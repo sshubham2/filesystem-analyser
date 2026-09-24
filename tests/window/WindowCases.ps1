@@ -118,6 +118,28 @@ function New-SmallTree([string] $root) {
     [pscustomobject]@{ Files = 20; Folders = 4; Links = 0; Bytes = $bytes }
 }
 
+# Enough for many timer ticks before the ending. Thousands of files alone scan in well under one tick
+# here (30,000 empty files: 54 ms), so the tree also holds 30,150 nested folders, which is what takes
+# the scan past a second (20,100 folders: 1.0 to 1.3 s).
+function New-LargeTree([string] $root) {
+    $tops = 150
+    $files = 0
+    $bytes = 0
+    for ($i = 0; $i -lt $tops; $i++) {
+        $top = Join-Path $root "n$i"
+        for ($j = 0; $j -lt 200; $j++) {
+            [void][System.IO.Directory]::CreateDirectory((Join-Path $top "m$j"))
+        }
+        New-File (Join-Path $top 'data.bin') $KiB64
+        $bytes += $KiB64
+        for ($f = 0; $f -lt 29; $f++) {
+            New-File (Join-Path $top "empty$f.txt") 0
+        }
+        $files += 30
+    }
+    [pscustomobject]@{ Files = $files; Folders = $tops + $tops * 200; Links = 0; Bytes = $bytes }
+}
+
 function Remove-CaseFolder([string] $folder) {
     if (Test-Path -LiteralPath $folder) {
         Remove-Item -LiteralPath $folder -Recurse -Force
@@ -202,29 +224,12 @@ function Test-C001 {
     finally { Remove-CaseFolder $case }
 }
 
-# C-002: a tree large enough for many timer ticks before the ending. Thousands of files alone scan in
-# well under one tick here (30,000 empty files: 54 ms), so the tree also holds 30,150 nested folders,
-# which is what takes the scan past a second (20,100 folders: 1.0 to 1.3 s).
+# C-002: a tree large enough for many timer ticks before the ending (New-LargeTree).
 function Test-C002 {
     $case = New-CaseFolder
     try {
         $root = Join-Path $case 'large'
-        $tops = 150
-        $files = 0
-        $bytes = 0
-        for ($i = 0; $i -lt $tops; $i++) {
-            $top = Join-Path $root "n$i"
-            for ($j = 0; $j -lt 200; $j++) {
-                [void][System.IO.Directory]::CreateDirectory((Join-Path $top "m$j"))
-            }
-            New-File (Join-Path $top 'data.bin') $KiB64
-            $bytes += $KiB64
-            for ($f = 0; $f -lt 29; $f++) {
-                New-File (Join-Path $top "empty$f.txt") 0
-            }
-            $files += 30
-        }
-        $manifest = [pscustomobject]@{ Files = $files; Folders = $tops + $tops * 200; Links = 0; Bytes = $bytes }
+        $manifest = New-LargeTree $root
 
         $read = Read-Window $root
         CheckFinished $read $root $root $manifest
@@ -346,9 +351,11 @@ function Test-C008 {
     finally { Remove-CaseFolder $case }
 }
 
-# C-009: the report cannot be written. Refused before any scan, with exit 3 and nothing left behind.
+# C-009: the report cannot be written. Exit 3 and nothing left behind, whether it is refused before any
+# scan or the final write fails because the report's folder went away during the scan.
 function Test-C009 {
     $case = New-CaseFolder
+    $process = $null
     try {
         $root = Join-Path $case 'tree'
         [void](New-SmallTree $root)
@@ -362,8 +369,33 @@ function Test-C009 {
         CheckEqual '3' (Invoke-App @($root, '--report', $folder)) 'a folder as the report path: exit code'
         Check (Test-Path -LiteralPath $folder -PathType Container) 'a folder as the report path: the folder is untouched'
         Check (-not (Test-Path -LiteralPath "$folder.tmp")) 'a folder as the report path: no .tmp'
+
+        # Past the startup check: the folder is deleted once the window is up, while a large tree is
+        # still scanning, so only the final write can fail.
+        $large = Join-Path $case 'large'
+        [void](New-LargeTree $large)
+        $out = Join-Path $case 'out'
+        [void][System.IO.Directory]::CreateDirectory($out)
+        $report = Join-Path $out 'r.json'
+        $process = Start-App "`"$large`" --report `"$report`""
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        while (-not $process.HasExited -and $process.MainWindowHandle -eq [IntPtr]::Zero -and $clock.Elapsed.TotalSeconds -lt 30) {
+            Start-Sleep -Milliseconds 10
+            $process.Refresh()
+        }
+        Check ($process.MainWindowHandle -ne [IntPtr]::Zero -and -not $process.HasExited) "folder gone mid-scan: the window was up and the app still running after $($clock.ElapsedMilliseconds) ms"
+        Remove-Item -LiteralPath $out -Recurse -Force
+        CheckEqual '3' (Wait-App $process) 'folder gone mid-scan: exit code'
+        Check (-not (Test-Path -LiteralPath $report)) 'folder gone mid-scan: no report'
+        Check (-not (Test-Path -LiteralPath "$report.tmp")) 'folder gone mid-scan: no .tmp'
     }
-    finally { Remove-CaseFolder $case }
+    finally {
+        if ($process -and -not $process.HasExited) {
+            $process.Kill()
+            $process.WaitForExit()
+        }
+        Remove-CaseFolder $case
+    }
 }
 
 # C-010: non-ASCII in the root, and a no-break space and a dash in the window text (the title shows the

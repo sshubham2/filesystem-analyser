@@ -1,18 +1,23 @@
 # Architecture rules for FsAnalyser, read by the engine's Fitness check (op=check, op=rules).
 #
-# TWIN OF tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs. That file is the source: every
-# pattern, scope and exemption here is copied from one of its [Fact]s, and the reasons from
-# docs/design/SL-020-scanner.md (Architecture rules). Change a rule in both places, or in neither.
+# Two kinds of entry:
+#   - TWINNED: every entry above the first '# settled by SL-0xx' marker. Each is a TWIN OF a [Fact] in
+#     tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs. That file is the source: every pattern,
+#     scope and exemption is copied from one of its [Fact]s, and the reasons from
+#     docs/design/SL-020-scanner.md (Architecture rules). Change a rule in both places, or in neither.
+#   - SETTLED: every entry under a '# settled by SL-0xx' marker, appended by the engine from that
+#     slice's design (architecture_rules). It has NO xUnit twin: Fitness is its only enforcement, and
+#     `dotnet test` stays green when it breaks. Its reason is its `because`. Change it here only.
 #
-# One entry per ([Fact], scope glob) pair, because `files` takes a single glob with no braces or
-# alternation. A [Fact] whose files span two file types or two roots is split into two entries that
-# are identical except for `name` and `files`; each carries the [Fact]'s whole except_files list.
-# The name is the [Fact]'s method name with the scope in parentheses, so a violation here points at
-# the xUnit test that fails with it. Five rules, eight entries.
+# For twinned entries: one entry per ([Fact], scope glob) pair, because `files` takes a single glob
+# with no braces or alternation. A [Fact] whose files span two file types or two roots is split into
+# two entries that are identical except for `name` and `files`; each carries the [Fact]'s whole
+# except_files list. The name is the [Fact]'s method name with the scope in parentheses, so a
+# violation here points at the xUnit test that fails with it.
 #
-# ArchitectureRulesTests (xUnit) is the authority. These rules are a quicker copy of it that the
-# engine can run at every gate, and they can pass where xUnit fails. Known differences, given as
-# examples and not as a complete list:
+# For twinned entries, ArchitectureRulesTests (xUnit) is the authority. They are a quicker copy of it
+# that the engine can run at every gate, and they can pass where xUnit fails. Known differences, given
+# as examples and not as a complete list:
 #   - A match that spans a line break. Fitness matches whole-file text and xUnit one line at a time,
 #     so \s, [^)]* and [^>]* can cross a line break here and not there: `using` and `System.Windows;`
 #     on two lines fail here and pass xUnit. A (?m)^\s* match is also reported at the first of any
@@ -28,7 +33,8 @@
 #     .Except([...]) does not, so a case-only rename of an exempted file such as EntryClassifier.cs
 #     or TestNative.cs fails xUnit and passes here.
 # No pattern in this repo can close the last four; the fixes belong in the engine. Until then the
-# xUnit test is the backstop.
+# xUnit test is the backstop for twinned entries. Settled entries have none: a file that is not
+# UTF-8, is over 2 MB or sits under a skipped folder hides a violation of theirs from every check.
 #
 # AUTHORING RULES, for anyone editing or appending (by hand or through a design's architecture_rules).
 # Each one exists because breaking it makes a rule pass silently:
@@ -39,11 +45,13 @@
 #     as the invisible character). Fitness keeps a UTF-8 BOM as the first character of line 1 and \s
 #     does not match it, while xUnit's File.ReadAllLines strips it, so without this a line-1 hit in a
 #     BOM file passes here and fails there.
-#   - Every entry says including_comments: true. Fitness blanks // and /* */ in .cs by default, and
-#     the xUnit test matches raw lines, comments included. The engine's append of a design's declared
-#     rules writes neither this flag nor (?m), so a declared rule must put (?m) in its own pattern.
-#   - Every regex is a YAML single-quoted scalar ('' for a quote). Double quotes turn \b into a
-#     backspace and reject \s.
+#   - Every twinned entry says including_comments: true. Fitness blanks // and /* */ in .cs by
+#     default, and the xUnit test matches raw lines, comments included. The engine's append of a
+#     design's declared rules writes neither this flag nor (?m), so a declared rule must put (?m) in
+#     its own pattern, and a settled entry without the flag is matched against code only.
+#   - Every regex written by hand is a YAML single-quoted scalar ('' for a quote). Double quotes turn
+#     \b into a backspace and reject \s. The SL-023 entries are plain scalars as the engine appended
+#     them; a plain scalar also keeps every backslash literal.
 #   - Every `files` glob is rooted at src/ or tests/. A bare **/*.cs also reads the gitignored .dotnet/,
 #     artifacts/ and TestResults/, which Fitness does not prune (it prunes only a fixed list of
 #     directory names, such as bin/, obj/ and packages/).

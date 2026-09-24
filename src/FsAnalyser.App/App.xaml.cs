@@ -88,6 +88,15 @@ public partial class App : Application
             Shutdown(Crashed);
         };
 
+        // Exit 0 only with a report: closing the window before its ending exits 0 by default, and so does
+        // an exception after Shutdown(ReportWritten), because WPF keeps the first code while Discard
+        // deletes the file.
+        Exit += (_, e) =>
+        {
+            if (e.ApplicationExitCode == ReportWritten && !File.Exists(report))
+                e.ApplicationExitCode = Crashed;
+        };
+
         var window = new MainWindow(root);
         bool reported = false;
         window.EndingShown += async (_, _) =>
