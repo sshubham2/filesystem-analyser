@@ -288,7 +288,7 @@ function Case-C004 {
 }
 
 function Case-C005 {
-    Write-Output 'C-005 shapes the readers cannot classify or count exit 2 with file:line, never AGREE'
+    Write-Output 'C-005 shapes the readers cannot classify or count exit 2 with file:line, a yaml item after a blank or comment line is read, never AGREE'
     $wpf = '            @"<UseWPF>\s*true",'
     $cs = @(
         @('two literals on one line', ($wpf + "`n" + '            @"<UseWindowsForms>\s*true",'), ($wpf + ' @"<UseWindowsForms>\s*true",'), '@"<UseWPF>\s*true", @"<UseWindowsForms>'),
@@ -338,6 +338,29 @@ function Case-C005 {
             "rules-parity: CANNOT-READ .taad/fitness.yaml:$(Get-LineOf $root $YamlRel ($new -split "`n")[0]): a pattern of 'OnlyTheClassifierReadsTheReparseAttribute (*.cs)' $says"
         } 2
     }
+
+    # A yaml-only pattern after a blank or comment line: YAML (and so Fitness) still reads it as part of the
+    # list, so the reader must too. Reading it gives DRIFT; stopping before it would give AGREE (O-019).
+    $last = "      - '(?m)AttributesToSkip'`n"
+    $onlyInYaml = "      - '(?m)OnlyInYaml'`n"
+    $hidden = @(
+        @('after a blank line', "`n"),
+        @('after a comment at the key''s indent', "    # a note`n"),
+        @('after a comment deeper than the key', "        # a deeper note`n"),
+        @('after a blank line and a comment', "`n    # a note`n")
+    )
+    foreach ($shape in $hidden) {
+        $name, $gap = $shape
+        Test-Parity "a yaml-only pattern $name" {
+            param($root)
+            Edit-File $root $YamlRel $last ($last + $gap + $onlyInYaml)
+        } 1 @('rules-parity: DRIFT 2 unpaired', "yaml entry 'TheScannerListsDirectoriesOnlyThroughDirectoryReader (*.cs)'", "only in yaml 'OnlyInYaml'")
+    }
+    # ... and a blank line and a comment between two twinned items hide neither: still AGREE on 21 patterns.
+    Test-Parity 'a blank line and a comment between two items' {
+        param($root)
+        Edit-File $root $YamlRel "      - '(?m)EnumerationOptions'`n" ("      - '(?m)EnumerationOptions'`n`n    # a note`n")
+    } 0 @('rules-parity: AGREE 7 facts <- 10 twinned entries, 21 patterns')
 }
 
 function Case-C006 {

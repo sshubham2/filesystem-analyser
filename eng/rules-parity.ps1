@@ -208,6 +208,9 @@ function Read-Entries {
         if ($Matches[2].Trim().Length -ne 0) {
             Stop-Reading "${YamlRel}:$($key + 1)" "must_not_match of $(Show-Name $name) is not a block list with one item per line"
         }
+        # YAML carries a list on past blank and comment lines, so this does too: stopping at one would leave
+        # the items after it unread here while Fitness still enforces them. The list ends only at a line
+        # that is neither, indented no deeper than the key; the loop never passes the next entry ($end).
         $patterns = New-Object System.Collections.Generic.List[string]
         for ($i = $key + 1; $i -lt $end; $i++) {
             $line = $lines[$i]
@@ -215,7 +218,8 @@ function Read-Entries {
                 $patterns.Add((Read-SingleQuoted $Matches[2].Trim() "${YamlRel}:$($i + 1)" "a pattern of $(Show-Name $name)"))
                 continue
             }
-            if ($line.Trim().Length -eq 0 -or ($line.Length - $line.TrimStart().Length) -le $indent) { break }
+            if ($line.Trim().Length -eq 0 -or $line -cmatch '^\s*#') { continue }
+            if (($line.Length - $line.TrimStart().Length) -le $indent) { break }
             Stop-Reading "${YamlRel}:$($i + 1)" "a pattern of $(Show-Name $name) runs onto the next line"
         }
         if ($patterns.Count -eq 0) { Stop-Reading "${YamlRel}:$($key + 1)" "twinned entry $(Show-Name $name) has zero patterns" }

@@ -1,0 +1,203 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-031",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-09-24T21:40:20.757Z",
+ "head": "0a3bb5fb716120b452a4fccf4ef36926c2c429c5",
+ "run_id": 943,
+ "summary": "The build matches the design, and every departure except a few small ones is declared. I ran each check myself, and the tree was left clean afterwards (`git status` unchanged):\n- `eng/rules-parity.ps1` gives AGREE under both powershell.exe 5.1 and pwsh 7 (7 Facts, 10 twinned entries, 21 patterns, 7 settled).\n- Core.Tests: 120/120, and the filtered RuleCopiesAgreeTests plus ArchitectureRulesTests run: 8/8.\n- Fitness: all 17 rules hold.\n- The full harness against the real taad_v3 engine: CLEAN, then 32/32 rows AS-RECORDED with 0 stray hits, exit 0. That is the same verdict for every row as the builder's three runs.\n- RuleCases.ps1 C-001 to C-014: every check held (8, 34, 26, 26, 54, 17, 9, 26, 12, 4, 7, 8, 3, 5).\n- No fsa-rules-* scratch folder was left behind.\n\nI read every case test, and each one does feed in its shape. One defect is outside the case matrix. The parity script's yaml reader stops reading a `must_not_match` list at the first blank line, or at a comment line at the key's indent. Any later patterns are dropped without a word. I checked both on a temp copy: an extra yaml-only pattern put after either shape gives `AGREE ... 21 patterns`, exit 0, while `yaml.safe_load` (and so Fitness) reads 6 patterns in that entry. So the one drift direction where Fitness is stricter than xUnit gets past RuleCopiesAgreeTests. That breaks the design's rule that both readers refuse any shape they cannot classify.\n\nTwo gaps the builder already declared still stand: no plant covers FileSystemCallsGoThroughTheCancelGuard or its exempted files, and the settled entries have no behavioural rows. Neither blocks this slice. The open slice history shows one build attempt and no loop.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The build matches the design, and every departure except a few small ones is declared. I ran each check myself, and the tree was left clean afterwards (`git status` unchanged):\n- `eng/rules-parity.ps1` gives AGREE under both powershell.exe 5.1 and pwsh 7 (7 Facts, 10 twinned entries, 21 patterns, 7 settled).\n- Core.Tests: 120/120, and the filtered RuleCopiesAgreeTests plus ArchitectureRulesTests run: 8/8.\n- Fitness: all 17 rules hold.\n- The full harness against the real taad_v3 engine: CLEAN, then 32/32 rows AS-RECORDED with 0 stray hits, exit 0. That is the same verdict for every row as the builder's three runs.\n- RuleCases.ps1 C-001 to C-014: every check held (8, 34, 26, 26, 54, 17, 9, 26, 12, 4, 7, 8, 3, 5).\n- No fsa-rules-* scratch folder was left behind.\n\nI read every case test, and each one does feed in its shape. One defect is outside the case matrix. The parity script's yaml reader stops reading a `must_not_match` list at the first blank line, or at a comment line at the key's indent. Any later patterns are dropped without a word. I checked both on a temp copy: an extra yaml-only pattern put after either shape gives `AGREE ... 21 patterns`, exit 0, while `yaml.safe_load` (and so Fitness) reads 6 patterns in that entry. So the one drift direction where Fitness is stricter than xUnit gets past RuleCopiesAgreeTests. That breaks the design's rule that both readers refuse any shape they cannot classify.\n\nTwo gaps the builder already declared still stand: no plant covers FileSystemCallsGoThroughTheCancelGuard or its exempted files, and the settled entries have no behavioural rows. Neither blocks this slice. The open slice history shows one build attempt and no loop.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "missing-edge-cases",
+    "claim": "Read-Entries in rules-parity.ps1 stops reading a twinned entry's must_not_match list at the first blank line, or at a comment line indented no deeper than the key. Items after that point are never read and never compared, but YAML, and so Fitness, still reads them. A pattern that exists only in yaml, placed after a blank line or after `    # note`, gives AGREE (exit 0), so RuleCopiesAgreeTests passes while Fitness enforces a pattern xUnit does not. Checked on a temp copy of the two files: adding `\\n      - '(?m)OnlyInYaml'` after `(?m)AttributesToSkip` printed 'rules-parity: AGREE 7 facts <- 10 twinned entries, 21 patterns', exit 0, while yaml.safe_load read 6 patterns in that entry. The same happened with a `    # a note` line at the key's indent. This breaks the design's decision that 'Both readers fail closed on any shape they cannot classify', and it is exactly the silence case C-005 exists for. The C# reader has no such hole: a blank or comment line there already exits 2.",
+    "evidence": "eng/rules-parity.ps1:212-220, specifically line 218: `if ($line.Trim().Length -eq 0 -or ($line.Length - $line.TrimStart().Length) -le $indent) { break }`. There is no C-005 row for these shapes in tests/rules/RuleCases.ps1:327-340.",
+    "fix": "In the list loop, `continue` on blank lines and on comment-only lines (`^\\s*#`). Break only on a non-blank, non-comment line indented no deeper than the key. The loop is already bounded by `$end` (the next entry or the settled marker). Then add C-005 rows that put a yaml-only pattern after a blank line and after a comment at the key's indent, and require DRIFT (or CANNOT-READ), never AGREE."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "I ran `harness.py --engine-root C:\\Users\\sshub\\projets\\taad_v3\\backend` (all scenarios): 32 rows, every divergence row AS-RECORDED with the same seen outcomes (D1-D13), exit 0. That matches the builder's three recorded runs. Owed to validate-slice, which should still run it on its own."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "eng/rules-harness/harness.py:434-442. `_rename` renames in two steps through `.fsa-rename`, then requires `os.listdir` to show the new-case name and not the old one; otherwise the row is PLANT-BROKEN. D3, D4 and D9 pass on %TEMP% (NTFS). C-012's bite (a rename to the same name gives PLANT-BROKEN, exit 1) held in my run."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "harness.py:518-523: `judge` returns DIVERGENCE-CLOSED when a split row's two outcomes match. harness.py:658-662: any label other than AS-RECORDED gives exit 1. RuleCases C-014 (D13 flipped to fitness quiet) exits 1 with DIVERGENCE-CLOSED; 5/5 checks in my run."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "harness.py:667: `--engine-root` is required with no default. load_engine (99-125) sets TAAD3_HOME and dont_write_bytecode before `sys.path.insert(0, root)` and the import, and checks that the module file really comes from that root."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "RuleCases C-001: 8/8 in my run, under powershell.exe and pwsh. My direct runs of eng/rules-parity.ps1 also gave AGREE (7/10/21/7). The settled count is 7, not 4 (declared)."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "RuleCases.ps1:204-231: a yaml typo in a split Fact's scope entry, a typo in a one-scope twin, a pattern dropped from C#, and one dropped from yaml. C-002: 34/34 in my run."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "RuleCases.ps1:233-261: a deleted one-scope twin, a changed split Fact, a new entry above the marker, and the same entry below a marker (AGREE with 8 settled). C-003: 26/26 in my run."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "RuleCases.ps1:263-288: a pattern without (?m) gives DRIFT, reported as 'lacks (?m)'. The ﻿, ﻿ and ﻿ spellings and a literal U+FEFF all give AGREE, and a BOM without '?' gives DRIFT. The escapes are built from [char]92. C-004: 26/26 in my run. fitness.yaml holds the escape form (3 occurrences) and no literal U+FEFF."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "RuleCases.ps1:290-341 feeds every shape the case names. C-005: 54/54 in my run. The discharge covers only the shapes listed. See M1 for an unlisted yaml shape that reads as AGREE."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "RuleCases C-006 (a missing root, the repo given as the root, no --engine-root, a fake engine whose result lacks 'unran' and which refuses a TAAD3_HOME outside scratch, an engine that fails to import): 17/17 in my run. harness.py:99-145."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "harness.py:549-567 (check_clean). My run printed 'clean: xunit 7 Facts, 0 hits | fitness pass, 17 rules, 43 files read ... CLEAN'. C-007 9/9, including the stray-DllImport bite that exits 2."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "plants.json F01-F16 cover both scopes of each split Fact. My full run: F01-F16 all AS-RECORDED. C-008 26/26, including the yaml-scope and xUnit-scope bites (MISSED-BY-FITNESS, MISSED-BY-XUNIT)."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "plants.json P07c-e. All AS-RECORDED quiet/quiet in my run. C-009 12/12, including the FIRED-WHEN-EXEMPT bite and the dropped-exemption clean-baseline failure."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "divergences.json D1 (packages/) and D2 (dist/): xunit fire, fitness quiet, AS-RECORDED in my run. C-010 4/4."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "D6 and D11 (UTF-16LE), D7 and D10 (padded past 2 MB), D13 (cp1252 with byte 0xE9). All AS-RECORDED in my run. C-011 7/7."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "D3 (EntryClassifier.cs to Entryclassifier.cs), D4 (TestNative.cs to testNative.cs), D9 (to Testnative.cs), each a two-step rename (harness.py:434-436). All AS-RECORDED in my run; D9 ran in batch 2 because D4 renames the same file. C-012 8/8."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "D5 plants ['using','    System.Windows;'] after an anchor in Scanner.cs. xunit quiet, fitness fire, AS-RECORDED in my run. C-013 3/3."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "C-014 5/5 in my run: DIVERGENCE-CLOSED with 'delete row D13 from divergences.json', exit 1."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:194-202 runs parity on the real repo under powershell.exe and pwsh, with and without -ExpectFacts 7, and asserts the exact AGREE line. The real tree now has 7 settled entries, not the case's 4 (declared)."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:204-231 edits a yaml copy (a typo in the src scope entry of InteropLivesOnlyInNative, a typo in the NoBcl twin, AttributesToSkip dropped) and a C# copy (FileSystemEnumerable dropped), and asserts DRIFT plus the file:line names."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:233-261 deletes the NoBcl entry with a regex up to the marker, changes a split Fact's pattern in C#, inserts a new entry above '# settled by SL-023', and appends the same entry below a new '# settled by SL-999' marker (AGREE, 8 settled)."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:263-288 strips (?m) from '(?m)IsReparsePoint', rewrites every ^﻿? with each spelling (lower, upper, mixed case, literal U+FEFF) and checks the copy really carries it, and removes the '?'."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:290-341 covers each named shape: two literals on one line, concatenation, raw string, const, nameof, interpolation, no AssertNoMatch, zero patterns, zero Facts, -ExpectFacts 8, and double-quoted, block and plain yaml. The case does not cover a blank or comment line inside a yaml list (M1)."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:343-376: a nonexistent root, the repo given as the engine root, no argument, a fake taad3 whose check() lacks 'unran' and which raises unless TAAD3_HOME is the harness's scratch 'home', and a taad3 that raises on import."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:378-392 runs --scenario clean on the repo and checks rule count = twinned + settled. The bite adds a stray DllImport line to a git-init'd copy of Scanner.cs and requires exit 2."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:396-417 runs F01-F16 (insert-after rows into Scanner.cs, the csproj, MainWindow.xaml(.cs) and CancellationTests.cs, which all have lines), then deletes the tests-scope entry from yaml and drops the tests scope from xUnit on copies, and requires MISSED-BY-FITNESS and MISSED-BY-XUNIT on F12."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:419-437 runs P07c-e (appends to Kernel32.cs, EntryClassifier.cs and TestNative.cs), moves P07d into DirectoryReader.cs (FIRED-WHEN-EXEMPT), and drops EntryClassifier.cs from the yaml except_files (clean baseline exits 2)."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:439-444 runs D1 (a new file under src/FsAnalyser.Core/packages/) and D2 (under dist/) and asserts fire/fire and quiet/quiet."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:446-452 runs D6 and D11 (utf16le with BOM), D7 and D10 (padded to about 2.04 and 2.09 MB), and D13 (cp1252 bytes including 0xE9, which is not valid UTF-8). Each carries a violating line."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:454-465 runs D3, D4 and D9, which are real case-only renames through the '.fsa-rename' temp name with a listdir check (harness.py:420-443). The bite (a rename to the same name) gives PLANT-BROKEN."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:467-472 runs D5, which inserts 'using' and '    System.Windows;' as two lines in Scanner.cs."
+   },
+   {
+    "key": "C-014",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:474-481 writes a temporary divergences.json with D13's fitness outcome flipped to quiet (so the row records a divergence both engines agree on) and requires DIVERGENCE-CLOSED and exit 1."
+   }
+  ],
+  "matches_design": true,
+  "drift": [
+   "Not declared: harness.py applies each scenario's rows in batches, each with its own `dotnet test --no-build`, Fitness run and hash-checked restore (harness.py:264-276, 619-640). A batch never touches one file twice in conflicting ways, so the divergences scenario runs twice: D9 is split from D4 because both rename TestNative.cs. The design described one apply/test/restore per scenario. The docstring documents it, but the declared deviations do not.",
+   "Not declared: hit attribution also counts the blank lines before a row's first planted line (`lead`, harness.py:378-382 and 495). The design said attribution is by path plus planted line range only. No current row has lead > 0: D12's blank line is inside its own span.",
+   "create-with accepts encoding 'utf8' (used by D7 and D10), which is not in the design's utf16le|cp1252|utf8bom list. The declared schema-extension deviation covers it only loosely.",
+   "Declared and confirmed in the tree: 7 settled entries and 17 Fitness rules instead of 4 and 14 (the three '# settled by SL-031' entries at .taad/fitness.yaml:223-254). --engine-root is required, with no TAAD3_BACKEND fallback (harness.py:667). The harness has extra options. tests/rules/RuleCases.ps1 was added. The engine probe runs before parity.",
+   "Design case 11's premise that cp1252 is read differently by the two engines was measured false. D13 pins it as an agreement row, and the yaml header says so (fitness.yaml:33-36). This answers the design with a measurement rather than building around it. design-slice should know that its case 11 row is now an agreement pin."
+  ],
+  "unreviewed": [
+   ".taad/slices/SL-031/critique-1.json: another stage's account of itself, not code. Deliberately not opened.",
+   ".taad/slices/SL-031/critique-review-1.json: another stage's account of itself, not code. Deliberately not opened.",
+   ".taad/slices/SL-031/design-slice-1.json: another stage's account of itself, not code. The design was supplied in the brief. Deliberately not opened.",
+   ".taad/slices/SL-031/build-slice-1.json: the builder's own account (untracked). The brief already carries its claims, and I checked them against the tree instead."
+  ]
+ }
+}
