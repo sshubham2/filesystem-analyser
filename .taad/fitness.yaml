@@ -170,3 +170,26 @@ rules:
       the observed window is no longer the one a person sees, and a normal launch could gain
       report behaviour without the App's report-mode guards (delete-first, exit codes). MainWindow
       raises EndingShown and nothing more.
+
+  # settled by SL-024
+  - name: CancelSynchronousIo is called only by the scan's own canceller
+    files: src/**/*.cs
+    must_not_match:
+    - \bCancelSynchronousIo\s*\(
+    because: 'CancelSynchronousIo can itself block (cited: it waits while on-access antivirus
+      holds a CreateFile over a slow link). From the token callback or the App it runs on the
+      UI thread inside _cancel.Cancel() and freezes the window, which is what this slice exists
+      to prevent. From anywhere outside the Enter/Exit protocol it can also cancel an unrelated
+      I/O on the scan thread.'
+    except_files:
+    - src/FsAnalyser.Core/Native/Kernel32.cs
+    - src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs
+  - name: the thread handle is never a pseudo-handle
+    files: src/FsAnalyser.Core/**/*.cs
+    must_not_match:
+    - \bGetCurrentThread\b
+    because: GetCurrentThread returns a pseudo-handle that always means the calling thread.
+      Passed from the canceller it cancels the canceller's own I/O, so every cancel returns
+      ERROR_NOT_FOUND, the scan never stops early, and nothing fails except a blocked-call test.
+      The handle must come from OpenThread(THREAD_TERMINATE, GetCurrentThreadId()). \bGetCurrentThread\b
+      does not match GetCurrentThreadId.

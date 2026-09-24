@@ -1,0 +1,364 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-024",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-24T16:01:43.340Z",
+ "head": "0320a0d22641e7eccc41254129d31ad957c07f04",
+ "run_id": 872,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "One proposal (practice), selected as core, with five changes made at the seams (see coherence_check). Selected against what was measured.\n\nWHAT MEASUREMENT SETTLED. Spike 1 is a go: 10/10 cancels of a blocked CreateFileW on an unreachable SMB share returned in 17 ms or less with 995, against a 21 s control. This overrides the slice text's claim that it 'cannot be tested unelevated here'. Spike 2 is a no-go for the naive design: a cancelled cloud-placeholder listing returned SUCCESS with an empty listing (5/5), and a single cancel never returned. The proposal answers both 'needs first' items directly. The interrupted call's result is discarded whatever it returned (recorded intent, not return code). The cancel is repeated until the call leaves. Spike 3 (a stalled, established session, and the close after cancel) did not run, so it is unmeasured and not designed around.\n\nWHAT REALITY SAYS IS ALREADY THERE. The scan is one synchronous P/Invoke reader (CreateFileW, then GetFileInformationByHandleEx) on a dedicated LongRunning thread. Cancel is only _cancel.Cancel() on the UI thread, and the only token check is at Scanner.cs:128. An in-place CancelSynchronousIo guard adds to that shape without touching the store, the UI or the Scan API. CreateFile has no overlapped form, so the blocked call spike 1 caught can only be cancelled this way. Overlapped rewrite, per-call timeouts, abandoning the thread and a scanner process were rejected as larger and unmeasured.\n\nACCEPTANCE CRITERIA THIS DESIGN OWNS. The slice had none and the build check derived two. Gates should read these instead:\n(1) A scan blocked in a synchronous Win32 call on the scan thread returns within 2 s of Cancel. The result of the interrupted call is discarded whatever the OS returned, and Cancel() itself returns promptly on the UI thread.\n(2) 995 under a requested cancel is cancellation: no Unreadable flag, no _unreadable entry, no ProbeFailed. 995 with no cancel requested is still Unreadable(995), because the counting rules forbid dropping a folder silently. This NARROWS the build check's derived criterion 2 ('995 is cancellation, not unreadable'), which read literally would stop a scan nobody cancelled or drop a folder.\n(3) An aborted folder commits nothing. It ends in the state of a folder the cancelled scan never reached, and the scan's cancelled state is what marks the totals partial.\n(4) The test that exercises an unreachable share fails as VOID, instead of passing, if no call was blocked.",
+  "components": [
+   {
+    "name": "SynchronousIoCancel (new)",
+    "responsibility": "One instance per scan, created on the scan thread, and only when ct.CanBeCanceled. A token that can never cancel opens no thread handle and registers nothing. It opens the thread's handle with OpenThread(THREAD_TERMINATE, false, GetCurrentThreadId()) into a SafeThreadHandle (measured to work unelevated in spike 1). It holds an int state: Idle, InCall, CancelIssued. bool Enter(): Interlocked.Exchange to InCall, then re-check the token; if cancelled (or disposed), Exchange back to Idle and return false so the call is never made. bool Exit(): Interlocked.Exchange to Idle, returning whether the previous state was CancelIssued. static int Settle(int error, bool cancelIssued): returns 995 whenever cancelIssued is true, else the error unchanged. Dispose(): mark disposed, dispose the token registration, JOIN the canceller thread if one was started, then close the handle. Nothing is allocated per call. Debug.Assert in Enter that the caller is the creating thread (single scan thread invariant).",
+    "lives_at": "src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs",
+    "key_interactions": "Registers once on the scan's CancellationToken. The callback runs inside MainWindow.OnCancel's _cancel.Cancel() on the UI thread, so it does nothing but start a background thread named scan-cancel. That thread loops: CompareExchange(state, CancelIssued, InCall). If the previous value was Idle (or the guard is disposed) it exits. Otherwise it calls CancelSynchronousIo(handle), ignores ERROR_NOT_FOUND, sleeps 25 ms, and repeats until the scan thread leaves the call. ObjectDisposedException from the SafeHandle stops it. If OpenThread fails, no registration is made and Cancel falls back to the old folder-boundary behaviour. The scan does not fail."
+   },
+   {
+    "name": "Kernel32 additions",
+    "responsibility": "Add ERROR_OPERATION_ABORTED = 995 to the 'Win32 errors the scanner branches on' list (Kernel32.cs:41-48) and THREAD_TERMINATE = 0x0001. Add LibraryImport declarations for GetCurrentThreadId, OpenThread (returns SafeThreadHandle), CancelSynchronousIo(SafeThreadHandle) with SetLastError, and CloseHandle for SafeThreadHandle.ReleaseHandle. Add SafeThreadHandle : SafeHandleZeroOrMinusOneIsInvalid beside them. Never GetCurrentThread(): its pseudo-handle names the calling thread.",
+    "lives_at": "src/FsAnalyser.Core/Native/Kernel32.cs",
+    "key_interactions": "Used only by SynchronousIoCancel. Follows the existing LibraryImport/SetLastError idiom of CreateFileW and GetFileInformationByHandleEx."
+   },
+   {
+    "name": "DirectoryReader: guarded open and listing",
+    "responsibility": "Bracket each CreateFileW in Open (DirectoryReader.cs:66) and each GetFileInformationByHandleEx call in the List loop (DirectoryReader.cs:101-108) as: if(!g.Enter()) return 995; try { e = Call(); } finally { issued = g.Exit(); } then Settle(e, issued). An aborted call's buffer is discarded even if it reported SUCCESS with zero entries. An aborted List commits NOTHING for that folder (whole-folder discard), which is the change made to the proposal. The handle is closed and never reused after a 995 (a handle that saw a cancel reports stale aborts). The close itself is outside the guard: Enter refuses after cancel, so it cannot be bracketed, and its behaviour on a stalled session is unmeasured.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/DirectoryReader.cs",
+    "key_interactions": "Each buffer call has its own bracket, so Cancel is also honoured between listing buffers of a 100k-item folder, not only at the folder's end. 995 flows to Scanner.FolderDone like any other code. BUILD MUST READ how List hands entries to FolderDone before writing the discard; if List streams into the store, that is a contract change to raise, not to improvise."
+   },
+   {
+    "name": "SizeProbe: guarded probe",
+    "responsibility": "Bracket every Win32 call in Probe the same way. An aborted probe returns 995 instead of turning into ProbeFailed (SizeProbe.cs:62-66). It writes no size it did not read and no ProbeFailed flag.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/SizeProbe.cs",
+    "key_interactions": "The survey cites the file without a folder; Scanning/ is inferred from its siblings. Scanner stops at an aborted probe as it does at an aborted listing."
+   },
+   {
+    "name": "Scanner: own the guard, branch on 995",
+    "responsibility": "At the top of Scan, on the scan thread, create the guard from the token, pass it to DirectoryReader and SizeProbe, dispose it in finally. Every other Win32 filesystem call the scan thread makes before or between folders (root attribute probe, volume-usage query, anything else in Kernel32) must be inside a bracket too; the build enumerates them by listing every P/Invoke in Kernel32.cs. The 995 decision is one small internal pure function, ClassifyReadError(error, cancelRequested), so it can be tested without a network: 995 with a requested cancel means the scan stops through the existing cancelled path (Scanner.cs:128) with no Unreadable flag and no _unreadable entry; 995 without one is Unreadable(995); every other code is unchanged (error 5 stays Unreadable). Update the class comment at Scanner.cs:21 ('checked once per folder').",
+    "lives_at": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "key_interactions": "The public Scan API and ScanOptions do not change. MainWindow.xaml.cs:145-150 (LongRunning dedicated thread) and OnCancel at 206-211 stay as they are."
+   },
+   {
+    "name": "Tests",
+    "responsibility": "SynchronousIoCancelTests (new): (1) a thread calls Enter then blocks in a synchronous NamedPipeServerStream(PipeOptions.None).WaitForConnection() with no client; the token is cancelled after 200 ms; assert the thread returns within 2 s, Exit reports cancel-issued, and the Cancel() call itself returned within 250 ms on the calling thread. (2) Retry: Enter, cancel the token, sleep 200 ms in managed code (first cancels find nothing, ERROR_NOT_FOUND), then start the pipe wait; assert it returns within 2 s. (3) No call starts after cancel: Enter returns false. (4) Settle(0,true)=995, Settle(5,true)=995, Settle(0,false)=0, Settle(995,false)=995. (5) ClassifyReadError: (995,true) is cancellation, (995,false) is Unreadable(995), (5,*) is Unreadable(5). (6) A stress of many small local scans with the cancel fired at random moments: no exception, no hang, no stray cancel after Dispose. CancellationTests (existing file): CancelReturnsFromAScanBlockedOnAnUnreachableShare scans \\\\192.0.2.N\\s (TEST-NET-1, last octet varied per run), cancels at 500 ms, and asserts the scan returns within 2 s of the cancel, ends cancelled, and has an empty unreadable list. If the scan returns before the cancel fires, the test FAILS with 'VOID: network failed fast after X ms, error Y; no blocked call was exercised'. It never passes without exercising a blocked call.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/SynchronousIoCancelTests.cs",
+    "key_interactions": "The two existing CancellationTests and the SL-020 counting-rule tests (especially unreadable-folder on a real temp tree) are the regression guard. Run through eng/dotnet.ps1 test FsAnalyser.slnx. Known limit: a network that fails naturally between 0.5 s and 2.5 s could pass the share test without the interrupt being the cause; the pipe tests carry the mechanism proof."
+   },
+   {
+    "name": "Deferral note and scan-thread invariant",
+    "responsibility": "Replace the m7 deferral note at docs/design/SL-020-scanner.md:101 with the new rule: Cancel interrupts a blocked call; an interrupted call is discarded and reported as 995; under a requested cancel 995 is never an unreadable folder; the guard is per scan thread, so a later slice that lists in parallel must give each worker its own guard. Later slices are not handed this design, so this note and the class comment are where they will find the invariant.",
+    "lives_at": "docs/design/SL-020-scanner.md"
+   }
+  ],
+  "contracts": [
+   {
+    "name": "SynchronousIoCancel.Enter / Exit / Settle",
+    "kind": "function",
+    "error_cases": "OpenThread failure: no handle, Enter/Exit still work, the canceller never starts, and behaviour is the old boundary-only cancel, not a failed scan. CancelSynchronousIo returning ERROR_NOT_FOUND means the call has not reached the kernel yet or has left it; ignored and retried after 25 ms. Handle disposed during the canceller loop: ObjectDisposedException is caught and the canceller stops.",
+    "notes": "Bracket in try/finally: if(!g.Enter()) return 995; int e; try { e = Call(); } finally { issued = g.Exit(); } return Settle(e, issued). Once the token is cancelled Enter never lets a new call start, so a stray CancelSynchronousIo can only land on a call already being abandoned. Dispose joins the canceller before closing the handle, so no cancel lands after Scan returns."
+   },
+   {
+    "name": "DirectoryReader.Open / List and SizeProbe.Probe return 995 for an aborted call",
+    "kind": "function",
+    "error_cases": "A call is aborted when Enter refused it or a cancel was issued during it. The result is 995 whatever the OS returned: SUCCESS with an empty listing (cloud), 995 (SMB), or anything else. Nothing from that call is delivered, and an aborted List commits nothing for its folder. Every other error passes through unchanged.",
+    "notes": "Internal to Core, sole consumer Scanner. 995 is the single internal code for an aborted call; no new outcome enum. The OS can also produce 995 by itself; the two are told apart by ct.IsCancellationRequested in Scanner, never by the code."
+   },
+   {
+    "name": "Scanner cancel semantics",
+    "kind": "function",
+    "error_cases": "995 with a requested cancel ends the scan as cancelled: no Unreadable flag, no _unreadable entry, no ProbeFailed, nothing committed for the aborted folder. 995 without a requested cancel is Unreadable(995), so a folder is never dropped silently. Error 5 and every other code behave as before.",
+    "notes": "Scan and ScanOptions do not change. A cancelled scan still 'stops with what was read', as CancellingAfterTheThirdFolderStopsWithWhatWasRead requires. Folders committed before the abort stay in the store."
+   },
+   {
+    "name": "Cancel button",
+    "kind": "ui",
+    "notes": "Code does not change. A scan blocked opening an unreachable share or listing a populating cloud folder now returns within about 2 s of Cancel, instead of waiting out the SMB timeout (21 s measured) or the cloud-filter retry cycle (measured as never ending). The UI thread never calls CancelSynchronousIo; the token callback only starts the canceller thread."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Interrupt the blocked call in place with CancelSynchronousIo on the scan thread's OpenThread(THREAD_TERMINATE) handle. Not overlapped handles with CancelIoEx, per-call timeouts, abandoning the thread, or a scanner process.",
+    "reversibility": "cheap",
+    "rationale": "CreateFile has no overlapped form, so the call spike 1 measured blocking can only be cancelled this way. Spike 1: 10/10 in 17 ms or less with 995 against a 21 s control. The change is additive to the synchronous reader and removable without touching store or UI."
+   },
+   {
+    "decision": "The outcome of a call is decided by recorded intent, not by its return code. A call during which a cancel was issued, or that Enter refused, is discarded and reported as 995, even if the OS said SUCCESS.",
+    "reversibility": "cheap",
+    "rationale": "Spike 2 (no-go): a cancelled cloud placeholder listing returns SUCCESS with an empty listing 5/5, which the scanner would record as a read, empty folder. The flag is set before CancelSynchronousIo is issued, so no cancelled call can pass as real. This also makes the spike's 'check RECALL_ON_DATA_ACCESS before trusting an empty result' unnecessary, so it is not built."
+   },
+   {
+    "decision": "The canceller repeats CancelSynchronousIo every 25 ms until the scan thread leaves the call, and runs only on its own background thread, never on the token callback or the UI thread.",
+    "reversibility": "cheap",
+    "rationale": "Spike 2: one cancel never returns, because the platform re-issues FETCH_PLACEHOLDERS about every 60 s; repeated cancels returned in 0.13 s. Cited [2]: ERROR_NOT_FOUND when nothing is pending, so a cancel that beats the call into the kernel is lost unless resent. Cited [4]: CancelSynchronousIo can itself block, and the callback runs inside _cancel.Cancel() on the UI thread."
+   },
+   {
+    "decision": "Enter/Exit protocol: Enter publishes InCall then re-checks the token, and refuses after cancel. The canceller CompareExchanges InCall to CancelIssued. Dispose marks disposed, joins the canceller, then closes the handle.",
+    "reversibility": "cheap",
+    "rationale": "Full fences on both sides mean the thread refuses the call or the canceller sees InCall, so a stray cancel can only land on a call the scan is abandoning. The join is the change to the proposal: without it a canceller mid-iteration could fire CancelSynchronousIo at the thread after Scan returned, hitting unrelated I/O such as a test's temp-dir cleanup."
+   },
+   {
+    "decision": "995 is cancellation only when a cancel was requested. Otherwise it is Unreadable(995). Narrows the build check's derived criterion 2.",
+    "reversibility": "cheap",
+    "rationale": "Read literally, 'always cancellation' would stop a scan nobody cancelled or drop a folder, and the project's counting rules require unreadable folders to be reported. Every 995 that Cancel produces is covered."
+   },
+   {
+    "decision": "An aborted folder commits nothing (whole-folder discard). No 'interrupted' flag is added to the Scan Store.",
+    "reversibility": "cheap",
+    "rationale": "Boundary cancel never half-commits a folder, so an aborted folder ending in the state of a never-reached one keeps one rule and matches the spike's 'aborted/unscanned'. The proposal said both that earlier calls' entries stay and that the folder ends like a never-reached one; those disagree, and this settles it. The cancelled scan state tells the user the totals are partial. A flag bit would need a UI panel this slice does not own. Depends on how List hands entries to FolderDone (must-verify in build)."
+   },
+   {
+    "decision": "Bracket every Win32 filesystem call individually, including SizeProbe's. Assume one scan thread; the guard is per scan thread, and a later parallel listing must own one guard per worker.",
+    "reversibility": "cheap",
+    "rationale": "Per-call bracketing makes 'no call starts after cancel' universal and lets a 100k-item listing stop between buffers. The cost is a few Interlocked operations per syscall, negligible against the syscall. The single-thread assumption matches the measured shape (LongRunning dedicated thread, one loop) and is written into the doc note because later slices are not handed this design."
+   },
+   {
+    "decision": "A token that cannot be cancelled gets no thread handle, no registration and no canceller.",
+    "reversibility": "cheap",
+    "rationale": "Most test scans pass CancellationToken.None. The guard then costs nothing and the 86 existing tests and counting-rule tests run the old path unchanged."
+   },
+   {
+    "decision": "Tests use two real blockers and no fakes: a synchronous named-pipe wait (local, deterministic) and a scan of a TEST-NET-1 share (last octet varied per run) in the default suite. The share test FAILS as VOID when the network fails fast.",
+    "reversibility": "cheap",
+    "rationale": "Spike 1 overrides the slice's 'cannot be tested unelevated'. A green test that never blocked a call is the defect class this project keeps hitting. The cloud case needs a separate-process sync-root provider, which is too much to build into the suite, so it rests on the discard rule, the retry loop and the Settle/ClassifyReadError tests."
+   },
+   {
+    "decision": "The close of a handle after an abort is outside the guard and its latency on a stalled session is not designed around.",
+    "reversibility": "cheap",
+    "rationale": "Spike 3 did not run (Defender blocks impacket). Guarding it is impossible because Enter refuses after cancel. If measured to block, the fix is an off-thread close, a small later addition."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "Only proposal handed to composition. Selected whole, with five seam changes: whole-folder discard for an aborted listing; Dispose joins the canceller; no guard for a token that cannot cancel; the 995 decision extracted as a pure function; the share test varies the address and its blind spot is named. Its embedded cross-domain block (begin/end plus recorded intent) is carried below."
+   }
+  ],
+  "coherence_check": "ONE PROPOSAL, NO COMPOSITION TO CHECK. Nothing here has survived a disagreement. Every choice below is the first thing to argue with, especially the two the spikes could not measure. I could not open files: every claim about DirectoryReader, Scanner, SizeProbe and MainWindow comes from the survey's evidence and the proposal, not from me.\n\nWHAT I CHECKED INSTEAD (the proposal against the measurements and against itself):\n1. Spike 2 no-go: the proposal's discard-by-intent rule and its repeat loop are the two 'needs first' items, and the design keeps both. The spike enumerated with FindFirstFileExW, not the scanner's GetFileInformationByHandleEx. That is not settled by argument, so it is a decidable disagreement below.\n2. Spike 3 (close after cancel on a stalled session) is unmeasured. It is an open question and an undischargeable case, not a claim.\n3. Enter/Exit/canceller orderings walked through: (a) cancel before the call reaches the kernel: first cancels find ERROR_NOT_FOUND, the 25 ms retry catches it. (b) The call completes normally after CancelIssued was set: Exit reports issued, the result is discarded, and the scan is ending anyway. (c) Cancel between calls: Enter refuses the next call and the canceller sees Idle and exits. (d) Enter's revert races the canceller's CAS: Enter returns false regardless. (e) Cancel during Dispose: the join closes it.\n4. Contradictions found in the proposal and redesigned at the seam: (i) 'entries from earlier calls stay' against 'ends in the same state as never-reached folders' became whole-folder discard. (ii) Dispose closed the handle and the registration but a canceller mid-iteration could still target the thread after Scan returned, so Dispose now joins it. (iii) 995 means both an OS-originated abort and the guard's synthesised abort. Only ct.IsCancellationRequested tells them apart, and that is now one tested pure function. (iv) The derived criterion 2 was flat ('995 is cancellation'); the design narrows it and says so.\n5. Test-plan blind spots named: a network that fails naturally between 0.5 s and 2.5 s could pass the share test without the interrupt being the cause; the Windows redirector may cache an unreachable address so a repeat run fails fast (hence a varied last octet); an offline laptop makes the share test red.\n6. Architecture rules: two, both about CancelSynchronousIo misuse. The guard's Enter/Exit bracketing has no regex form that fires on the defect without also firing on correct code, so it is enforced by the case matrix and the build's enumeration of Kernel32 P/Invokes, not by a rule.\n\nNOT CONTESTED BY ANYONE: the choice of in-place CancelSynchronousIo over overlapped I/O or a process; the 25 ms period; a new thread per cancel; the decision not to test the cloud case in the suite.",
+  "architecture_rules": [
+   {
+    "name": "CancelSynchronousIo is called only by the scan's own canceller",
+    "files": "src/**/*.cs",
+    "must_not_match": [
+     "\\bCancelSynchronousIo\\s*\\("
+    ],
+    "except_files": [
+     "src/FsAnalyser.Core/Native/Kernel32.cs",
+     "src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs"
+    ],
+    "because": "CancelSynchronousIo can itself block (cited: it waits while on-access antivirus holds a CreateFile over a slow link). From the token callback or the App it runs on the UI thread inside _cancel.Cancel() and freezes the window, which is what this slice exists to prevent. From anywhere outside the Enter/Exit protocol it can also cancel an unrelated I/O on the scan thread."
+   },
+   {
+    "name": "the thread handle is never a pseudo-handle",
+    "files": "src/FsAnalyser.Core/**/*.cs",
+    "must_not_match": [
+     "\\bGetCurrentThread\\b"
+    ],
+    "because": "GetCurrentThread returns a pseudo-handle that always means the calling thread. Passed from the canceller it cancels the canceller's own I/O, so every cancel returns ERROR_NOT_FOUND, the scan never stops early, and nothing fails except a blocked-call test. The handle must come from OpenThread(THREAD_TERMINATE, GetCurrentThreadId()). \\bGetCurrentThread\\b does not match GetCurrentThreadId."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "Cancel a scan",
+    "shape": "The root is an unreachable SMB share (\\\\192.0.2.N\\s, TEST-NET-1) and the first CreateFileW blocks about 21 s",
+    "why": "The case the slice exists for. Spike 1 measured it (10/10 in 17 ms or less, 995). The test must fail as VOID if the network fails fast, or a green result would mean nothing was blocked."
+   },
+   {
+    "behaviour": "Cancel a blocked synchronous call",
+    "shape": "A thread inside Enter is blocked in a local synchronous named-pipe WaitForConnection with no client",
+    "why": "The deterministic, elevation-free proof of the mechanism: the thread returns within 2 s, Exit reports cancel-issued, and Cancel() itself returns promptly on the calling thread."
+   },
+   {
+    "behaviour": "Cancel a call that has not reached the kernel",
+    "shape": "The token is cancelled after Enter but before the blocking wait starts, so the first CancelSynchronousIo returns ERROR_NOT_FOUND",
+    "why": "Cited [2]: a cancel that beats the call into the kernel is lost. Only the 25 ms retry loop can catch the wait once it starts; without it the scan hangs."
+   },
+   {
+    "behaviour": "Start a call after cancel",
+    "shape": "The token is already cancelled before Enter, or before the scan starts (existing AnAlreadyCancelledTokenReadsNothing)",
+    "why": "Enter must refuse so no new call starts, and a stray cancel can never hit an unrelated later call. Guards the classic CancelSynchronousIo failure."
+   },
+   {
+    "behaviour": "Trust the result of a cancelled call",
+    "shape": "A cancel was issued during a call that then returns SUCCESS with zero entries (the cloud-placeholder shape from spike 2)",
+    "why": "Without the discard rule the folder is recorded as read and empty and counts silently drop. Settle(0,true) must be 995 and the aborted listing must deliver and commit nothing."
+   },
+   {
+    "behaviour": "Cancel a populating cloud-placeholder listing",
+    "shape": "The listing re-blocks after a cancel because the platform re-issues FETCH_PLACEHOLDERS",
+    "why": "Spike 2: a single cancel never returns. The repeat loop is the fix. The local retry test covers the loop. Whether the scanner's GetFileInformationByHandleEx call behaves as the FindFirstFileExW stand-in did is unmeasured and owed as a measurement."
+   },
+   {
+    "behaviour": "Cancel a listing",
+    "shape": "The folder spans several GetFileInformationByHandleEx buffers and the cancel lands between them",
+    "why": "Per-buffer brackets make Cancel effective mid-folder. The aborted folder must commit nothing, the handle must be closed and not reused (stale 995 after a cancel), and the folder must not be flagged Unreadable. Depends on how List hands entries to FolderDone."
+   },
+   {
+    "behaviour": "Report an error 995",
+    "shape": "995 arrives with no cancel requested",
+    "why": "It must stay Unreadable(995) and the scan must continue, because a folder is never dropped silently. Only ClassifyReadError(995,false) versus (995,true) tells them apart, so it is tested as a pure function."
+   },
+   {
+    "behaviour": "Probe a file size",
+    "shape": "The probe is aborted or refused by a cancelled token",
+    "why": "SizeProbe.Probe would otherwise turn 995 into ProbeFailed. It must write no size and no flag."
+   },
+   {
+    "behaviour": "Cancel racing the scan's own completion",
+    "shape": "The cancel fires at a random moment across many small local scans, including the instant the scan finishes",
+    "why": "Guards the Dispose-versus-canceller race and the stray cancel landing on unrelated I/O after Scan returns. No exception, no hang, and each scan either completes or ends cancelled."
+   },
+   {
+    "behaviour": "Scan with a live, never-cancelled token, or CancellationToken.None",
+    "shape": "The token is never cancelled, including the SL-020 counting-rule trees and the unreadable-folder (error 5) tree",
+    "why": "The guard must not change any result or mask any error: error 5 stays Unreadable, and a token that cannot cancel opens no thread handle. The existing 86 tests are the regression guard."
+   },
+   {
+    "behaviour": "Run the share test again",
+    "shape": "The same unreachable address is scanned twice in one session, and the SMB redirector may cache the failure",
+    "why": "A cached failure turns the second run into a fast failure, so the test would go red as VOID for the wrong reason. The address varies per run (the spike wrote 192.0.2.N); the build must run the test twice to see whether it matters."
+   },
+   {
+    "behaviour": "Close the handle after an abort",
+    "shape": "An SMB session that was established and then stopped responding",
+    "why": "If CloseHandle blocks, Cancel only moves the hang into cleanup. Spike 3 did not run (Defender blocks impacket), so this cannot be exercised here and stays an open obligation, not a green claim."
+   },
+   {
+    "behaviour": "Fall back when OpenThread fails",
+    "shape": "OpenThread returns an invalid handle",
+    "material": false,
+    "why": "Judged not worth a test: OpenThread(THREAD_TERMINATE) on the caller's own thread id has no plausible failure for an ordinary user (spike 1 measured it works unelevated), and the fallback is 'register nothing', which is the old boundary-only cancel. The next slice can disagree with this."
+   }
+  ],
+  "decidable_disagreements": [
+   {
+    "question": "Does CancelSynchronousIo interrupt the scanner's actual listing call, GetFileInformationByHandleEx on a cloud-placeholder directory handle, the way it interrupted the FindFirstFileExW stand-in in spike 2?",
+    "positions": "The proposal assumes yes and rests the cloud case on the discard rule plus the repeat loop. Spike 2 measured a different enumeration call (its author could not identify the scanner's real call). If the answer is no, an in-place cancel cannot free the scan thread and the design needs a different mechanism, such as abandoning the thread or a scanner process.",
+    "would_force_resynthesis": true
+   },
+   {
+    "question": "How does DirectoryReader.List hand entries to Scanner.FolderDone: returned as a whole on completion, or streamed into the store as each buffer is read?",
+    "positions": "The proposal says both 'entries from earlier calls stay' and 'ends in the same state as never-reached folders'. This design picks whole-folder discard, which needs List to return entries to the caller. If List streams into the store, discarding needs a rollback or a different commit contract, and that is a store-contract change to raise as an obligation, not to improvise in build.",
+    "would_force_resynthesis": true
+   }
+  ],
+  "taste_disagreements": [
+   "The share test FAILS as VOID when the network fails fast, so an offline laptop gets a red suite. The alternative is a skip or a filterable trait, which keeps the suite green but lets a green run hide that no blocked call was exercised. The design chose the loud failure. The project's 'never skipped' rule is stated for counting-rule tests, not this one.",
+   "A fixed 25 ms retry forever, against a backoff. The spike measured one cancel never returning, and the loop only runs while a cancelled call is still in flight, so fixed was kept.",
+   "A new dedicated thread per cancel, against a ThreadPool task. A thread is used because the loop sleeps and the pool may be starved, but a Task.Run would also work.",
+   "Whether an interrupted folder deserves its own visible flag (a store bit and a UI panel) instead of sharing the state of never-reached folders. Deferred to a slice that owns the screen."
+  ],
+  "open_questions": [
+   "Spike 3 (a stalled, established SMB session: cancel returns 995, and the CloseHandle and dispose afterwards return within 2 s) did not run because Defender blocks impacket. A person with admin must either add a Defender exclusion for the spike's scratch venv or supply a different unelevated SMB2 server on port 4450. Without that, close-after-abort latency is unmeasured and this slice ships on the reading that it is fast. Do you want it measured, or is the residual risk accepted?"
+  ],
+  "stack_chosen": [],
+  "whats_reused": [
+   "The existing synchronous P/Invoke reader (CreateFileW then GetFileInformationByHandleEx, LibraryImport with SetLastError) and its Kernel32 declaration idiom and Win32 error list.",
+   "The existing folder-boundary cancelled path at Scanner.cs:128: a guarded 995 under a requested cancel routes into it, so 'stops with what was read' is unchanged.",
+   "The dedicated LongRunning scan thread and MainWindow.OnCancel, both unchanged.",
+   "The two existing CancellationTests and the SL-020 counting-rule tests on real NTFS trees as the regression guard.",
+   "eng/dotnet.ps1 as the only way to build and test (it installs SDK 10.0.401 repo-locally).",
+   "Spike 1's method: TEST-NET-1 as the unreachable share, and the VOID rule when the control does not block."
+  ],
+  "whats_new": [
+   "SynchronousIoCancel: a per-scan guard with an Enter/Exit state machine, a canceller thread that repeats every 25 ms, and a Dispose that joins it.",
+   "Kernel32: ERROR_OPERATION_ABORTED, THREAD_TERMINATE, OpenThread, GetCurrentThreadId, CancelSynchronousIo, CloseHandle, SafeThreadHandle.",
+   "Guarded brackets around every Win32 call in DirectoryReader and SizeProbe, with an aborted call returning 995 and delivering nothing.",
+   "Scanner: guard creation and disposal, and ClassifyReadError as a pure function separating cancellation from Unreadable(995).",
+   "SynchronousIoCancelTests: pipe-wait cancel, retry, no-call-after-cancel, Settle and ClassifyReadError, and a random-time cancel stress. Plus the TEST-NET-1 share test in CancellationTests with a VOID-fails rule.",
+   "Two architecture rules on CancelSynchronousIo call sites and the thread pseudo-handle.",
+   "A replacement for the m7 deferral note in docs/design/SL-020-scanner.md, carrying the single-scan-thread invariant."
+  ],
+  "prior_art": [
+   {
+    "pattern": "CancelSynchronousIo marks pending synchronous I/O of a thread as cancelled. It needs THREAD_TERMINATE, returns 0 with ERROR_NOT_FOUND when nothing is pending, does not wait for completion, and some operations continue toward completion before they are cancelled.",
+    "where": "https://learn.microsoft.com/en-us/windows/win32/fileio/cancelsynchronousio-func",
+    "authority": "official",
+    "basis": "cited",
+    "source_date": "2023-05-01"
+   },
+   {
+    "pattern": "Microsoft's guidance that slow or blocked I/O should be cancellable from another thread for usability and robustness.",
+    "where": "https://learn.microsoft.com/en-us/windows/win32/fileio/canceling-pending-i-o-operations",
+    "authority": "official",
+    "basis": "cited",
+    "source_date": "2023-05-01"
+   },
+   {
+    "pattern": "CancelSynchronousIo can itself block, for example while on-access antivirus holds a cancelled CreateFile over a high-latency WAN. That is why it is never called from the UI thread or the token callback.",
+    "where": "https://learn.microsoft.com/en-us/answers/questions/258819/should-cancelsynchronousio-be-blocking",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2021-02-04"
+   },
+   {
+    "pattern": "After a cancel on a handle, the next operation on the same handle can fail with 995 without being sent, so a handle that saw a cancel is never reused.",
+    "where": "https://stackoverflow.com/questions/45760370/readdirectorychangesw-fails-with-error-995-if-cancelio-was-called-before",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2017-08-18"
+   },
+   {
+    "pattern": "Cancellation must reach I/O already in flight, not only the next operation, or the operation waits for a transport timeout. The SMB version of the m7 defect.",
+    "where": "https://github.com/rclone/rclone/pull/9792",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-08-20"
+   },
+   {
+    "pattern": "As remembered by the designer and NOT checked: dotnet/runtime cancels synchronous-handle file I/O on a worker thread by registering on the token and calling CancelSynchronousIo on an OpenThread(THREAD_TERMINATE) handle, using a small interlocked state machine. Composition doubts this recollection. The design does not depend on it, and the Enter/Exit protocol stands on its own reasoning and the pipe tests.",
+    "where": "dotnet/runtime, Windows file-handle I/O",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "begin()/end(completed) around a blocking call, with an interrupter that marks the operation and then interrupts it. end() decides the outcome from the mark, not only from the call's return.",
+    "where": "Java NIO java.nio.channels.spi.AbstractInterruptibleChannel",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Interrupting a thread blocked in a system call: POSIX signals and EINTR, and Java NIO InterruptibleChannel begin/end",
+   "pattern": "Wrap the blocking call in begin/end. The interrupter records its intent before delivering the interrupt and keeps resending until the thread leaves the call. On exit the thread reads the recorded intent, not only the call's status. After an interrupt no new wrapped call may start.",
+   "transfer_found": true,
+   "rationale": "The main failures of these patterns are the ones this slice faces: an interrupt lost because it arrived before the thread entered the kernel, an interrupt hitting an unrelated later call, a call reporting completion when it was interrupted, and the interrupter itself blocking. Borrowing the pattern names each of them, and the spikes show which actually occur on Windows. Two of the pattern's usual preconditions fail here, and the design is built around that.",
+   "invariants": [
+    {
+     "precondition": "The OS status of an interrupted call truthfully says it was interrupted",
+     "status": "fails",
+     "evidence": "Cloud spike (no-go): a cancelled placeholder listing returns SUCCESS with an empty listing, 5/5. The recorded intent (CancelIssued) decides the outcome, not the return code."
+    },
+    {
+     "precondition": "A single interrupt is enough to release the thread",
+     "status": "fails",
+     "evidence": "Cloud spike: one cancel never returned, because the platform re-issues FETCH_PLACEHOLDERS about every 60 s. Cited [2]: ERROR_NOT_FOUND when nothing is pending, so an early cancel is lost. The canceller repeats until the thread leaves the call."
+    },
+    {
+     "precondition": "After an interrupt, no new wrapped call may start, so a stray interrupt cannot hit an unrelated call",
+     "status": "must-verify",
+     "evidence": "Enter refuses after cancel, and Dispose joins the canceller. The design argues it; NoCallStartsOnceCancelIsRequested and the random-time stress test are the proof, and neither exists yet."
+    },
+    {
+     "precondition": "The interrupter must not block the thread that requests cancellation",
+     "status": "must-verify",
+     "evidence": "Cited [4]: CancelSynchronousIo can block. The design runs it only on the scan-cancel thread, so the UI thread's Cancel() only starts a thread. The pipe test asserts Cancel() returns within 250 ms while the scan thread is blocked."
+    },
+    {
+     "precondition": "The cleanup after an interrupted call (CloseHandle, dispose) returns promptly",
+     "status": "must-verify",
+     "evidence": "Spike 3 did not run (Defender blocks impacket), so this is unmeasured on a stalled established SMB session. Spike 1 covered only the connect-blocked open, where there is no handle to close."
+    },
+    {
+     "precondition": "The thread handle stays valid for as long as the interrupter can use it",
+     "status": "holds",
+     "evidence": "SafeThreadHandle keeps the handle alive across an in-flight P/Invoke, ObjectDisposedException stops the canceller, and Dispose joins the canceller before closing. This is by construction and is exercised by the random-time stress test."
+    }
+   ]
+  },
+  "channeled_experts": []
+ }
+}
