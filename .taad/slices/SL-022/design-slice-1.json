@@ -1,0 +1,324 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-022",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-24T11:59:27.692Z",
+ "head": "12763aa896ba5681b3b451e7aa3054721eb14fb3",
+ "run_id": 799,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "One proposal was handed over, and I took its core: hand-write `.taad/fitness.yaml` on `slice/SL-022`, translated from `ArchitectureRulesTests.cs`, using only `must_not_match` entries. It matches reality on every point the survey and spikes measured. Fitness reads only `<slice worktree>/.taad/fitness.yaml`, so the file has to be committed on the slice branch (spike 2). Nothing in the engine deletes or regenerates it (spike 3). The patterns must be written as `(?m)`, `including_comments: true`, single-quoted and rooted to pass and fail exactly where xUnit does (spikes 1 and 4). The stale SL-020 design record holds four pre-amendment rules (survey), so translating from it would drop the widened reparse rule, the extended never-skipped rule and the interop rule. `must_not_import` would report UNABLE at validate because no code graph is built (spike 2). The proposal's `over_engineering_flag` is taken as a real signal: no converter, generator, parity test or YAML parser goes into the .NET project. The flag's note was clipped at C3's wording, and I read it as saying a project-side C3 mechanism is over-built. Amendments to the proposal: (1) C3 is reported as NOT closed by this slice. The SL-020 design declared four rules and no file ever landed, which contradicts 'the engine already appends'. (2) Acceptance also requires zero unmatched rules, because a glob that matches nothing is a silent pass. (3) The count is phrased as one entry per (xUnit Fact, scope glob) pair, expected 8, because spike 1 (8) and spike 4 (6) disagree. (4) The authoring transforms are widened to carry every RegexOptions flag and to cover `$` on CRLF checkouts. (5) The planted-violation discharge is stated with its real limit: judges cannot edit the worktree. The web was not searched (Tavily 432). Recalled claims that would have been checked: Python 3.11+ requires a global inline flag to lead the pattern, PyYAML last-key-wins on duplicate keys, and Semgrep's rule-test convention. The first two were measured by the spikes, so recall carries no weight there. Only the Semgrep analogy rests on recall alone.",
+  "components": [
+   {
+    "name": "Rule file",
+    "lives_at": ".taad/fitness.yaml",
+    "responsibility": "New, hand-written, committed on slice/SL-022. It holds one must_not_match entry per (ArchitectureRulesTests [Fact], scope glob) pair, expected to be eight covering the five rules. CoreIsScreenFree takes a .cs entry and a .csproj entry. The widened reparse rule takes src/**/*.cs and src/**/*.xaml. InteropLivesOnlyInNative takes src/**/*.cs and tests/**/*.cs. The directory-listing rule and the never-skipped rule take one entry each. Every entry has name (the xUnit method name plus a glob suffix), files (ONE rooted glob, never a bare **/*.x), except_files copied from the test, must_not_match (single-quoted, verbatim, with a leading (?m)), including_comments: true, and because (from docs/design/SL-020-scanner.md:104-112). A header comment names ArchitectureRulesTests.cs as the twin and states the authoring rules for anyone who edits or appends: (?m) on anchored patterns, including_comments: true, rooted globs, single-quoted regexes. The top-level shape is whatever fitness.load parses and design._append_rules extends. It is copied from a shape the spikes already loaded, and code review confirms it with Fitness op=rules. A `rules:` list of mappings is expected but unverified here.",
+    "key_interactions": "validate calls Fitness op=check with cwd = the slice worktree and reads this file. Later slices are cut from trunk after this file merges. The engine's commit_all (git add -A) carries it on the branch to trunk."
+   },
+   {
+    "name": "Rule source (read-only)",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs",
+    "responsibility": "The only source of the patterns, scopes and exemptions (lines 13-72, passing 5/5). Patterns are copied character for character. Allowed transforms: a leading (?m); YAML single-quote escaping ('' for '); any other RegexOptions the test compiles with carried as an inline flag at the pattern start; and `\\r?` before a `$` anchor only if a pattern has one, because xUnit reads lines while Fitness matches whole-file text. Not edited (cut from scope).",
+    "key_interactions": "Code review diffs each yaml pattern against its [Fact]. The file itself holds the banned tokens as string literals, so it must be in except_files wherever a tests/**/*.cs entry would otherwise match it."
+   },
+   {
+    "name": "Reason source (read-only)",
+    "lives_at": "docs/design/SL-020-scanner.md",
+    "responsibility": "Lines 104-112 supply each entry's because text, so a Fitness violation carries the reason the design gave. Not edited.",
+    "key_interactions": "Read by the builder only."
+   },
+   {
+    "name": "Ignore check",
+    "lives_at": ".gitignore",
+    "responsibility": "Must not match .taad/ or .taad/fitness.yaml. If it did, commit_all stages nothing and a fresh slice reads NONE (spike 3). The builder runs `git check-ignore -v .taad/fitness.yaml` and edits .gitignore only if that command matches.",
+    "key_interactions": "Engine commit_all."
+   },
+   {
+    "name": "Engine Fitness loader and append (external, not edited)",
+    "responsibility": "Lives in taad_v3 (fitness.py: load, check, op=rules; design.py: _record_rules and _append_rules), outside this repo. Fitness takes its rules from the file alone. _append_rules is the engine's route for a design's declared architecture_rules into the same file. This slice depends on it only for later slices, and does not verify that it is committed in taad_v3 (taad3/design.py was modified and uncommitted at the start of this session).",
+    "key_interactions": "The loader reads what the builder wrote. The append extends it later. A design whose architecture_rules is empty never touches the file (_record_rules returns early)."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Hand-write .taad/fitness.yaml on slice/SL-022 from ArchitectureRulesTests.cs:13-72. Do not derive it from .taad/slices/SL-020/design-slice-1.json, and do not back-fill that record.",
+    "reversibility": "cheap",
+    "rationale": "The survey measured that the design record holds four pre-amendment rules. It has no interop rule, an unwidened reparse rule and an unextended never-skipped rule. The tests are what passes 5/5 today and what the person amended. A slice record is history."
+   },
+   {
+    "decision": "This design declares architecture_rules: []. The builder is the only writer of the file in this slice.",
+    "reversibility": "cheap",
+    "rationale": "_record_rules appends declared rules at design time, so a non-empty list would create the file before the builder writes it and double every entry. The record's rule fields also have no including_comments, so comment-only violations would false-pass (spike 1). The record's `files` is a single glob, which forces the same 8-entry split anyway."
+   },
+   {
+    "decision": "Every rule is a must_not_match entry. There is no must_not_import, including for 'Core is screen-free', which stays the regex ban on the using directive and the csproj reference that the xUnit test uses.",
+    "reversibility": "cheap",
+    "rationale": "Import rules need a code graph for the slice's own worktree, and validate builds none. They would report DID NOT RUN and the verdict UNABLE, which is the same 'not-run' SL-020 recorded, for a different reason (spike 2). Content rules run without a graph."
+   },
+   {
+    "decision": "Use exact, rooted scopes: one entry per (Fact, scope glob) pair, expected to be 8. No bare **/*.x and no superset glob such as src/**. A csproj sitting directly in its project folder is written without **/.",
+    "reversibility": "cheap",
+    "rationale": "`files:` takes one glob with no alternation or braces. An unrooted glob walks gitignored .dotnet/, artifacts/ and TestResults/, which the engine does not prune (spike 4 measured 3 false violations). A superset glob runs .cs patterns against .csproj and .resx. The spikes disagree on the count: spike 1 gives 8 exact and spike 4 gives 6. Acceptance is therefore worded as 'one entry per (Fact, scope) pair' and not 'five', and any check expecting exactly five is wrong."
+   },
+   {
+    "decision": "Every entry sets including_comments: true, every ^-anchored pattern starts with (?m), and every regex is a YAML single-quoted scalar. Any other RegexOptions the test uses is carried as an inline flag at the pattern start. If a pattern has a `$` anchor, write `\\r?$`.",
+    "reversibility": "cheap",
+    "rationale": "Spike 1 measured both silent passes: a planted `using System.Windows;` at Scanner.cs:7 passed without (?m), and a planted DllImport in a comment passed without the flag. Single quotes keep \\b and \\s literal, where double quotes turn \\b into a backspace or reject \\s. xUnit matches per line and Fitness matches whole-file text, so `$` on a CRLF checkout (this machine has core.autocrlf=true) needs `\\r?`."
+   },
+   {
+    "decision": "C3 is carried by the engine's existing append of declared architecture_rules. No converter, script or generator is built in this project. This slice closes C1, C2, C4 and the effect of C3 (trunk holds the five rules, so later slices read them), and it does NOT close the mechanism half of C3.",
+    "reversibility": "expensive",
+    "rationale": "Fitness reads only the file, and the engine already has the append (spike 3, read from a working-tree copy of taad_v3). A project-side converter would duplicate it and would read stale records. But SL-020 declared four rules and no file ever reached git, so the append's presence in a committed engine is unproven. Every later slice's gate now rests on the engine and on its gaps: appended entries have no including_comments, and the engine never adds (?m). Undoing this later means building a converter and reconciling entries already appended."
+   },
+   {
+    "decision": "Leave ArchitectureRulesTests unchanged and accept two copies of the rules. The yaml header names the test file as its twin.",
+    "reversibility": "cheap",
+    "rationale": "The tests are cut from scope. Making them load the yaml, or adding a parity test, would bring a YAML parser into the .NET test project, which a low-risk slice does not need. Drift is recorded as a risk, not solved. The xUnit tests remain the strict backstop, including for comment-only violations."
+   },
+   {
+    "decision": "Acceptance reads Fitness report text. op=rules must list one entry per (Fact, scope) pair, all rooted. op=check in the slice worktree must say '8 rule(s) checked', report 0 unmatched rules and say every declared rule holds. C4 is closed only when that text appears in this slice's validate record. The verdict is never read from the CLI exit code.",
+    "reversibility": "cheap",
+    "rationale": "`python -m taad3.fitness --op check` exited 0 on all 10 violated copies (spikes 1 and 4). A rule whose glob matches nothing passes silently, and the report's unmatched-rules count is the only signal for it. Validate's `not-run` label is the model's, so the report text is the evidence."
+   },
+   {
+    "decision": "Planted-violation shapes are discharged in a scratch copy under %TEMP%, never in the slice worktree, through the engine's fitness module, where the builder can reach it. If it cannot, the shape is carried by spike 1's measurement plus a character-for-character pattern diff, and the build record says so.",
+    "reversibility": "cheap",
+    "rationale": "Judges cannot edit the worktree, and the builder is not granted the Fitness tool. Spike 1 planted one violation per rule against patterns textually identical to these apart from (?m), so identity carries its measurement over, but the builder's own file has not itself been seen to fire."
+   },
+   {
+    "decision": "SL-022 is the only in-flight slice that creates .taad/fitness.yaml. Later slices are cut after it merges and only append or edit.",
+    "reversibility": "cheap",
+    "rationale": "Two branches that create the file with different content hit an add/add conflict at commit-slice's trunk refresh, and commit-slice resolves no conflicts (spike 3). A slice cut before this merges reads NONE at its validate (spike 2)."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "Selected in full, with five amendments: C3 is reported as not closed; unmatched rules must be 0; the entry count is phrased as (Fact, scope) pairs; the authoring transforms are widened to other RegexOptions and `$` on CRLF; and the planted-violation discharge is stated with its real limit. Its over_engineering_flag was honoured: nothing is built for C3 in this project. Only this designer's proposal was handed over; no other designer's proposal was seen."
+   }
+  ],
+  "coherence_check": "One proposal, no composition to check. Nothing here has yet survived a disagreement, and it is the first thing to argue with. The checks below were internal, plus a check against the survey and the four spikes.\n\nCONTRADICTIONS FOUND AND REDESIGNED AT THE SEAM:\n\n(1) Two dialects in one file. The proposal makes hand-written entries strict: (?m), including_comments, rooted. C3 then lets the engine append entries whose record has no including_comments and which get no (?m). The file would end up with two rule semantics. I kept both and moved the seam. The yaml header states the authoring rules, and this design tells later designers to put an inline (?m) in the must_not_match of a declared rule, which the record can carry today. The durable fix (compile with MULTILINE, or default including_comments) is engine-side and cannot be built here. It is recorded as unclosed, and the header is the only guard a later designer may ever read.\n\n(2) The proposal says 'C3 is carried by the engine's append', but the survey shows SL-020's design declared four rules and .taad/fitness.yaml never reached git history on any branch. Either _append_rules did not exist then, or it was not committed. taad_v3's design.py was modified and uncommitted at the start of this session. The proposal treated C3 as live, and I changed it to 'not verified'. This slice can close C1, C2 and C4 and the effect of C3, but it cannot close the mechanism half of C3.\n\n(3) The proposal's transfer pattern, 'trust a rule only after it has been seen to fail', does not match its own acceptance, which plants nothing. I resolved it by naming the difference. Spike 1 saw these patterns fire when textually identical apart from (?m), and the builder's file is only diffed against them.\n\n(4) Spike 1 says 8 exact-scope entries and spike 4 says 6. Both are measured, and they differ on how rules 1 and 2 are scoped. Acceptance is worded as 'one entry per (Fact, scope) pair', so it does not depend on which count is right.\n\nARCHITECTURE RULES: none are declared, and that is the answer, not an omission. This slice adds no code and no dependency direction, and a rule invented to fill the field would be worse. The one candidate, a must_not_match over .taad/fitness.yaml against bare ^, double-quoted regexes and missing including_comments, was rejected for two reasons. It cannot be shown to scan a dot-directory, since Fitness's walk skips some directory names and .taad is not known to be exempt from that, so its files glob may match nothing. And the engine would append any declared rule to that same file at design time, before the builder writes it, which is the doubling the design avoids.\n\nSTACK: nothing outside the stack block was decided. The YAML rule format, the Python `re` dialect and the Fitness tool belong to the engine.\n\nNOT CONTESTED BY ANYONE: eight-versus-five entries; whether xUnit and yaml should share one source; the top-level layout of the file; whether the engine's append preserves hand-written entries (unmeasured with a non-empty list); and whether design.py's append is committed.",
+  "architecture_rules": [],
+  "cases": [
+   {
+    "behaviour": "Fitness loads the rule file at validate",
+    "shape": "the file is committed on the slice branch and holds patterns containing \\b and \\s, written as YAML single-quoted scalars",
+    "why": "A double-quoted scalar turns \\b into a backspace or rejects \\s, so the rule silently changes meaning or the loader refuses. op=rules must list every entry with its rooted scope, or C2 is not delivered."
+   },
+   {
+    "behaviour": "the file reaches trunk",
+    "shape": ".gitignore matches .taad/ or .taad/fitness.yaml",
+    "why": "commit_all (git add -A) stages nothing, the file never leaves the branch, and every later slice reads NONE (spike 3). `git check-ignore -v .taad/fitness.yaml` must return no match."
+   },
+   {
+    "behaviour": "the screen-free rule fires on a using directive",
+    "shape": "the violation is on a line after the first, for example `using System.Windows;` at Scanner.cs:7",
+    "why": "Fitness compiles must_not_match without MULTILINE, so a bare ^ only fires on a file's first line. Spike 1 measured a false pass, then a fail at the same file:line as xUnit once (?m) was added."
+   },
+   {
+    "behaviour": "the interop rule fires on a banned token",
+    "shape": "the token appears only inside a // comment, for example `// planted: DllImport belongs in Native`",
+    "why": "The engine blanks comments by default and reports the hit as 'IN COMMENTS, AND NOT COUNTED', so Fitness passes while xUnit fails. including_comments: true is needed (spike 1)."
+   },
+   {
+    "behaviour": "a rule whose xUnit scope spans two file types fires in each",
+    "shape": "the violation is in the second glob's file type only (a banned reference in a .csproj, or a reparse attribute in a .xaml)",
+    "why": "`files:` takes one glob, so the rule is split into separate entries. If one half is dropped or mis-globbed, the other half still passes and the rule looks present."
+   },
+   {
+    "behaviour": "the widened reparse rule fires outside the classifier",
+    "shape": "FileAttributes.ReparsePoint or `0x0*400\\b` in the App project, for example src/FsAnalyser.App/MainWindow.xaml.cs",
+    "why": "The widening from the Core project to src/** is the part that exists only in the tests and the scanner doc, and the stale design record lacks it. This is the shape that shows the yaml follows the tests."
+   },
+   {
+    "behaviour": "an exempted file legitimately holds the token",
+    "shape": "Native/Kernel32.cs uses interop and reparse constants, and the classifier reads the reparse attribute",
+    "why": "except_files must carry each exemption exactly. Without it the clean tree fails, and if it is too broad the rule stops biting."
+   },
+   {
+    "behaviour": "a tests/**/*.cs entry runs over the test file that holds the patterns",
+    "shape": "ArchitectureRulesTests.cs contains DllImport, Skip and the like as string literals, and now that comments are included the whole file is scanned",
+    "why": "The clean tree must pass. The xUnit test either excludes itself or builds its tokens so they do not match, and the yaml entry needs the same exemption in except_files, or op=check fails on correct code."
+   },
+   {
+    "behaviour": "the rooted globs cover their target files",
+    "shape": "a glob matches no file, for example `**/` under a csproj that sits directly in its project folder, or a typo",
+    "why": "The rule reads zero files and passes silently. Acceptance requires op=check to report 0 unmatched rules, because the gate cannot show a rule that never fires."
+   },
+   {
+    "behaviour": "op=check on a worktree that has been built",
+    "shape": "bin/, obj/ (WPF *.g.cs, source-generated LibraryImports.g.cs) and the repo-local .dotnet/, artifacts/ and TestResults/ all exist",
+    "why": "The engine prunes bin/obj by name only. With unrooted globs, spike 4 measured 3 false violations from .dotnet/, artifacts/ and TestResults/. With pruning off, the built tree failed with 9. The verdict must equal the clean tree's."
+   },
+   {
+    "behaviour": "a `$`-anchored pattern matches a source file",
+    "shape": "the file is checked out CRLF (core.autocrlf=true on this machine) and a pattern ends in `$`",
+    "why": "xUnit reads lines, but Fitness matches whole-file text, and `$` does not match before \\r. The rule would silently never fire. If no pattern uses `$`, the case is a no-op and the build says so."
+   },
+   {
+    "behaviour": "the never-skipped rule fires on a skipped counting test",
+    "shape": "`[Fact(Skip = ...)]` or Explicit in a test file such as CancellationTests.cs",
+    "why": "The extended rule (Explicit and SkipException added) exists only in the tests. The project constraint says the counting-rule tests are never skipped, so this rule protects the one place not to cut corners."
+   },
+   {
+    "behaviour": "a slice cut before this merges reads the rules",
+    "shape": "the slice branch has no .taad/fitness.yaml because the file reached trunk after the slice was cut",
+    "material": false,
+    "why": "Fitness reads only the slice worktree, so such a slice gets NONE at validate (spike 2). Nothing in this repo branches on it and no test can change it. It is a known limit of when the file lands, stated so the next slice can disagree with the judgement."
+   },
+   {
+    "behaviour": "a later design appends its declared rules onto the hand-written file",
+    "shape": "architecture_rules is non-empty (versus empty, which touches nothing)",
+    "material": false,
+    "why": "The append is engine-owned in taad_v3 and cannot be exercised from this repo, so build-slice cannot discharge it. It stays as a must-verify invariant and an open question. The main risks are a second top-level key (PyYAML keeps the last one silently) and a bare ^ in the appended rule."
+   }
+  ],
+  "channeled_experts": [],
+  "contracts": [
+   {
+    "name": ".taad/fitness.yaml rule file",
+    "kind": "function",
+    "auth_model": "Owned by the project. The builder writes it under the guard, which spike 3 found allows the write. The engine only appends, and a person may edit it. Nothing in the engine regenerates or deletes it.",
+    "error_cases": "Absent, or on trunk but not on the slice branch: Fitness reports NONE. Malformed YAML: Fitness refuses with FitnessError. A double-quoted regex: undefined escape (\\s) or a silent backspace (\\b). A bare ^: the rule fires only on a file's first line. An unrooted **/*.cs: reads .dotnet/, artifacts/ and TestResults/. A glob that matches nothing: passes silently.",
+    "notes": "One entry per (xUnit Fact, scope glob) pair, expected 8, so the report says 8 rules for 5. Entry names are the xUnit method name plus a glob suffix (for example 'InteropLivesOnlyInNative (tests)'), so a violation maps to the xUnit test that fails with it. The header comment carries the authoring rules and names the test file as the twin."
+   },
+   {
+    "name": "Fitness op=rules (code review and validate)",
+    "kind": "function",
+    "auth_model": "A judge tool (JUDGE_TOOLS), granted to the reviewer and validator, not the builder. It reads <cwd>/.taad/fitness.yaml, where cwd is the slice worktree.",
+    "error_cases": "Fewer entries than (Fact, scope) pairs, or an entry whose scope is not rooted: C2 is not delivered. NONE: the file is missing from the branch.",
+    "notes": "Proves the loader parsed every entry with its scope before op=check is trusted, and shows the top-level shape the loader accepts."
+   },
+   {
+    "name": "Fitness op=check in the slice worktree (validate)",
+    "kind": "function",
+    "auth_model": "Same judge grant. validate sets cwd = slices.own_tree(sl).",
+    "error_cases": "NONE: the file is not on the branch. UNABLE: only from must_not_import without a graph, which this design does not use. VIOLATED: the CLI form still exits 0, so the verdict is read from the text.",
+    "notes": "Expected text: '8 rule(s) checked … Every declared rule holds', with 0 unmatched rules. Content rules need no graph, so this holds on a fresh worktree. C4 is closed only when this text appears in this slice's validate record."
+   },
+   {
+    "name": "Engine append of declared rules (design._record_rules → _append_rules)",
+    "kind": "function",
+    "auth_model": "Engine-side in taad_v3. This slice neither builds nor changes it.",
+    "error_cases": "A second top-level key erases the eight entries silently (PyYAML last-key-wins). An appended ^ pattern never fires. The record's rule fields have no including_comments. Concurrent slices that each append conflict at the end of the file at merge.",
+    "notes": "Unverified as committed (design.py was modified and uncommitted at session start), and unmeasured with a non-empty list onto a hand-written file. This is the mechanism half of C3."
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Authoring static-analysis rules (Semgrep and lint rule suites that ship each rule with a test showing it fires)",
+   "pattern": "Port a rule from the check that already passes, keeping its text, and trust it only after it has been seen to fail on a planted violation at the same place the old check fails. A translated regex's usual failure is to pass everything silently, not to break loudly.",
+   "transfer_found": true,
+   "rationale": "The fit is real but modest. Every measured failure here was a silent pass: bare ^, comment blanking, a double-quoted escape, an unmatched glob, a file read as NONE. The pattern was selected in part: the fixed text transform is kept, and 'seen to fail' is carried by spike 1's plants for patterns textually identical to these, not by a plant run against the builder's own file. The analogy is close to the same domain (lint rules), so it adds little beyond that discipline.",
+   "invariants": [
+    {
+     "precondition": "Fitness names the violated rule and gives the same file:line as xUnit when both fire",
+     "status": "holds",
+     "evidence": "Spike 1: with (?m), a planted `using System.Windows;` failed at Scanner.cs:7 in both. With including_comments, a planted comment failed InteropLivesOnlyInNative in both."
+    },
+    {
+     "precondition": "Each yaml pattern is identical to its xUnit pattern except a leading (?m), quote escaping, carried inline flags and, if a `$` anchor exists, `\\r?`",
+     "status": "must-verify",
+     "evidence": "Code review diffs the two. Spike 1's parity measurement carries over to the builder's file only under this condition."
+    },
+    {
+     "precondition": "Python re compiles every .NET pattern in ArchitectureRulesTests with the same meaning",
+     "status": "holds",
+     "evidence": "Spike 1 ran the patched five rules on taad3's Python 3.14.7 against the xUnit plants at 12763aa. It holds only while the test patterns stay unchanged; .NET-only syntax would make Fitness refuse or change meaning."
+    },
+    {
+     "precondition": "Every entry's rooted glob matches at least one file (0 unmatched rules)",
+     "status": "must-verify",
+     "evidence": "Spike 4 showed the report carries an unmatched-rules count. Not yet measured for these exact eight globs."
+    },
+    {
+     "precondition": "The file's top-level shape is the one fitness.load parses and _append_rules extends",
+     "status": "must-verify",
+     "evidence": "The spikes loaded hand-written files, but their exact shape is not in this brief. op=rules at code review is the check."
+    },
+    {
+     "precondition": "An engine append onto the hand-written file keeps every existing entry",
+     "status": "must-verify",
+     "evidence": "Not measured. Spike 3 checked survival only with architecture_rules empty."
+    },
+    {
+     "precondition": "design._append_rules is in the committed engine, not only in taad_v3's uncommitted design.py",
+     "status": "must-verify",
+     "evidence": "taad_v3 status showed `M taad3/design.py` at session start, spike 3 ran on a copy of that working tree, and SL-020's four declared rules produced no file."
+    },
+    {
+     "precondition": ".taad/fitness.yaml is not gitignored in filesystem-analyser-v2",
+     "status": "must-verify",
+     "evidence": "`git ls-files .taad` shows the SL-020 records are tracked, so .taad/ as a whole is not ignored. The file itself has not been checked with git check-ignore."
+    }
+   ]
+  },
+  "decidable_disagreements": [],
+  "open_questions": [
+   "Does the person accept SL-022 as closing C1, C2, C4 and the effect of C3, while the mechanism half of C3 (design._append_rules in taad_v3) is verified and committed on its own? The engine's append was measured only on a working-tree copy with design.py uncommitted, and SL-020 declared four rules that never produced a file. Or should the C3 criterion be reworded, or an engine-side obligation filed?",
+   "Is any other filesystem-analyser-v2 slice in flight that has declared, or will declare, architecture_rules before SL-022 merges? Its design would append to, and so create, the same file with different content. The add/add conflict at commit-slice's refresh is one nothing resolves."
+  ],
+  "prior_art": [
+   {
+    "pattern": "Every rule ships with annotated test code (`ruleid:` / `ok:` comments) and `semgrep --test` proves it fires, so a rule that silently never matches is caught",
+    "where": "Semgrep rule testing",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Architecture rules written as .NET unit tests over source or assemblies, which is the shape ArchitectureRulesTests already has",
+    "where": "ArchUnitNET / NetArchTest.Rules",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Single-quoted scalars keep backslashes literal. Double-quoted scalars process escapes (\\b becomes a backspace, and an undefined escape like \\s is an error), so regexes belong in single quotes",
+    "where": "YAML 1.2 specification, scalar styles",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "^ and $ anchor to the whole string unless re.MULTILINE or the inline (?m) is set, unlike .NET code that applies RegexOptions.Multiline",
+    "where": "Python `re` module documentation",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Duplicate mapping keys are accepted without error and the last one wins, which is why an append that writes a second top-level key erases earlier entries silently",
+    "where": "PyYAML safe_load behaviour",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Two branches that each add the same path with different content produce an add/add conflict on merge",
+    "where": "git merge",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "stack_chosen": [],
+  "taste_disagreements": [
+   "Eight split entries with exact rooted scopes (the proposal, and spike 1's 'exact scopes' option) versus five superset-scope entries (spike 1's other option, which runs .cs patterns over .csproj and .resx) versus six (spike 4's rooted translation, which splits only the interop rule). I chose eight because it is the only form that keeps each xUnit scope exact.",
+   "Two copies of the rules (yaml plus xUnit, kept in step by a header comment) versus a single source, where the test loads the yaml or a generator writes both. Rejected here as over-built for a low-risk slice, but drift has no mechanical guard.",
+   "Hand-writing the five rules versus declaring them in this design's architecture_rules so the engine's append writes them, which would exercise C3 end to end. Rejected because the record has no including_comments, so comment-only violations false-pass, and the append path is unmeasured with a non-empty list.",
+   "Naming entries as the xUnit method name plus a glob suffix, versus one plain name per rule with duplicated names across the split entries.",
+   "Leaving the mechanism half of C3 to the engine versus building a project-side converter. The over_engineering_flag pushed against the converter."
+  ],
+  "whats_new": [
+   ".taad/fitness.yaml: one must_not_match entry per (ArchitectureRulesTests Fact, scope glob) pair, expected 8 covering the five FsAnalyser rules, each with a rooted glob, including_comments: true, (?m) on anchored patterns, a single-quoted verbatim regex, the test's except_files and a because taken from the scanner design",
+   "A header comment in that file naming tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs as its twin and stating the authoring rules for anyone who edits or appends",
+   "An acceptance reading of the Fitness report text: op=rules lists the entries, op=check says 'N rule(s) checked', 0 unmatched rules and every rule holds, and the verdict is never read from the exit code"
+  ],
+  "whats_reused": [
+   "Patterns, scopes and exemptions from tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs:13-72, copied verbatim apart from the listed transforms",
+   "because text from docs/design/SL-020-scanner.md:104-112",
+   "The engine's Fitness loader with op=rules and op=check, unchanged, reading <slice worktree>/.taad/fitness.yaml",
+   "The engine's by-name prune of bin/ and obj/, which keeps built and clean verdicts identical (spike 4)",
+   "The engine's commit_all (git add -A), which carries the file on the slice branch and to trunk at merge",
+   "The engine's design._append_rules, which is meant to get declared rules into the file for later slices (not built here, unverified as committed)",
+   "The constraints the four risk spikes measured, used as authoring rules instead of being re-proven"
+  ]
+ }
+}

@@ -1,0 +1,120 @@
+# Architecture rules for FsAnalyser, read by the engine's Fitness check (op=check, op=rules).
+#
+# TWIN OF tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs. That file is the source: every
+# pattern, scope and exemption here is copied from one of its [Fact]s, and the reasons from
+# docs/design/SL-020-scanner.md (Architecture rules). Change a rule in both places, or in neither.
+#
+# One entry per ([Fact], scope glob) pair, because `files` takes a single glob with no braces or
+# alternation. A [Fact] whose files span two file types or two roots is split into two entries that
+# are identical except for `name` and `files`; each carries the [Fact]'s whole except_files list.
+# The name is the [Fact]'s method name with the scope in parentheses, so a violation here points at
+# the xUnit test that fails with it. Five rules, eight entries.
+#
+# Fitness matches whole-file text and xUnit matches one line at a time, so \s and [^)]* may span a
+# line break here and not there, and a (?m)^\s* match is reported at the first of any blank lines
+# before the offending line. Both fail on the same files; only that line number can differ.
+#
+# AUTHORING RULES, for anyone editing or appending (by hand or through a design's architecture_rules).
+# Each one exists because breaking it makes a rule pass silently:
+#   - Every pattern starts with (?m). Fitness matches the whole file text without MULTILINE, so a bare
+#     ^ only fires on a file's first line. The xUnit test compiles with RegexOptions.Multiline; any
+#     other RegexOptions it uses is carried the same way, as an inline flag at the pattern start.
+#   - Every entry says including_comments: true. Fitness blanks // and /* */ in .cs by default, and
+#     the xUnit test matches raw lines, comments included. The engine's append of a design's declared
+#     rules writes neither this flag nor (?m), so a declared rule must put (?m) in its own pattern.
+#   - Every regex is a YAML single-quoted scalar ('' for a quote). Double quotes turn \b into a
+#     backspace and reject \s.
+#   - Every `files` glob is rooted at src/ or tests/. A bare **/*.cs also reads the gitignored .dotnet/,
+#     artifacts/ and TestResults/, which Fitness does not prune (it prunes bin/ and obj/ by name).
+#   - A glob must match at least one file. op=check lists any rule that MATCHED NO FILES; that list
+#     must stay empty.
+#   - `rules:` stays the only top-level key and the last thing in the file, with entries indented two
+#     spaces, because the engine appends new entries to the end of the file at that indent.
+rules:
+  - name: 'TheScannerCoreDoesNotKnowAboutTheScreen (*.cs)'
+    files: 'src/FsAnalyser.Core/**/*.cs'
+    must_not_match:
+      - '(?m)^\s*using\s+(static\s+)?(System\.Windows|PresentationFramework|FsAnalyser\.App)'
+      - '(?m)<UseWPF>\s*true'
+      - '(?m)<UseWindowsForms>\s*true'
+      - '(?m)<ProjectReference[^>]*FsAnalyser\.App'
+    including_comments: true
+    because: 'The scanner core does not know about the screen (docs/design/SL-020-scanner.md, Architecture rules).'
+
+  - name: 'TheScannerCoreDoesNotKnowAboutTheScreen (*.csproj)'
+    files: 'src/FsAnalyser.Core/**/*.csproj'
+    must_not_match:
+      - '(?m)^\s*using\s+(static\s+)?(System\.Windows|PresentationFramework|FsAnalyser\.App)'
+      - '(?m)<UseWPF>\s*true'
+      - '(?m)<UseWindowsForms>\s*true'
+      - '(?m)<ProjectReference[^>]*FsAnalyser\.App'
+    including_comments: true
+    because: 'The scanner core does not know about the screen (docs/design/SL-020-scanner.md, Architecture rules).'
+
+  - name: 'OnlyTheClassifierReadsTheReparseAttribute (*.cs)'
+    files: 'src/**/*.cs'
+    except_files:
+      - 'src/FsAnalyser.Core/Scanning/EntryClassifier.cs'
+      - 'src/FsAnalyser.Core/Native/Kernel32.cs'
+    must_not_match:
+      - '(?m)FileAttributes\.ReparsePoint'
+      - '(?m)FILE_ATTRIBUTE_REPARSE_POINT'
+      - '(?m)IsReparsePoint'
+      - '(?m)0x0*400\b'
+    including_comments: true
+    because: 'Only the classifier reads the reparse attribute (widened to all of src, O-006). Deciding link-or-data by the reparse attribute dropped 241.7 MiB and the OneDrive tree in the spike, and the store exposes Attributes to every later reader.'
+
+  - name: 'OnlyTheClassifierReadsTheReparseAttribute (*.xaml)'
+    files: 'src/**/*.xaml'
+    except_files:
+      - 'src/FsAnalyser.Core/Scanning/EntryClassifier.cs'
+      - 'src/FsAnalyser.Core/Native/Kernel32.cs'
+    must_not_match:
+      - '(?m)FileAttributes\.ReparsePoint'
+      - '(?m)FILE_ATTRIBUTE_REPARSE_POINT'
+      - '(?m)IsReparsePoint'
+      - '(?m)0x0*400\b'
+    including_comments: true
+    because: 'Only the classifier reads the reparse attribute (widened to all of src, O-006). Deciding link-or-data by the reparse attribute dropped 241.7 MiB and the OneDrive tree in the spike, and the store exposes Attributes to every later reader.'
+
+  - name: 'TheScannerListsDirectoriesOnlyThroughDirectoryReader (*.cs)'
+    files: 'src/FsAnalyser.Core/Scanning/**/*.cs'
+    must_not_match:
+      - '(?m)Directory\.(Enumerate\w*|GetFiles|GetDirectories|GetFileSystemEntries)'
+      - '(?m)new\s+(DirectoryInfo|FileInfo)\b'
+      - '(?m)FileSystemEnumerable'
+      - '(?m)EnumerationOptions'
+      - '(?m)AttributesToSkip'
+    including_comments: true
+    because: 'The scanner lists directories only through DirectoryReader (docs/design/SL-020-scanner.md, Architecture rules).'
+
+  - name: 'CountingRuleTestsAreNeverSkipped (*.cs)'
+    files: 'tests/FsAnalyser.Core.Tests/**/*.cs'
+    must_not_match:
+      - '(?m)\[(Fact|Theory)\([^)]*\bSkip\w*\s*='
+      - '(?m)Assert\.Skip\w*\('
+      - '(?m)Skip\.(If|IfNot|Unless)'
+      - '(?m)\bExplicit\s*=\s*true'
+      - '(?m)Skip(?:Exception)'
+    including_comments: true
+    because: 'Counting-rule tests are never skipped (extended, O-007): the counting rules are the one place not to cut corners. Covers xUnit v2 and v3: Skip properties, dynamic skips, and v3''s explicit-only tests.'
+
+  - name: 'InteropLivesOnlyInNative (src)'
+    files: 'src/**/*.cs'
+    except_files:
+      - 'src/FsAnalyser.Core/Native/**'
+      - 'tests/FsAnalyser.Core.Tests/TestNative.cs'
+    must_not_match:
+      - '(?m)(Library|Dll)Import'
+    including_comments: true
+    because: 'Interop lives only in Native (O-003). Every Win32 call goes through Native, where paths are \\?\ and built by LongPath. Fixture-only interop lives in TestNative.cs.'
+
+  - name: 'InteropLivesOnlyInNative (tests)'
+    files: 'tests/**/*.cs'
+    except_files:
+      - 'src/FsAnalyser.Core/Native/**'
+      - 'tests/FsAnalyser.Core.Tests/TestNative.cs'
+    must_not_match:
+      - '(?m)(Library|Dll)Import'
+    including_comments: true
+    because: 'Interop lives only in Native (O-003). Every Win32 call goes through Native, where paths are \\?\ and built by LongPath. Fixture-only interop lives in TestNative.cs.'
