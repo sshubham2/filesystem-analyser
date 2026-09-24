@@ -33,6 +33,15 @@ public partial class MainWindow : Window
         _timer.Tick += (_, _) => ShowProgress();
     }
 
+    /// <summary>
+    /// Raised after every ending (Finished, Stopped, Could not read, Scan failed) has been put on the
+    /// screen, once per scan. The window does nothing else for whoever listens.
+    /// </summary>
+    internal event EventHandler? EndingShown;
+
+    /// <summary>The result behind the ending on screen; null when the ending came before any result.</summary>
+    internal ScanResult? LastResult { get; private set; }
+
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         if (_launchPath is not null)
@@ -112,6 +121,7 @@ public partial class MainWindow : Window
             return;
         _scanning = true;
         _result = null; // let the previous scan's store be collected
+        LastResult = null;
         UnreadableList.ItemsSource = null;
         OutcomePanel.Visibility = Visibility.Collapsed;
         SetPickersEnabled(false);
@@ -213,6 +223,7 @@ public partial class MainWindow : Window
 
     private void ShowOutcome(ScanResult result, long? volumeInUse)
     {
+        LastResult = result;
         if (result.Status == ScanStatus.RootUnreadable)
         {
             ShowProblem($"Could not read {result.Root}", $"{Win32Message(result.RootError)} (Windows error {result.RootError})");
@@ -255,6 +266,7 @@ public partial class MainWindow : Window
             UnreadableExpander.Visibility = Visibility.Collapsed;
         }
         OutcomePanel.Visibility = Visibility.Visible;
+        EndingShown?.Invoke(this, EventArgs.Empty);
     }
 
     // What the scan saw against what the volume says is in use. The gap is not explained here yet:
@@ -279,6 +291,7 @@ public partial class MainWindow : Window
         OutcomeNotes.Visibility = Visibility.Collapsed;
         UnreadableExpander.Visibility = Visibility.Collapsed;
         OutcomePanel.Visibility = Visibility.Visible;
+        EndingShown?.Invoke(this, EventArgs.Empty);
     }
 
     private void Paint((Brush Border, Brush Background) look)

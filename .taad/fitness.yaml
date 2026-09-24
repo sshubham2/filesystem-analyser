@@ -139,3 +139,26 @@ rules:
       - '(?m)(Library|Dll)Import'
     including_comments: true
     because: 'Interop lives only in Native (O-003). Every Win32 call goes through Native, where paths are \\?\ and built by LongPath. Fixture-only interop lives in TestNative.cs.'
+
+  # settled by SL-023
+  - name: the window report reads the window, never rebuilds it from Core
+    files: src/FsAnalyser.App/WindowReport.cs
+    must_not_match:
+    - \bFormat[A-Z]\w*\s*\(|string\.Format\s*\(
+    - \$"[^"]*\{[^}]*\.(Bytes|BytesOnDisk|Files|Folders|Links)\b
+    - \.(Bytes|BytesOnDisk|Files|Folders|Links)\.ToString\(
+    because: Validate trusts `window` as evidence of what the shipped window shows. If WindowReport
+      calls a display helper or builds text from ScanResult, a wrong or blank control still
+      reports correct numbers and the slice's evidence is worthless. The spike's broken-bytes-format
+      proof does not repeat at validate, so this rule stands in for it.
+  - name: the main window does not know it is being observed
+    files: src/FsAnalyser.App/MainWindow.xaml.cs
+    must_not_match:
+    - \bWindowReport\b
+    - \bif\s*\([^)]*[Rr]eport
+    - \b[Rr]eport(Mode|Path)\b
+    because: The report is only evidence about the normal window if rendering is identical with
+      and without --report. If MainWindow references the report or branches on report mode,
+      the observed window is no longer the one a person sees, and a normal launch could gain
+      report behaviour without the App's report-mode guards (delete-first, exit codes). MainWindow
+      raises EndingShown and nothing more.
