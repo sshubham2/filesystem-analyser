@@ -12,13 +12,23 @@
 #
 # Fitness matches whole-file text and xUnit matches one line at a time, so \s and [^)]* may span a
 # line break here and not there, and a (?m)^\s* match is reported at the first of any blank lines
-# before the offending line. Both fail on the same files; only that line number can differ.
+# before the offending line. In a UTF-8 file under 2 MB, with or without a byte-order mark, every
+# violation xUnit reports is also reported here in the same file; only that line number can differ.
+# KNOWN DIVERGENCES, where xUnit fails and these rules pass: a UTF-16 (or UTF-32) file, because
+# Fitness decodes every file as UTF-8 with errors replaced, so no pattern here can match it; and a
+# file over 2 MB, which Fitness skips unread. No pattern in this repo can close either one. The fix
+# is in the engine (taad3/fitness.py, where it opens and sizes covered files). Until then the xUnit
+# test is the backstop.
 #
 # AUTHORING RULES, for anyone editing or appending (by hand or through a design's architecture_rules).
 # Each one exists because breaking it makes a rule pass silently:
 #   - Every pattern starts with (?m). Fitness matches the whole file text without MULTILINE, so a bare
 #     ^ only fires on a file's first line. The xUnit test compiles with RegexOptions.Multiline; any
 #     other RegexOptions it uses is carried the same way, as an inline flag at the pattern start.
+#   - Every ^ anchor is followed by \ufeff? (an optional byte-order mark, written as that escape, never
+#     as the invisible character). Fitness keeps a UTF-8 BOM as the first character of line 1 and \s
+#     does not match it, while xUnit's File.ReadAllLines strips it, so without this a line-1 hit in a
+#     BOM file passes here and fails there.
 #   - Every entry says including_comments: true. Fitness blanks // and /* */ in .cs by default, and
 #     the xUnit test matches raw lines, comments included. The engine's append of a design's declared
 #     rules writes neither this flag nor (?m), so a declared rule must put (?m) in its own pattern.
@@ -34,7 +44,7 @@ rules:
   - name: 'TheScannerCoreDoesNotKnowAboutTheScreen (*.cs)'
     files: 'src/FsAnalyser.Core/**/*.cs'
     must_not_match:
-      - '(?m)^\s*using\s+(static\s+)?(System\.Windows|PresentationFramework|FsAnalyser\.App)'
+      - '(?m)^\ufeff?\s*using\s+(static\s+)?(System\.Windows|PresentationFramework|FsAnalyser\.App)'
       - '(?m)<UseWPF>\s*true'
       - '(?m)<UseWindowsForms>\s*true'
       - '(?m)<ProjectReference[^>]*FsAnalyser\.App'
@@ -44,7 +54,7 @@ rules:
   - name: 'TheScannerCoreDoesNotKnowAboutTheScreen (*.csproj)'
     files: 'src/FsAnalyser.Core/**/*.csproj'
     must_not_match:
-      - '(?m)^\s*using\s+(static\s+)?(System\.Windows|PresentationFramework|FsAnalyser\.App)'
+      - '(?m)^\ufeff?\s*using\s+(static\s+)?(System\.Windows|PresentationFramework|FsAnalyser\.App)'
       - '(?m)<UseWPF>\s*true'
       - '(?m)<UseWindowsForms>\s*true'
       - '(?m)<ProjectReference[^>]*FsAnalyser\.App'
