@@ -1,0 +1,163 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-024",
+ "stage": "build-slice",
+ "attempt": 1,
+ "at": "2026-09-24T16:37:06.177Z",
+ "head": "5da23ca68113ff5a8c805309fea8614a831ff273",
+ "run_id": 882,
+ "summary": "I built nothing, and the working tree is unchanged. The M5 and O-004 dispositions stop build from writing the cancel guard until risk-spike re-runs the cloud-placeholder cancel experiment with the scanner's real listing call. Spike 2 used a FindFirstFileExW stand-in, and the risk-spike stage has no attempt since the critique-review. I raised that as an obligation naming risk-spike (O-023) and listed the exact calls it must measure. I also ran the baseline build and the full test suite unchanged to confirm the starting point: the build is clean and all 86 tests pass.",
+ "payload": {
+  "status": "blocked",
+  "reason": "The design is only accepted if a risk-spike measurement comes back as a go, and that measurement has not been taken. M5 was accepted, and its disposition says: \"Before build writes the cancel guard, re-run spike 2's harness with the scanner's real listing call ... This measurement belongs to the spike, not to build. If it does not [free the call] ... the design is redone before build.\" O-004's discharge says: \"The slice goes back to risk-spike for one experiment before build starts. If build is reached first, its first act is to raise an obligation naming risk-spike. It must not write ...\" (the rest of that text is clipped). O-023 says: \"Design is accepted only on a go.\" Build was reached first. In .taad/slices/SL-024/index.json the risk-spike stage has no attempt after critique-review (16:29:59Z), and the only cloud experiment on record is spike 2. That spike's own evidence says it used stand-ins (\"FindFirstFileExW(FindExInfoBasic, LARGE_FETCH) ... I could not identify the Core scanner's real enumeration call, so these are stand-ins\"). The scanner's real listing call is Kernel32.GetFileInformationByHandleEx on a CreateFileW(FILE_LIST_DIRECTORY, FILE_FLAG_BACKUP_SEMANTICS) directory handle. Its info class is FileIdExtdDirectoryRestartInfo=20, then FileIdExtdDirectoryInfo=19. The fallback is FileFullDirectoryRestartInfo=15, then 14. It runs over a 64 KiB buffer (src/FsAnalyser.Core/Scanning/DirectoryReader.cs:66, :96, :101, :113). If CancelSynchronousIo cannot free that call on a populating placeholder, the design's own fallback (abandon the thread, or run the scanner in its own process) replaces the in-place guard. Anything written now would then be discarded. So I am raising this on risk-spike and have left src/, tests/ and docs/ untouched. This does not need an administrator. Spike 2 registered and connected its sync root unelevated with hr=0. A builder should not stand up a cloud sync root on this machine anyway, because it registers a sync root in the user's settings. The disposition assigns the measurement to risk-spike.",
+  "summary": "I built nothing, and the working tree is unchanged. The M5 and O-004 dispositions stop build from writing the cancel guard until risk-spike re-runs the cloud-placeholder cancel experiment with the scanner's real listing call. Spike 2 used a FindFirstFileExW stand-in, and the risk-spike stage has no attempt since the critique-review. I raised that as an obligation naming risk-spike (O-023) and listed the exact calls it must measure. I also ran the baseline build and the full test suite unchanged to confirm the starting point: the build is clean and all 86 tests pass.",
+  "files": [],
+  "obligations": [
+   {
+    "key": "O-023",
+    "done": false,
+    "how": "RAISED ON risk-spike. Re-run cloud-fetch-placeholders-cancel with the same harness as spike 2: a never-answering provider in a separate process, CfRegisterSyncRoot with DISABLE_ON_DEMAND_POPULATION_ON_ROOT (2), and a placeholder directory left on on-demand population. Swap the FindFirstFileExW/Directory.Enumerate stand-in for the scanner's own calls. The open is CreateFileW(\\\\?\\ path, FILE_LIST_DIRECTORY=0x1, share all, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS=0x02000000) (DirectoryReader.cs:66). The listing is GetFileInformationByHandleEx with FileIdExtdDirectoryRestartInfo=20 into a 64 KiB buffer, then FileIdExtdDirectoryInfo=19 (DirectoryReader.cs:96-113). Also run the fallback classes, FileFullDirectoryRestartInfo=15 then 14. Cancel from another thread with CancelSynchronousIo on an OpenThread(THREAD_TERMINATE) handle, repeated every 25 ms until the call returns. Record four things: which call blocks, whether it returns within 2 s of the first cancel, what it returns (995, SUCCESS with an empty or partial buffer, or a cloud error code), and how long CloseHandle takes afterwards. My evidence that this has not happened yet: index.json shows no risk-spike attempt after critique-review, and spike 2's own evidence says its calls were stand-ins. The design is accepted only on a go, so I wrote no guard."
+   },
+   {
+    "key": "O-006",
+    "done": false,
+    "how": "Not built. The share test (CancelReturnsFromAScanBlockedOnAnUnreachableShare) depends on the guard, which is blocked on the risk-spike re-run (O-023). The m5 disposition also moves this real-network test behind an opt-in trait, out of the default suite. That change is owed with the build."
+   },
+   {
+    "key": "O-007",
+    "done": false,
+    "how": "Not built. The named-pipe WaitForConnection cancel test needs SynchronousIoCancel, which I did not write because the design is not accepted until the risk-spike re-run (O-023) is a go."
+   },
+   {
+    "key": "O-008",
+    "done": false,
+    "how": "Not built. The retry test for a cancel that arrives before the call reaches the kernel (ERROR_NOT_FOUND) needs the canceller loop, which is blocked on O-023."
+   },
+   {
+    "key": "O-009",
+    "done": false,
+    "how": "Not built. A test that Enter refuses once the token is cancelled needs the guard, which is blocked on O-023. The existing AnAlreadyCancelledTokenReadsNothing still passes (86/86 baseline), but it does not exercise Enter."
+   },
+   {
+    "key": "O-010",
+    "done": false,
+    "how": "Not built. Settle(0,true)=995 and the discard of an aborted listing are the core of what the O-023 re-spike decides. If the real call is not freed, the design is redone and this rule may not survive."
+   },
+   {
+    "key": "O-011",
+    "done": false,
+    "how": "Not built. This case depends directly on the measurement raised on risk-spike under O-023: does repeated CancelSynchronousIo free GetFileInformationByHandleEx on a populating placeholder?"
+   },
+   {
+    "key": "O-012",
+    "done": false,
+    "how": "Not built. The mid-folder cancel sweep across several listing buffers needs the guarded List, which is blocked on O-023."
+   },
+   {
+    "key": "O-013",
+    "done": false,
+    "how": "Not built. ClassifyReadError(995,false) staying Unreadable(995) is part of the guard design, which is blocked on O-023. Today the code already treats 995 as Unreadable in every case (DirectoryReader.List returns it as-is), but no test pins that."
+   },
+   {
+    "key": "O-014",
+    "done": false,
+    "how": "Not built. A guarded SizeProbe, and the rule that an aborted probe aborts its folder, are blocked on O-023."
+   },
+   {
+    "key": "O-015",
+    "done": false,
+    "how": "Not built. The random-time cancel stress test, including the late-client pipe check after Dispose, needs the guard. Blocked on O-023."
+   },
+   {
+    "key": "O-016",
+    "done": false,
+    "how": "Not built. The live-token-versus-None equality runs on the unreadable-folder tree and one other counting-rule tree only mean something once the bracket exists. Blocked on O-023. The 86 existing tests pass unchanged on the current code."
+   },
+   {
+    "key": "O-017",
+    "done": false,
+    "how": "Not built or run. Running the share test twice needs the share test, which is blocked on O-023 and, per m5, will be opt-in."
+   },
+   {
+    "key": "O-018",
+    "done": false,
+    "how": "Not built. A stalled, established SMB session cannot be exercised here: spike 3 did not run because Defender blocks impacket. The design's open question to a person, whether to measure it or accept the risk, is still unanswered. The off-thread closer from M4 would make this moot, but it is part of the blocked build."
+   },
+   {
+    "key": "O-019",
+    "done": false,
+    "how": "Not built. The single guarded-I/O seam (Open, List, Probe, root attributes) and the two rules owed with it are blocked on O-023. The first rule forbids Kernel32.CreateFile and GetFileInformationByHandleEx outside Kernel32.cs and the wrapper. The second forbids File, Directory, DirectoryInfo, FileInfo and DriveInfo in Scanning/**, and does not cover Path.*. Note for the next build: the P/Invoke is named Kernel32.CreateFile, not CreateFileW. The sites to bracket are DirectoryReader.cs:66 and :101, Scanner.cs:205, and SizeProbe.cs:48 and :54."
+   },
+   {
+    "key": "O-020",
+    "done": false,
+    "how": "Not built. Always creating the guard, and skipping only OpenThread and the registration when !CanBeCanceled, is part of the guard, which is blocked on O-023."
+   },
+   {
+    "key": "O-021",
+    "done": false,
+    "how": "Not built. Running the IsDue probes over the raw entries before the first Append, so an aborted probe aborts its folder with no store rollback, is blocked on O-023."
+   },
+   {
+    "key": "O-022",
+    "done": false,
+    "how": "Not built. The background closer for aborted handles is part of the guarded seam, which is blocked on O-023."
+   },
+   {
+    "key": "O-024",
+    "done": false,
+    "how": "Not built. Having an aborted Open dispose the handle it got, through the off-thread closer, lives in the guarded Open wrapper, which is blocked on O-023."
+   },
+   {
+    "key": "O-025",
+    "done": false,
+    "how": "Not built. The scan-cancel thread, with IsBackground = true, is blocked on O-023."
+   },
+   {
+    "key": "O-026",
+    "done": false,
+    "how": "Not built. The creating-thread check in Enter (InvalidOperationException in every build) is blocked on O-023."
+   },
+   {
+    "key": "O-027",
+    "done": false,
+    "how": "Not built. The counter of CancelSynchronousIo calls that returned TRUE, and the late-client pipe check in the stress test, are blocked on O-023."
+   },
+   {
+    "key": "O-028",
+    "done": false,
+    "how": "Not built. The m5 disposition wants a default-suite hang test through a stand-in reader that ignores cancel, with the real \\\\192.0.2.N\\s test moved behind an opt-in trait or environment variable. That depends on the reader seam, which is blocked on O-023."
+   },
+   {
+    "key": "O-029",
+    "done": false,
+    "how": "Not done. Rewording criterion (1) to cover the measured shapes only (unreachable-SMB connect and the local synchronous pipe) depends on the O-023 re-spike. The cloud listing joins that list only on a go, so the wording cannot be settled before the measurement."
+   },
+   {
+    "key": "O-030",
+    "done": false,
+    "how": "Not built. The per-Enter internal hook, and the cancel-at-the-k-th-call sweep over a real multi-buffer temp tree compared with an uncancelled baseline, are blocked on O-023. FsAnalyser.Core.csproj already carries InternalsVisibleTo for the tests, so no public change is needed when it is built."
+   }
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build FsAnalyser.slnx -nologo",
+    "outcome": "passed",
+    "note": "Baseline on the unchanged tree: build succeeded, 0 warnings, 0 errors, exit 0."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx -nologo --no-build",
+    "outcome": "passed",
+    "note": "Baseline on the unchanged tree: 86 passed, 0 failed, 0 skipped, exit 0. None of these tests exercises SL-024 behaviour, because none was built."
+   }
+  ],
+  "not_built": [
+   "All of the design. That covers SynchronousIoCancel.cs, the additions to Kernel32 (995, THREAD_TERMINATE, GetCurrentThreadId, OpenThread, CancelSynchronousIo, SafeThreadHandle), the guarded DirectoryReader.Open/List, the guarded SizeProbe.Probe, and Scanner owning the guard with ClassifyReadError. It also covers SynchronousIoCancelTests, the additions to CancellationTests, and the replacement for the deferral note at docs/design/SL-020-scanner.md:101. The M5 and O-004 dispositions say build must not write the cancel guard before risk-spike measures the scanner's real GetFileInformationByHandleEx call on a populating cloud placeholder. That measurement has not been taken, and a no-go would replace the in-place guard with the design's fallback."
+  ],
+  "follow_ups": [
+   "risk-spike should also record the CloseHandle latency on the placeholder directory handle after the cancelled listing. That is the cloud counterpart of O-003, and it is cheap to take in the same run.",
+   "O-004's discharge text reached this build clipped at \"It must not write\". The engine should hand the full disposition to build-slice so the constraint does not have to be reconstructed from the M5 disposition.",
+   "The design's open question on spike 3 (a stalled, established SMB session) still needs a person. The options are a Defender exclusion for the spike venv, or approval of a different unelevated SMB2 target on port 4450. Until it is answered, O-003 and O-018 cannot be discharged by measurement."
+  ]
+ }
+}

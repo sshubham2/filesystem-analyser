@@ -1,0 +1,85 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-024",
+ "stage": "critique-review",
+ "attempt": 1,
+ "at": "2026-09-24T16:29:59.954Z",
+ "head": "0320a0d22641e7eccc41254129d31ad957c07f04",
+ "run_id": 879,
+ "summary": "The first review holds up. Nine of its eleven findings are right at the severity filed. M3 is the one over-reach: the design's cancel contract already puts ProbeFailed alongside 'nothing committed for the aborted folder', so only the must-verify on where the probe runs is missing, and that makes it minor. One major was missed. Criterion (3), 'an aborted folder commits nothing', has no test that goes through the real DirectoryReader or SizeProbe. The share test aborts at the root, before any entry exists, and the stress test compares nothing that was committed. A build that commits a partly read folder as complete would pass every planned test. The frame is sound: an in-place CancelSynchronousIo is the only way to cancel a synchronous CreateFileW, and spike 1 measured it working. Abandoning the thread only matters as the fallback the design already names, which applies if M5's re-spike comes back no-go.",
+ "payload": {
+  "status": "complete",
+  "verdict": "extend",
+  "summary": "The first review holds up. Nine of its eleven findings are right at the severity filed. M3 is the one over-reach: the design's cancel contract already puts ProbeFailed alongside 'nothing committed for the aborted folder', so only the must-verify on where the probe runs is missing, and that makes it minor. One major was missed. Criterion (3), 'an aborted folder commits nothing', has no test that goes through the real DirectoryReader or SizeProbe. The share test aborts at the root, before any entry exists, and the stress test compares nothing that was committed. A build that commits a partly read folder as complete would pass every planned test. The frame is sound: an in-place CancelSynchronousIo is the only way to cancel a synchronous CreateFileW, and spike 1 measured it working. Abandoning the thread only matters as the fallback the design already names, which applies if M5's re-spike comes back no-go.",
+  "assessments": [
+   {
+    "finding": "M1",
+    "classification": "valid",
+    "note": "The design turns down a rule because 'no regex form' exists, and that is only true while the bracket is copied by hand at each site. There is also a concrete site today that the component-level list can miss. Spike 1's evidence records CreateFileW, then GetFileInformationByHandleEx(FileAttributeTagInfo), and only then the FileIdExtdDirectoryRestartInfo loop. The DirectoryReader component brackets 'each CreateFileW in Open' and 'each GetFileInformationByHandleEx call in the List loop', so whether the tag query is covered depends on where it sits. The build's 'list every P/Invoke in Kernel32.cs' step cannot tell two call sites of the same P/Invoke apart. On a stalled session an unbracketed tag query blocks. Major is right because a missed bracket brings back the spike-2 silent-empty counting defect. If the wrapper goes in a new file, rule 1's except_files needs that file added."
+   },
+   {
+    "finding": "M2",
+    "classification": "valid",
+    "note": "Correct. The design's own key_decision says None-token scans 'run the old path unchanged', which means the counting-rule and error-5 tests never run the bracket the app always runs. The existing CancellingAfterTheThirdFolderStopsWithWhatWasRead test does use a cancellable token, so the guarded path runs for about three folders there, but it makes no counting-rule assertion. A Settle or Exit bug that reports issued=true without a cancel would ship. The fix (always bracket, and skip only OpenThread and the registration) is cheap and removes a second code path at every call site."
+   },
+   {
+    "finding": "M3",
+    "classification": "severity-wrong",
+    "corrected_severity": "minor",
+    "note": "The design mostly answers this already. The 'Scanner cancel semantics' contract says: '995 with a requested cancel ends the scan as cancelled: no Unreadable flag, no _unreadable entry, no ProbeFailed, nothing committed for the aborted folder.' Naming ProbeFailed in the same sentence puts an aborted probe under the commit-nothing rule. The SizeProbe component adds 'Scanner stops at an aborted probe as it does at an aborted listing.' What is really missing is narrower: decidable disagreement #2 (the order of reading and committing) names only List, not where the probe runs relative to the commit. Adding SizeProbe to that must-verify is a one-line change, not worth a lap. The test half of this concern is covered by the missed test-coverage finding below."
+   },
+   {
+    "finding": "M4",
+    "classification": "valid",
+    "note": "This overlaps the design's open question to a person ('measured, or residual risk accepted?') but does not ask it again. The off-thread close makes the close half of that question moot whatever the person answers. Spike 1 aborted at CreateFileW, so no handle ever existed and no close was measured. The raw-P/Invoke reader has no enumerator to dispose, so handing the SafeFileHandle to a background closer covers all of the cleanup. Part (a), whether a QUERY_DIRECTORY in flight on a stalled session cancels at all, stays unmeasured, and M4 says so. Major is right: a share dropping mid-scan is the most likely real case this slice exists for."
+   },
+   {
+    "finding": "M5",
+    "classification": "valid",
+    "note": "By reasoning, a go looks likely. FindFirstFileExW and GetFileInformationByHandleEx with a directory class both issue IRP_MN_QUERY_DIRECTORY on a synchronous handle, which is where cldflt raises FETCH_PLACEHOLDERS. But the design itself marks this would_force_resynthesis:true, the harness ran unelevated with hr=0, and a measurement outranks that reasoning. The re-spike should record whether the call returns within 2 s, not which code it returns. The real call may surface as ERROR_NO_MORE_FILES (18) rather than SUCCESS, and Settle's discard by recorded intent covers either. Major is right."
+   },
+   {
+    "finding": "m1",
+    "classification": "valid",
+    "note": "The DirectoryReader component's 'the handle is closed and never reused after a 995' is about the List handle. Nothing says a CreateFileW that succeeds under an issued cancel gets its handle disposed. A finalizer does close it eventually, so minor is right. Putting the dispose inside M1's Open wrapper is the natural fix."
+   },
+   {
+    "finding": "m2",
+    "classification": "valid",
+    "note": "The design's 'background thread' is .NET's own term for IsBackground=true, so a careful build would probably set it. The scan thread comes from LongRunning StartNew and is already a background thread, so a foreground canceller would be the only thing keeping the process alive. Making it explicit costs nothing. Minor is right."
+   },
+   {
+    "finding": "m3",
+    "classification": "valid",
+    "note": "A Debug.Assert protects nothing in the shipped Release exe. If a later parallel slice shares one guard across workers, it silently cancels the wrong thread's I/O. An int compare with a throw in every build is the right fix. Minor is right."
+   },
+   {
+    "finding": "m4",
+    "classification": "valid",
+    "note": "A counter of CancelSynchronousIo calls that returned TRUE closes the design's own 'fails naturally between 0.5 s and 2.5 s' blind spot. 'No stray cancel after Dispose' in test (6) really does have nothing observable behind it. Minor is right."
+   },
+   {
+    "finding": "m5",
+    "classification": "valid",
+    "note": "Windows sends the user's NTLM credentials to an SMB server reached by IP. TEST-NET-1 is safe only while nothing on the local network answers. The suite runs this on every developer invocation, so recording it as an accepted risk is the least that is needed. The alternative the reviewer offers is correctly marked as unmeasured. Minor is right."
+   },
+   {
+    "finding": "m6",
+    "classification": "valid",
+    "note": "Criterion (1) as written is universal. The Microsoft docs and the Q&A thread cited show shapes (filter-held I/O, drivers without cancel support) where no in-place cancel can meet it. Scoping it to the measured shapes stops validate from either claiming it for shapes nobody measured or looping on it. Minor is right."
+   }
+  ],
+  "missed": [
+   {
+    "dimension": "test-coverage",
+    "severity": "major",
+    "claim": "Criterion (3), 'an aborted folder commits nothing', has no test that runs it through the real reader. The same goes for the refused-Enter and discard paths in DirectoryReader.List, SizeProbe.Probe and Scanner. The share test aborts at the root's CreateFileW, before any entry exists, so 'commits nothing' is trivially true there. The pipe tests and the Settle/ClassifyReadError tests exercise the guard and the pure functions, never DirectoryReader or SizeProbe. Stress test (6) cancels at random moments on small local folders, which fit in one listing buffer. It asserts only no exception, no hang and 'completes or ends cancelled', and never compares what was committed. So a build can return the entries read so far when Enter refuses the second listing buffer, committing a partly read folder as complete (a silent undercount, which the counting rules forbid). It can also set ProbeFailed on a refused probe. Either build passes every planned test.",
+    "evidence": "The Tests component names SynchronousIoCancelTests (1)-(6) and the share test only. The case matrix lists 'Cancel a listing -- several GetFileInformationByHandleEx buffers, the cancel lands between them' and 'Probe a file size -- aborted or refused', but no named test drives either. Acceptance criterion (3): 'An aborted folder commits nothing.' Q-002's decision: counting rules cannot pass without a test on a real temporary NTFS tree. The survey found no seam in ScanOptions other than ForceFullDirectoryClass and AfterFolder, so no existing hook can cancel between listing buffers.",
+    "fix": "Add an internal hook on SynchronousIoCancel: an Action<int> called in Enter before the token re-check, exposed through InternalsVisibleTo. The Scan API and ScanOptions stay unchanged. Build a real temp tree with one folder large enough to need several FileIdExtdDirectoryRestartInfo buffers (thousands of long-named entries) and with entries that go through SizeProbe. Run it once uncancelled and count the guarded calls. Then, for every guarded call k (or, if that count is large, every listing-buffer call plus the first and last probe), scan with a CTS that is cancelled from the hook on the k-th Enter. Assert that each run ends cancelled, and has no Unreadable flag, no _unreadable entry and no ProbeFailed. Assert that every committed folder exactly equals that folder in the uncancelled run (entries and on-disk size), and that the in-progress folder is absent, as a never-reached folder would be. This is deterministic and needs no elevation, it gives the random stress test the assertion it lacks, and it covers M3's aborted-probe case.",
+    "route": "re-derivation"
+   }
+  ],
+  "frame_challenged": false,
+  "notes": "The first reviewer is well calibrated here. Every major is anchored in design text or a spike record, and the minors really are minor. Its one over-reach, M3, is a spec gap the contract section already mostly closes, filed as if the design were silent. Its blind spot is the gap between the case matrix and the test list: it checked whether the cases were well chosen, not whether each case has a test that drives it through production code. Two related facts it did not use: decidable disagreement #2 (does List stream into the store?) is also marked would_force_resynthesis:true, and it is routed to build rather than to a code read. That routing is acceptable, because build can open the file and raise the question as an obligation. But M5 sends the slice back through risk-spike and design anyway, so the survey could answer #2 on that lap for one file read. On the frame: abandoning the scan thread on Cancel would make criterion (1) hold for every shape, including a stalled close and filter-held I/O. It is only needed if M5's re-spike comes back no-go, and the design already names it for that case, so it is not raised here."
+ }
+}

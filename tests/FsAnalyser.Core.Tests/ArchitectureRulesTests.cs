@@ -46,6 +46,30 @@ public class ArchitectureRulesTests
             @"AttributesToSkip");
     }
 
+    /// <summary>
+    /// Every Win32 filesystem call goes through SynchronousIoCancel, which brackets it so Cancel can
+    /// interrupt it and discards its result once a cancel was issued (SL-024). A call made anywhere else
+    /// would block with no way to cancel it, or pass a cancelled cloud listing off as an empty folder.
+    /// </summary>
+    [Fact]
+    public void FileSystemCallsGoThroughTheCancelGuard()
+    {
+        AssertNoMatch(Files("src", "*.cs")
+                .Except([@"src\FsAnalyser.Core\Native\Kernel32.cs", @"src\FsAnalyser.Core\Scanning\SynchronousIoCancel.cs"]),
+            @"\bKernel32\.(CreateFile|GetFileInformationByHandleEx)\s*\(");
+    }
+
+    /// <summary>
+    /// A BCL file-system call on the scan thread would block with no guard around it (SL-024). Path is not
+    /// covered: GetFullPath and GetPathRoot are lexical and do no I/O.
+    /// </summary>
+    [Fact]
+    public void TheScannerMakesNoBclFileSystemCalls()
+    {
+        AssertNoMatch(Files(@"src\FsAnalyser.Core\Scanning", "*.cs"),
+            @"\b(File|Directory|DirectoryInfo|FileInfo|DriveInfo)\.");
+    }
+
     /// <summary>Covers xUnit v2 and v3: Skip properties, dynamic skips, and v3's explicit-only tests.</summary>
     [Fact]
     public void CountingRuleTestsAreNeverSkipped()

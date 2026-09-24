@@ -52,7 +52,8 @@ internal static class Scans
     /// <summary>The raw listing of one folder, as DirectoryReader gives it, keyed by name.</summary>
     public static Dictionary<string, RawEntry> Listing(string folder, bool fullClass = false)
     {
-        using var reader = new DirectoryReader();
+        using var io = new SynchronousIoCancel(CancellationToken.None);
+        using var reader = new DirectoryReader(io);
         int error = reader.Read(LongPath.ToExtended(folder), fullClass);
         if (error != 0)
             throw new XunitException($"Listing {folder} failed with Win32 error {error}.");
@@ -60,6 +61,35 @@ internal static class Scans
         for (int i = 0; i < reader.Count; i++)
             entries.Add(reader.NameOf(reader[i]).ToString(), reader[i]);
         return entries;
+    }
+
+    /// <summary>Everything the store holds about one entry except its index.</summary>
+    public readonly record struct EntryState(
+        EntryKind Kind, EntryFlags Flags, FileAttributes Attributes, long Size, long OnDisk, UInt128 FileId, int ChildCount);
+
+    /// <summary>Every entry of the scan by path, so two scans of one tree can be compared entry by entry.</summary>
+    public static Dictionary<string, EntryState> Snapshot(ScanStore store)
+    {
+        var entries = new Dictionary<string, EntryState>(StringComparer.Ordinal);
+        for (int i = 0; i < store.Count; i++)
+        {
+            entries.Add(store.GetPath(i), new EntryState(store.Kind(i), store.Flags(i), store.Attributes(i),
+                store.Size(i), store.OnDisk(i), store.FileId(i), store.ChildCount(i)));
+        }
+        return entries;
+    }
+
+    /// <summary>The unreadable folders by path, with their errors.</summary>
+    public static List<(string Path, int Error)> UnreadableByPath(ScanResult result) =>
+        result.Unreadable.Select(u => (result.Store.GetPath(u.Entry), u.Win32Error)).Order().ToList();
+
+    /// <summary>
+    /// Waits for the closes of aborted calls' handles, which run on the pool, so a temp tree can be removed.
+    /// </summary>
+    public static void WaitForAbortedCloses()
+    {
+        Assert.True(SpinWait.SpinUntil(() => SynchronousIoCancel.PendingCloses == 0, TimeSpan.FromSeconds(10)),
+            $"{SynchronousIoCancel.PendingCloses} handle(s) of aborted calls were still not closed after 10 s.");
     }
 
     /// <summary>Entries whose parent is a link. A scan that never enters a link has none.</summary>

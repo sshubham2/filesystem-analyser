@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using FsAnalyser.Core.Native;
 using Microsoft.Win32.SafeHandles;
 
@@ -40,28 +39,30 @@ internal static unsafe class SizeProbe
         && (attributes & Kernel32.FILE_ATTRIBUTE_SPARSE_FILE) == 0
         && !cloudOnly;
 
-    /// <returns>0 with the file's true sizes, or the Win32 error that stopped the probe.</returns>
-    public static int Probe(string win32Path, out long endOfFile, out long allocationSize)
+    /// <returns>0 with the file's true sizes, or the Win32 error that stopped the probe. After
+    /// ERROR_OPERATION_ABORTED nothing was read, and the caller writes no size and no ProbeFailed.</returns>
+    public static int Probe(SynchronousIoCancel io, string win32Path, out long endOfFile, out long allocationSize)
     {
         endOfFile = 0;
         allocationSize = 0;
-        using SafeFileHandle handle = Kernel32.CreateFile(win32Path, Kernel32.FILE_READ_ATTRIBUTES,
-            Kernel32.FILE_SHARE_ALL, 0, Kernel32.OPEN_EXISTING, 0, 0);
-        if (handle.IsInvalid)
-            return Error();
+        int error = io.OpenForAttributes(win32Path, out SafeFileHandle? handle);
+        if (error != 0)
+            return error;
 
-        Kernel32.FILE_STANDARD_INFO info;
-        if (!Kernel32.GetFileInformationByHandleEx(handle, Kernel32.FileStandardInfo, &info, (uint)sizeof(Kernel32.FILE_STANDARD_INFO)))
-            return Error();
+        try
+        {
+            Kernel32.FILE_STANDARD_INFO info;
+            error = io.Query(handle!, Kernel32.FileStandardInfo, &info, (uint)sizeof(Kernel32.FILE_STANDARD_INFO));
+            if (error != 0)
+                return error;
 
-        endOfFile = info.EndOfFile;
-        allocationSize = info.AllocationSize;
-        return 0;
-    }
-
-    private static int Error()
-    {
-        int error = Marshal.GetLastPInvokeError();
-        return error == 0 ? Kernel32.ERROR_ACCESS_DENIED : error;
+            endOfFile = info.EndOfFile;
+            allocationSize = info.AllocationSize;
+            return 0;
+        }
+        finally
+        {
+            io.Close(handle!);
+        }
     }
 }

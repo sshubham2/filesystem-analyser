@@ -44,7 +44,8 @@ the window recognises by `ParamName == "root"` (O-015). Any other ArgumentExcept
 ArgumentOutOfRangeException from the store, is a bug and gets Scan failed. It
 shows the exception type and message and re-enables the pickers. On a drive-root scan, Finished and
 Stopped also show the volume's used space (DriveInfo TotalSize − TotalFreeSpace) and how much of it
-the scan did not see (O-013). The optional path argument goes through `CommandLine.RootArgument`
+the scan did not see (O-013). A scan that was cancelled, before or during that query, omits the volume
+line (SL-024, O-031; see below). The optional path argument goes through `CommandLine.RootArgument`
 (O-009). Windows argv turns a typed `"C:\"` into `C:"`, and a trailing quote can only come from that,
 so it becomes `\` again.
 
@@ -98,8 +99,64 @@ so it becomes `\` again.
   charged record's path. The extended long-path case now probes a WOF file and a hardlink pair under a
   path over 400 characters with trailing-dot names. A `Win32Path` type and `ScanStore.GetNativePath`
   wait for the slice that adds a third Win32 caller (open in Explorer, delete).
-- **Deferred (m7):** CancelSynchronousIo for a blocked network or cloud call. Cancel is honoured at
-  the next folder boundary.
+- **Cancel interrupts a blocked call (SL-024, replacing the m7 deferral).** Every Win32 filesystem call
+  the scan makes goes through the scan thread's `SynchronousIoCancel`, which brackets it. Cancel
+  interrupts the call in progress with CancelSynchronousIo, sent every 25 ms from a background
+  `scan-cancel` thread until the call returns. The token's callback only starts that thread, so
+  Cancel() on the UI thread never blocks. A call that a cancel was issued during, or that started after
+  Cancel, is **discarded and reported as 995**, whatever Windows returned. A cancelled cloud listing
+  returns SUCCESS with nothing in it (measured), so only this recorded intent tells it from an empty
+  folder.
+  - **Under a requested cancel, 995 is cancellation, never an unreadable folder.** The folder it hit
+    commits nothing and ends as the scan leaves every folder it never reached. With no cancel requested,
+    995 is `Unreadable(995)` like any other error.
+  - **Probes run before their folder is appended**, so an aborted probe aborts its folder whole. The
+    probe of a first repeat runs while the folder is appended. If that probe is aborted, the charged
+    record stays as it would be had the repeat never been reached, and the folder is committed whole.
+  - **Handles of aborted calls are closed on a pool thread**, because on a share that stopped answering
+    the close can wait on the server.
+  - **Only the guard's own abort empties a listing.** `LastCallAborted` means the call was refused, or a
+    cancel was issued during it. A 995 that Windows returns with no cancel issued is an error like any
+    other: the folder is `Unreadable(995)` and keeps what was listed before it (O-032).
+  - **The App's volume-usage query is awaited against Cancel, not guarded (O-031).** `MainWindow.VolumeInUse`
+    (DriveInfo, GetDiskFreeSpaceEx) runs after the scan, on its own thread, outside the guard. It is never
+    started once Cancel was requested. A Cancel that arrives while it is running ends the window's wait
+    at once, and the query finishes unobserved; the ending then omits the volume line. Why not guard it in
+    Core: on a stalled share even CancelSynchronousIo waits for the SMB client (62 to 66 s measured), so a
+    guarded query would still hold the window. Only not waiting for it frees the window on every shape. A
+    scan that completed and was not cancelled still waits for the query, which on a mapped drive whose
+    server stopped answering can take as long as the SMB client does; Cancel stays enabled throughout
+    and ends that wait.
+  - **The guard belongs to one thread.** `Enter` throws on any other thread. A later slice that lists
+    in parallel gives each worker its own guard.
+  - **What is guaranteed.** Cancel() returns promptly on the UI thread in every case. The scan returns
+    within 2 s of Cancel for the shapes that were measured:
+    - an open blocked on an unreachable share (spike 1: 17 ms or less);
+    - a local synchronous pipe wait (the test suite);
+    - a listing blocked on a cloud placeholder whose provider never answers (build-slice 2 re-spike, run
+      with the scanner's real calls: 1 ms or less, and CloseHandle 0 ms afterwards).
+
+    Two shapes are **not** covered by the 2 s:
+    - **A share that stops answering once its session is established.** Measured in SL-024 build 3 with
+      `StalledShareTests`: an SMBLibrary server on 127.0.0.1, reached through `New-SmbMapping -TcpPort`,
+      that stops answering at one folder's listing. Cancel() returned in about 1 ms. The SMB client held
+      the listing, and the canceller's CancelSynchronousIo with it, until it gave up on the server, and
+      the scan returned **62 to 66 s** after Cancel (two runs). It ended Cancelled, with the stalled folder not committed
+      and its handle closed on a pool thread. Only abandoning the scan thread would return sooner.
+    - **I/O held by a filter driver.** CancelSynchronousIo can itself wait behind on-access antivirus.
+      This is unmeasured.
+  - **The loopback SMB test is opt-in too.** `CancellingAScanOfAShareThatStoppedAnsweringNeverHangsInTheClose`
+    carries `Trait("Network", "SMB-LOOPBACK")`. It needs the Windows 11 24H2 SMB client (`-TcpPort`)
+    and takes about 70 s. It uses SMBLibrary and SMBLibrary.Win32 (LGPL-3.0-or-later) in the test
+    project only. SMBServer's public `Start` listens only on port 445, so the fixture calls its private
+    overload that takes a port.
+  - **The TEST-NET-1 share tests are opt-in (m5).** `CancelReturnsFromAScanBlockedOnAnUnreachableShare`
+    and `CancelReturnsFromTheSameUnreachableShareScannedTwice` carry `Trait("Network", "TEST-NET-1")`.
+    The test project's default `VSTestTestCaseFilter` leaves them out of every run that names no filter.
+    The accepted risk: a UNC path by IP address signs in with NTLM, so on a hostile network whoever
+    answers on port 445 gets this user's NTLMv2 response, and a network that fails fast turns them red.
+    The default suite proves the same interrupt with a stand-in instead. That test is
+    `CancelReturnsFromAScanStuckInItsFirstCall`, whose first call is stuck in a synchronous pipe wait.
 
 ## Architecture rules (widened; enforced by `tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs`)
 
@@ -110,5 +167,7 @@ so it becomes `\` again.
 | The scanner lists directories only through DirectoryReader | `src/FsAnalyser.Core/Scanning/**` | `Directory\.(Enumerate\w*\|GetFiles\|GetDirectories\|GetFileSystemEntries)`, `new\s+(DirectoryInfo\|FileInfo)\b`, `FileSystemEnumerable`, `EnumerationOptions`, `AttributesToSkip` |
 | Counting-rule tests are never skipped (**extended**, O-007) | `tests/FsAnalyser.Core.Tests/**` | `\[(Fact\|Theory)\([^)]*\bSkip\w*\s*=`, `Assert\.Skip\w*\(`, `Skip\.(If\|IfNot\|Unless)`, `\bExplicit\s*=\s*true`, `Skip(?:Exception)` |
 | Interop lives only in Native (**new**, O-003) | `src/**`, `tests/**` except `src/FsAnalyser.Core/Native/**` and `tests/FsAnalyser.Core.Tests/TestNative.cs` | `(Library\|Dll)Import` |
+| Filesystem calls go through the cancel guard (**new**, SL-024) | `src/**` except `Native/Kernel32.cs` and `Scanning/SynchronousIoCancel.cs` | `\bKernel32\.(CreateFile\|GetFileInformationByHandleEx)\s*\(` |
+| The scanner makes no BCL file-system calls (**new**, SL-024) | `src/FsAnalyser.Core/Scanning/**` | `\b(File\|Directory\|DirectoryInfo\|FileInfo\|DriveInfo)\.` (not `Path`: lexical, no I/O) |
 
 xUnit stays on v2 (2.9.3, from `dotnet new xunit` under SDK 10.0.401). `--fail-skips` waits for a move to v3.

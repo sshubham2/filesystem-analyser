@@ -26,8 +26,10 @@ internal struct RawEntry
 /// paged through a reused 64 KiB buffer. The extended class (FILE_ID_EXTD_DIR_INFO) carries FileId,
 /// EndOfFile, AllocationSize and the reparse tag in one pass. The fallback class (FILE_FULL_DIR_INFO)
 /// has no FileId and carries the tag in EaSize. Records are yielded raw; nothing here interprets them.
+/// Every call goes through the scan's <see cref="SynchronousIoCancel"/>, one per buffer, so Cancel is
+/// honoured between the buffers of a large folder as well as inside a blocked call.
 /// </summary>
-internal sealed unsafe class DirectoryReader : IDisposable
+internal sealed unsafe class DirectoryReader(SynchronousIoCancel io) : IDisposable
 {
     internal const int BufferSize = 64 * 1024;
 
@@ -56,39 +58,35 @@ internal sealed unsafe class DirectoryReader : IDisposable
 
     public ReadOnlySpan<char> NameOf(in RawEntry entry) => _names.AsSpan(entry.NameStart, entry.NameLength);
 
-    /// <summary>
-    /// Opens a directory for listing: FILE_LIST_DIRECTORY, every share mode, backup semantics, and no
-    /// OPEN_REPARSE_POINT, so a link a person chose as the root is opened through to its target.
-    /// </summary>
+    /// <summary>Opens a directory for listing; see <see cref="SynchronousIoCancel.OpenDirectory"/>.</summary>
     /// <returns>0, or the Win32 error.</returns>
-    public static int Open(string win32Path, out SafeFileHandle handle)
-    {
-        handle = Kernel32.CreateFile(win32Path, Kernel32.FILE_LIST_DIRECTORY, Kernel32.FILE_SHARE_ALL, 0,
-            Kernel32.OPEN_EXISTING, Kernel32.FILE_FLAG_BACKUP_SEMANTICS, 0);
-        if (!handle.IsInvalid)
-            return 0;
-        int error = Marshal.GetLastPInvokeError();
-        handle.Dispose();
-        return error == 0 ? Kernel32.ERROR_ACCESS_DENIED : error;
-    }
+    public int Open(string win32Path, out SafeFileHandle? handle) => io.OpenDirectory(win32Path, out handle);
 
     /// <summary>Opens and lists one directory. See <see cref="List"/>.</summary>
     public int Read(string win32Path, bool fullClass)
     {
         _count = 0;
         _namesUsed = 0;
-        int error = Open(win32Path, out SafeFileHandle handle);
+        int error = Open(win32Path, out SafeFileHandle? handle);
         if (error != 0)
             return error;
-        using (handle)
-            return List(handle, fullClass);
+        try
+        {
+            return List(handle!, fullClass);
+        }
+        finally
+        {
+            io.Close(handle!);
+        }
     }
 
     /// <summary>
     /// Lists an open directory, replacing what the reader held.
     /// </summary>
     /// <returns>0 when the listing ran to its end, or the Win32 error that stopped it. Entries read before
-    /// the error are kept.</returns>
+    /// the error are kept, except when the guard aborted the listing: that listing keeps nothing, so a
+    /// cancelled folder is never committed half read, and its handle is not used again. A 995 Windows
+    /// returns with no cancel issued is an error like any other and keeps what was read.</returns>
     public int List(SafeFileHandle directory, bool fullClass)
     {
         _count = 0;
@@ -98,13 +96,18 @@ internal sealed unsafe class DirectoryReader : IDisposable
 
         while (true)
         {
-            if (!Kernel32.GetFileInformationByHandleEx(directory, infoClass, _buffer, BufferSize))
+            int error = io.Query(directory, infoClass, _buffer, BufferSize);
+            if (error != 0)
             {
-                int error = Marshal.GetLastPInvokeError();
                 if (error == Kernel32.ERROR_NO_MORE_FILES)
                     return 0;
                 if (first && error == Kernel32.ERROR_FILE_NOT_FOUND)
                     return 0; // nothing at all to list
+                if (io.LastCallAborted)
+                {
+                    _count = 0;
+                    _namesUsed = 0;
+                }
                 return error;
             }
 
