@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 using FsAnalyser.Core.Native;
 using FsAnalyser.Core.Store;
 using Microsoft.Win32.SafeHandles;
@@ -15,10 +14,15 @@ namespace FsAnalyser.Core.Scanning;
 /// of a hardlinked file the scan meets is always the same one. Links are recorded and never entered.
 /// Nothing that goes wrong inside the tree fails the scan: an unreadable folder is flagged and listed in
 /// <see cref="ScanResult.Unreadable"/>.
+/// <para>Cancel interrupts the filesystem call the scan is blocked in, through the scan thread's
+/// <see cref="SynchronousIoCancel"/>, and is otherwise checked once per folder. An interrupted call is
+/// reported as ERROR_OPERATION_ABORTED (995). Under a requested cancel 995 is cancellation, never an
+/// unreadable folder, and the folder it hit commits nothing: it stays as the scan left every folder it
+/// never reached. With no cancel requested, 995 is an unreadable folder like any other error.</para>
 /// </remarks>
 public static class Scanner
 {
-    /// <summary>Scans <paramref name="root"/>. Cancellation is checked once per folder.</summary>
+    /// <summary>Scans <paramref name="root"/>. Cancel interrupts a blocked call; see the remarks.</summary>
     /// <exception cref="ArgumentException">The root is empty or not an absolute path.</exception>
     public static ScanResult Scan(string root, ScanProgress progress, CancellationToken ct) =>
         Scan(root, progress, ct, ScanOptions.Default);
@@ -28,21 +32,41 @@ public static class Scanner
         ArgumentNullException.ThrowIfNull(progress);
         ArgumentNullException.ThrowIfNull(options);
         (string display, string win32) = LongPath.NormalizeRoot(root);
-        using var run = new Run(display, win32, progress, ct, options);
+        using var io = new SynchronousIoCancel(ct);
+        using var run = new Run(display, win32, progress, ct, options, io);
         return run.Execute();
     }
 
-    private sealed class Run(string display, string win32Root, ScanProgress progress, CancellationToken ct, ScanOptions options)
-        : IDisposable
+    /// <summary>What a folder's read error, or a probe's, means for the scan.</summary>
+    internal static ReadOutcome ClassifyReadError(int error, bool cancelRequested) =>
+        error == 0 ? ReadOutcome.Read
+        : error == Kernel32.ERROR_OPERATION_ABORTED && cancelRequested ? ReadOutcome.Cancelled
+        : ReadOutcome.Unreadable;
+
+    internal enum ReadOutcome
+    {
+        Read,
+
+        /// <summary>Flagged and listed in <see cref="ScanResult.Unreadable"/>, so no folder is dropped silently.</summary>
+        Unreadable,
+
+        /// <summary>Aborted by Cancel: nothing of it is committed, and the scan stops.</summary>
+        Cancelled,
+    }
+
+    private sealed class Run(string display, string win32Root, ScanProgress progress, CancellationToken ct, ScanOptions options,
+        SynchronousIoCancel io) : IDisposable
     {
         private readonly ScanStore _store = new();
-        private readonly DirectoryReader _reader = new();
+        private readonly DirectoryReader _reader = new(io);
         private readonly Stack<(int Entry, string Path)> _pending = new();
         private readonly List<UnreadableFolder> _unreadable = [];
+        private readonly List<DueProbe> _dueProbes = [];
+        private readonly HashSet<UInt128> _settled = [];
         private readonly Stopwatch _clock = Stopwatch.StartNew();
         private bool _fullClass = options.ForceFullDirectoryClass;
         private long _files, _folders, _links, _bytes, _bytesOnDisk;
-        private int _probes, _probeFailures, _foldersListed;
+        private int _probes, _probeFailures, _foldersListed, _nextDueProbe;
 
         public ScanResult Execute()
         {
@@ -51,7 +75,11 @@ public static class Scanner
 
             int error = ListRoot(out int rootEntry);
             if (rootEntry < 0)
-                return Finish(ScanStatus.RootUnreadable, error);
+            {
+                return ClassifyReadError(error, ct.IsCancellationRequested) == ReadOutcome.Cancelled
+                    ? Finish(ScanStatus.Cancelled)
+                    : Finish(ScanStatus.RootUnreadable, error);
+            }
             if (FolderDone(rootEntry, win32Root, error))
                 return Finish(ScanStatus.Cancelled);
 
@@ -71,25 +99,25 @@ public static class Scanner
         private int ListRoot(out int rootEntry)
         {
             rootEntry = -1;
-            int error = DirectoryReader.Open(win32Root, out SafeFileHandle handle);
+            int error = _reader.Open(win32Root, out SafeFileHandle? handle);
             if (error != 0)
                 return error;
 
-            using (handle)
+            try
             {
-                error = QueryAttributes(handle, out uint attributes);
+                error = QueryAttributes(handle!, out uint attributes);
                 if (error != 0)
                     return error;
                 // Checked before the class is picked: error 87 must only ever mean "class unsupported".
                 if ((attributes & Kernel32.FILE_ATTRIBUTE_DIRECTORY) == 0)
                     return Kernel32.ERROR_DIRECTORY;
 
-                error = _reader.List(handle, _fullClass);
+                error = _reader.List(handle!, _fullClass);
                 if (!_fullClass && _reader.Count == 0 && error is Kernel32.ERROR_INVALID_FUNCTION
                         or Kernel32.ERROR_NOT_SUPPORTED or Kernel32.ERROR_INVALID_PARAMETER)
                 {
                     _fullClass = true;
-                    error = _reader.List(handle, _fullClass);
+                    error = _reader.List(handle!, _fullClass);
                 }
                 if (error != 0 && _reader.Count == 0)
                     return error;
@@ -97,16 +125,25 @@ public static class Scanner
                 rootEntry = _store.AppendRoot(display, attributes);
                 return error;
             }
+            finally
+            {
+                io.Close(handle!);
+            }
         }
 
-        // Appends the reader's listing as the folder's children, queues its subfolders, publishes
-        // progress, and reports whether the scan must stop.
+        // Probes what the listing cannot be trusted for, appends the listing as the folder's children,
+        // queues its subfolders, publishes progress, and reports whether the scan must stop. An aborted
+        // listing or probe commits nothing and stops the scan.
         private bool FolderDone(int folder, string folderPath, int error)
         {
+            if (ClassifyReadError(error, ct.IsCancellationRequested) == ReadOutcome.Cancelled || !ProbeListing(folderPath))
+                return true;
+
             int first = _store.Count;
             int count = _reader.Count;
+            _nextDueProbe = 0;
             for (int k = 0; k < count; k++)
-                AddEntry(folder, folderPath, in _reader[k]);
+                AddEntry(folder, folderPath, k);
             _store.SetChildren(folder, first, count);
 
             if (error != 0)
@@ -128,8 +165,36 @@ public static class Scanner
             return ct.IsCancellationRequested;
         }
 
-        private void AddEntry(int parent, string parentPath, in RawEntry raw)
+        // Reads the true size of every file in the listing that is due a probe (SizeProbe.IsDue), before
+        // anything of the folder is appended, so that an aborted probe aborts the folder whole. A name of a
+        // file already settled by a probe is skipped, as the append would skip it. False when a probe was
+        // aborted by Cancel.
+        private bool ProbeListing(string folderPath)
         {
+            _dueProbes.Clear();
+            for (int k = 0; k < _reader.Count; k++)
+            {
+                ref readonly RawEntry raw = ref _reader[k];
+                bool isDirectory = (raw.Attributes & Kernel32.FILE_ATTRIBUTE_DIRECTORY) != 0;
+                (EntryKind kind, bool cloudOnly) = EntryClassifier.Classify(raw.Attributes, raw.ReparseTag, isDirectory);
+                if (kind != EntryKind.File
+                        || !SizeProbe.IsDue(raw.AllocationSize, raw.EndOfFile, raw.Attributes, cloudOnly)
+                        || (raw.FileId != UInt128.Zero && _settled.Contains(raw.FileId)))
+                    continue;
+
+                int error = SizeProbe.Probe(io, LongPath.Child(folderPath, _reader.NameOf(raw)), out long size, out long onDisk);
+                if (ClassifyReadError(error, ct.IsCancellationRequested) == ReadOutcome.Cancelled)
+                    return false;
+                _dueProbes.Add(new DueProbe(k, error, size, onDisk));
+                if (raw.FileId != UInt128.Zero)
+                    _settled.Add(raw.FileId);
+            }
+            return true;
+        }
+
+        private void AddEntry(int parent, string parentPath, int index)
+        {
+            ref readonly RawEntry raw = ref _reader[index];
             bool isDirectory = (raw.Attributes & Kernel32.FILE_ATTRIBUTE_DIRECTORY) != 0;
             (EntryKind kind, bool cloudOnly) = EntryClassifier.Classify(raw.Attributes, raw.ReparseTag, isDirectory);
             ReadOnlySpan<char> name = _reader.NameOf(raw);
@@ -149,6 +214,10 @@ public static class Scanner
             }
 
             _files++;
+            DueProbe? due = null;
+            if (_nextDueProbe < _dueProbes.Count && _dueProbes[_nextDueProbe].Index == index)
+                due = _dueProbes[_nextDueProbe++];
+
             if (!_store.TryAddFileId(entry, out int charged))
             {
                 // A later name of a file already charged: it counts as a file and adds no bytes. The
@@ -156,21 +225,39 @@ public static class Scanner
                 _store.AddFlags(entry, EntryFlags.HardlinkDuplicate);
                 const EntryFlags settled = EntryFlags.SizeProbed | EntryFlags.ProbeFailed | EntryFlags.CloudOnly;
                 if (!cloudOnly && (_store.Flags(charged) & settled) == 0)
-                    ProbeAndCorrect(charged, LongPath.Child(parentPath, name));
+                {
+                    if (due is { } read)
+                        Correct(charged, read.Error, read.Size, read.OnDisk);
+                    else
+                        ProbeAndCorrect(charged, LongPath.Child(parentPath, name));
+                }
                 return;
             }
 
             _bytes += raw.EndOfFile;
             _bytesOnDisk += raw.AllocationSize;
-            if (SizeProbe.IsDue(raw.AllocationSize, raw.EndOfFile, raw.Attributes, cloudOnly))
-                ProbeAndCorrect(entry, LongPath.Child(parentPath, name));
+            if (due is { } probed)
+                Correct(entry, probed.Error, probed.Size, probed.OnDisk);
         }
 
-        // Replaces a charged record's listing sizes with the file's own, and the totals by the difference.
+        // The first repeat of a file whose charged record was never probed. An aborted probe changes
+        // nothing: the charged record stays as it would be had this name never been reached.
         private void ProbeAndCorrect(int charged, string path)
         {
+            int error = SizeProbe.Probe(io, path, out long size, out long onDisk);
+            if (ClassifyReadError(error, ct.IsCancellationRequested) != ReadOutcome.Cancelled)
+                Correct(charged, error, size, onDisk);
+        }
+
+        // Replaces a charged record's listing sizes with the file's own, and the totals by the difference,
+        // or flags it ProbeFailed and keeps the listing sizes.
+        private void Correct(int charged, int probeError, long size, long onDisk)
+        {
             _probes++;
-            if (SizeProbe.Probe(path, out long size, out long onDisk) != 0)
+            UInt128 fileId = _store.FileId(charged);
+            if (fileId != UInt128.Zero)
+                _settled.Add(fileId);
+            if (probeError != 0)
             {
                 _store.AddFlags(charged, EntryFlags.ProbeFailed);
                 _probeFailures++;
@@ -199,18 +286,17 @@ public static class Scanner
             Probes = _probes,
         };
 
-        private static unsafe int QueryAttributes(SafeFileHandle handle, out uint attributes)
+        private unsafe int QueryAttributes(SafeFileHandle handle, out uint attributes)
         {
             Kernel32.FILE_ATTRIBUTE_TAG_INFO info;
-            if (!Kernel32.GetFileInformationByHandleEx(handle, Kernel32.FileAttributeTagInfo, &info, (uint)sizeof(Kernel32.FILE_ATTRIBUTE_TAG_INFO)))
-            {
-                attributes = 0;
-                return Marshal.GetLastPInvokeError();
-            }
-            attributes = info.FileAttributes;
-            return 0;
+            int error = io.Query(handle, Kernel32.FileAttributeTagInfo, &info, (uint)sizeof(Kernel32.FILE_ATTRIBUTE_TAG_INFO));
+            attributes = error == 0 ? info.FileAttributes : 0;
+            return error;
         }
 
         public void Dispose() => _reader.Dispose();
     }
+
+    /// <summary>A probe run before its folder was appended: the listing index it belongs to and what it read.</summary>
+    private readonly record struct DueProbe(int Index, int Error, long Size, long OnDisk);
 }

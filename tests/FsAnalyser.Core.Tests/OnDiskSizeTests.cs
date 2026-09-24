@@ -60,7 +60,8 @@ public class OnDiskSizeTests
         writer.Flush(flushToDisk: true);
 
         RawEntry listed = Scans.Listing(tree.Root)["open.bin"];
-        Assert.Equal(0, SizeProbe.Probe(LongPath.ToExtended(path), out long endOfFile, out long allocationSize));
+        using var io = new SynchronousIoCancel(CancellationToken.None);
+        Assert.Equal(0, SizeProbe.Probe(io, LongPath.ToExtended(path), out long endOfFile, out long allocationSize));
 
         Assert.Equal(64 * MiB, endOfFile);
         Assert.Equal(endOfFile, listed.EndOfFile);

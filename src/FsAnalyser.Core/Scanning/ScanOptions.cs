@@ -1,6 +1,6 @@
 namespace FsAnalyser.Core.Scanning;
 
-/// <summary>The scanner's only test seam. The app never sets it.</summary>
+/// <summary>The scanner's test seam for a whole scan; the cancel guard has its own, per call. The app never sets it.</summary>
 internal sealed class ScanOptions
 {
     public static readonly ScanOptions Default = new();

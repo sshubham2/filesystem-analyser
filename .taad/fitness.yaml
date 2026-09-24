@@ -148,6 +148,23 @@ rules:
     including_comments: true
     because: 'Interop lives only in Native (O-003). Every Win32 call goes through Native, where paths are \\?\ and built by LongPath. Fixture-only interop lives in TestNative.cs.'
 
+  - name: 'FileSystemCallsGoThroughTheCancelGuard (*.cs)'
+    files: 'src/**/*.cs'
+    except_files:
+      - 'src/FsAnalyser.Core/Native/Kernel32.cs'
+      - 'src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs'
+    must_not_match:
+      - '(?m)\bKernel32\.(CreateFile|GetFileInformationByHandleEx)\s*\('
+    including_comments: true
+    because: 'Every Win32 filesystem call goes through SynchronousIoCancel (SL-024, M1), which brackets it so Cancel can interrupt it and discards its result once a cancel was issued. A call made anywhere else blocks with no way to cancel it, or passes a cancelled cloud listing (SUCCESS, nothing in it) off as an empty folder.'
+
+  - name: 'TheScannerMakesNoBclFileSystemCalls (*.cs)'
+    files: 'src/FsAnalyser.Core/Scanning/**/*.cs'
+    must_not_match:
+      - '(?m)\b(File|Directory|DirectoryInfo|FileInfo|DriveInfo)\.'
+    including_comments: true
+    because: 'A BCL file-system call on the scan thread would block with no guard around it, and Cancel could not free it (SL-024, M1). Path is not covered: GetFullPath and GetPathRoot are lexical and do no I/O.'
+
   # settled by SL-023
   - name: the window report reads the window, never rebuilds it from Core
     files: src/FsAnalyser.App/WindowReport.cs

@@ -11,6 +11,7 @@ internal static unsafe partial class Kernel32
     // Access rights
     public const uint FILE_LIST_DIRECTORY = 0x0001;
     public const uint FILE_READ_ATTRIBUTES = 0x0080;
+    public const uint THREAD_TERMINATE = 0x0001; // the right CancelSynchronousIo needs
 
     // Share modes and creation
     public const uint FILE_SHARE_ALL = 0x1 | 0x2 | 0x4; // read | write | delete
@@ -46,6 +47,7 @@ internal static unsafe partial class Kernel32
     public const int ERROR_NOT_SUPPORTED = 50;
     public const int ERROR_INVALID_PARAMETER = 87;
     public const int ERROR_DIRECTORY = 267;
+    public const int ERROR_OPERATION_ABORTED = 995;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct FILE_STANDARD_INFO
@@ -72,4 +74,33 @@ internal static unsafe partial class Kernel32
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool GetFileInformationByHandleEx(SafeFileHandle file, int infoClass, void* buffer, uint bufferSize);
+
+    [LibraryImport("kernel32.dll")]
+    public static partial uint GetCurrentThreadId();
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    public static partial SafeThreadHandle OpenThread(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint threadId);
+
+    /// <summary>Only SynchronousIoCancel's own canceller thread calls this: it can block.</summary>
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool CancelSynchronousIo(SafeThreadHandle thread);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool CloseHandle(nint handle);
+}
+
+/// <summary>
+/// A real handle to a thread, from OpenThread with that thread's id. Never the pseudo-handle that means
+/// "the calling thread": passed from another thread, that names the wrong thread.
+/// </summary>
+internal sealed class SafeThreadHandle : SafeHandleZeroOrMinusOneIsInvalid
+{
+    public SafeThreadHandle()
+        : base(ownsHandle: true)
+    {
+    }
+
+    protected override bool ReleaseHandle() => Kernel32.CloseHandle(handle);
 }
