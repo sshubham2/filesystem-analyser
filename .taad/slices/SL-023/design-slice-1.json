@@ -1,0 +1,359 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-023",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-24T13:28:53.611Z",
+ "head": "dc5d607a9d77b04b8f113e5a956499d988874c07",
+ "run_id": 833,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "One proposal, and it matches the measured ground. The survey found no seam of any kind: no flag, no console or file output, no App test project. The data (ScanResult and ScanTotals) is already in Core, so the only gap is an App-side seam. The spike `report-equals-final-rendered-window` ran this exact design against the real published exe: 55/55 reports showed the final ending and Core's totals, and a deliberately broken bytes format read 0, so the report reads the window and not the data. The guard allowed the launch and read sequence in both %TEMP% and the worktree. Engine-spawned nodes run at Medium integrity, so the exe needs no elevation. The App test project was only conditional: it passed with three constraints, and it reads a hosted MainWindow, not the shipped exe, which is the very thing the SL-020 reflection said validate could not read. The stdout spike also worked, but only on a throwaway app under SDK 9, never on the real app. `.taad/fitness.yaml` forbids Core from knowing the screen, so everything lives in the App. I kept the proposal's core and made five changes at the seams, listed in coherence_check. I added one small piece the proposal did not have (a reader script), and I marked it as uncontested.",
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The whole design is taken: the --report flag, the window/core split, delete-first atomic writing, and the exit-code contract. Five seam repairs were made (once-guard location, schema key naming, strict report-mode arguments, ASCII-only encoding, exit-70 vs stale-file consistency). One uncontested piece was added, the eng/read-window.ps1 reader. Only the practice proposal existed; no crossdomain or expert proposal was handed over."
+   }
+  ],
+  "components": [
+   {
+    "name": "Launch arguments and report mode",
+    "responsibility": "Keep the positional root exactly as it is. Add one option, `--report <file>`. In report mode, in this order: (1) `--report` without a value exits 2; (2) resolve the path with Path.GetFullPath, delete any existing file there and any `<file>.tmp`, and map an IO or UnauthorizedAccess failure to exit 3 before any scan starts; (3) any argument other than one positional root and `--report <file>`, or a missing root, exits 2. The folder picker never opens in report mode. (4) Register DispatcherUnhandledException so it marks the exception handled, deletes the target and .tmp best-effort, and calls Shutdown(70). (5) Subscribe to MainWindow.EndingShown with a handler that ignores every ending after the first, calls WindowReport, and then calls Shutdown(0) on success or Shutdown(3) on an IO failure. Without --report nothing changes.",
+    "lives_at": "src/FsAnalyser.App/App.xaml.cs",
+    "key_interactions": "Extends OnStartup (App.xaml.cs:9-13) and the existing CommandLine.RootArgument helper. The builder must find that helper first. If it sits in Core, the --report parsing goes in the App project and not beside it. The window is shown normally; only the App calls Shutdown."
+   },
+   {
+    "name": "MainWindow ending signal",
+    "responsibility": "Raise an internal `EndingShown` event as the last statement of ShowOutcome and of ShowProblem, every time an ending is shown, and keep the last ScanResult (null when ShowProblem ran before any result) in `internal ScanResult? LastResult`. No formatting, layout or wording line changes. MainWindow does not know that a report exists: it holds no reference to WindowReport and does not branch on report mode.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "key_interactions": "ShowOutcome (214-258) and ShowProblem (274-282) assign OutcomeTitle and OutcomeDetail and then raise the event. Only App.xaml.cs subscribes, and only in report mode. Architecture rule 2 fails the build if MainWindow starts knowing about the report."
+   },
+   {
+    "name": "WindowReport",
+    "responsibility": "On the UI thread, `await Dispatcher.Yield(DispatcherPriority.Loaded)` so layout and render have finished. Then read each named control's current `.Text` as shown, plus OutcomePanel's IsVisible and ActualHeight. Build the record (schema in the contracts), serialise it with System.Text.Json using the default encoder, write `<file>.tmp` and `File.Move(overwrite: true)` onto the target, and delete the .tmp on failure. Every `window` value comes from a control; every raw ScanResult number goes only into `core`. The file header comment documents the command line, the schema and the add-never-rename rule, so the tree slice finds them where it adds a field.",
+    "lives_at": "src/FsAnalyser.App/WindowReport.cs",
+    "key_interactions": "Called from the App's EndingShown handler. It reads the internal x:Name fields directly because it is in the same assembly, so it needs no FindName or InternalsVisibleTo. It never calls FormatSize or any other display helper. Architecture rule 1 enforces this. The file name is fixed because that rule's glob names it."
+   },
+   {
+    "name": "Window reader script",
+    "responsibility": "A thin script that runs the exe against one root and prints what came back. It asserts nothing and needs no SDK. It builds a fresh GUID report path under %TEMP%\\fsa-window and creates the folder. It embeds quotes around root and report path and doubles any trailing backslashes in the root, so a path with a space or a `C:\\` root survives Start-Process. It starts the exe with Start-Process -PassThru, uses WaitForExit(timeout), and on timeout kills only that process and reports TIMEOUT. It prints `EXIT <code>` and then the report JSON, or `NO REPORT` when the file is absent. It defaults to artifacts/publish/FsAnalyser.App.exe and fails clearly if the exe is missing.",
+    "lives_at": "eng/read-window.ps1",
+    "key_interactions": "Sits beside eng/dotnet.ps1. Validate publishes through `pwsh -File eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o artifacts/publish`, builds its own fixture tree and manifest, and then calls this script per root. This piece is composer-added and uncontested; see coherence_check."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "Launch: FsAnalyser.App.exe <root> --report <file>",
+    "kind": "cli",
+    "auth_model": "Runs as the ordinary user. An engine-spawned node's PowerShell was measured at Medium integrity with a Limited token (spike validate-child-not-elevated), and children inherit it. No admin, no grant.",
+    "error_cases": "Exit 0: the report was written, whatever the ending (the ending is in the file). Exit 2: `--report` has no value, an argument other than the root and `--report <file>` was given, or there is no root; the folder picker never opens. Exit 3: the stale-file delete or the final write failed (IO or access). Exit 70: an unhandled UI-thread exception. Invariant: every non-zero exit leaves no file at <file> (the target and its .tmp are deleted before any refusal that follows the parse, and on exit 70). An absent file always means no report exists for this run.",
+    "notes": "The exit code says whether a report exists, not how the scan ended. Validate reads the ending from the file. Without --report the app behaves exactly as before: it scans the positional root and stays open, or shows the picker when no root is given. A run that never reaches an ending blocks a plain `-Wait`, so the reader script bounds the wait."
+   },
+   {
+    "name": "Report file, schema 1 (JSON, ASCII)",
+    "kind": "cli",
+    "error_cases": "`core` is null when ShowProblem ran before any ScanResult existed. A reader that finds no file treats the run as having no ending and must not fall back to an older file, so each run uses a fresh GUID path.",
+    "notes": "Shape: {\"schema\":1, \"root\":<argument as given>, \"window\":{\"OutcomeTitle\":<Text>, \"OutcomeDetail\":[<Text split on \\r?\\n>], \"CountersText\":<Text>, \"OutcomePanel\":{\"visible\":bool, \"actualHeight\":number}}, \"core\":{\"status\",\"rootError\",\"files\",\"folders\",\"links\",\"bytes\",\"bytesOnDisk\",\"elapsedMs\"}|null}. Rules: every key under `window` is the x:Name of the control it was read from. Text controls hold their Text as shown, and OutcomePanel holds visibility. Later screens add keys and never rename or reformat one. The file is written with System.Text.Json's default encoder, so it is pure ASCII (non-ASCII becomes \\uXXXX) and reads identically in Windows PowerShell 5.1 and pwsh without an -Encoding switch. `window` is what validate checks. `core` only says which side is wrong when window and manifest disagree; it comes from the same process and is not an oracle. The independent oracle is the manifest of the tree validate built. OutcomeDetail's last line is the elapsed time and differs every run: do not compare it."
+   },
+   {
+    "name": "MainWindow.EndingShown / LastResult",
+    "kind": "event",
+    "notes": "An internal event with no payload, raised after the ending text has been assigned, every time ShowOutcome or ShowProblem completes. There is no once-guard in MainWindow, so a window that rescans keeps signalling each ending. `internal ScanResult? LastResult` holds the last result, or null after a ShowProblem that came before any result. The report handler in the App decides that only the first ending counts."
+   },
+   {
+    "name": "Reader: pwsh -File eng/read-window.ps1 -Root <dir> [-Exe <path>] [-TimeoutSec <n>]",
+    "kind": "cli",
+    "auth_model": "Guard: Start-Process, New-Item and Get-Content of a report were measured as allowed under %TEMP% and <worktree>\\artifacts (spike guard-allows-flagged-exe-run). `pwsh -File eng/...` is the form already used for eng/dotnet.ps1. Stop-Process on the launched PID (timeout path) and Wait-style timeouts were NOT measured against the guard.",
+    "error_cases": "Prints `EXIT <n>` followed by the JSON, or `NO REPORT`. On timeout it kills only its own process and prints TIMEOUT. It fails plainly when the exe is missing. It never reuses a report path.",
+    "notes": "Validate recipe: (1) publish through eng/dotnet.ps1, because the machine has no SDK 10 (~300 MB, ~36 s first time, allowed by Q-003). (2) Build a known tree under %TEMP% and keep its manifest. (3) Read it with this script. (4) Check exit 0, `root` equals the path passed, window.OutcomeTitle starts with the ending word, and the first two OutcomeDetail lines match the manifest. (5) Read a second run against a root that does not exist. A bare `& exe` returns before a WinExe exits, so it is not used."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "The seam is a `--report <file>` flag on the shipped exe. It writes a file, has no stdout mode, and adds no App test project.",
+    "reversibility": "cheap",
+    "rationale": "The SL-020 reflection requires reading the published exe's own window. The App test project reads a hosted MainWindow and passed its spike only under three conditions. The file design is the one spiked on the real published exe, at 55/55. The stdout spike used a throwaway app under SDK 9, and its bare `&` form returns early. Adding an App test project later would not conflict with this."
+   },
+   {
+    "decision": "`window` values are controls' Text as shown, read after `Dispatcher.Yield(DispatcherPriority.Loaded)`. Raw ScanResult numbers go only into a separate `core` section.",
+    "reversibility": "cheap",
+    "rationale": "This is what makes the report evidence about the window. The spike measured no mid-scan or zero reads, and a broken bytes format read 0. Loaded runs below Render, so layout and render have finished. Architecture rule 1 keeps the property from eroding."
+   },
+   {
+    "decision": "Absent-file protocol: delete the target and its .tmp before anything else can fail, write .tmp and then move it over the target, and delete the target on exit 70. Exit codes mean 'a report exists' (0/2/3/70), not how the scan ended.",
+    "reversibility": "cheap",
+    "rationale": "A missing report is safer than a stale one. The proposal said 'every non-zero exit leaves no file' but its exit-70 handler could fire after a good write, so the handler now deletes the target to keep that invariant true. The ending has one home, the rendered window in the file."
+   },
+   {
+    "decision": "EndingShown fires on every ending. The 'only the first ending counts' guard lives in the App's report handler, not in MainWindow.",
+    "reversibility": "cheap",
+    "rationale": "MainWindow can scan more than once (picker, rescan). A once-guard inside it would silently drop later endings for any future subscriber, including the tree slice. Keeping it in the handler leaves MainWindow's change to one event raise and one property."
+   },
+   {
+    "decision": "Report mode is strict: it takes exactly one positional root and `--report <file>`, and anything else exits 2. The picker never opens.",
+    "reversibility": "cheap",
+    "rationale": "Start-Process -ArgumentList does not quote array elements containing spaces (measured by the spike). An extra token would otherwise scan a truncated root and produce a plausible 'Could not read' report. An unattended run also must never wait on a dialog."
+   },
+   {
+    "decision": "Serialise with System.Text.Json's default encoder (pure ASCII). Schema keys are x:Names, add-never-rename, and visibility lives under `window.OutcomePanel`.",
+    "reversibility": "cheap",
+    "rationale": "Cheap now. It becomes expensive once a checker script that reads the schema is committed. ASCII output makes the file independent of BOM and code page, so Windows PowerShell 5.1 does not corrupt window text such as non-breaking spaces. The proposal's `outcomeShown` broke its own naming rule and is replaced by OutcomePanel. There is no trimming (recorded stack), so reflection serialisation is safe."
+   },
+   {
+    "decision": "In report mode the window is shown normally and the App closes it with Shutdown(code) after writing.",
+    "reversibility": "cheap",
+    "rationale": "The spike measured a normally shown window. A hidden or minimised window may skip the layout and render the report exists to observe. Shutdown(int) returning its exit code through a WinExe was measured (Shutdown(7)), though from a throwaway app."
+   },
+   {
+    "decision": "Add eng/read-window.ps1, a thin reader with no assertions, that runs the exe and prints EXIT plus the JSON or NO REPORT.",
+    "reversibility": "cheap",
+    "rationale": "Composer-added. The proposal kept the recipe in a header comment, which every validate would re-derive. The reader encodes four traps once: quoting for spaces and trailing backslashes, a fresh GUID path, a bounded wait, and ExitCode after WaitForExit. It is about 30 lines and safe to delete."
+   },
+   {
+    "decision": "No xUnit App test project. The counting-rule suite stays in Core.Tests, and the App window is checked by published-exe runs through the reader.",
+    "reversibility": "cheap",
+    "rationale": "The testing constraint puts strict process on the counting rules, and this slice does not touch the scanner. The App-project spike was conditional and cannot read the shipped exe. The cost is that no engine-run unit test discharges the App cases; validate's exe runs do, and the case matrix says so."
+   },
+   {
+    "decision": "The report is a diagnostic written to disk only when `--report` is passed. It holds totals and the root, never a file listing, and is never written in a normal launch. I read the recorded storage line ('nothing is saved to disk') as covering the product's scan data.",
+    "reversibility": "cheap",
+    "rationale": "The file form was spiked on the real exe. A stdout form would avoid touching disk, but it was proven only on a throwaway app. See open_questions."
+   }
+  ],
+  "architecture_rules": [
+   {
+    "name": "the window report reads the window, never rebuilds it from Core",
+    "files": "src/FsAnalyser.App/WindowReport.cs",
+    "must_not_match": [
+     "\\bFormat[A-Z]\\w*\\s*\\(|string\\.Format\\s*\\(",
+     "\\$\"[^\"]*\\{[^}]*\\.(Bytes|BytesOnDisk|Files|Folders|Links)\\b",
+     "\\.(Bytes|BytesOnDisk|Files|Folders|Links)\\.ToString\\("
+    ],
+    "because": "Validate trusts `window` as evidence of what the shipped window shows. If WindowReport calls a display helper or builds text from ScanResult, a wrong or blank control still reports correct numbers and the slice's evidence is worthless. The spike's broken-bytes-format proof does not repeat at validate, so this rule stands in for it.",
+    "except_files": []
+   },
+   {
+    "name": "the main window does not know it is being observed",
+    "files": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "must_not_match": [
+     "\\bWindowReport\\b",
+     "\\bif\\s*\\([^)]*[Rr]eport",
+     "\\b[Rr]eport(Mode|Path)\\b"
+    ],
+    "because": "The report is only evidence about the normal window if rendering is identical with and without --report. If MainWindow references the report or branches on report mode, the observed window is no longer the one a person sees, and a normal launch could gain report behaviour without the App's report-mode guards (delete-first, exit codes). MainWindow raises EndingShown and nothing more.",
+    "except_files": []
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "read the ending and totals from the published exe",
+    "shape": "a tree that finishes scanning inside one DispatcherTimer interval (about 20 files, 4 folders)",
+    "why": "The timer updates only CountersText. A read before layout and render shows blanks or zeros. The spike passed 55/55 here, so this is the regression guard. Assert exit 0, OutcomePanel visible, title 'Finished: <root>', and the first two OutcomeDetail lines against the manifest."
+   },
+   {
+    "behaviour": "read the ending and totals from the published exe",
+    "shape": "a tree large enough for many timer ticks before the ending (thousands of files in nested folders)",
+    "why": "The spike used only 20-file trees, where no tick ever ran mid-scan. A report taken from the last tick's CountersText, or before ShowOutcome, would pass every small-tree run and fail here."
+   },
+   {
+    "behaviour": "read the links and hardlink lines from the window",
+    "shape": "a tree holding a junction and a hardlinked pair of files",
+    "why": "Every measured spike tree had 0 links. The 'N links not followed' line and the once-counted hardlink figure have never been read from the window as non-zero. Compare the window text with the manifest."
+   },
+   {
+    "behaviour": "read the not-Finished ending",
+    "shape": "the root does not exist",
+    "why": "This exercises the 'Could not read' branch. Expect exit 0 and a file whose title is not 'Finished', a non-null core.rootError, and `root` equal to the path passed. The exit code must not encode the ending."
+   },
+   {
+    "behaviour": "report when ShowProblem runs before any ScanResult",
+    "shape": "LastResult is null, so `core` is null",
+    "why": "A null dereference in WindowReport would surface as exit 70 with no file instead of a report. Nothing measured shows which outside input reaches ShowProblem before a result. The builder must find a trigger, or say plainly that none is reachable from outside and confirm the null path by reading the code."
+   },
+   {
+    "behaviour": "read the Stopped ending",
+    "shape": "the scan is stopped by a person clicking Stop",
+    "material": false,
+    "why": "Judged not worth a test. No person is present in report mode, and the ending goes through the same ShowOutcome and EndingShown path as the others. The next slice may disagree with this judgement."
+   },
+   {
+    "behaviour": "launch with a fixture path containing a space",
+    "shape": "the root path has a space and is passed via Start-Process without embedded quotes",
+    "why": "The unquoted array splits into two tokens. Report mode must exit 2 and leave no file, not scan a truncated root and write a plausible 'Could not read' report. The reader script must quote correctly, and validate must check that `root` equals the path it passed."
+   },
+   {
+    "behaviour": "never leave a stale report",
+    "shape": "a report file from an earlier run already sits at the target path, and this run ends without a report (for example, no root)",
+    "why": "Without delete-first, validate would read the earlier run's passing report. Expect exit 2 and no file at the path."
+   },
+   {
+    "behaviour": "fail cleanly when the report cannot be written",
+    "shape": "the report path's parent folder does not exist, or the path is an existing directory",
+    "why": "Both the startup delete and the final move can throw IOException or UnauthorizedAccessException. They must map to exit 3 with no crash dialog, no left-over .tmp, and no waiting on a scan that will be discarded."
+   },
+   {
+    "behaviour": "round-trip window text through the report file",
+    "shape": "a root name with non-ASCII characters (é, 日本) and window text containing a non-breaking space or dash",
+    "why": "The file must be pure ASCII escapes so that Windows PowerShell 5.1 and pwsh both read the same text. A BOM or code-page mismatch would silently corrupt the very text validate compares."
+   },
+   {
+    "behaviour": "launch without --report",
+    "shape": "a positional root only, no flag",
+    "why": "Behaviour must be unchanged: the window opens and stays open, no file is written, and EndingShown has no subscriber. Verify by diff review that no rendering line moved in ShowOutcome and ShowProblem, plus one launch still alive after its scan ended. This guards the observer-effect invariant."
+   },
+   {
+    "behaviour": "survive an unhandled UI-thread exception in report mode",
+    "shape": "an exception escapes on the dispatcher thread",
+    "material": false,
+    "why": "Judged not worth a test. The handler is three lines (delete target, Shutdown(70)) and no outside input is known to trigger it without a code edit. Code review reads it, and a later slice that finds a trigger can add one."
+   },
+   {
+    "behaviour": "launch with a root that ends in a backslash",
+    "shape": "a drive root such as `C:\\` or a folder path ending in `\\`",
+    "why": "A backslash before the closing quote of a quoted argument escapes it, so the App would receive `C:\"...`. The reader must double trailing backslashes. SL-020's own validate scanned C:\\, so this is the primary real shape. Test it with a temp folder path plus a trailing backslash, not a full-drive scan."
+   },
+   {
+    "behaviour": "never wait on a person in report mode",
+    "shape": "`--report` with no value, or a report path with no root",
+    "why": "The folder picker would block `-Wait` forever. Both must exit 2 without any window waiting."
+   }
+  ],
+  "stack_chosen": [
+   {
+    "area": "testing",
+    "choice": "App window state is verified by the published exe's own `--report <file>` output (schema 1, JSON) read through eng/read-window.ps1 under PowerShell. There is no App test project. xUnit stays for Core.Tests only.",
+    "why": "The recorded stack names only xUnit, and it cannot read the shipped exe's window. This is the project-scope way later slices (the tree slice especially) verify screens, and it is stated here because later slices are handed the constraints and the architecture but not this design."
+   }
+  ],
+  "whats_new": [
+   "`--report <file>` option and strict report-mode argument handling in App.xaml.cs, with exit codes 0/2/3/70",
+   "DispatcherUnhandledException handler, active in report mode only",
+   "internal `EndingShown` event and `LastResult` property on MainWindow",
+   "src/FsAnalyser.App/WindowReport.cs: reads control Text after Dispatcher.Yield(Loaded) and writes schema 1 JSON atomically",
+   "Report schema 1 with the naming rule 'keys are x:Names; add, never rename'",
+   "eng/read-window.ps1: a thin reader that bounds the wait, quotes arguments and prints EXIT plus the JSON or NO REPORT",
+   "Two architecture rules appended to the existing .taad/fitness.yaml",
+   "The validate recipe for reading the shipped window"
+  ],
+  "whats_reused": [
+   "ScanResult and ScanTotals in Core (ScanResult.cs:21-48), untouched, feeding only the `core` section",
+   "The x:Name controls OutcomeTitle, OutcomeDetail, CountersText and OutcomePanel, whose text ShowOutcome and ShowProblem already assign",
+   "CommandLine.RootArgument and OnStartup (App.xaml.cs:9-13), extended, not replaced",
+   "eng/dotnet.ps1 for the SDK 10 bootstrap and publish (Q-003 allows the download)",
+   "The publish settings in FsAnalyser.App.csproj:11-15 (single-file, self-contained, win-x64), unchanged",
+   "The existing .taad/fitness.yaml rule TheScannerCoreDoesNotKnowAboutTheScreen, which already keeps every piece of this out of Core",
+   "Spike results: report-equals-final-rendered-window, guard-allows-flagged-exe-run, validate-child-not-elevated, winexe-stdout-captured"
+  ],
+  "coherence_check": "One proposal, so there is no composition across proposals to check. Nothing in this design has yet survived a disagreement between designers, and the first thing to argue with is that the whole design rests on a single designer's reading of the spikes. What I did instead: I checked the proposal's own parts against each other and against the measurements, and repaired five seams. (1) Its exit-code contract said 'every non-zero exit leaves no file', but its exit-70 handler could fire after a successful write. The handler now deletes the target and the .tmp, so the invariant holds. (2) Its schema said 'each key under window is an x:Name that holds text', then put a lower-case `outcomeShown` bool in it. Visibility now lives under `window.OutcomePanel`. (3) A once-guard inside MainWindow would drop later endings for any future subscriber, since MainWindow can scan more than once. The guard moved to the App's handler. (4) The proposal named the Start-Process quoting trap and then left root-vs-arguments unguarded, so report mode now rejects extra arguments (exit 2), and root is recorded 'as given' for validate to compare. (5) Serialisation now pins the default encoder for an ASCII-only file, because Windows PowerShell 5.1 would otherwise corrupt non-ASCII window text. The eng/read-window.ps1 reader is a composer addition that no proposal or spike contested; it is about 30 lines, encodes traps the proposal only listed as risks, and can be dropped without touching any other component. Two things stay unproven. First, I found the proposal's dismissal of stdout weaker than stated: the spike showed `& exe | Out-String` waits and captures, but only on a throwaway app under SDK 9, so file stays chosen because it was spiked on the real exe. Second, the recorded storage line says 'nothing is saved to disk', and this design writes a file when asked; I read that as covering scan data and flagged it below. The invariants of the transferred pattern hold as recorded, except two 'must-verify' items (no observer effect; window renders in validate's session). Architecture rule 2 and diff review cover the first. Rules go into the existing .taad/fitness.yaml by appending, per Q-010, and this slice does not create that file. No answered question conflicts with this design and no measurement was contradicted. Nothing here has run a single test: the machine has no SDK 10, so build and tests were never executed by any stage.",
+  "cross_domain_transfer": {
+   "source_domain": "Headless browsers and render-tree dumps (Chromium --dump-dom / --screenshot)",
+   "pattern": "A flag makes the shipped binary serialise what it rendered, at a defined 'settled' moment, into an artefact and then exit. Checking runs against that artefact instead of scraping the live UI from another process.",
+   "transfer_found": true,
+   "rationale": "It fits exactly. The guard forbids inspecting the window from outside through UIA, while the process's own dispatcher can read its own controls freely. It also keeps what is read the shipped exe, which an in-process test host cannot. The two lessons that carry over are to dump the rendered artefact (control Text), not the model (ScanResult), and to dump only after rendering has settled.",
+   "invariants": [
+    {
+     "precondition": "The dump reads the rendered output, not the data model behind it.",
+     "status": "holds",
+     "evidence": "Spike report-equals-final-rendered-window: with the bytes format in OutcomeDetail deliberately broken, the report showed bytes as 0 while Core's value was correct. Architecture rule 1 now enforces it in code."
+    },
+    {
+     "precondition": "Rendering has settled before the dump is taken.",
+     "status": "holds",
+     "evidence": "The same spike: 55/55 runs showed the final ending and totals after Dispatcher.Yield(Loaded), and none showed a mid-scan timer update or zeros. Only 20-file trees were used, hence the many-tick case."
+    },
+    {
+     "precondition": "The caller waits for the process to exit and can see the exit code.",
+     "status": "holds",
+     "evidence": "Spike winexe-stdout-captured: Start-Process -Wait -PassThru reported HasExited=True and ExitCode=7, and bare `&` returned early, so the reader script never uses bare `&`. That spike used a throwaway app under SDK 9."
+    },
+    {
+     "precondition": "The dump flag does not change what is rendered (no observer effect).",
+     "status": "must-verify",
+     "evidence": "By design ShowOutcome and ShowProblem gain only an event raise. Architecture rule 2 forbids MainWindow from knowing about the report. Code review must confirm that no formatting or layout line moved in MainWindow.xaml.cs:214-282, and one launch without --report must stay unchanged."
+    },
+    {
+     "precondition": "The window renders in the session where validate runs.",
+     "status": "must-verify",
+     "evidence": "The spikes ran in interactive session 1 from engine-spawned nodes. The validate node itself was not separately reached. The first validate run settles it."
+    }
+   ]
+  },
+  "prior_art": [
+   {
+    "pattern": "UI Automation harness (`winapp ui`) asserting on AutomationIds is the mainstream agent route for testing Windows desktop UIs. It is the route the guard refused here, so this slice replaces it and does not adopt it.",
+    "where": "https://github.com/microsoft/win-dev-skills/blob/main/plugins/winui/skills/winui-ui-testing/SKILL.md",
+    "authority": "official",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Reading a running window's visual tree from outside, as JSON, by HWND or PID. It is the cross-process alternative, larger than needed because the app can report its own window.",
+    "where": "https://github.com/asklar/lvt",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-02-20"
+   },
+   {
+    "pattern": "Microsoft's official UI test tooling (UIA Verify) is built on UI Automation, so there is no official non-UIA way to read a window from outside the process.",
+    "where": "https://learn.microsoft.com/en-us/windows/win32/winauto/ui-automation-verify",
+    "authority": "official",
+    "basis": "cited",
+    "source_date": "2025-07-14"
+   },
+   {
+    "pattern": "The app writes its own rendered state and exits, as in headless browser flags like --dump-dom and --screenshot, instead of an outside tool scraping the window.",
+    "where": "Chromium headless mode (--dump-dom)",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Wait for render by yielding the WPF dispatcher at a priority below Render (Loaded, ContextIdle, ApplicationIdle) before reading controls. This avoids stale text or zero ActualHeight.",
+    "where": "WPF Dispatcher / DispatcherPriority, the long-standing 'DoEvents' pattern",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "A GUI-subsystem exe has no console. Stdout reaches a caller only when redirected, and a bare `&` in PowerShell returns before a WinExe exits. This is the trap behind choosing a file as the primary output.",
+    "where": "Win32 PE subsystem behaviour, .NET WinExe",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Write to a temporary file and rename it over the target so a reader never sees a partial file. Deleting the target first means an unfinished run leaves nothing behind instead of the last run's result.",
+    "where": "General atomic file publication (File.Move with overwrite / MoveFileEx)",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "System.Text.Json's default JavaScriptEncoder escapes non-ASCII characters as \\uXXXX, so default-encoded output is ASCII and independent of BOM or code page.",
+    "where": "System.Text.Json character encoding customisation",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Windows command-line parsing treats a backslash run before a double quote as an escape, so a quoted argument ending in a backslash (`\"C:\\dir\\\"`) swallows the closing quote. Trailing backslashes must be doubled.",
+    "where": "CommandLineToArgvW / MSVCRT argv parsing rules",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "decidable_disagreements": [
+   {
+    "question": "Does a WPF window actually render, and does the report get written, in the process tree and session where the validate node runs its PowerShell?",
+    "positions": "Renders: the spikes ran the real published exe from engine-spawned nodes in interactive session 1 and got 55/55 reports. Does not render: the validate node's own session was never separately reached, so a non-interactive session would show no WPF window at all. Nobody has argued the second position; it is the one unmeasured link.",
+    "would_force_resynthesis": true
+   }
+  ],
+  "taste_disagreements": [
+   "File output versus stdout output. Both were measured to work (`& exe | Out-String` waits and captures; Start-Process redirection also works), and only the file form was spiked on the real exe. The file is chosen for that reason, but stdout would leave nothing on disk and remove the stale-file, atomic-write and exit-3 machinery.",
+   "Where the once-only ending guard lives: in MainWindow (the proposal) or in the App's report handler (chosen). This is boundary placement.",
+   "A committed reader script (composer-added) versus the recipe living only as a header comment in WindowReport.cs and being re-derived by each validate run.",
+   "Keeping the `core` section beside `window`. It helps diagnose which side is wrong, but it invites a lazy checker to verify Core instead of the window. It is kept and labelled as not an oracle.",
+   "WindowReport as its own class versus inlining the reading in App.xaml.cs. The separate file lets architecture rule 1 name one file, but it is a layering choice."
+  ],
+  "open_questions": [
+   "The recorded storage line says 'nothing is saved to disk'. This design writes a small JSON diagnostic file, but only when `--report <file>` is passed, and it holds totals and the root, never a listing. I built the file form on the reading that the line covers scan data and not an opt-in diagnostic. If the person reads it as covering any disk write, the report must move to stdout, which changes the launch contract, and the exit-3 and delete-first machinery drops out."
+  ]
+ }
+}
