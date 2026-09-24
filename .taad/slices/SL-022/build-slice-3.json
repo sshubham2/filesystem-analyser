@@ -1,0 +1,65 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-022",
+ "stage": "build-slice",
+ "attempt": 3,
+ "at": "2026-09-24T12:53:06.214Z",
+ "head": "8eb711ac7461960d98e810eff6cad8faa16c7bb9",
+ "run_id": 816,
+ "summary": "Attempt 3 fixes O-008 by changing only the header comments of `.taad/fitness.yaml`. No rule, glob, pattern or except_files entry changed: the parsed YAML is identical to HEAD's, 8 rules. The old claim that Fitness reports every violation xUnit reports is gone. The header now says ArchitectureRulesTests (xUnit) is the authority, and Fitness is a quicker copy that can pass where xUnit fails. The known differences follow as examples, not a complete list, and the four new ones were measured on a scratch copy before I wrote them down. Line 48 now says Fitness prunes only a fixed list of directory names, such as bin/, obj/ and packages/. The worktree still reports '8 rule(s) checked against 33 file(s) read. Every declared rule holds.'",
+ "payload": {
+  "status": "complete",
+  "summary": "Attempt 3 fixes O-008 by changing only the header comments of `.taad/fitness.yaml`. No rule, glob, pattern or except_files entry changed: the parsed YAML is identical to HEAD's, 8 rules. The old claim that Fitness reports every violation xUnit reports is gone. The header now says ArchitectureRulesTests (xUnit) is the authority, and Fitness is a quicker copy that can pass where xUnit fails. The known differences follow as examples, not a complete list, and the four new ones were measured on a scratch copy before I wrote them down. Line 48 now says Fitness prunes only a fixed list of directory names, such as bin/, obj/ and packages/. The worktree still reports '8 rule(s) checked against 33 file(s) read. Every declared rule holds.'",
+  "files": [
+   {
+    "path": ".taad/fitness.yaml",
+    "change": "modified",
+    "why": "O-008, header comments only. I replaced the parity sentence with 'xUnit is the authority; these rules can pass where it fails' and listed the known differences as examples: matches that span a line break, files that are not UTF-8, files over 2 MB, folders the engine skips by name (SKIP_DIRS), and case in exempted file names. I also reworded the prune remark in the rooted-glob rule."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-008",
+    "done": true,
+    "how": "The sentence 'In a UTF-8 file under 2 MB … every violation xUnit reports is also reported here in the same file' is deleted. No sentence in the header now says Fitness catches everything xUnit catches; a grep for 'every violation', 'also reported here' and 'bin/ and obj/ by name' finds nothing. Lines 13-15 now say xUnit is the authority and that these rules can pass where it fails, with the differences given as examples and not a complete list:\n- a match spanning a line break\n- UTF-16/UTF-32 files\n- files over 2 MB\n- folders skipped by name at any depth (SKIP_DIRS: packages/, dist/, target/, node_modules/, venv/, .venv/, .vs/, .idea/, .next/, __pycache__/, .git/ and more), against xUnit skipping only bin/ and obj/\n- case in exempted file names (except_files ignore case, xUnit's .Except does not).\nThe old line 38 now reads '(it prunes only a fixed list of directory names, such as bin/, obj/ and packages/)'. Before writing, I measured each difference with divergences.ps1 on the built scratch copy, running the engine's fitness.check and xUnit --no-build:\n- D1 src/FsAnalyser.Core/packages/Planted.cs and D2 dist/Planted.cs: Fitness passes (still 33 files read), xUnit fails two Facts at :1 and :2.\n- D3 EntryClassifier.cs renamed to Entryclassifier.cs: Fitness passes, xUnit fails OnlyTheClassifierReadsTheReparseAttribute at :26.\n- D4 TestNative.cs renamed to testNative.cs: Fitness passes, xUnit fails InteropLivesOnlyInNative at :12.\n- D5 `using` / `System.Windows;` split across two lines: Fitness fails at Scanner.cs:6 and xUnit passes. That is the opposite direction, and the header says so.\nThe baseline and the tree after each undo passed on both, and the hashes of the restored files matched the clean copy."
+   }
+  ],
+  "cases": [],
+  "deviations": [
+   "The bullet for rules written across more than one line is worded by what I measured. A match spanning a line break makes Fitness fail where xUnit passes, the opposite of the 'can pass where xUnit fails' framing. The bullet says which way it goes, and does not list it as another case where Fitness is weaker.",
+   "Unchanged from attempt 1: the csproj half of TheScannerCoreDoesNotKnowAboutTheScreen uses `src/FsAnalyser.Core/**/*.csproj`, because the engine's `_glob` lets `**/` match zero directories."
+  ],
+  "not_built": [
+   "The `cases` array is empty, as in attempts 1 and 2. The design puts no fitness test in the .NET project, and the shapes are measured by the scratch harness under %TEMP%\\sl022-fitness.",
+   "No engine-side fix is built for the listed differences: encoding detection, the 2 MB skip, pruning by .gitignore instead of by name, and case-sensitive exemptions. They are in taad_v3, outside this repo and this slice. The header says so."
+  ],
+  "follow_ups": [
+   "Engine (taad_v3), taad3/fitness.py:325-327 and :408: prune by .gitignore, or report files a covered glob reaches that were skipped by name, instead of skipping packages/, dist/ and the rest without a word.",
+   "Engine (taad_v3), taad3/fitness.py:216: an option for case-sensitive except_files globs, so exemptions can match an ordinal .Except twin exactly.",
+   "Engine (taad_v3), carried over from attempt 2: encoding detection or `utf-8-sig` at fitness.py:422, and reporting of files over MAX_CONTENT_BYTES at :420."
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File %TEMP%\\sl022-fitness\\divergences.ps1 -Worktree <worktree>",
+    "outcome": "passed",
+    "note": "Measures the differences the header names, on the built scratch copy (its yaml is hash-identical to the worktree's attempt-2 file).\n- Baseline: Fitness pass on 33 files, xUnit 5/5.\n- D1 packages/ and D2 dist/: Fitness passes, xUnit fails Interop and Screen at :1 and :2.\n- D3 Entryclassifier.cs: Fitness passes, xUnit fails Reparse at :26.\n- D4 testNative.cs: Fitness passes, xUnit fails Interop at :12.\n- D5 two-line using: Fitness fails at Scanner.cs:6, xUnit passes.\n- After undo: both pass, and the restored files are hash-equal to the clean copy with their original names."
+   },
+   {
+    "command": "python -c \"yaml.safe_load(worktree .taad/fitness.yaml) == yaml.safe_load(git show HEAD:.taad/fitness.yaml)\"",
+    "outcome": "passed",
+    "note": "True, 8 rules, so no rule, glob, pattern or exemption changed. git diff -U0 shows only `#` comment lines. The file has 0 non-ASCII bytes."
+   },
+   {
+    "command": "python -m taad3.fitness --tree . --op rules / --op check  (C:\\Users\\sshub\\.claude\\.venv\\Scripts\\python.exe; PYTHONPATH=C:\\Users\\sshub\\projets\\taad_v3\\backend, PYTHONDONTWRITEBYTECODE=1, PYTHONUTF8=1, TAAD3_HOME=%TEMP%\\sl022-fitness\\home)",
+    "outcome": "passed",
+    "note": "Rules: '8 rule(s) in .taad\\fitness.yaml'. Check: '8 rule(s) checked against 33 file(s) read. Every declared rule holds.' with no MATCHED NO FILES section."
+   },
+   {
+    "command": "git check-ignore -v .taad/fitness.yaml",
+    "outcome": "passed",
+    "note": "Exit 1, no match, so the file is still not ignored."
+   }
+  ],
+  "sessions": []
+ }
+}
