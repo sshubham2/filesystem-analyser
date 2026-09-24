@@ -56,7 +56,8 @@ public class RootTests
     [InlineData("C:folder")]
     public void ARelativeOrEmptyRootThrows(string root)
     {
-        Assert.Throws<ArgumentException>(() => Scanner.Scan(root, new ScanProgress(), CancellationToken.None));
+        var e = Assert.Throws<ArgumentException>(() => Scanner.Scan(root, new ScanProgress(), CancellationToken.None));
+        Assert.Equal("root", e.ParamName); // the window shows 'Could not read' only for this ParamName
     }
 
     [Fact]

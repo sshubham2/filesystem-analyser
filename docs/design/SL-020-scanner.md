@@ -39,7 +39,9 @@ well as ERROR_NO_MORE_FILES. A volume root has no "." or "..", so an empty FAT o
 this way. Confirming it on a real stick is left to validate.
 
 **Main window.** It has **four** endings: Finished, Stopped, Could not read, and **Scan failed** (O-008).
-Scan failed covers any exception other than the ArgumentException for a relative or empty path. It
+Scan failed covers any exception other than the ArgumentException for a relative or empty path, which
+the window recognises by `ParamName == "root"` (O-015). Any other ArgumentException, including an
+ArgumentOutOfRangeException from the store, is a bug and gets Scan failed. It
 shows the exception type and message and re-enables the pickers. On a drive-root scan, Finished and
 Stopped also show the volume's used space (DriveInfo TotalSize − TotalFreeSpace) and how much of it
 the scan did not see (O-013). The optional path argument goes through `CommandLine.RootArgument`

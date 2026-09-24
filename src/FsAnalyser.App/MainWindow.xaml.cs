@@ -139,9 +139,11 @@ public partial class MainWindow : Window
                 },
                 CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
-        catch (ArgumentException e)
+        catch (ArgumentException e) when (e.ParamName == "root")
         {
-            rejected = e.ParamName is null ? e.Message : e.Message.Replace($" (Parameter '{e.ParamName}')", "");
+            // Only the root's own rejection (empty or relative, from LongPath.NormalizeRoot). Any other
+            // ArgumentException, such as an index out of range inside the store, is a bug: Scan failed.
+            rejected = e.Message.Replace(" (Parameter 'root')", "");
         }
         catch (Exception e)
         {

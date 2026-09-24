@@ -95,7 +95,8 @@ public class OnDiskSizeTests
     /// <summary>
     /// The probe guard. The listing says 0 allocated for all of the first four; only the WOF files are
     /// probed. An all-hole sparse file really has nothing allocated, OFFLINE stands in for a cloud
-    /// placeholder that must never be opened, and a resident file takes no clusters.
+    /// placeholder that must never be opened (at 1 MiB against the WOF rule, at 64 MiB against the
+    /// large-file rule), and a resident file takes no clusters.
     /// </summary>
     [Fact]
     public void AFileWhoseListingSaysNothingIsAllocatedIsProbedOnlyWhenItIsWof()
@@ -107,6 +108,10 @@ public class OnDiskSizeTests
         string offline = tree.TextFile("offline.txt", 1 * MiB);
         TempTree.WofCompress(offline); // 0 allocated and not sparse: a WOF suspect but for OFFLINE
         TempTree.AddAttributes(offline, FileAttributes.Offline);
+        // The large-file rule's own cloud guard: a placeholder listed at 64 MiB with nothing allocated,
+        // like an online-only OneDrive file. Sparse, so only the large-file branch could probe it.
+        string offlineLarge = tree.SparseFile("offline-large.bin", 64 * MiB);
+        TempTree.AddAttributes(offlineLarge, FileAttributes.Offline);
         tree.File("resident.bin", 200);
         string denied = tree.TextFile("wof-denied.txt", 1 * MiB);
         TempTree.WofCompress(denied);
@@ -120,6 +125,9 @@ public class OnDiskSizeTests
                 $"precondition: {name} should be listed as 0 allocated, but shows {listed.AllocationSize} of {listed.EndOfFile}");
         }
         Assert.NotEqual(0u, listing["offline.txt"].Attributes & Offline);
+        RawEntry large = listing["offline-large.bin"];
+        Assert.True(large.EndOfFile >= SizeProbe.LargeFileThreshold && (large.Attributes & Offline) != 0,
+            $"precondition: offline-large.bin should be listed OFFLINE at 64 MiB or more, but shows {large.EndOfFile} with 0x{large.Attributes:X}");
 
         ScanResult result = Scans.Run(tree.Root);
 
@@ -141,6 +149,11 @@ public class OnDiskSizeTests
         int cloud = Scans.Find(result, offline);
         Assert.Equal(EntryFlags.CloudOnly, store.Flags(cloud)); // never opened
         Assert.Equal(0, store.OnDisk(cloud));
+
+        int cloudLarge = Scans.Find(result, offlineLarge);
+        Assert.Equal(EntryFlags.CloudOnly, store.Flags(cloudLarge)); // CloudOnly, not SizeProbed: never opened
+        Assert.Equal(64 * MiB, store.Size(cloudLarge));
+        Assert.Equal(0, store.OnDisk(cloudLarge));
 
         int resident = Scans.Find(result, tree.PathOf("resident.bin"));
         Assert.Equal(200, store.Size(resident));

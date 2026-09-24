@@ -54,7 +54,9 @@ public class ScanStoreTests
 
         Assert.Throws<ArgumentOutOfRangeException>(() => store.Name(1).Length);
         Assert.Throws<ArgumentOutOfRangeException>(() => store.Parent(-1));
-        Assert.Throws<ArgumentOutOfRangeException>(() => store.GetPath(1));
+        var e = Assert.Throws<ArgumentOutOfRangeException>(() => store.GetPath(1));
+        // Not "root": an indexing bug during a scan must reach the window's Scan failed ending, not Could not read.
+        Assert.NotEqual("root", e.ParamName);
     }
 
     [Fact]
