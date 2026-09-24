@@ -142,12 +142,10 @@ public partial class MainWindow : Window
         Exception? failure = null;
         try
         {
-            (result, volumeInUse) = await Task.Factory.StartNew(() =>
-                {
-                    ScanResult scan = Scanner.Scan(path, progress, token);
-                    return (scan, VolumeInUse(scan));
-                },
+            result = await Task.Factory.StartNew(() => Scanner.Scan(path, progress, token),
                 CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            ScanResult scan = result;
+            volumeInUse = await UnlessCancelled(() => VolumeInUse(scan), token);
         }
         catch (ArgumentException e) when (e.ParamName == "root")
         {
@@ -178,6 +176,25 @@ public partial class MainWindow : Window
             ShowProblem($"Could not read {path}", rejected!);
         else
             ShowOutcome(result, volumeInUse);
+    }
+
+    // The volume query goes to the volume like the scan did, outside the scanner's cancel guard: on a
+    // mapped drive whose server stopped answering it can wait as long as the SMB client does (21 to 66 s
+    // measured). So it is never started once Cancel was requested, and a Cancel during it ends the wait,
+    // not the query, which finishes unobserved on its own thread. The ending then omits the volume line.
+    private static async Task<long?> UnlessCancelled(Func<long?> query, CancellationToken token)
+    {
+        if (token.IsCancellationRequested)
+            return null;
+        Task<long?> running = Task.Factory.StartNew(query, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        try
+        {
+            return await running.WaitAsync(token);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            return null;
+        }
     }
 
     // For a scan of a whole drive, the volume's own count of bytes in use, so the outcome can say how

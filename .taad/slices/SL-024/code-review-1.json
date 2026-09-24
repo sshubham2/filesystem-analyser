@@ -1,0 +1,258 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-024",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-09-24T17:34:27.661Z",
+ "head": "ae2046712ca3c8fd72b9f4350c181dbb90bd56e0",
+ "run_id": 887,
+ "summary": "I reviewed the whole slice (0320a0d..HEAD), not just attempt 3. The build had 0 warnings. The default suite passed 117/117, and the cancel-related classes passed 33/33 on three repeated runs. I also ran the opt-in TEST-NET-1 share tests: both passed, in 535 ms and 1 s, so C-001 and C-012 are really exercised. Fitness reports all 14 declared rules hold.\n\nThe Core mechanism matches the design and the accepted findings:\n- SynchronousIoCancel is the single guarded seam: OpenDirectory, OpenForAttributes, Query and Close.\n- Enter publishes InCall and then re-checks the token. The canceller CASes InCall to CancelIssued and resends every 25 ms on a background thread. Dispose joins the canceller before closing the thread handle.\n- The result is settled by recorded intent, not by return code. Aborted handles are closed on the pool.\n- IsDue probes run before the append. The owner-thread check throws in every build.\n\nI walked the Enter/Exit/canceller orderings and found no window where a stray CancelSynchronousIo lands on unguarded scan-thread I/O before Dispose's join. Every material case-matrix row has a test that feeds its shape:\n- The k-th-call sweep asserts that big needed more than one buffer.\n- The 'empty' folder's SUCCESS-with-nothing listing is told apart by the progress assertion.\n- The stalled-share test really stalls an established session. Its ClosesHandedOff assertion would fail if the close ran on the scan thread.\n\nOne real gap: the design named the 'volume-usage query' as a scan-thread call that must be bracketed. It is MainWindow.VolumeInUse (DriveInfo.TotalSize/TotalFreeSpace), which runs on the scan thread after Scan returns, for any drive-letter root. The App offers mapped network drives (DriveType.Network) as roots, and that call has no guard. So Cancel of a scan of an unreachable mapped drive still waits out the redirector after the scan itself has returned. Build 2 noticed this but called it out of scope and put it on the UI thread by mistake. It was not carried into attempt 3's open list.\n\nA minor one: DirectoryReader.List discards partial entries on any 995. The declared reason, that it 'cannot tell a guard abort from an OS 995', is false, because the guard records exactly that.\n\nI did not run StalledShareTests. Its fixture creates a credentialed New-SmbMapping, which is outside what I may change on this machine. I judged it by reading it and the builder's logs (test-run5/6/7).",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "I reviewed the whole slice (0320a0d..HEAD), not just attempt 3. The build had 0 warnings. The default suite passed 117/117, and the cancel-related classes passed 33/33 on three repeated runs. I also ran the opt-in TEST-NET-1 share tests: both passed, in 535 ms and 1 s, so C-001 and C-012 are really exercised. Fitness reports all 14 declared rules hold.\n\nThe Core mechanism matches the design and the accepted findings:\n- SynchronousIoCancel is the single guarded seam: OpenDirectory, OpenForAttributes, Query and Close.\n- Enter publishes InCall and then re-checks the token. The canceller CASes InCall to CancelIssued and resends every 25 ms on a background thread. Dispose joins the canceller before closing the thread handle.\n- The result is settled by recorded intent, not by return code. Aborted handles are closed on the pool.\n- IsDue probes run before the append. The owner-thread check throws in every build.\n\nI walked the Enter/Exit/canceller orderings and found no window where a stray CancelSynchronousIo lands on unguarded scan-thread I/O before Dispose's join. Every material case-matrix row has a test that feeds its shape:\n- The k-th-call sweep asserts that big needed more than one buffer.\n- The 'empty' folder's SUCCESS-with-nothing listing is told apart by the progress assertion.\n- The stalled-share test really stalls an established session. Its ClosesHandedOff assertion would fail if the close ran on the scan thread.\n\nOne real gap: the design named the 'volume-usage query' as a scan-thread call that must be bracketed. It is MainWindow.VolumeInUse (DriveInfo.TotalSize/TotalFreeSpace), which runs on the scan thread after Scan returns, for any drive-letter root. The App offers mapped network drives (DriveType.Network) as roots, and that call has no guard. So Cancel of a scan of an unreachable mapped drive still waits out the redirector after the scan itself has returned. Build 2 noticed this but called it out of scope and put it on the UI thread by mistake. It was not carried into attempt 3's open list.\n\nA minor one: DirectoryReader.List discards partial entries on any 995. The declared reason, that it 'cannot tell a guard abort from an OS 995', is false, because the guard records exactly that.\n\nI did not run StalledShareTests. Its fixture creates a credentialed New-SmbMapping, which is outside what I may change on this machine. I judged it by reading it and the builder's logs (test-run5/6/7).",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "drift-from-design",
+    "claim": "The design's Scanner component says every Win32 filesystem call the scan thread makes, and names the 'volume-usage query', must be inside a bracket. That query is MainWindow.VolumeInUse. It runs `new DriveInfo(root)` and TotalSize/TotalFreeSpace (GetDiskFreeSpaceEx) on the same LongRunning scan thread, right after Scanner.Scan returns (MainWindow.xaml.cs:145-150, 185-204). It runs for every drive-letter root whose status is not RootUnreadable, cancelled scans included. ReadDrives offers DriveType.Network drives as roots (MainWindow.xaml.cs:81). Consider a person who picks a mapped Z: whose server has become unreachable, or stopped answering, and then presses Cancel. The scan returns in milliseconds, since spike 1 measured this connect being freed in 17 ms or less. Then the unguarded GetDiskFreeSpaceEx on Z:\\ goes to the same redirector connect, about 21 s in spike 1's control arm, or to the 60 s SMB session timeout. The window stays on 'Stopping...' for that long, which is the defect this slice exists to remove, on the most common way the App reaches a share. Build 2 raised this as a follow-up, but said it was on the UI thread (it is not) and 'outside SL-024's scope' (the design put it in scope). Attempt 3 dropped it from the open list. TheScannerMakesNoBclFileSystemCalls covers only src/FsAnalyser.Core/Scanning, so no rule catches it. I did not measure it: that needs a mapped drive, which I may not create here.",
+    "evidence": "src/FsAnalyser.App/MainWindow.xaml.cs:147-148 `ScanResult scan = Scanner.Scan(path, progress, token); return (scan, VolumeInUse(scan));`. Lines 189-194 have the query guarded only by `!driveRoot || scan.Status == ScanStatus.RootUnreadable`. Line 81 admits DriveType.Network. Design, Scanner component: 'Every other Win32 filesystem call the scan thread makes before or between folders (root attribute probe, volume-usage query, anything else in Kernel32) must be inside a bracket too'. .taad/slices/SL-024/build-slice-2.json follow_ups[1].",
+    "fix": "The smallest fix is to skip the volume query once cancel was requested, since the scan is partial anyway: `return (scan, token.IsCancellationRequested ? null : VolumeInUse(scan));`. Also skip it for DriveType.Network roots if a stalled-but-not-cancelled share is to be covered. Alternatively, expose a guarded volume query from Core and extend the BCL rule to the App's scan lambda. Either way, record the decision in docs/design/SL-020-scanner.md."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "DirectoryReader.List empties the reader on ANY 995, including one the OS produced with no cancel requested. Such a folder is then committed as Unreadable(995) with zero children, where before this slice its partial listing was kept, as it still is for every other error. That is an undercount in the unreadable-folder counting rule, on a rare shape. The deviation build 2 declared for this rests on the claim that List 'cannot tell a guard abort from a 995 the OS produced'. That is false: the guard itself decides every abort, when Enter refuses or when Exit reports issued, and already records it in `_aborted`.",
+    "evidence": "src/FsAnalyser.Core/Scanning/DirectoryReader.cs:105-109 `if (error == SynchronousIoCancel.Aborted) { _count = 0; _namesUsed = 0; }`. SynchronousIoCancel.cs:181-185 and 193-195 are where the guard knows it aborted the call. build-slice-2.json deviations[3].",
+    "fix": "Have the guard report whether the last call was its own abort, for example an internal `bool LastCallAborted` set in Enter's refusal branch and in Exit when issued. In List, reset `_count`/`_namesUsed` only when that is true. Add one line to AnAbortedListingKeepsNothingOfTheBuffersBeforeIt, or a pure test, asserting that an OS-style 995 keeps its partial entries."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "In SynchronousIoCancel.cs:171-188, Enter publishes InCall, then re-checks `_ct.IsCancellationRequested || _disposed` and refuses. In Dispose (199-212), the join on the canceller comes before `_thread.Dispose()`. NoCallStartsOnceCancelIsRequested and the 100-scan stress test, which calls AssertNoCancelLandsOnThisThread after every scan, passed in 3 runs I made."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "StartCanceller (251-260) only starts the IsBackground scan-cancel thread, under `_gate`, and CancelSynchronousIo is called only from CancelLoop. Cancel() < 250 ms is asserted in CancelInterruptsACallBlockedInTheKernel, CancelReturnsFromAScanStuckInItsFirstCall, both TEST-NET-1 tests (which I ran) and StalledShareTests (0.9 ms in test-run7.txt)."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "The scan thread never runs the close of an aborted call: SynchronousIoCancel.Close (144-164) queues it to the pool once `_aborted` is set. StalledShareTests asserts ClosesHandedOff >= 1, which fails if the close is inline. Whether the pool close itself is fast is only logged ('pending 0, done within 1 s True' in test-run7.txt), not asserted. On this shape it cannot block anyway, because the listing returns only after the SMB client has torn the session down."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "In CancellationTests.cs, CancelReturnsFromAScanBlockedOnAnUnreachableShare fails as VOID if the scan ends within 500 ms, and asserts CancelsDelivered >= 1, Cancelled and no unreadable folders. I ran it with --filter Network=TEST-NET-1: passed in 535 ms."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "SynchronousIoCancelTests.CancelInterruptsACallBlockedInTheKernel: a synchronous pipe WaitForConnection with no client, inside Enter. It asserts the thread returns within 2 s, issued, waitError not null and CancelsDelivered >= 1."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "CancelIsResentUntilACallThatHadNotReachedTheKernelIsInterrupted runs Enter, then Cancel on the same thread, then a 200 ms managed sleep, then the pipe wait. It asserts CancelAttempts > CancelsDelivered >= 1."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "NoCallStartsOnceCancelIsRequested covers tokens cancelled both after and before the guard: 995 with a null handle, Enter false, and CancelsDelivered 0. The existing AnAlreadyCancelledTokenReadsNothing is unchanged and passes."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "CancelledFolderTests.CancelAtAnyCallCommitsOnlyWholeFolders(true) cancels inside AfterCall of every call, including the 'empty' folder's first query, which returns SUCCESS with only . and .. entries. The runProgress.CurrentFolder assertion tells a committed empty folder from an aborted one, since ChildCount 0 alone cannot."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "CancelIsResentWhileACallBlocksAgainAfterACancel: three consecutive pipe waits inside one bracket, all interrupted within 2 s. The real call is covered by .taad/slices/SL-024/build-slice-2-respike/README.md: GetFileInformationByHandleEx on a cloud placeholder was freed in 1 ms or less and returned SUCCESS with only . and .., and the result was discarded."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "The CancelAtAnyCallCommitsOnlyWholeFolders(false) sweep asserts `bigBuffers > 1` on 2000 100-character names and refuses at every call. AnAbortedListingKeepsNothingOfTheBuffersBeforeIt aborts at the third buffer and asserts Count 0."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "OnlyARequestedCancelMakesAnAbortedCallACancellation covers the Scanner.ClassifyReadError pure function, as the design specified. The reader path for an OS 995 is not exercised (see m1)."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "The sweep cancels at the pre-append probe of probes\\large.bin (both open and query) and asserts ProbeFailures 0 and no committed entries for that folder. It also covers the repeat probe of y.bin, which leaves x.bin without SizeProbed and h2 committed whole, matching the M3 disposition."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "CancelAtRandomMomentsEndsEveryScanCleanlyAndLeavesNoStrayCancel: 100 scans with random cancel delays up to twice the median scan time. It requires both completed and cancelled outcomes, checks charged bytes against totals, and runs a same-thread pipe wait after each scan to catch a stray cancel."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "CancellationTests.ALiveTokenThatIsNeverCancelledChangesNothing compares a live token with None on three trees: the error-5 tree, a stale hardlink tree, and a tree with a probe, a failed probe and a junction. The comparison uses Snapshot equality plus totals, unreadable folders and probes, and asserts HasThreadHandle and CancelAttempts == 0."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "CancelReturnsFromTheSameUnreachableShareScannedTwice: I ran it and it passed in 1 s, with both scans blocked and freed."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "tests/FsAnalyser.Core.Tests/StalledShareTests.cs: an SMBLibrary server on loopback, an established mapped session, and StallingFileStore blocking QueryDirectory of 'hung' plus every later request. The test fails as VOID if the scan ends by itself. It asserts Cancelled, no unreadable folders, 'hung' ChildCount 0 and never reported, and ClosesHandedOff >= 1. I read it but did not run it, because it creates a credentialed SMB mapping. test-run7.txt shows it passed, with the scan returning 61.9 s after Cancel."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "Every CreateFile/GetFileInformationByHandleEx call is in SynchronousIoCancel.cs. The rules FileSystemCallsGoThroughTheCancelGuard and TheScannerMakesNoBclFileSystemCalls are in .taad/fitness.yaml and ArchitectureRulesTests.cs, and Fitness reports all rules hold. The App's scan-thread DriveInfo call stays outside the seam and outside both rules (M1)."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "Scanner.Scan always creates the guard (Scanner.cs:35), and the constructor skips OpenThread and registration only for a token that cannot cancel or is already cancelled (SynchronousIoCancel.cs:61). The live-token equality test is ALiveTokenThatIsNeverCancelledChangesNothing."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "Scanner.ProbeListing (172-193) probes every IsDue file before the first Append, and FolderDone returns early on an aborted probe. `_settled` keeps the rule of one probe per file, and the baseline asserts Probes == 2."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "SynchronousIoCancel.Close queues handles to ThreadPool.UnsafeQueueUserWorkItem once `_aborted` is set, and PendingCloses tracks them. This covers the ListRoot, Read and SizeProbe.Probe finally blocks."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": ".taad/slices/SL-024/build-slice-2-respike/README.md: the real CreateFileW followed by GetFileInformationByHandleEx (classes 20/19 and 15/14), with the provider in a separate process, returned 1 ms or less after one cancel, 7 of 7 runs passed with the result discarded, and CloseHandle took 0 ms."
+   },
+   {
+    "key": "O-024",
+    "discharged": "yes",
+    "evidence": "SynchronousIoCancel.Open (234-240) calls Close(opened) and leaves handle null when aborted. AnAbortedCallsHandleIsClosedOffTheScanThread asserts a null handle and ClosesHandedOff == 1."
+   },
+   {
+    "key": "O-025",
+    "discharged": "yes",
+    "evidence": "SynchronousIoCancel.cs:257 `new Thread(CancelLoop) { IsBackground = true, Name = \"scan-cancel\" }`."
+   },
+   {
+    "key": "O-026",
+    "discharged": "yes",
+    "evidence": "SynchronousIoCancel.cs:45 `_owner = Environment.CurrentManagedThreadId` and lines 173-177 throw InvalidOperationException. Covered by AGuardIsUsedOnlyOnTheThreadThatCreatedIt."
+   },
+   {
+    "key": "O-027",
+    "discharged": "yes",
+    "evidence": "CancelsDelivered counts only TRUE returns (line 275-276) and is asserted >= 1 in the pipe tests, the stand-in test and the share tests. The stress test has a same-thread pipe wait as its observable check."
+   },
+   {
+    "key": "O-028",
+    "discharged": "yes",
+    "evidence": "FsAnalyser.Core.Tests.csproj sets VSTestTestCaseFilter to `Network!=TEST-NET-1&Network!=SMB-LOOPBACK` when no filter is given. Both share tests carry Trait Network=TEST-NET-1. The default run executes 117 tests with those left out, and the stand-in CancelReturnsFromAScanStuckInItsFirstCall is in the default suite."
+   },
+   {
+    "key": "O-029",
+    "discharged": "yes",
+    "evidence": "docs/design/SL-020-scanner.md, 'What is guaranteed': Cancel() is always prompt. The 2 s bound covers only the unreachable-SMB open, a local pipe and the cloud listing. Stalled sessions and filter-driver I/O are named as not covered."
+   },
+   {
+    "key": "O-030",
+    "discharged": "yes",
+    "evidence": "BeforeCall is invoked in Enter before the token check (line 180), and AfterCall after the Win32 call and before Exit. CancelledFolderTests sweeps every call k in both modes and compares Snapshot against the uncancelled baseline, asserting bigBuffers > 1."
+   }
+  ],
+  "matches_design": false,
+  "drift": [
+   "The design's Scanner component told build to bracket the 'volume-usage query'. It is MainWindow.VolumeInUse on the scan thread and is still unguarded. Build 2 listed it only as an out-of-scope follow-up and put it on the UI thread by mistake; it never became a deviation, and attempt 3 did not carry it. The new doc line 'Every Win32 filesystem call the scan makes goes through ... SynchronousIoCancel' is therefore true of Scanner but not of the scan thread. Filed as M1.",
+   "StalledShareTests runs the whole scan on the FILE_FULL_DIR_INFO fallback class, because the fixture answers STATUS_INVALID_INFO_CLASS to class 60. That was declared. The consequence for the next reader: the extended-class listing on a stalled SMB session has never been exercised.",
+   "The stalled-share test asserts only that the aborted handle was handed to the pool. The pool close finishing is logged, not asserted. On this shape the close cannot block in any case, because the listing only returns after the SMB client has dropped the session. So O-003's 'close returns promptly' is made moot by the design change, not measured."
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "CancellationTests.CancelReturnsFromAScanBlockedOnAnUnreachableShare scans \\\\192.0.2.N\\s and is VOID if it ends within 500 ms. It is opt-in (m5). I ran it: passed in 535 ms, with CancelsDelivered >= 1 asserted."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "SynchronousIoCancelTests.CancelInterruptsACallBlockedInTheKernel: a PipeOptions.None WaitForConnection with no client, inside Enter."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "CancelIsResentUntilACallThatHadNotReachedTheKernelIsInterrupted: Cancel lands during a 200 ms managed sleep before the pipe wait. It asserts attempts > delivered, so the first cancels really missed."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "NoCallStartsOnceCancelIsRequested covers a token cancelled after the guard was made and one cancelled before. The existing AnAlreadyCancelledTokenReadsNothing also covers it."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "CancelAtAnyCallCommitsOnlyWholeFolders(duringTheCall: true) cancels during the 'empty' folder's first query, which returns SUCCESS with only . and .. entries. The CurrentFolder assertion catches a wrongly committed empty folder. AnAbortedCallsHandleIsClosedOffTheScanThread covers SUCCESS with one entry."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "CancelIsResentWhileACallBlocksAgainAfterACancel: one bracket re-blocks three times and needs three delivered cancels. This is a stand-in; the real cloud call was measured in build-slice-2-respike."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "CancelledFolderTests sweep: 2000 files with 100-character names, `Assert.True(bigBuffers > 1)`, refusal before every buffer, and a Snapshot comparison against the baseline. AnAbortedListingKeepsNothingOfTheBuffersBeforeIt aborts at the third buffer."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "Covered only by the pure ClassifyReadError theory, as the design chose. The reader path for an OS-originated 995 (List discarding partial entries) is not exercised; see m1."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "The sweep hits both the open and the query of the sparse probes\\large.bin probe before the append, and the first-repeat probe of y.bin. It asserts ProbeFailures 0, the folder uncommitted, and x.bin's flags without SizeProbed."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "CancelAtRandomMomentsEndsEveryScanCleanlyAndLeavesNoStrayCancel: 100 scans with delays up to twice the median scan time. It requires both completed and cancelled outcomes and runs a same-thread pipe wait after each scan."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "ALiveTokenThatIsNeverCancelledChangesNothing runs the error-5 tree, the stale-hardlink tree and a probe/failed-probe/junction tree, live token against None, with full Snapshot equality. All existing tests also run the guard with None."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "CancelReturnsFromTheSameUnreachableShareScannedTwice uses the same address twice and needs both scans to block. I ran it: passed in 1 s."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "StalledShareTests: an established, signed session to a loopback SMBLibrary server, whose store stops answering the listing of 'hung' and every later request. The test is VOID if the scan ends by itself, and ClosesHandedOff >= 1 fails if the close is inline. I read it but did not run it, because it creates a credentialed SMB mapping. The builder's test-run7.txt shows a pass."
+   },
+   {
+    "key": "C-014",
+    "exercised": "no",
+    "evidence": "Deferred as not material, and no test exists. The reason still holds against the code: the fallback is 4 lines (SynchronousIoCancel.cs:64-68, dispose and skip registration), and Enter still refuses through the token check, so the behaviour is the old boundary cancel."
+   }
+  ],
+  "unreviewed": [
+   ".taad/slices/SL-024/build-slice-2-respike/Program.cs: evidence harness, not product or test code. I read only its README for O-023.",
+   ".taad/slices/SL-024/build-slice-3-smb/precheck-Program.cs and precheck-smbcheck.csproj: precheck harness evidence, not built by the solution.",
+   ".taad/slices/SL-024/build-slice-2-respike/*.log, build-slice-3-smb/precheck.log, test-run6-measure.txt: run logs. Only test-run5.txt and test-run7.txt were read."
+  ]
+ }
+}

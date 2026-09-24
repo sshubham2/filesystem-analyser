@@ -46,55 +46,59 @@
   },
   {
    "stage": "build-slice",
-   "issue": "C-013 / O-018, closing the handle after an abort on an established SMB session that has stopped answering, has no test. It needs a stalled SMB server. Spike 3 never ran because Defender blocks impacket, and unblocking it is a person's decision about security settings or an alternative-port target. The off-thread close makes the scan thread independent of close latency. Whether a cancel frees an in-flight QUERY_DIRECTORY on such a session is still unmeasured."
+   "issue": "Design decision for a person: if a share that stops answering mid-session drops, Cancel leaves the scan blocked for 62 to 66 s, and the UI stays in 'cancelling' for that long. The only in-process remedy is the design's rejected fallback: stop awaiting the scan thread on Cancel and let it finish in the background. If that wait is not acceptable, it belongs back at design-slice."
   },
   {
    "stage": "build-slice",
-   "issue": "Spike 3 is still the one unmeasured shape. Someone has to decide between a Defender exclusion for the spike venv, approving an alternative-port SMB server as the target (for example Samba on 4450 under WSL, frozen with SIGSTOP), or accepting the risk. The design's open question is still unanswered."
+   "issue": "O-003 (owed to validate-slice) now has evidence on the stalled shape. The aborted listing's close ran on a pool thread and was not pending when the scan returned. The scan thread is never held by the close; what holds it is the listing itself, until the SMB client gives up."
   },
   {
    "stage": "build-slice",
-   "issue": "The App shows used space on a drive-root scan through DriveInfo.TotalSize/TotalFreeSpace on the UI thread. For a mapped network drive that stopped answering, that call is unguarded and could freeze the window at the ending after Cancel. This is outside SL-024's scope and is worth checking."
+   "issue": "The stalled-share test takes about 65 s and needs the Windows 11 24H2 SMB client (New-SmbMapping -TcpPort). It is opt-in for that reason and would fail on Windows 10, which the platform constraint still supports."
   },
   {
    "stage": "build-slice",
-   "issue": "The design question of whether an interrupted folder deserves its own visible flag and UI panel was deferred to a slice that owns the screen. Today it looks the same as a folder that was never reached."
+   "issue": "Scratch folders %TEMP%\\taad-sl024-smb (the precheck) and %TEMP%\\taad-sl024-respike (attempt 2) are left in place. Their sources and logs are copied into the slice, so both can be deleted."
   },
   {
    "stage": "build-slice",
-   "issue": "Engine: O-004's discharge text reached build clipped at 'It must not write'. Build-slice should be handed the full text."
+   "issue": "deviation: The rebuild note asked that 'the scan returns within a set time after cancel'. On this shape the time is the SMB client's own limit, not Cancel's: the client keeps the unanswered QUERY_DIRECTORY, and…"
   },
   {
    "stage": "build-slice",
-   "issue": "The re-spike harness build folder %TEMP%\\taad-sl024-respike (bin/obj and logs) was left in place. The source and logs are copied into the slice, so it can be deleted."
+   "issue": "deviation: The note says the hung folder must be 'reported as an error, not Completed with 0 files'. The test asserts Status Cancelled, never Completed, with the hung folder not committed and never reported as …"
   },
   {
    "stage": "build-slice",
-   "issue": "deviation: The re-spike was run by build, not risk-spike. The rebuild note overrode M5 on that point only, because the gate could not send the slice back to risk-spike. The measurement is recorded in the slice."
+   "issue": "deviation: Two additions the note did not name. SMBLibrary.Win32 is added next to SMBLibrary, for NTDirectoryFileSystem, a real-folder INTFileStore; SMBLibrary itself ships none. And SMBServer's public Start li…"
   },
   {
    "stage": "build-slice",
-   "issue": "deviation: The per-call test hook is reached through a [ThreadStatic] SynchronousIoCancel.Created seam. M-add-1 requires ScanOptions to stay unchanged while the guard is created inside Scan, so a test has no ot…"
+   "issue": "deviation: The fixture store answers STATUS_INVALID_INFO_CLASS where SMBLibrary would throw on a class it cannot encode: FileIdExtdDirectoryInformation (60), which the Windows client passes through. That is how…"
   },
   {
-   "stage": "build-slice",
-   "issue": "deviation: M3's rule is 'an aborted probe aborts its folder'. It holds for every IsDue probe, which now runs before the append. The first-repeat hardlink probe still runs during the append, because only the sto…"
+   "stage": "code-review",
+   "issue": "drift: The design's Scanner component told build to bracket the 'volume-usage query'. It is MainWindow.VolumeInUse on the scan thread and is still unguarded. Build 2 listed it only as an out-of-scope follow…"
   },
   {
-   "stage": "build-slice",
-   "issue": "deviation: DirectoryReader.List discards its entries on any 995, because it cannot tell a guard abort from a 995 the OS produced. Without a cancel request, such a folder is still Unreadable(995), but with no pa…"
+   "stage": "code-review",
+   "issue": "drift: StalledShareTests runs the whole scan on the FILE_FULL_DIR_INFO fallback class, because the fixture answers STATUS_INVALID_INFO_CLASS to class 60. That was declared. The consequence for the next read…"
   },
   {
-   "stage": "build-slice",
-   "issue": "deviation: A guard for a token that is already cancelled also skips OpenThread and the registration. The design said this only for tokens that cannot cancel. No call can start either way, and this avoids starti…"
+   "stage": "code-review",
+   "issue": "drift: The stalled-share test asserts only that the aborted handle was handed to the pool. The pool close finishing is logged, not asserted. On this shape the close cannot block in any case, because the lis…"
   },
   {
-   "stage": "build-slice",
-   "issue": "deviation: The guard maps a failed call with GetLastError 0 to ERROR_ACCESS_DENIED for listing calls too, not only for opens and probes as before. This is an edge that is not known to occur."
+   "stage": "code-review",
+   "issue": "not reviewed: .taad/slices/SL-024/build-slice-2-respike/Program.cs: evidence harness, not product or test code. I read only its README for O-023."
   },
   {
-   "stage": "build-slice",
-   "issue": "O-018 not done: Not exercised: this needs an SMB session that is established and then stops answering. Spike 3 never ran because Defender blocks impacket. Unblocking it needs a person to decide on a Defender exclusi…"
+   "stage": "code-review",
+   "issue": "not reviewed: .taad/slices/SL-024/build-slice-3-smb/precheck-Program.cs and precheck-smbcheck.csproj: precheck harness evidence, not built by the solution."
+  },
+  {
+   "stage": "code-review",
+   "issue": "not reviewed: .taad/slices/SL-024/build-slice-2-respike/*.log, build-slice-3-smb/precheck.log, test-run6-measure.txt: run logs. Only test-run5.txt and test-run7.txt were read."
   }
  ],
  "stages": [
@@ -177,7 +181,7 @@
    "stage": "build-slice",
    "title": "Build",
    "order": 7,
-   "state": "failed",
+   "state": "sent back",
    "attempts": [
     {
      "n": 1,
@@ -208,6 +212,40 @@
       "measured_by_git": 24
      },
      "details": "build-slice-2.json"
+    },
+    {
+     "n": 3,
+     "state": "passed",
+     "at": "2026-09-24T17:17:46.408Z",
+     "head": "ae2046712ca3c8fd72b9f4350c181dbb90bd56e0",
+     "summary": "O-018 is now exercised against a real stalled SMB session, with no admin rights, no Defender change and no impacket.",
+     "caused_by": null,
+     "changed": {
+      "tests": 5,
+      "docs": 1,
+      "config": 4,
+      "listed": 10,
+      "measured_by_git": 12
+     },
+     "details": "build-slice-3.json"
+    }
+   ]
+  },
+  {
+   "stage": "code-review",
+   "title": "Code review",
+   "order": 8,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-24T17:34:27.661Z",
+     "head": "ae2046712ca3c8fd72b9f4350c181dbb90bd56e0",
+     "summary": "I reviewed the whole slice (0320a0d..HEAD), not just attempt 3.",
+     "caused_by": null,
+     "changed": {},
+     "details": "code-review-1.json"
     }
    ]
   }

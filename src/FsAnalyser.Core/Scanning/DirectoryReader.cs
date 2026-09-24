@@ -84,8 +84,9 @@ internal sealed unsafe class DirectoryReader(SynchronousIoCancel io) : IDisposab
     /// Lists an open directory, replacing what the reader held.
     /// </summary>
     /// <returns>0 when the listing ran to its end, or the Win32 error that stopped it. Entries read before
-    /// the error are kept, except after ERROR_OPERATION_ABORTED: an aborted listing keeps nothing, so a
-    /// cancelled folder is never committed half read. The handle is not used again after it.</returns>
+    /// the error are kept, except when the guard aborted the listing: that listing keeps nothing, so a
+    /// cancelled folder is never committed half read, and its handle is not used again. A 995 Windows
+    /// returns with no cancel issued is an error like any other and keeps what was read.</returns>
     public int List(SafeFileHandle directory, bool fullClass)
     {
         _count = 0;
@@ -102,7 +103,7 @@ internal sealed unsafe class DirectoryReader(SynchronousIoCancel io) : IDisposab
                     return 0;
                 if (first && error == Kernel32.ERROR_FILE_NOT_FOUND)
                     return 0; // nothing at all to list
-                if (error == SynchronousIoCancel.Aborted)
+                if (io.LastCallAborted)
                 {
                     _count = 0;
                     _namesUsed = 0;

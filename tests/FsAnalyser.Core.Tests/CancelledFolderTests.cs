@@ -185,7 +185,92 @@ public class CancelledFolderTests
 
         Assert.Equal(SynchronousIoCancel.Aborted, error);
         Assert.Equal(ThirdBuffer, guard.Calls); // two buffers were read, and parsed, before the abort
+        Assert.True(guard.LastCallAborted);
         Assert.Equal(0, reader.Count);
         Scans.WaitForAbortedCloses();
+    }
+
+    /// <summary>
+    /// A 995 that Windows returns by itself, with no cancel requested, is not the guard's abort. It is an
+    /// error like any other, and the entries read before it are kept.
+    /// </summary>
+    [Fact]
+    public void A995WindowsReturnsWithNoCancelKeepsWhatWasListed()
+    {
+        using var tree = new TempTree();
+        for (int i = 0; i < 2000; i++)
+            tree.File($"{i:D4}{new string('n', 92)}.txt", 1);
+        using var cts = new CancellationTokenSource(); // live, never cancelled
+        using var guard = new SynchronousIoCancel(cts.Token);
+        using var reader = new DirectoryReader(guard);
+        Assert.Equal(0, guard.OpenDirectory(tree.ExtendedRoot, out var handle));
+        const int ThirdBuffer = 4; // call 1 was the open
+        guard.OverrideQueryError = (call, error) => call == ThirdBuffer ? SynchronousIoCancel.Aborted : error;
+
+        int listed = reader.List(handle!, fullClass: false);
+        guard.Close(handle!);
+
+        Assert.Equal(SynchronousIoCancel.Aborted, listed);
+        Assert.Equal(ThirdBuffer, guard.Calls);
+        Assert.False(guard.LastCallAborted);
+        Assert.InRange(reader.Count, 1, 1999); // the first two buffers, kept
+        Assert.Equal(0, guard.ClosesHandedOff); // nothing was aborted, so the close ran inline
+    }
+
+    /// <summary>
+    /// The same 995, through the real scanner: the folder is Unreadable(995) with what was listed before
+    /// it, and the scan carries on, because no folder is dropped silently and nobody asked to stop.
+    /// </summary>
+    [Fact]
+    public void A995WindowsReturnsWithNoCancelIsAnUnreadableFolderAndTheScanCarriesOn()
+    {
+        using var tree = new TempTree();
+        tree.Folder("a");
+        tree.File(@"a\one.txt", 11);
+        tree.Folder("big");
+        for (int i = 0; i < 2000; i++)
+            tree.File($@"big\{i:D4}{new string('n', 92)}.txt", 1);
+        tree.Folder("z");
+        tree.File(@"z\last.txt", 33);
+
+        // Where big's listing calls fall, from a scan with nothing overridden.
+        var progress = new ScanProgress();
+        var folderEnds = new List<(string Folder, int LastCall)>();
+        SynchronousIoCancel? guard = null;
+        using var live = new CancellationTokenSource();
+        SynchronousIoCancel.Created = g => guard = g;
+        try
+        {
+            Scanner.Scan(tree.Root, progress, live.Token, new ScanOptions
+            {
+                AfterFolder = _ => folderEnds.Add((progress.CurrentFolder!, guard!.Calls)),
+            });
+        }
+        finally
+        {
+            SynchronousIoCancel.Created = null;
+        }
+        Assert.Equal(tree.PathOf("big"), folderEnds[2].Folder);
+        int bigThirdBuffer = folderEnds[1].LastCall + 4; // big's open, then its first two buffers
+
+        SynchronousIoCancel.Created = g => g.OverrideQueryError = (call, error) => call == bigThirdBuffer ? SynchronousIoCancel.Aborted : error;
+        ScanResult result;
+        try
+        {
+            result = Scanner.Scan(tree.Root, new ScanProgress(), live.Token);
+        }
+        finally
+        {
+            SynchronousIoCancel.Created = null;
+        }
+
+        Assert.Equal(ScanStatus.Completed, result.Status);
+        int big = Scans.Find(result, tree.PathOf("big"));
+        Assert.Equal(new UnreadableFolder(big, SynchronousIoCancel.Aborted), Assert.Single(result.Unreadable));
+        Assert.Equal(EntryFlags.Unreadable, result.Store.Flags(big));
+        Assert.InRange(result.Store.ChildCount(big), 1, 1999); // what the first two buffers listed
+        Assert.Equal(1, result.Store.ChildCount(Scans.Find(result, tree.PathOf("z")))); // the scan carried on
+        Scans.AssertChargedBytesAreTheTotals(result);
+        TraversalTests.AssertChildrenAreContiguous(result.Store);
     }
 }

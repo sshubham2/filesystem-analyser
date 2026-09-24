@@ -81,6 +81,19 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
     /// <summary>Tests only: called when the Win32 call has returned, before Exit reads whether a cancel was issued.</summary>
     internal Action<int>? AfterCall { get; set; }
 
+    /// <summary>
+    /// Tests only: given a <see cref="Query"/> call's number and the error Windows returned, the error to
+    /// report instead, as if Windows had returned it. Feeds in errors Windows gives rarely, such as a 995
+    /// nobody asked for.
+    /// </summary>
+    internal Func<int, int, int>? OverrideQueryError { get; set; }
+
+    /// <summary>
+    /// Whether the last call was aborted by this guard: refused after Cancel, or a cancel was issued
+    /// during it. False for an error Windows returned by itself, 995 included.
+    /// </summary>
+    internal bool LastCallAborted { get; private set; }
+
     /// <summary>How many calls were bracketed, refused ones included.</summary>
     internal int Calls => _calls;
 
@@ -127,6 +140,8 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
         {
             if (!Kernel32.GetFileInformationByHandleEx(handle, infoClass, buffer, bufferSize))
                 error = LastError();
+            if (OverrideQueryError is { } overrideError)
+                error = overrideError(_calls, error);
             AfterCall?.Invoke(_calls);
         }
         finally
@@ -182,6 +197,7 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
         {
             Interlocked.Exchange(ref _state, Idle);
             _aborted = true;
+            LastCallAborted = true;
             return false;
         }
         return true;
@@ -193,6 +209,7 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
         bool issued = Interlocked.Exchange(ref _state, Idle) == CancelIssued;
         if (issued)
             _aborted = true;
+        LastCallAborted = issued;
         return issued;
     }
 

@@ -44,7 +44,8 @@ the window recognises by `ParamName == "root"` (O-015). Any other ArgumentExcept
 ArgumentOutOfRangeException from the store, is a bug and gets Scan failed. It
 shows the exception type and message and re-enables the pickers. On a drive-root scan, Finished and
 Stopped also show the volume's used space (DriveInfo TotalSize − TotalFreeSpace) and how much of it
-the scan did not see (O-013). The optional path argument goes through `CommandLine.RootArgument`
+the scan did not see (O-013). A scan that was cancelled, before or during that query, omits the volume
+line (SL-024, O-031; see below). The optional path argument goes through `CommandLine.RootArgument`
 (O-009). Windows argv turns a typed `"C:\"` into `C:"`, and a trailing quote can only come from that,
 so it becomes `\` again.
 
@@ -114,6 +115,18 @@ so it becomes `\` again.
     record stays as it would be had the repeat never been reached, and the folder is committed whole.
   - **Handles of aborted calls are closed on a pool thread**, because on a share that stopped answering
     the close can wait on the server.
+  - **Only the guard's own abort empties a listing.** `LastCallAborted` means the call was refused, or a
+    cancel was issued during it. A 995 that Windows returns with no cancel issued is an error like any
+    other: the folder is `Unreadable(995)` and keeps what was listed before it (O-032).
+  - **The App's volume-usage query is awaited against Cancel, not guarded (O-031).** `MainWindow.VolumeInUse`
+    (DriveInfo, GetDiskFreeSpaceEx) runs after the scan, on its own thread, outside the guard. It is never
+    started once Cancel was requested. A Cancel that arrives while it is running ends the window's wait
+    at once, and the query finishes unobserved; the ending then omits the volume line. Why not guard it in
+    Core: on a stalled share even CancelSynchronousIo waits for the SMB client (62 to 66 s measured), so a
+    guarded query would still hold the window. Only not waiting for it frees the window on every shape. A
+    scan that completed and was not cancelled still waits for the query, which on a mapped drive whose
+    server stopped answering can take as long as the SMB client does; Cancel stays enabled throughout
+    and ends that wait.
   - **The guard belongs to one thread.** `Enter` throws on any other thread. A later slice that lists
     in parallel gives each worker its own guard.
   - **What is guaranteed.** Cancel() returns promptly on the UI thread in every case. The scan returns
