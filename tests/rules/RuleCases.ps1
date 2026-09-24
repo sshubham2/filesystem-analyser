@@ -1,0 +1,502 @@
+# The rule-copy cases (SL-031). C-001 to C-005 run eng/rules-parity.ps1 against copies of the two rule
+# files with one shape fed in each, under both Windows PowerShell 5.1 (the shell RuleCopiesAgreeTests
+# launches) and pwsh 7. C-006 to C-014 run eng/rules-harness/harness.py, which needs the TAAD engine:
+#
+#   pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-002
+#   pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-010 `
+#       -EnginePython <the engine's python.exe> -EngineRoot <taad_v3 checkout>\backend
+#
+# -Case All runs every case. Exit 0 when every check held, 1 when any failed. Each guard is also shown to
+# bite: the defect it exists for is put back in a copy, and the check must fail on it. A harness case
+# that needs a changed repo runs it on a copy of this repo's files in %TEMP% (with its own throwaway
+# `git init`, because the harness copies what git lists), built with this repo's SDK (--dotnet-from).
+
+param(
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010',
+        'C-011', 'C-012', 'C-013', 'C-014')]
+    [string] $Case,
+    [string] $EnginePython = '',
+    [string] $EngineRoot = ''
+)
+
+$ErrorActionPreference = 'Stop'
+
+$Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$Parity = Join-Path $Repo 'eng\rules-parity.ps1'
+$Harness = Join-Path $Repo 'eng\rules-harness\harness.py'
+$CsRel = 'tests\FsAnalyser.Core.Tests\ArchitectureRulesTests.cs'
+$YamlRel = '.taad\fitness.yaml'
+$Utf8 = [System.Text.UTF8Encoding]::new($false)
+$Shells = @('powershell.exe', 'pwsh')
+$script:Failures = [System.Collections.Generic.List[string]]::new()
+$script:Temps = [System.Collections.Generic.List[string]]::new()
+
+# ---- Checks ----
+
+# Non-ASCII shown as \uXXXX, so a failure prints the same whatever the console's code page.
+function Show($value) {
+    if ($null -eq $value) { return '<null>' }
+    $builder = [System.Text.StringBuilder]::new()
+    foreach ($c in ([string]$value).ToCharArray()) {
+        if ([int]$c -gt 126 -or ([int]$c -lt 32 -and $c -ne "`n")) { [void]$builder.AppendFormat('\u{0:X4}', [int]$c) } else { [void]$builder.Append($c) }
+    }
+    "'$builder'"
+}
+
+function Check([bool] $condition, [string] $what) {
+    if ($condition) {
+        Write-Output "  ok    $(($what -split "`n")[0])"
+    }
+    else {
+        Write-Output "  FAIL  $what"
+        $script:Failures.Add($what)
+    }
+}
+
+function CheckRun($run, [int] $exit, [string] $what, [string[]] $contains = @()) {
+    Check ($run.Exit -eq $exit) "$what exits $exit`n          got exit $($run.Exit):`n$($run.Output)"
+    foreach ($text in $contains) {
+        Check ($run.Output.Contains($text)) "$what says $(Show $text)`n$($run.Output)"
+    }
+}
+
+# ---- Temporary trees ----
+
+function New-TempDir([string] $prefix) {
+    $dir = Join-Path ([System.IO.Path]::GetTempPath()) ($prefix + [guid]::NewGuid().ToString('N').Substring(0, 10))
+    New-Item -ItemType Directory -Path $dir | Out-Null
+    $script:Temps.Add($dir)
+    $dir
+}
+
+function Copy-RepoFile([string] $root, [string] $rel) {
+    $target = Join-Path $root $rel
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $Repo $rel) -Destination $target
+}
+
+# The two files the parity check reads, and nothing else.
+function New-ParityRoot {
+    $root = New-TempDir 'fsa-parity-case-'
+    Copy-RepoFile $root $CsRel
+    Copy-RepoFile $root $YamlRel
+    $root
+}
+
+# Every file git lists in this repo (tracked, and untracked but not ignored), under a throwaway git init.
+function New-RepoCopy {
+    $root = New-TempDir 'fsa-rules-case-'
+    $listed = (& git -C $Repo ls-files -co --exclude-standard -z | Out-String) -split "`0"
+    foreach ($rel in $listed) {
+        if ($rel.Trim().Length -and (Test-Path -LiteralPath (Join-Path $Repo $rel) -PathType Leaf)) { Copy-RepoFile $root $rel }
+    }
+    & git -C $root init -q
+    if ($LASTEXITCODE) { throw "git init in $root failed" }
+    $root
+}
+
+function Edit-File([string] $root, [string] $rel, [string] $old, [string] $new, [switch] $Pattern, [switch] $All) {
+    $path = Join-Path $root $rel
+    $text = [System.IO.File]::ReadAllText($path, $Utf8)
+    $eol = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
+    if ($Pattern) {
+        $regex = [regex]::new($old)
+        if (-not $regex.IsMatch($text)) { throw "case setup: no match for $(Show $old) in $rel" }
+        $text = if ($All) { $regex.Replace($text, $new) } else { $regex.Replace($text, $new, 1) }
+    }
+    else {
+        $old = $old.Replace("`n", $eol)
+        $new = $new.Replace("`n", $eol)
+        $at = $text.IndexOf($old, [StringComparison]::Ordinal)
+        if ($at -lt 0) { throw "case setup: $(Show $old) is not in $rel" }
+        $text = $text.Substring(0, $at) + $new + $text.Substring($at + $old.Length)
+    }
+    [System.IO.File]::WriteAllText($path, $text, $Utf8)
+}
+
+function Get-LineOf([string] $root, [string] $rel, [string] $needle) {
+    $lines = [System.IO.File]::ReadAllLines((Join-Path $root $rel), $Utf8)
+    for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i].Contains($needle)) { return $i + 1 } }
+    throw "case setup: $(Show $needle) is not in $rel"
+}
+
+# A copy of one of the harness's row files with one row changed.
+function New-RowsFile([string] $name, [string] $id, [scriptblock] $change) {
+    $data = [System.IO.File]::ReadAllText((Join-Path $Repo "eng\rules-harness\$name"), $Utf8) | ConvertFrom-Json
+    $row = @($data.rows | Where-Object { $_.id -eq $id })[0]
+    & $change $row
+    $path = Join-Path (New-TempDir 'fsa-rows-case-') $name
+    [System.IO.File]::WriteAllText($path, ($data | ConvertTo-Json -Depth 10), $Utf8)
+    $path
+}
+
+# ---- Running the two tools ----
+
+function Invoke-Parity([string] $shell, [string] $root, [string[]] $more = @()) {
+    $ErrorActionPreference = 'Continue'
+    $output = & $shell -NoProfile -ExecutionPolicy Bypass -File $Parity -Root $root @more 2>&1 | Out-String
+    [pscustomobject]@{ Exit = $LASTEXITCODE; Output = $output.Trim() }
+}
+
+# One shape, fed to a fresh copy under each shell.
+function Test-Parity([string] $what, [scriptblock] $mutate, [int] $exit, [string[]] $contains = @(), [string[]] $more = @()) {
+    foreach ($shell in $Shells) {
+        $root = New-ParityRoot
+        $expected = @(& $mutate $root)
+        $run = Invoke-Parity $shell $root $more
+        CheckRun $run $exit "$what [$shell]" (@($contains) + $expected)
+    }
+}
+
+function Invoke-HarnessRaw([string[]] $arguments) {
+    if (-not $EnginePython -or -not $EngineRoot) {
+        Check $false 'harness cases need -EnginePython and -EngineRoot'
+        return [pscustomobject]@{ Exit = -1; Output = '' }
+    }
+    $ErrorActionPreference = 'Continue'
+    $env:PYTHONDONTWRITEBYTECODE = '1'
+    $output = & $EnginePython $Harness @arguments 2>&1 | Out-String
+    $exit = $LASTEXITCODE
+    # A run that did not exit 0 keeps its scratch copy for a person to read; a case that expected that
+    # removes it, and only a folder the harness itself made in %TEMP%.
+    $kept = [regex]::Match($output, 'harness: scratch kept at (\S+)')
+    if ($kept.Success) {
+        $dir = $kept.Groups[1].Value
+        if ((Split-Path -Leaf $dir) -like 'fsa-rules-*' -and $dir.StartsWith([System.IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    [pscustomobject]@{ Exit = $exit; Output = $output.Trim() }
+}
+
+function Invoke-Harness([string[]] $arguments) {
+    Invoke-HarnessRaw (@('--engine-root', $EngineRoot) + $arguments)
+}
+
+# A row of the harness's matrix: id, scenario, batch, xunit recorded/seen, fitness recorded/seen, verdict.
+function Test-Rows($run, [string[]] $ids, [string] $verdict, [string] $xunit = '', [string] $fitness = '') {
+    foreach ($id in $ids) {
+        $rows = @($run.Output -split "`r?`n" | ForEach-Object {
+                $m = [regex]::Match($_, "^\s+$([regex]::Escape($id))\s+\S+\s+\d+\s+(\S+)\s+(\S+)\s+(.+?)\s*$")
+                if ($m.Success) { $m }
+            })
+        $held = $rows.Count -eq 1 -and $rows[0].Groups[3].Value -ceq $verdict -and
+            (-not $xunit -or $rows[0].Groups[1].Value -ceq $xunit) -and (-not $fitness -or $rows[0].Groups[2].Value -ceq $fitness)
+        $what = "row $id reads $verdict"
+        if ($xunit) { $what += ", xunit $xunit, fitness $fitness (recorded/seen)" }
+        Check $held "$what`n$($run.Output)"
+    }
+}
+
+# ---- The cases ----
+
+function Case-C001 {
+    Write-Output 'C-001 the clean tree: 7 Facts, 10 twinned entries, 21 patterns, the settled entries below the marker'
+    # 7 settled: the 4 of SL-023 and SL-024, and the 3 this slice's design appended.
+    $agree = 'rules-parity: AGREE 7 facts <- 10 twinned entries, 21 patterns; 7 settled entries not compared'
+    foreach ($shell in $Shells) {
+        CheckRun (Invoke-Parity $shell $Repo) 0 "the repo [$shell]" @($agree)
+        CheckRun (Invoke-Parity $shell $Repo @('-ExpectFacts', '7')) 0 "the repo with -ExpectFacts 7 [$shell]" @($agree)
+    }
+}
+
+function Case-C002 {
+    Write-Output 'C-002 a pattern edited or dropped in only one copy'
+    Test-Parity 'a typo in one scope entry of a split Fact' {
+        param($root)
+        Edit-File $root $YamlRel "'(?m)(Library|Dll)Import'" "'(?m)(Library|Dll)Imprt'"
+        "yaml entry 'InteropLivesOnlyInNative (src)' (.taad/fitness.yaml:$(Get-LineOf $root $YamlRel "name: 'InteropLivesOnlyInNative (src)'"))"
+        "nearest Fact InteropLivesOnlyInNative (tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs:$(Get-LineOf $root $CsRel 'public void InteropLivesOnlyInNative'))"
+    } 1 @('rules-parity: DRIFT 1 unpaired', "only in yaml '(Library|Dll)Imprt'; only in C# '(Library|Dll)Import'")
+
+    Test-Parity 'a typo in the twin of a one-scope Fact' {
+        param($root)
+        Edit-File $root $YamlRel "'(?m)\b(File|Directory|DirectoryInfo|FileInfo|DriveInfo)\.'" "'(?m)\b(File|Directory|DirectoryInfo|FileInfo)\.'"
+        "Fact TheScannerMakesNoBclFileSystemCalls (tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs:$(Get-LineOf $root $CsRel 'public void TheScannerMakesNoBclFileSystemCalls')) pairs with no twinned entry"
+        "yaml entry 'TheScannerMakesNoBclFileSystemCalls (*.cs)' (.taad/fitness.yaml:$(Get-LineOf $root $YamlRel "name: 'TheScannerMakesNoBclFileSystemCalls (*.cs)'")) pairs with no Fact"
+    } 1 @('rules-parity: DRIFT 2 unpaired')
+
+    Test-Parity 'one of a Fact''s five patterns dropped from C#' {
+        param($root)
+        Edit-File $root $CsRel "            @`"FileSystemEnumerable`",`n" ''
+        "Fact TheScannerListsDirectoriesOnlyThroughDirectoryReader (tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs:$(Get-LineOf $root $CsRel 'public void TheScannerListsDirectoriesOnlyThroughDirectoryReader'))"
+    } 1 @('rules-parity: DRIFT 2 unpaired', "only in yaml 'FileSystemEnumerable'")
+
+    Test-Parity 'one of a Fact''s five patterns dropped from yaml' {
+        param($root)
+        Edit-File $root $YamlRel "      - '(?m)AttributesToSkip'`n" ''
+        "yaml entry 'TheScannerListsDirectoriesOnlyThroughDirectoryReader (*.cs)'"
+    } 1 @('rules-parity: DRIFT 2 unpaired', "only in C# 'AttributesToSkip'")
+}
+
+function Case-C003 {
+    Write-Output 'C-003 a Fact with no yaml entry, or a yaml entry above the settled marker with no Fact'
+    Test-Parity 'the twin of a one-scope Fact deleted' {
+        param($root)
+        Edit-File $root $YamlRel "(?ms)^  - name: 'TheScannerMakesNoBclFileSystemCalls \(\*\.cs\)'.*?(?=^  # settled by SL-)" '' -Pattern
+        "Fact TheScannerMakesNoBclFileSystemCalls (tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs:$(Get-LineOf $root $CsRel 'public void TheScannerMakesNoBclFileSystemCalls')) pairs with no twinned entry"
+    } 1 @('rules-parity: DRIFT 1 unpaired')
+
+    Test-Parity 'a split Fact changed, so both of its entries are stale' {
+        param($root)
+        Edit-File $root $CsRel '@"IsReparsePoint",' '@"IsReparsePointOrLink",'
+        'Fact OnlyTheClassifierReadsTheReparseAttribute ('
+        "yaml entry 'OnlyTheClassifierReadsTheReparseAttribute (*.cs)'"
+        "yaml entry 'OnlyTheClassifierReadsTheReparseAttribute (*.xaml)'"
+    } 1 @('rules-parity: DRIFT 3 unpaired')
+
+    $newEntry = "  - name: 'ANewRuleInTheWrongPlace (*.cs)'`n    files: 'src/**/*.cs'`n    must_not_match:`n      - '(?m)NewThing'`n    including_comments: true`n    because: 'probe'`n`n"
+    Test-Parity 'a new entry authored above the settled marker' {
+        param($root)
+        Edit-File $root $YamlRel '  # settled by SL-023' ($newEntry + '  # settled by SL-023')
+        "yaml entry 'ANewRuleInTheWrongPlace (*.cs)' (.taad/fitness.yaml:$(Get-LineOf $root $YamlRel "name: 'ANewRuleInTheWrongPlace (*.cs)'")) pairs with no Fact"
+    } 1 @('rules-parity: DRIFT 1 unpaired')
+
+    Test-Parity 'the same entry appended below the marker, as the engine appends' {
+        param($root)
+        $path = Join-Path $root $YamlRel
+        [System.IO.File]::AppendAllText($path, "`r`n  # settled by SL-999`r`n" + $newEntry.Replace("`n", "`r`n"), $Utf8)
+    } 0 @('rules-parity: AGREE 7 facts <- 10 twinned entries, 21 patterns; 8 settled entries not compared')
+}
+
+function Case-C004 {
+    Write-Output 'C-004 a twinned pattern without (?m), and the BOM guard spelled three ways'
+    Test-Parity 'a twinned pattern without (?m)' {
+        param($root)
+        Edit-File $root $YamlRel "'(?m)IsReparsePoint'" "'IsReparsePoint'"
+    } 1 @('rules-parity: DRIFT 1 unpaired', "only in yaml 'IsReparsePoint' (lacks (?m)); only in C# 'IsReparsePoint'")
+
+    # The escape spelled out from [char]92, so no tool along the way turns it into the character. The
+    # replacement text of Regex.Replace takes a backslash literally; only $ is special in it.
+    $bs = [string][char]92
+    $guard = [regex]::Escape("^${bs}ufeff?")
+    foreach ($spelling in @("${bs}ufeff", "${bs}uFEFF", "${bs}uFeFf", [string][char]0xFEFF)) {
+        $label = if ($spelling.Length -eq 1) { 'a literal U+FEFF' } else { Show $spelling }
+        Test-Parity "the BOM guard written as $label" {
+            param($root)
+            Edit-File $root $YamlRel $guard ('^' + $spelling + '?') -Pattern -All
+            $text = [System.IO.File]::ReadAllText((Join-Path $root $YamlRel), $Utf8)
+            if (-not $text.Contains('^' + $spelling + '?')) { throw "case setup: the copy does not carry ^$(Show $spelling)?" }
+        } 0 @('rules-parity: AGREE 7 facts <- 10 twinned entries, 21 patterns')
+    }
+
+    Test-Parity 'a BOM without the ? is not the guard' {
+        param($root)
+        Edit-File $root $YamlRel $guard "^${bs}ufeff" -Pattern
+    } 1 @('rules-parity: DRIFT 1 unpaired')
+}
+
+function Case-C005 {
+    Write-Output 'C-005 shapes the readers cannot classify or count exit 2 with file:line, never AGREE'
+    $wpf = '            @"<UseWPF>\s*true",'
+    $cs = @(
+        @('two literals on one line', ($wpf + "`n" + '            @"<UseWindowsForms>\s*true",'), ($wpf + ' @"<UseWindowsForms>\s*true",'), '@"<UseWPF>\s*true", @"<UseWindowsForms>'),
+        @('a concatenation', $wpf, '            @"<UseWPF>\s*" + @"true",', '@"<UseWPF>\s*" + @"true"'),
+        @('a raw string', $wpf, '            """<UseWPF>\s*true""",', '"""<UseWPF>'),
+        @('a const', $wpf, '            UseWpfPattern,', 'UseWpfPattern,'),
+        @('nameof', $wpf, '            nameof(UseWpfPattern),', 'nameof(UseWpfPattern)'),
+        @('an interpolated string', $wpf, '            $@"<UseWPF>\s*{true}",', '$@"<UseWPF>')
+    )
+    foreach ($shape in $cs) {
+        $name, $old, $new, $needle = $shape
+        Test-Parity "C# $name" {
+            param($root)
+            Edit-File $root $CsRel $old $new
+            "rules-parity: CANNOT-READ tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs:$(Get-LineOf $root $CsRel $needle):"
+        } 2
+    }
+
+    $noBcl = '        AssertNoMatch(Files(@"src\FsAnalyser.Core\Scanning", "*.cs"),' + "`n" + '            @"\b(File|Directory|DirectoryInfo|FileInfo|DriveInfo)\.");'
+    Test-Parity 'a Fact with no AssertNoMatch( call' {
+        param($root)
+        Edit-File $root $CsRel $noBcl '        Assert.True(true);'
+    } 2 @('rules-parity: CANNOT-READ', 'Fact TheScannerMakesNoBclFileSystemCalls makes no AssertNoMatch( call')
+    Test-Parity 'a Fact with zero patterns' {
+        param($root)
+        Edit-File $root $CsRel $noBcl '        AssertNoMatch(Files(@"src\FsAnalyser.Core\Scanning", "*.cs"));'
+        "rules-parity: CANNOT-READ tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs:$(Get-LineOf $root $CsRel 'AssertNoMatch(Files(@"src\FsAnalyser.Core\Scanning", "*.cs"));'): AssertNoMatch( closes before any pattern"
+    } 2
+    Test-Parity 'zero Facts' {
+        param($root)
+        Edit-File $root $CsRel '\[Fact\]' '[Fect]' -Pattern -All
+    } 2 @('rules-parity: CANNOT-READ tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs: zero [Fact]s found')
+    Test-Parity 'a Fact count that differs from the reflected count' { param($root) } 2 `
+        @('rules-parity: CANNOT-READ tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs: the reader found 7 Facts where the test class has 8') @('-ExpectFacts', '8')
+
+    $isReparse = "      - '(?m)IsReparsePoint'"
+    $yaml = @(
+        @('a double-quoted pattern', '      - "(?m)IsReparsePoint"', 'is a double-quoted scalar'),
+        @('a block pattern', ("      - >-`n        (?m)IsReparsePoint"), 'is a block scalar'),
+        @('a plain pattern', '      - (?m)IsReparsePoint', 'is a plain scalar')
+    )
+    foreach ($shape in $yaml) {
+        $name, $new, $says = $shape
+        Test-Parity "yaml $name" {
+            param($root)
+            Edit-File $root $YamlRel $isReparse $new
+            "rules-parity: CANNOT-READ .taad/fitness.yaml:$(Get-LineOf $root $YamlRel ($new -split "`n")[0]): a pattern of 'OnlyTheClassifierReadsTheReparseAttribute (*.cs)' $says"
+        } 2
+    }
+}
+
+function Case-C006 {
+    Write-Output 'C-006 the harness cannot reach the engine, or the engine result lacks a field: exit 2 naming the path'
+    $missing = Join-Path (New-TempDir 'fsa-engine-case-') 'no-such-engine'
+    CheckRun (Invoke-HarnessRaw @('--engine-root', $missing)) 2 'an engine root that does not exist' @("engine root $missing", 'no taad3/fitness.py', 'harness: exit 2')
+    CheckRun (Invoke-HarnessRaw @('--engine-root', $Repo)) 2 'an engine root that holds no engine' @("engine root $Repo", 'no taad3/fitness.py')
+    CheckRun (Invoke-HarnessRaw @()) 2 'no --engine-root at all (required, no default)' @('--engine-root')
+
+    # A stand-in engine: its check() leaves out 'unran', and its import refuses a TAAD3_HOME other than the
+    # run's own scratch (%TEMP%\fsa-rules-*\home), so passing also proves the harness set it before importing.
+    $fake = New-TempDir 'fsa-engine-case-'
+    New-Item -ItemType Directory -Path (Join-Path $fake 'taad3') | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $fake 'taad3\__init__.py'), '', $Utf8)
+    [System.IO.File]::WriteAllText((Join-Path $fake 'taad3\fitness.py'), @'
+import os, tempfile, types
+_home = os.path.abspath(os.environ.get("TAAD3_HOME") or "/")
+_work = os.path.dirname(_home)
+if not (os.path.basename(_home) == "home" and os.path.basename(_work).startswith("fsa-rules-")
+        and os.path.normcase(os.path.dirname(_work)) == os.path.normcase(os.path.abspath(tempfile.gettempdir()))):
+    raise RuntimeError("TAAD3_HOME was not pointed at scratch before the import: " + _home)
+
+def check(tree, build=False):
+    return types.SimpleNamespace(verdict="pass", rules=[], violations=[], unmatched=[], content_files=0)
+'@, $Utf8)
+    $run = Invoke-HarnessRaw @('--engine-root', $fake)
+    CheckRun $run 2 'an engine whose result lacks a field' @("engine root $fake", 'the result of taad3.fitness.check lacks unran')
+    Check (-not $run.Output.Contains('TAAD3_HOME was not pointed')) "TAAD3_HOME pointed at scratch before the import`n$($run.Output)"
+    Check (-not $run.Output.Contains('MISSED') -and -not $run.Output.Contains('harness: exit 1')) 'never reported as the engine disagreeing'
+
+    $broken = New-TempDir 'fsa-engine-case-'
+    New-Item -ItemType Directory -Path (Join-Path $broken 'taad3') | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $broken 'taad3\__init__.py'), '', $Utf8)
+    [System.IO.File]::WriteAllText((Join-Path $broken 'taad3\fitness.py'), "raise ImportError('this engine is broken')`n", $Utf8)
+    CheckRun (Invoke-HarnessRaw @('--engine-root', $broken)) 2 'an engine that fails to import' @("engine root $broken", 'importing taad3.fitness failed')
+}
+
+function Case-C007 {
+    Write-Output 'C-007 the clean scenario: no plants, zero hits in both engines'
+    $run = Invoke-Harness @('--scenario', 'clean')
+    CheckRun $run 0 'the clean scenario on this repo' @('| CLEAN', 'xunit 7 Facts, 0 hits', 'none unmatched or unran')
+    $parity = [regex]::Match($run.Output, '(\d+) twinned entries, \d+ patterns; (\d+) settled')
+    $rules = [regex]::Match($run.Output, 'fitness pass, (\d+) rules')
+    Check ($parity.Success -and $rules.Success -and [int]$rules.Groups[1].Value -eq [int]$parity.Groups[1].Value + [int]$parity.Groups[2].Value) `
+        "the Fitness rule count equals the yaml entries (twinned + settled)`n$($run.Output)"
+
+    # Bites: a hit nobody planted stops the run before any row is judged.
+    $copy = New-RepoCopy
+    Edit-File $copy 'src\FsAnalyser.Core\Scanning\Scanner.cs' '(?s)\r?\n$' "`r`n// stray: DllImport`r`n" -Pattern
+    $run = Invoke-Harness @('--root', $copy, '--dotnet-from', $Repo, '--scenario', 'clean')
+    CheckRun $run 2 'a stray violation already in the tree' @('the clean baseline is not clean', 'InteropLivesOnlyInNative', 'src/FsAnalyser.Core/Scanning/Scanner.cs')
+}
+
+$MustFire = 1..16 | ForEach-Object { 'F{0:D2}' -f $_ }
+
+function Case-C008 {
+    Write-Output 'C-008 the 16 must-fire plants, one per scope of each split Fact, inserted into files that have lines'
+    $run = Invoke-Harness @('--scenario', 'plants', '--only', ($MustFire -join ','))
+    CheckRun $run 0 'the 16 must-fire plants' @('harness: 16 rows, 16 AS-RECORDED, 0 not, 0 stray hits')
+    Test-Rows $run $MustFire 'AS-RECORDED'
+
+    # Bites: a scope entry deleted from yaml is parity's blind spot, and the per-scope plant catches it.
+    $copy = New-RepoCopy
+    Edit-File $copy $YamlRel "(?ms)^  - name: 'InteropLivesOnlyInNative \(tests\)'.*?(?=^  - name: )" '' -Pattern
+    $run = Invoke-Harness @('--root', $copy, '--dotnet-from', $Repo, '--scenario', 'plants', '--only', 'F02,F12')
+    CheckRun $run 1 'the tests scope of InteropLivesOnlyInNative deleted from yaml' @('rules-parity: AGREE 7 facts <- 9 twinned entries')
+    Test-Rows $run @('F02') 'AS-RECORDED'
+    Test-Rows $run @('F12') 'MISSED-BY-FITNESS'
+
+    # ... and the same scope dropped from the xUnit copy, which parity cannot see either.
+    $copy = New-RepoCopy
+    Edit-File $copy $CsRel 'Files("src", "*.cs").Concat(Files("tests", "*.cs"))' 'Files("src", "*.cs")'
+    $run = Invoke-Harness @('--root', $copy, '--dotnet-from', $Repo, '--scenario', 'plants', '--only', 'F02,F12')
+    CheckRun $run 1 'the tests scope of InteropLivesOnlyInNative dropped from xUnit' @('rules-parity: AGREE 7 facts <- 10 twinned entries')
+    Test-Rows $run @('F02') 'AS-RECORDED'
+    Test-Rows $run @('F12') 'MISSED-BY-XUNIT'
+}
+
+function Case-C009 {
+    Write-Output 'C-009 plants in the exempted files (P07c-P07e) stay quiet in both engines'
+    $run = Invoke-Harness @('--scenario', 'plants', '--only', 'P07c,P07d,P07e')
+    CheckRun $run 0 'the three exempt-file plants' @('harness: 3 rows, 3 AS-RECORDED')
+    Test-Rows $run @('P07c', 'P07d', 'P07e') 'AS-RECORDED'
+
+    # Bites: the same plant in a file that is not exempt reads FIRED-WHEN-EXEMPT ...
+    $rows = New-RowsFile 'plants.json' 'P07d' { param($row) $row.file = 'src/FsAnalyser.Core/Scanning/DirectoryReader.cs' }
+    $run = Invoke-Harness @('--plants', $rows, '--scenario', 'plants', '--only', 'P07d')
+    CheckRun $run 1 'the classifier plant moved out of the exempted file' @('FIRED-WHEN-EXEMPT')
+    Test-Rows $run @('P07d') 'FIRED-WHEN-EXEMPT'
+
+    # ... and an exemption dropped from yaml fails the clean baseline, because the exempted file really
+    # holds what the rule forbids.
+    $copy = New-RepoCopy
+    Edit-File $copy $YamlRel "      - 'src/FsAnalyser.Core/Scanning/EntryClassifier.cs'`n" ''
+    $run = Invoke-Harness @('--root', $copy, '--dotnet-from', $Repo, '--scenario', 'plants', '--only', 'P07d')
+    CheckRun $run 2 'the classifier exemption dropped from yaml' @('rules-parity: AGREE', 'the clean baseline is not clean', 'src/FsAnalyser.Core/Scanning/EntryClassifier.cs')
+}
+
+function Case-C010 {
+    Write-Output 'C-010 a violating file under packages/ or dist/ (D1, D2): xUnit fires, Fitness does not walk there'
+    $run = Invoke-Harness @('--scenario', 'divergences', '--only', 'D1,D2')
+    CheckRun $run 0 'D1 and D2' @('harness: 2 rows, 2 AS-RECORDED')
+    Test-Rows $run @('D1', 'D2') 'AS-RECORDED' 'fire/fire' 'quiet/quiet'
+}
+
+function Case-C011 {
+    Write-Output 'C-011 UTF-16LE, cp1252 and over-2-MB files, each carrying a violation'
+    $run = Invoke-Harness @('--scenario', 'divergences', '--only', 'D6,D7,D10,D11,D13')
+    CheckRun $run 0 'D6, D7, D10, D11 and D13' @('harness: 5 rows, 5 AS-RECORDED')
+    Test-Rows $run @('D6', 'D7', 'D10', 'D11') 'AS-RECORDED' 'fire/fire' 'quiet/quiet'
+    Test-Rows $run @('D13') 'AS-RECORDED' 'fire/fire' 'fire/fire'
+}
+
+function Case-C012 {
+    Write-Output 'C-012 a case-only rename of an exempted file, in two steps through a temporary name'
+    $run = Invoke-Harness @('--scenario', 'divergences', '--only', 'D3,D4,D9')
+    CheckRun $run 0 'D3, D4 and D9' @('harness: 3 rows, 3 AS-RECORDED')
+    Test-Rows $run @('D3', 'D4', 'D9') 'AS-RECORDED' 'fire/fire' 'quiet/quiet'
+
+    # Bites: a rename that is not a case-only change is PLANT-BROKEN, never a silent no-op.
+    $rows = New-RowsFile 'divergences.json' 'D3' { param($row) $row.to = 'EntryClassifier.cs' }
+    $run = Invoke-Harness @('--divergences', $rows, '--scenario', 'divergences', '--only', 'D3')
+    CheckRun $run 1 'a rename to the same name' @('is not a case-only change')
+    Test-Rows $run @('D3') 'PLANT-BROKEN'
+}
+
+function Case-C013 {
+    Write-Output 'C-013 a using directive split across two lines (D5): Fitness fires, xUnit does not'
+    $run = Invoke-Harness @('--scenario', 'divergences', '--only', 'D5')
+    CheckRun $run 0 'D5' @('harness: 1 rows, 1 AS-RECORDED')
+    Test-Rows $run @('D5') 'AS-RECORDED' 'quiet/quiet' 'fire/fire'
+}
+
+function Case-C014 {
+    Write-Output 'C-014 a recorded divergence both engines now agree on fails as DIVERGENCE-CLOSED'
+    # D13 is an agreement both engines give; recording it as a divergence is what an engine fix looks like.
+    $rows = New-RowsFile 'divergences.json' 'D13' { param($row) $row.expect.fitness = 'quiet' }
+    $run = Invoke-Harness @('--divergences', $rows, '--scenario', 'divergences', '--only', 'D13')
+    CheckRun $run 1 'a row recorded as a divergence that both engines agree on' @('DIVERGENCE-CLOSED', 'delete row D13 from divergences.json', 'harness: exit 1')
+    Test-Rows $run @('D13') 'DIVERGENCE-CLOSED'
+}
+
+# ---- Main ----
+
+$cases = if ($Case -eq 'All') { 1..14 | ForEach-Object { 'C-{0:D3}' -f $_ } } else { @($Case) }
+try {
+    foreach ($c in $cases) {
+        try { & "Case-$($c.Replace('-', ''))" }
+        catch { Check $false "$c stopped: $($_.Exception.Message)" }
+    }
+}
+finally {
+    foreach ($dir in $script:Temps) { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+Write-Output ''
+if ($script:Failures.Count) {
+    Write-Output "$($script:Failures.Count) check(s) failed."
+    exit 1
+}
+Write-Output 'All checks held.'
+exit 0

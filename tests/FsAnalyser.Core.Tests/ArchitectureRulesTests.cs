@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace FsAnalyser.Core.Tests;
 
+// One verbatim literal per pattern line: eng/rules-parity.ps1 reads them against .taad/fitness.yaml (RuleCopiesAgreeTests).
 /// <summary>
 /// The architecture rules, checked over the source tree, so breaking one fails a test and not only a
 /// review. The patterns are written so that this file does not match its own rules.

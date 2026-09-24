@@ -5,6 +5,13 @@
 #     tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs. That file is the source: every pattern,
 #     scope and exemption is copied from one of its [Fact]s, and the reasons from
 #     docs/design/SL-020-scanner.md (Architecture rules). Change a rule in both places, or in neither.
+#     eng/rules-parity.ps1 checks that the two copies hold the same patterns, and RuleCopiesAgreeTests
+#     runs it on every `dotnet test`, so a pattern changed in one place only fails a test. It reads only
+#     single-quoted patterns that start with (?m), allows the BOM guard (authoring rules below), and
+#     stops at the first '# settled by' line: a twinned entry goes above it, and one there with no
+#     [Fact] is drift. It compares patterns, not scopes, exemptions or engine behaviour, so after
+#     changing a rule also run eng/rules-harness/harness.py (it needs the TAAD engine), which plants
+#     violations in a scratch copy and checks what each engine does with them.
 #   - SETTLED: every entry under a '# settled by SL-0xx' marker, appended by the engine from that
 #     slice's design (architecture_rules). It has NO xUnit twin: Fitness is its only enforcement, and
 #     `dotnet test` stays green when it breaks. Its reason is its `because`. Change it here only.
@@ -17,21 +24,23 @@
 #
 # For twinned entries, ArchitectureRulesTests (xUnit) is the authority. They are a quicker copy of it
 # that the engine can run at every gate, and they can pass where xUnit fails. Known differences, given
-# as examples and not as a complete list:
-#   - A match that spans a line break. Fitness matches whole-file text and xUnit one line at a time,
-#     so \s, [^)]* and [^>]* can cross a line break here and not there: `using` and `System.Windows;`
-#     on two lines fail here and pass xUnit. A (?m)^\s* match is also reported at the first of any
-#     blank lines before the offending line, so the line number can differ.
-#   - A file that is not UTF-8, such as UTF-16 or UTF-32. Fitness decodes every file as UTF-8 with
-#     errors replaced, so no pattern here matches it; xUnit decodes it by its byte-order mark and
-#     fails it.
-#   - A file over 2 MB, which Fitness skips unread.
+# as examples and not as a complete list. Each D-id is a row of eng/rules-harness/divergences.json, which
+# fails when both engines come to agree on it; delete the row and its D-id here together.
+#   - A match that spans a line break (D5, D12). Fitness matches whole-file text and xUnit one line at
+#     a time, so \s, [^)]* and [^>]* can cross a line break here and not there: `using` and
+#     `System.Windows;` on two lines fail here and pass xUnit (D5). A (?m)^\s* match is also reported
+#     at the first of any blank lines before the offending line, so the line number can differ (D12).
+#   - A file that is not UTF-8, such as UTF-16 or UTF-32 (D6, D11). Fitness decodes every file as
+#     UTF-8 with errors replaced, so no pattern here matches it; xUnit decodes it by its byte-order
+#     mark and fails it. A single-byte file such as cp1252 is not one of these: both read it as UTF-8
+#     with the odd byte replaced, and both fail an ASCII violation in it (D13, pinned, not a divergence).
+#   - A file over 2 MB, which Fitness skips unread (D7, D10).
 #   - A file under a folder the engine skips by name at any depth (SKIP_DIRS in taad3/fitness.py):
-#     packages/, dist/, target/, node_modules/, venv/, .venv/, .vs/, .idea/, .next/, __pycache__/,
-#     .git/ and more, besides bin/ and obj/. xUnit skips only bin/ and obj/.
-#   - Upper and lower case in an exempted file's name. Fitness's except_files ignore case and xUnit's
-#     .Except([...]) does not, so a case-only rename of an exempted file such as EntryClassifier.cs
-#     or TestNative.cs fails xUnit and passes here.
+#     packages/ (D1), dist/ (D2), target/ (D8), node_modules/, venv/, .venv/, .vs/, .idea/, .next/,
+#     __pycache__/, .git/ and more, besides bin/ and obj/. xUnit skips only bin/ and obj/.
+#   - Upper and lower case in an exempted file's name (D3, D4, D9). Fitness's except_files ignore case
+#     and xUnit's .Except([...]) does not, so a case-only rename of an exempted file such as
+#     EntryClassifier.cs or TestNative.cs fails xUnit and passes here.
 # No pattern in this repo can close the last four; the fixes belong in the engine. Until then the
 # xUnit test is the backstop for twinned entries. Settled entries have none: a file that is not
 # UTF-8, is over 2 MB or sits under a skipped folder hides a violation of theirs from every check.
@@ -210,3 +219,36 @@ rules:
       ERROR_NOT_FOUND, the scan never stops early, and nothing fails except a blocked-call test.
       The handle must come from OpenThread(THREAD_TERMINATE, GetCurrentThreadId()). \bGetCurrentThread\b
       does not match GetCurrentThreadId.
+
+  # settled by SL-031
+  - name: eng tooling carries no machine-specific path
+    files: eng/**
+    must_not_match:
+    - '[A-Za-z]:\\+Users\\'
+    - (?i)sl022-(fitness|val)
+    because: 'The SL-022 harness crashed from a clean clone on exactly these: C:\Users\sshub\...
+      constants and %TEMP%\sl022-* trees. A check pinned to one machine''s path cannot run in
+      another worktree or checkout, and it fails silently as ''cannot measure''. Cite SL-022
+      by id in notes, never by path. The two pre-existing scripts are excepted because this
+      design does not govern them.'
+    except_files:
+    - eng/dotnet.ps1
+    - eng/read-window.ps1
+  - name: the .NET caller launches the check and parses nothing
+    files: tests/FsAnalyser.Core.Tests/RuleCopiesAgreeTests.cs
+    must_not_match:
+    - \bRegex\b
+    - YamlDotNet
+    - File\.ReadAll(Text|Lines|Bytes)
+    because: The slice's design rejected a rule parser inside the .NET project as over-built
+      (C4). A third reader of the two rule copies would itself need keeping in step with them,
+      which is the drift this slice exists to remove. The Fact may only launch eng/rules-parity.ps1
+      and assert its exit code.
+  - name: the harness measures the real Fitness engine and never a copy of it
+    files: eng/rules-harness/*.py
+    must_not_match:
+    - (?m)^\s*(import|from)\s+yaml\b
+    - \bSKIP_DIRS\b
+    because: A reimplemented matcher or a private YAML reader pins the copy. The harness would
+      stay green while the engine's glob, skip-dir, size or encoding behaviour changed, which
+      is exactly the divergence class this slice measures. Only taad3.fitness may read fitness.yaml.
