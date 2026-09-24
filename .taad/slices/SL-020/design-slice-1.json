@@ -1,0 +1,413 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-020",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-24T05:28:15.960Z",
+ "head": "f8cb1690f26104fbb4c6a43b9ee37666d39b53d5",
+ "run_id": 722,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "The tree is empty (build-check: 0 tracked files), so there is no existing shape to match. The proposal was therefore selected against the four spike verdicts, Q-001 and the U-001 memory budget. It fits all of them. Links are decided by tag only (0xA0000003 and 0xA000000C), which answers the reparse no-go. The size probe runs only for WOF suspects and the first repeat of a FileId, which answers the listing no-go. Cloud files are recognised by RECALL/OFFLINE attributes and never opened. Test links come from a Developer-Mode-safe route, which matches the symlink go and Q-001. The .NET 10 no-go is answered with a repo-local SDK bootstrap, one of the fixes the spike itself named. It is also the simplest slice that meets 'pick any drive or folder, read everything underneath'. It has one background thread, no rollups, no parallelism, no saved state and no tree view. Its one expensive-to-reverse piece is the struct-of-arrays Scan Store. That is justified because the U-001 budget (5M entries under 1 GiB) rules out a node-object tree, and every later slice reads the store through its index API. Five things were changed at seams, and coherence_check lists them. Several things the proposal rests on are still unmeasured, and this document says so instead of settling them: the memory budget for this column layout, the FAT/exFAT/SMB fallback on a real volume, WPF single-file publish, and network access for the SDK bootstrap.",
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "Sole proposal (sized tournament). Taken whole: scan pipeline, store, classifier, probe, test plan and SDK bootstrap. Five seams were redesigned. Its text was clipped at 20,000 chars, so its tail (later key decisions, prior art, whats_new/whats_reused) was not visible; those lists were rebuilt from what was visible plus the survey."
+   }
+  ],
+  "components": [
+   {
+    "name": "Solution scaffold and SDK bootstrap",
+    "responsibility": "Makes the repo build and test on a PC whose `dotnet` resolves 9.0.318. global.json pins sdk 10.0.100 with rollForward latestFeature, so a bare `dotnet` fails loudly instead of quietly building against 9. eng/dotnet.ps1 uses a machine-wide 10.0.x SDK if `dotnet --list-sdks` shows one. Otherwise it runs Microsoft's dotnet-install.ps1 (-Channel 10.0 -InstallDir .dotnet -NoPath), sets DOTNET_ROOT and PATH for its own process only, and forwards its arguments. It never falls back to 9.0. Three projects: FsAnalyser.Core and FsAnalyser.Core.Tests, both net10.0-windows with no WPF, and FsAnalyser.App, net10.0-windows with UseWPF. AllowUnsafeBlocks is set on Core only. App.csproj pins ServerGarbageCollector=false, the setting U-001 measured its 699 MiB under, and carries the single-file publish properties (SelfContained, win-x64, PublishSingleFile, IncludeNativeLibrariesForSelfExtract, no trimming).",
+    "lives_at": "global.json, eng/dotnet.ps1, FsAnalyser.slnx, Directory.Build.props, .gitignore, src/FsAnalyser.App/FsAnalyser.App.csproj",
+    "key_interactions": "Every build, test and publish command from the builder and from validate goes through `pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 ...`. The first build step must show `eng/dotnet.ps1 --version` printing 10.x. If it cannot, the slice goes back to the risk-spike stage rather than building on 9.0."
+   },
+   {
+    "name": "Native interop",
+    "responsibility": "Production-only Win32 surface. LibraryImport declarations (SetLastError, SafeFileHandle) for CreateFileW and GetFileInformationByHandleEx, with classes FileIdExtdDirectoryInfo=19, FileIdExtdDirectoryRestartInfo=20, FileFullDirectoryInfo=14, FileFullDirectoryRestartInfo=15, FileStandardInfo=1 and FileAttributeTagInfo. Also a LongPath helper. The helper normalises the ROOT once (drive letter to C:\\, GetFullPath) and maps it to \\\\?\\C:\\... or \\\\?\\UNC\\server\\share\\.... Child paths are then plain concatenation and are never re-normalised. No test-only calls live here.",
+    "lives_at": "src/FsAnalyser.Core/Native/Kernel32.cs, src/FsAnalyser.Core/Native/LongPath.cs",
+    "key_interactions": "Used by DirectoryReader and SizeProbe. The test project reaches internals through InternalsVisibleTo."
+   },
+   {
+    "name": "DirectoryReader",
+    "responsibility": "Opens one directory with CreateFileW (FILE_LIST_DIRECTORY, all share modes, FILE_FLAG_BACKUP_SEMANTICS, no OPEN_REPARSE_POINT, so a chosen link root is opened through). It pages FILE_ID_EXTD_DIR_INFO through a reused 64 KiB buffer, parsing EndOfFile at +40, AllocationSize at +48, attributes at +56, name length at +60, tag at +68, FileId at +72 and name at +88. It skips '.' and '..' and yields raw records without interpreting them. The FILE_FULL_DIR_INFO variant (tag from EaSize at +64, name at +68, no FileId) is used when the whole scan is on the fallback class. An open failure or a mid-listing failure returns the Win32 error together with the entries already read.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/DirectoryReader.cs",
+    "key_interactions": "Called by Scanner once per folder. Scanner decides the class once per scan, after the root has been checked to be a directory."
+   },
+   {
+    "name": "EntryClassifier",
+    "responsibility": "Pure Classify(attributes, reparseTag, isDirectory) returning Folder, File or Link plus a CloudOnly flag. It is the only file allowed to read the reparse attribute. Link is REPARSE_POINT with tag 0xA0000003 or 0xA000000C. Every other reparse directory (cloud, WCI, ProjFS) is a Folder and is entered. Every other reparse file (APPEXECLINK, AF_UNIX, LX_SYMLINK, dedup) is a File. WOF files carry no reparse bit and are plain files. CloudOnly means RECALL_ON_DATA_ACCESS (0x400000), RECALL_ON_OPEN (0x40000) or OFFLINE (0x1000), the only visible sign of a placeholder under placeholder mode 1.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/EntryClassifier.cs",
+    "key_interactions": "Scanner asks it whether to descend and whether a file may ever be probed."
+   },
+   {
+    "name": "SizeProbe",
+    "responsibility": "Opens one file with FILE_READ_ATTRIBUTES only, all share modes and no OPEN_REPARSE_POINT, so the WOF filter applies. It reads FILE_STANDARD_INFO (EndOfFile, AllocationSize) and never reads data. It runs in two cases only. (1) A WOF suspect: listing AllocationSize is 0, EndOfFile is at least 4096, and the file is neither SPARSE nor CloudOnly. (2) The first repeat of a FileId, where it corrects the record already charged. A failed probe keeps the listing values, sets ProbeFailed on the entry and increments ScanResult.ProbeFailures. CloudOnly files are never passed to it.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/SizeProbe.cs",
+    "key_interactions": "Called by Scanner. The spike measured handle FileStandardInfo.AllocationSize equal to the true free-space drop for a WOF file (149,053,440 B) where the listing said 0."
+   },
+   {
+    "name": "Scanner",
+    "responsibility": "Scan(root, progress, ct) runs on the caller's thread; the UI starts it LongRunning. It requires an absolute path, normalises it, and checks the root is a directory through FileAttributeTagInfo on the opened handle. Otherwise it returns RootUnreadable with ERROR_DIRECTORY (267), so error 87 only ever means 'extended class unsupported'. It picks the listing class once from the root's first call: error 1, 50 or 87 switches the whole scan to FILE_FULL_DIR_INFO. It walks depth-first with an explicit stack of (entryIndex, fullPath). Each folder's listing is appended to ScanStore as one contiguous block. It keeps running totals (files, folders, links, bytes, bytes on disk, unreadable) and updates ScanProgress after each folder. It checks the CancellationToken once per folder. A hardlink repeat adds a file and no bytes, and the first repeat's probe delta corrects the totals. It never throws for a problem inside the tree. An internal ScanOptions {ForceFullDirectoryClass, AfterFolder} is the only test seam.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/Scanner.cs, ScanOptions.cs, ScanProgress.cs, ScanResult.cs",
+    "key_interactions": "Produces ScanResult with Status Completed, Cancelled or RootUnreadable. Unreadable folders become entries flagged Unreadable plus (entry, win32Error) rows in ScanResult.Unreadable."
+   },
+   {
+    "name": "ScanStore",
+    "responsibility": "First cut of the architecture's in-memory struct-of-arrays store. Entry 0 is the root (Parent=-1) and each folder's children are contiguous. Columns: Parent, NameOffset/NameLength into pooled UTF-16 char pages, Kind, Flags (Unreadable, HardlinkDuplicate, CloudOnly, SizeProbed, ProbeFailed), Attributes, Size, OnDisk, FileId (two ulongs), FirstChild, ChildCount. Columns live in fixed 65,536-entry pages that never move. The hardlink table is a HashSet<int> of entry indices whose comparer reads the FileId columns, so keys are not stored twice. FileId 0 (fallback volumes) is never deduplicated. Read API (Count, Parent, Name as ReadOnlySpan<char>, Kind, Flags, Attributes, Size, OnDisk, FileId as UInt128, FirstChild, ChildCount, GetPath) is public. Write and correct API is internal to Core, so only Scanner can write. Rollups, largest-first order and concurrent readers are left to the tree slice.",
+    "lives_at": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "key_interactions": "Scanner is the only writer. The UI reads it after the scan ends. The probe's correction rewrites the first-seen entry's Size and OnDisk in place (aligned 8-byte writes, never torn on x64), so a later concurrent reader must not assume values are append-only."
+   },
+   {
+    "name": "Main window",
+    "responsibility": "A drive row loaded off the UI thread from DriveInfo.GetDrives(), showing IsReady Fixed, Removable and Network drives with letter, label, format and free space. Beside it, 'Choose a folder...' opens Microsoft.Win32.OpenFolderDialog. An optional first command-line argument names a path to scan at launch, so validate can drive 'any folder' without automating the system dialog. While a scan runs: an indeterminate bar, counters from a 250 ms DispatcherTimer polling ScanProgress, the current folder, a Cancel button, and both pickers disabled. It ends in three visibly different states. Finished shows totals, a note when FileIds were unavailable (hardlinks not deduplicated), a note when ProbeFailures > 0, and an expander of unreadable folders with Win32 messages. Stopped shows what was read before the stop, never as a finished scan. Could not read names the root and its Win32 error. Code-behind only.",
+    "lives_at": "src/FsAnalyser.App/App.xaml, MainWindow.xaml, MainWindow.xaml.cs",
+    "key_interactions": "Calls Scanner.Scan through Task.Factory.StartNew(LongRunning), owns the CancellationTokenSource, and drops the previous ScanResult before a new scan starts so the old store can be collected."
+   },
+   {
+    "name": "TempTree fixture and TestNative",
+    "responsibility": "Builds real trees under %TEMP%\\fsa-tests\\<guid> and asserts %TEMP% is NTFS. Symlinks come from File/Directory.CreateSymbolicLink (measured working unelevated in this context). If 1314 ever appears, a test-local CreateSymbolicLinkW passing SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE is the fix (Q-001), never a skip. Junctions and hardlinks come from `cmd /c mklink /J` and `/H`. Sparse files use FSCTL_SET_SPARSE and compression uses `compact /c` or `compact /c /exe:xpress4k`, both through test-only P/Invoke in tests/TestNative.cs. Names Win32 would rewrite and paths over 400 chars are created through \\\\?\\. Deny ACEs use FileSystemAclExtensions with the current user's SID. Any failed step throws with the Windows error text. Dispose removes deny ACEs first, then links, then the tree.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/TempTree.cs, tests/FsAnalyser.Core.Tests/TestNative.cs",
+    "key_interactions": "Used by every counting-rule test."
+   },
+   {
+    "name": "Counting-rule and traversal tests",
+    "responsibility": "One class per rule, each against a real temp tree: TraversalTests, LinkTests, HardlinkTests, OnDiskSizeTests, LongPathTests, UnreadableFolderTests, RootTests, CancellationTests, ListingFallbackTests, plus pure tests for EntryClassifier (a table from the spike's tag tally, including the RECALL/OFFLINE attributes), LongPath (including the \\\\?\\UNC\\ mapping) and ScanStore (synthetic page rollover). The hardlink counting tests assert the true size charged once, every name counted as a file, and SizeProbed set on the charged record. A separate documentary test asserts the raw listing is stale, so an OS change fails one test and not the counting rule. Nothing is skipped.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/*.cs",
+    "key_interactions": "Run with `pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx`."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "Scanner.Scan(string root, ScanProgress progress, CancellationToken ct) -> ScanResult",
+    "kind": "function",
+    "auth_model": "Runs as the invoking user and is never elevated. It reads only what an ordinary token can read.",
+    "error_cases": "A relative or empty root throws ArgumentException. A root that is missing, denied, not ready or not a folder returns Status=RootUnreadable with RootError set (267 for a regular file), never an empty success. Cancellation returns Status=Cancelled with the partial store and totals and throws nothing. A folder inside the tree that cannot be opened or listed does not fail the scan; it becomes an entry flagged Unreadable plus a row in ScanResult.Unreadable. A failed probe keeps the listing values and increments ProbeFailures.",
+    "notes": "ScanResult carries Status, RootError, Store, Totals (Files, Folders, Links, Bytes, BytesOnDisk), Unreadable (entry, win32Error), ProbeFailures, FileIdsAvailable and Elapsed. A junction or symlink chosen as the root is opened through, because the person chose it."
+   },
+   {
+    "name": "ScanStore read API",
+    "kind": "function",
+    "error_cases": "An index outside [0, Count) throws. A Link or File entry has ChildCount 0.",
+    "notes": "Public read surface only: Count, Parent, Name, Kind, Flags, Attributes, Size, OnDisk, FileId, FirstChild, ChildCount, GetPath. The bytes charged for an entry are Size or OnDisk, except 0 for HardlinkDuplicate and Link entries. Write methods are internal to Core, so the compiler enforces the single writer."
+   },
+   {
+    "name": "ScanProgress (polled counters)",
+    "kind": "function",
+    "notes": "One writer (the scanner, once per folder) and any number of readers through Volatile.Read: Files, Folders, Links, Bytes, BytesOnDisk, Unreadable, CurrentFolder. The UI polls every 250 ms. There are no events and no dispatcher marshalling."
+   },
+   {
+    "name": "EntryClassifier.Classify(uint attributes, uint reparseTag, bool isDirectory) -> (EntryKind, bool cloudOnly)",
+    "kind": "function",
+    "notes": "Pure and table-tested. The link-or-data decision rests on the tag and never on FILE_ATTRIBUTE_REPARSE_POINT alone."
+   },
+   {
+    "name": "ScanOptions (internal test seam)",
+    "kind": "function",
+    "notes": "{ bool ForceFullDirectoryClass; Action<int>? AfterFolder }. Visible to the test project through InternalsVisibleTo. The App never sets it. AfterFolder makes mid-scan cancellation deterministic."
+   },
+   {
+    "name": "Main window: pick, progress, cancel, outcome",
+    "kind": "ui",
+    "error_cases": "A drive that stops being ready leads to 'Could not read'. Closing the folder dialog without a choice does nothing. Pickers are disabled during a scan, so there is never a second scan.",
+    "notes": "Finished, Stopped (partial) and Could not read look different. The unreadable-folder list is reachable from Finished and Stopped."
+   },
+   {
+    "name": "FsAnalyser.App.exe [path]",
+    "kind": "cli",
+    "auth_model": "Ordinary user. The manifest must not request elevation.",
+    "error_cases": "An invalid path lands in the 'Could not read' state, exactly as the picker would.",
+    "notes": "The optional first argument scans that path at launch. It exists so validate can drive 'any folder' and a full real drive without automating the system folder dialog."
+   },
+   {
+    "name": "eng/dotnet.ps1 <dotnet args>",
+    "kind": "cli",
+    "error_cases": "No machine 10.0 SDK and no network means the installer fails and the script exits non-zero with its message. It never falls back to 9.0.",
+    "notes": "`pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx`; `... run --project src/FsAnalyser.App -- C:\\`; `... publish src/FsAnalyser.App -c Release -r win-x64`."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "List each directory with GetFileInformationByHandleEx(FileIdExtdDirectoryInfo) on a directory handle. The root is first checked to be a directory. If the root's first listing call then fails with error 1, 50 or 87, the whole scan switches to FileFullDirectoryInfo: no FileIds, no hardlink deduplication, and the result says so.",
+    "reversibility": "cheap",
+    "rationale": "One pass returns FileId, AllocationSize, EndOfFile and tag without opening any file, and the spike verified the struct offsets on this machine. FileSystemEnumerable exposes none of those fields. The fallback is decided once because a scan never leaves its volume, and it keeps FAT, exFAT, USB and SMB covered under 'any drive'. Checking 'is a directory' first removes the ambiguity in error 87."
+   },
+   {
+    "decision": "Only tags 0xA0000003 and 0xA000000C are links: recorded with 0 bytes and never entered. Every other reparse directory is entered. A file is cloud-only when it carries RECALL_ON_DATA_ACCESS, RECALL_ON_OPEN or OFFLINE, and a cloud-only file is never opened or probed.",
+    "reversibility": "cheap",
+    "rationale": "The reparse spike was measured false: 241.7 MiB of non-link reparse files and a OneDrive root with entries. 'Skip reparse points' silently drops real data. Under placeholder mode 1 the RECALL attributes are the only sign of a placeholder."
+   },
+   {
+    "decision": "Take on-disk size from the listing. Correct it with one FILE_READ_ATTRIBUTES handle probe in two cases only: a WOF suspect (AllocationSize 0, EndOfFile of at least 4096, not sparse, not cloud) and the first repeat of a FileId. A failed probe keeps the listing value and is counted and shown.",
+    "reversibility": "cheap",
+    "rationale": "These are the two listing failures the spike measured: WOF reported 0 where 142.6 MiB was real, and the non-written hardlink name reported a stale 1 MiB where 64 MiB was real. Probing every one of ~3.4M files would roughly double the scan to catch a rare case. The 4096 floor keeps MFT-resident small files at their true 0."
+   },
+   {
+    "decision": "Deduplicate hardlinks with a HashSet<int> of entry indices keyed by the 128-bit FileId read from the store's columns. The first name seen charges and later names count as files with 0 bytes. Limit accepted: a file with several names of which only one lies under the root is charged at its listing size, which can be stale. That case is not testable, and it is recorded and not fixed.",
+    "reversibility": "cheap",
+    "rationale": "The listing carries no link count, so every file with an ID must go through the set. Keying through the columns avoids a second 16-byte copy per file at 5M entries. The spike measured staleness only for the name not written through, and probing every file to close a narrow gap costs a doubled scan. The key has no volume part because links and mount points are never followed, so a scan stays on one volume."
+   },
+   {
+    "decision": "One background thread, a depth-first walk with an explicit stack, and each directory's listing appended as one contiguous block.",
+    "reversibility": "cheap",
+    "rationale": "A few minutes for a full scan is acceptable, and the spike's single-threaded C: walk took 127 s cold. Contiguous blocks give FirstChild and ChildCount with no extra pass and make 'first name seen' deterministic, so the hardlink tests do not flake. Parallelism can come later behind the same Scan() signature."
+   },
+   {
+    "decision": "The Scan Store is index-addressed struct-of-arrays in fixed 65,536-entry pages that never move, with pooled UTF-16 names, the root at entry 0 and contiguous children. Reads are public and writes are internal to Core. Corrections to charged hardlink records are in-place 8-byte writes.",
+    "reversibility": "expensive",
+    "rationale": "This is the primary entity every later slice reads, so its index model becomes a contract. A node-object tree cannot meet the U-001 budget of 5M entries under 1 GiB. Pages that never move mean a later reader never sees a half-finished resize, and they avoid the doubling-copy spikes of growing arrays. Internal write visibility makes 'Scanner is the only writer' a compile error instead of a convention."
+   },
+   {
+    "decision": "The root is normalised once. Every Win32 call takes an absolute \\\\?\\ path (\\\\?\\UNC\\ for shares). Child paths are concatenated and never re-normalised. No longPathAware manifest is relied on.",
+    "reversibility": "cheap",
+    "rationale": "The spike's full-drive walk used \\\\?\\ paths. Re-normalising a child would strip trailing dots and spaces, turn NUL or AUX into devices, or hit MAX_PATH. A bare 'C:' means the current directory on C, so the root helper turns it into 'C:\\'."
+   },
+   {
+    "decision": "Tests build real trees on NTFS in %TEMP% and never skip. Links come from File/Directory.CreateSymbolicLink and `mklink /J`. Fixture-only interop (hardlink, sparse, compression) lives in the test project, not in Core. One internal ScanOptions supplies both test seams (forced fallback class, AfterFolder hook).",
+    "reversibility": "cheap",
+    "rationale": "Q-001 (Developer Mode is on) and the symlink-fixture spike (go) both say links are creatable unelevated, and Q-001 forbids skipping. The proposal put CreateSymbolicLinkW in Core's Native folder 'for the tests'; that puts test-only P/Invoke in the shipping assembly. The project constraint requires a real-tree test for each of links, hardlinks, on-disk size, long paths and unreadable folders."
+   },
+   {
+    "decision": "Pin sdk 10.0.100 with rollForward latestFeature in global.json. Run every build, test and publish through eng/dotnet.ps1, which prefers a machine-wide 10.0 SDK and otherwise installs one without admin into a gitignored .dotnet/. Target net10.0-windows everywhere (UseWPF on the App only), win-x64, and set the single-file self-contained publish properties in App.csproj now.",
+    "reversibility": "cheap",
+    "rationale": "The spike measured dotnet10-in-builder-context as no-go (dotnet --version is 9.0.318, NETSDK1045) and named 'set DOTNET_ROOT/PATH to a 10.0.x SDK' as an acceptable fix. U-001 already installed 10.0.401 with dotnet-install.ps1 on this PC. A machine-wide install would need admin, which this project's engine avoids. The publish properties cost nothing now but are verified by one real publish, not by xUnit."
+   },
+   {
+    "decision": "The UI is code-behind with a polled ScanProgress (250 ms timer) and no MVVM library. It has three distinct endings (Finished, Stopped, Could not read) and an optional path argument that scans at launch.",
+    "reversibility": "cheap",
+    "rationale": "One window and one action do not justify a framework. Polling one writer's counters avoids dispatcher marshalling for millions of entries. A partial scan must never read as a finished one. The path argument lets validate drive a real drive without automating the system dialog."
+   }
+  ],
+  "architecture_rules": [
+   {
+    "name": "the scanner core does not know about the screen",
+    "files": "src/FsAnalyser.Core/**",
+    "must_not_import": [
+     "System.Windows*",
+     "PresentationFramework*",
+     "FsAnalyser.App*"
+    ],
+    "must_not_match": [
+     "<UseWPF>\\s*true",
+     "<UseWindowsForms>\\s*true",
+     "<ProjectReference[^>]*FsAnalyser\\.App"
+    ],
+    "because": "The counting-rule tests run headless with no desktop and no STA thread, and later slices reuse Core. A WPF or App reference would put dispatcher types in the scanner and make the tests need a window."
+   },
+   {
+    "name": "only the classifier reads the reparse attribute",
+    "files": "src/FsAnalyser.Core/Scanning/**",
+    "except_files": [
+     "src/FsAnalyser.Core/Scanning/EntryClassifier.cs"
+    ],
+    "must_not_match": [
+     "FileAttributes\\.ReparsePoint",
+     "FILE_ATTRIBUTE_REPARSE_POINT",
+     "IsReparsePoint"
+    ],
+    "because": "The reparse spike measured that deciding link-versus-data by the attribute silently drops 241.7 MiB of real files and the OneDrive tree. Only tags 0xA0000003 and 0xA000000C are links, and that decision lives in one function with a table test."
+   },
+   {
+    "name": "the scanner lists directories only through DirectoryReader",
+    "files": "src/FsAnalyser.Core/Scanning/**",
+    "must_not_match": [
+     "Directory\\.(Enumerate\\w*|GetFiles|GetDirectories|GetFileSystemEntries)",
+     "new\\s+(DirectoryInfo|FileInfo)\\b",
+     "FileSystemEnumerable",
+     "EnumerationOptions",
+     "AttributesToSkip"
+    ],
+    "because": "System.IO enumerators expose no FileId, no AllocationSize and no reparse tag, so hardlinks could not be counted once and on-disk size could not be shown. They also apply their own hidden/system skipping and link recursion, so a full-drive count would understate without any error."
+   },
+   {
+    "name": "counting-rule tests are never skipped",
+    "files": "tests/FsAnalyser.Core.Tests/**",
+    "must_not_match": [
+     "\\[(Fact|Theory)\\([^)]*\\bSkip\\w*\\s*=",
+     "Assert\\.Skip\\w*\\(",
+     "Skip\\.(If|IfNot|Unless)"
+    ],
+    "because": "Q-001 decided the link tests must run and fail loudly with Windows' error if a link cannot be created. A skipped test reports green while the rule it guards is unchecked, which is exactly what the project's counting constraint exists to prevent."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "read everything under a folder",
+    "shape": "a folder whose only child is a subfolder, three levels deep, beside an empty folder, a zero-byte file and hidden+system files and folders",
+    "why": "DirectoryReader opens directories with list access while files are never opened. A folder that contains a subfolder is where those paths meet, and this is the shape that broke the default route on another project. The empty folder must give ChildCount 0. Hidden and system entries must be counted, which a System.IO enumerator default would drop silently."
+   },
+   {
+    "behaviour": "list one folder",
+    "shape": "the listing spans several 64 KiB buffers (about 2,000 entries with 100-character names)",
+    "why": "The RestartInfo-then-Info paging loop ends on ERROR_NO_MORE_FILES. An off-by-one at a buffer boundary drops or repeats an entry, and no small tree would ever show it."
+   },
+   {
+    "behaviour": "append entries to the store",
+    "shape": "more than 65,536 entries and enough name characters to roll to a second name page (synthetic entries, no disk)",
+    "why": "Column and name pages never move. The index-to-(page, offset) arithmetic and a name that would straddle a page boundary are the branches, and a small real tree never crosses one."
+   },
+   {
+    "behaviour": "reach a path Win32 would alter",
+    "shape": "a path over 400 characters with a 255-character component, plus names with a trailing dot or space and a device name (NUL) created through \\\\?\\; and, as a pure string mapping, a UNC root",
+    "why": "Child paths are concatenated and never re-normalised. Any GetFullPath or Path.Combine on a child would strip the dot, hit MAX_PATH or turn NUL into a device. GetPath must return the true path. The \\\\?\\UNC\\ branch of the helper is only testable as a string mapping."
+   },
+   {
+    "behaviour": "meet a link",
+    "shape": "a junction (0xA0000003), a directory symlink and a file symlink (0xA000000C) pointing outside the root, inside the root, and to an ancestor (a cycle)",
+    "why": "Each is recorded as Kind=Link with 0 bytes and never entered. The cycle proves termination. A dangling link takes the same branch, because only the listing's tag is read and the target is never resolved. Q-001 requires both kinds and forbids skipping either."
+   },
+   {
+    "behaviour": "count a file that has more than one name",
+    "shape": "two names where the name seen first carries the stale listing size (1 MiB seen, 64 MiB real), then three names in three folders, then the reverse visiting order",
+    "why": "The first name charges. The first repeat probes and corrects the charged record and the totals. A third name adds a file and 0 bytes and must not probe again. The SizeProbed flag on the charged record proves the probe path ran."
+   },
+   {
+    "behaviour": "size a file NTFS stores smaller than its length",
+    "shape": "a sparse file with 4 KiB written in 64 MiB, an LZNT-compressed file of repetitive text, and a plain 10,000-byte file",
+    "why": "The listing's AllocationSize is trusted here, as the spike measured it right for these. OnDisk must be well under Size for the sparse and LZNT files and at least 10,000 for the plain one. A probe added for these would double the scan on the ordinary case."
+   },
+   {
+    "behaviour": "size a file whose listing says nothing is allocated",
+    "shape": "AllocationSize 0 with EndOfFile of at least 4,096: a WOF (xpress4k) file, an all-hole sparse file, and a file carrying OFFLINE; plus a resident file under 4,096 bytes; and a WOF file whose probe open is denied",
+    "why": "This is the probe guard. Only the WOF file is probed and gets its true OnDisk (the spike measured listing 0 against 142.6 MiB real). OFFLINE and all-hole sparse must not be probed, since OFFLINE stands in for a cloud placeholder that must not be opened. A resident file truly takes 0 clusters. A denied probe keeps the listing value and increments ProbeFailures."
+   },
+   {
+    "behaviour": "meet a folder that cannot be listed",
+    "shape": "a folder inside the root with a deny-ListDirectory ACE for the current user, next to readable siblings",
+    "why": "The scan still ends Completed, the folder is flagged Unreadable with error 5 and contributes nothing, and its siblings are counted. Dispose must remove the ACE before deleting the tree or the temp folder leaks."
+   },
+   {
+    "behaviour": "start from a root",
+    "shape": "a regular file, a path that does not exist, a bare 'C:', a relative path, and a junction the person picked as the root",
+    "why": "Root failures return RootUnreadable and never an empty success. Error 87 means both 'extended class unsupported' and 'handle is not a directory', so the root is checked as a directory before the fallback decision. Bare 'C:' means the current directory on C and must become 'C:\\'. A relative path throws ArgumentException. A root that is itself a junction is opened through."
+   },
+   {
+    "behaviour": "cancel a scan",
+    "shape": "cancellation raised after the third folder of a ten-folder tree (through the internal AfterFolder hook), and a token already cancelled before the call",
+    "why": "Stopped must return the partial store and totals with Status=Cancelled and never Completed. The hook makes mid-scan cancel deterministic, where the proposal covered only a pre-cancelled token."
+   },
+   {
+    "behaviour": "list on a volume without the extended class",
+    "shape": "the whole scan forced onto FILE_FULL_DIR_INFO (tag from EaSize, no FileId) against a real NTFS tree",
+    "why": "The fallback parser's offsets (name at +68, tag at +64) are exercised only here, since FAT, exFAT and SMB volumes cannot be made unelevated. Counts must match the normal path, FileIdsAvailable must be false, and nothing may be deduplicated."
+   },
+   {
+    "behaviour": "count a file that has more than one name",
+    "shape": "only one of its names lies under the scan root and its listing size is stale",
+    "why": "The listing has no link count, so the scanner cannot see the name outside the root. A lone name is charged at its listing size, and the spike measured staleness only for the name not written through. It is a recorded limitation with no branch to test, and a fix would mean probing every file.",
+    "material": false
+   }
+  ],
+  "stack_chosen": [
+   {
+    "area": "build",
+    "choice": "dotnet CLI with the SDK 10 solution format (FsAnalyser.slnx), global.json pinning sdk 10.0.100 with rollForward latestFeature, and eng/dotnet.ps1, which bootstraps a repo-local 10.0 SDK (dotnet-install.ps1 into gitignored .dotnet/) when no machine-wide 10.0 SDK exists.",
+    "why": "The stack block names .NET 10 but the spike found this PC resolves 9.0.318 (NETSDK1045). Every later slice must run its build and test through eng/dotnet.ps1, so this is declared for them."
+   },
+   {
+    "area": "runtime",
+    "choice": "net10.0-windows for Core, Tests and App (UseWPF on the App only), win-x64, workstation non-server GC.",
+    "why": "The stack block says .NET 10 and Windows-only but not the target framework, the RID or the GC mode. U-001's 699 MiB was measured under workstation GC."
+   },
+   {
+    "area": "ui",
+    "choice": "WPF with code-behind and no MVVM library. Folder picking uses Microsoft.Win32.OpenFolderDialog and drives come from DriveInfo. Progress is polled from a DispatcherTimer.",
+    "why": "The stack block says WPF but not how it is structured. Later screens should inherit this decision instead of reopening it."
+   },
+   {
+    "area": "testing",
+    "choice": "xUnit, with the major version (v2 or v3) left as whatever `dotnet new xunit` generates under SDK 10. Counting-rule tests build real NTFS trees in %TEMP% and are never skipped.",
+    "why": "The stack block names xUnit but not its major version. The next slice inherits it from the csproj, and the never-skipped rule is written to cover both Skip syntaxes."
+   },
+   {
+    "area": "packaging",
+    "choice": "Single-file self-contained win-x64 publish (PublishSingleFile, SelfContained, IncludeNativeLibrariesForSelfExtract, no trimming), set in App.csproj and verified by one real publish at validate.",
+    "why": "The stack block says one self-contained .exe. The RID, the native-library extraction and the no-trimming choice (trimming is unsupported for WPF) were not decided."
+   }
+  ],
+  "coherence_check": "One proposal (practice), so there is no composition across proposals and nothing here has survived a disagreement. This design is the first thing a reviewer should argue with.\n\nI checked the proposal against the measured record and against itself at its seams, and changed five things.\n1. It put CreateSymbolicLinkW in Core/Native 'for the tests', which is test-only P/Invoke in the shipping assembly. Links now come from the .NET link APIs (measured working unelevated in this context). A test-local call with ALLOW_UNPRIVILEGED_CREATE is the Q-001 fix if error 1314 appears. Fixture interop lives in tests/TestNative.cs.\n2. Error 87 meant two things at the root: 'extended class unsupported', which triggers the fallback, and 'handle is not a directory'. The root is now checked to be a directory first and returns RootUnreadable with 267, so the fallback fires only for a real directory.\n3. The two test-only switches became one internal ScanOptions. That also makes mid-scan cancellation deterministic, where the proposal tested only a pre-cancelled token.\n4. The hardlink test used the OS's stale listing as a precondition of the counting assertion. It is now a separate documentary test, and the counting tests assert the SizeProbed flag, so an OS change fails one test and not the counting rule.\n5. The probe rewrites an already-written entry, while the store is described as safe for future concurrent readers. The design now states that corrections are in-place aligned 8-byte writes and that writes are internal to Core.\n\nTwo invariants were checked and held. 'First name seen charges', 'the probe corrects the charged record' and 'a hardlink repeat adds 0 bytes' agree with each other and with the totals-by-delta rule. 'Cloud-only files are never opened' agrees with the probe guard, since CloudOnly files are excluded from both probe cases.\n\nThe constraint 'Slices that touch the scanner are cut at a higher risk tier' conflicts with this slice being labelled low. The conflict is not resolved here and is raised as an open question. The counting-rule tests are required regardless of tier.\n\nCarried forward as unmeasured, not settled:\n- The <1 GiB memory budget at this column layout. U-001 measured 699 MiB for a layout whose columns were not visible to me.\n- The FILE_FULL_DIR_INFO fallback on a real FAT, exFAT or SMB volume. It runs only through the forced switch on NTFS.\n- OneDrive placeholders. The classifier is table-tested and OFFLINE is exercised on a real file, but no real cloud file is created in tests.\n- WPF single-file publish.\n- Network access for dotnet-install.ps1 and NuGet, in the sandbox the builder runs in.\n- The dotnet10-in-builder-context no-go is addressed by the bootstrap and not by fiat. If `eng/dotnet.ps1 --version` does not print 10.x on the first build step, that is the risk-spike stage's finding to reopen.\n\nThe proposal text was clipped at 20,000 chars, so its own prior-art and whats_new lists were not visible. The lists below are rebuilt from what was visible plus the survey.",
+  "decidable_disagreements": [
+   {
+    "question": "Does the proposed store layout (about 50 bytes of columns, plus UTF-16 names and the hardlink index set, per entry) hold a full 5M-entry drive under 1 GiB? U-001's 699 MiB peak was measured for a layout whose columns are not shown here.",
+    "positions": "The proposal claims it fits by construction, on arithmetic only. U-001 reports 699 MiB for its own test build. Nobody has compared the two layouts or measured this one. It is a shared, untested assumption, not a disagreement between proposals.",
+    "would_force_resynthesis": true
+   }
+  ],
+  "taste_disagreements": [
+   "Code-behind only in the window versus a view-model. This is fine for one window, but the next slice (the tree) will add screens and may want the opposite.",
+   "The optional path argument as a supported CLI contract versus a test-only hook. It is kept as a contract because validate drives a real drive with it, and it also gives 'pick a folder' a scriptable route.",
+   "One Core assembly holding Native, Scanning and Store versus splitting the store into its own project. It is one project now, and the internal write API is what keeps the seam.",
+   "Ten test classes plus a fixture for the first slice. This is heavier than the lightest process would pick, but the project constraint requires the five counting-rule tests before any scanner slice can pass."
+  ],
+  "open_questions": [
+   "This slice creates the scanner, but it is labelled risk tier low. The project's process constraint says scanner slices are cut at a higher tier and that the lightest process cannot tell which ones those are. Should the engine re-tier SL-020 so the counting rules get the harder review?",
+   "Is it acceptable for the build to run Microsoft's dotnet-install.ps1 into a gitignored .dotnet/ when no 10.0 SDK is present? If not, someone with admin installs a 10.0 SDK machine-wide once, and eng/dotnet.ps1 becomes a check with no install."
+  ],
+  "whats_reused": [
+   "Spike-measured facts: FILE_ID_EXTD_DIR_INFO offsets (+40, +48, +56, +60, +68, +72, +88), classes 19 and 20, the tag-only link rule, the two probe cases, and the \\\\?\\ full-drive walk technique.",
+   "The architecture's in-memory struct-of-arrays Scan Store and U-001's under-1 GiB target.",
+   "U-001's method for getting a 10.0 SDK onto this PC (dotnet-install.ps1 into a folder, DOTNET_ROOT for the process), now made repeatable by eng/dotnet.ps1.",
+   "Q-001 (Developer Mode on) and the symlink-fixture spike (go): links created unelevated, no skipping.",
+   "Standard OS tools for fixtures: compact.exe for LZNT and WOF, `cmd /c mklink /J` and `/H`, and .NET's File/Directory.CreateSymbolicLink."
+  ],
+  "whats_new": [
+   "Everything in the tree: it holds zero tracked files.",
+   "Solution scaffold (FsAnalyser.slnx, three projects, Directory.Build.props, .gitignore, global.json) and the eng/dotnet.ps1 SDK bootstrap.",
+   "Native interop and LongPath (root normalised once, \\\\?\\ and \\\\?\\UNC\\ mapping).",
+   "DirectoryReader with the extended and full-directory listing classes, and the whole-scan fallback.",
+   "EntryClassifier (tag-based link rule, CloudOnly attributes) and SizeProbe (WOF and first-repeat cases).",
+   "Scanner, ScanOptions, ScanProgress and ScanResult, with the root-is-a-directory check.",
+   "ScanStore (paged columns, name pages, FileId-keyed hardlink index, internal writes, public reads).",
+   "Main window (drive row, folder picker, progress, cancel, Finished/Stopped/Could not read) and the path argument.",
+   "TempTree fixture, TestNative, and the counting-rule, traversal, classifier, LongPath and store tests.",
+   "Single-file publish properties and the GC setting in App.csproj."
+  ],
+  "prior_art": [
+   {
+    "pattern": "Pick a drive or folder, scan it, then show where the space went (WinDirStat's flow, which is the entry point this slice builds)",
+    "where": "https://medium.com/@drfavreau/windirstat-the-visual-tool-that-tells-you-exactly-whats-eating-your-windows-hard-drive-79d74d92c3ba",
+    "authority": "community",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Directory listing by handle with FILE_ID_EXTD_DIR_INFO (128-bit FileId, EndOfFile, AllocationSize, reparse tag in one pass)",
+    "where": "Microsoft Learn: GetFileInformationByHandleEx and FILE_INFO_BY_HANDLE_CLASS",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Extended-length \\\\?\\ and \\\\?\\UNC\\ paths to bypass MAX_PATH and Win32 name normalisation",
+    "where": "Microsoft Learn: Maximum Path Length Limitation and Naming Files, Paths, and Namespaces",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Cloud Files placeholders identified by the RECALL_ON_DATA_ACCESS, RECALL_ON_OPEN and OFFLINE attributes; reading them must not hydrate the file",
+    "where": "Microsoft Learn: Cloud Files API and file attribute constants",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Unprivileged symbolic link creation under Developer Mode via SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE",
+    "where": "Microsoft Learn: CreateSymbolicLinkW; .NET File.CreateSymbolicLink and Directory.CreateSymbolicLink",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Repo-local SDK install with dotnet-install.ps1 plus global.json version pinning and rollForward",
+    "where": "Microsoft Learn: dotnet-install scripts and global.json overview",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Microsoft.Win32.OpenFolderDialog as the WPF folder picker (.NET 8 and later)",
+    "where": "Microsoft Learn: OpenFolderDialog class",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "channeled_experts": []
+ }
+}

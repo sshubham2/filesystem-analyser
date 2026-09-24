@@ -1,0 +1,349 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-020",
+ "stage": "validate-slice",
+ "attempt": 1,
+ "at": "2026-09-24T10:03:10.283Z",
+ "head": "2e4eb27312aaa189bbcbda0dfa0615ce60ac5ce1",
+ "run_id": 771,
+ "summary": "The scanner holds up on real drives: all 13 acceptance criteria are met. The verdict is partial for two reasons: two fixes owed to build-slice (O-014, O-015) are still not in the tree, and the app's window was never observed.\n\n**Setup.** The worktree had no SDK, so eng/dotnet.ps1 bootstrapped 10.0.401 into the gitignored .dotnet/ (signature check passed, exit 0). The solution then built with 0 warnings and 86 of 86 tests passed with none skipped.\n\n**Real drives.** A throwaway harness in %TEMP% ran the product's own Scanner.Scan. It then walked the same root a second way, with FindFirstFileExW, and in \"bytes\" mode also opened every non-cloud file to read its FILE_ID_INFO and FILE_STANDARD_INFO.\n\n| Root | Entries | Result |\n|---|---|---|\n| C:\\Windows | 355,506 | Path sets, kinds and unreadable folders identical. 55,451 hardlink duplicates; unique bytes and on-disk bytes equal the handle-derived unique sums exactly (0 double-charged, 0 size mismatches). |\n| D:\\ (NTFS) | 531,781 | Exact on counts, bytes and on-disk bytes. |\n| C:\\Program Files | 89,142 | One mismatch: a OneDrive log being written, listed at 0 bytes against 3,738 on its handle. |\n| Whole C:\\ | 4,134,137 | 16,799 links, 0 kind mismatches, the same 599 unreadable folders. The only 10 path differences were files created or rotated between the two walks. Peak working set 516 MiB. |\n| Network drive Z:\\ | 148,421 | Scan reported fileIds=False, so it fell back to FILE_FULL_DIR_INFO on a real SMB volume, and matched the independent walk exactly. |\n\nA further C:\\ run found 317 cloud-only files of 64 MiB or more (about 188 GB). None was opened, so the guard O-014 wants pinned is correct today, and the shape it protects exists on this PC.\n\n**The shipped exe.** The single-file self-contained publish produced a 139.8 MB exe. Launched with \"C:\\\" and DOTNET_ROOT unset (this machine has no .NET 10 runtime), it ran about 80 s of CPU, peaked at 661 MiB and stayed responsive with the window title 'Filesystem Analyser'. Reading its outcome text through UI Automation was refused by the engine guard, so what the window shows was not observed.\n\n**Still owed to build-slice.**\n- O-014: SizeProbe.IsDue's `!cloudOnly` guard is still unpinned; the test's only OFFLINE file is 1 MiB.\n- O-015: MainWindow.xaml.cs:142 still catches every ArgumentException.\n\nThe Fitness gate still reports no declared rules; the architecture rules are held only by ArchitectureRulesTests.",
+ "payload": {
+  "status": "complete",
+  "verdict": "partial",
+  "contact": "real",
+  "summary": "The scanner holds up on real drives: all 13 acceptance criteria are met. The verdict is partial for two reasons: two fixes owed to build-slice (O-014, O-015) are still not in the tree, and the app's window was never observed.\n\n**Setup.** The worktree had no SDK, so eng/dotnet.ps1 bootstrapped 10.0.401 into the gitignored .dotnet/ (signature check passed, exit 0). The solution then built with 0 warnings and 86 of 86 tests passed with none skipped.\n\n**Real drives.** A throwaway harness in %TEMP% ran the product's own Scanner.Scan. It then walked the same root a second way, with FindFirstFileExW, and in \"bytes\" mode also opened every non-cloud file to read its FILE_ID_INFO and FILE_STANDARD_INFO.\n\n| Root | Entries | Result |\n|---|---|---|\n| C:\\Windows | 355,506 | Path sets, kinds and unreadable folders identical. 55,451 hardlink duplicates; unique bytes and on-disk bytes equal the handle-derived unique sums exactly (0 double-charged, 0 size mismatches). |\n| D:\\ (NTFS) | 531,781 | Exact on counts, bytes and on-disk bytes. |\n| C:\\Program Files | 89,142 | One mismatch: a OneDrive log being written, listed at 0 bytes against 3,738 on its handle. |\n| Whole C:\\ | 4,134,137 | 16,799 links, 0 kind mismatches, the same 599 unreadable folders. The only 10 path differences were files created or rotated between the two walks. Peak working set 516 MiB. |\n| Network drive Z:\\ | 148,421 | Scan reported fileIds=False, so it fell back to FILE_FULL_DIR_INFO on a real SMB volume, and matched the independent walk exactly. |\n\nA further C:\\ run found 317 cloud-only files of 64 MiB or more (about 188 GB). None was opened, so the guard O-014 wants pinned is correct today, and the shape it protects exists on this PC.\n\n**The shipped exe.** The single-file self-contained publish produced a 139.8 MB exe. Launched with \"C:\\\" and DOTNET_ROOT unset (this machine has no .NET 10 runtime), it ran about 80 s of CPU, peaked at 661 MiB and stayed responsive with the window title 'Filesystem Analyser'. Reading its outcome text through UI Automation was refused by the engine guard, so what the window shows was not observed.\n\n**Still owed to build-slice.**\n- O-014: SizeProbe.IsDue's `!cloudOnly` guard is still unpinned; the test's only OFFLINE file is 1 MiB.\n- O-015: MainWindow.xaml.cs:142 still catches every ArgumentException.\n\nThe Fitness gate still reports no declared rules; the architecture rules are held only by ArchitectureRulesTests.",
+  "checks": [
+   {
+    "what": "Bootstrap the repo-local .NET 10 SDK through the product's own script (no machine-wide 10.0 SDK present: only 8.0.425 and 9.0.318)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 --version",
+    "outcome": "passed",
+    "evidence": "Downloaded dotnet-sdk-10.0.401-win-x64.zip (300,608,304 bytes). The signature-checked installer ran and printed 10.0.401, exit 0, in 28.7 s."
+   },
+   {
+    "what": "Build the solution",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build FsAnalyser.slnx -nologo",
+    "outcome": "passed",
+    "evidence": "Build succeeded, 0 warnings, 0 errors."
+   },
+   {
+    "what": "Full test suite on real NTFS temp trees",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --no-build --logger trx",
+    "outcome": "passed",
+    "evidence": "Failed 0, Passed 86, Skipped 0, Total 86. The per-test trx lists every case named in criteria 1-13 as Passed. %TEMP%\\fsa-tests was left with 0 entries."
+   },
+   {
+    "what": "Real-data cross-check on C:\\Program Files: product scanner against an independent FindFirstFileExW walk plus per-file handle truth",
+    "command": "xcheck.exe bytes \"C:\\Program Files\" progfiles (throwaway harness in %TEMP%\\fsa-validate, references src/FsAnalyser.Core)",
+    "outcome": "passed",
+    "evidence": "89,142 paths each side, onlyScanner 0, onlyIndependent 0, kind mismatches 0, 46 links, same 2 unreadable folders. 1,347 hardlink duplicates, 0 double-charged. Exactly 1 size mismatch: OneDrive FileSyncHelper .aodl log, scanner (0,0) against handle (3,738, 4,096). It is an actively written file below the 64 MiB large-file threshold."
+   },
+   {
+    "what": "Real-data cross-check on C:\\Windows (WinSxS hardlinks, WOF), bytes mode",
+    "command": "xcheck.exe bytes C:\\Windows windows",
+    "outcome": "passed",
+    "evidence": "355,506 paths each side, identical, 0 kind mismatches, the same 50 unreadable folders. The independent pass opened 193,103 files (332 access-denied opens excluded). 137,653 unique FileIds. Scanner charged EOF 41,38,69,52,264 and alloc 40,68,99,70,336, exactly equal to the handle-derived unique sums. doubleCharged 0, orphanDuplicate 0, sizeMismatch 0, allocMismatch 0. Scanner hardlinkDuplicates 55,451."
+   },
+   {
+    "what": "Whole-drive C:\\ cross-check of counts, path sets and unreadable folders, plus memory",
+    "command": "xcheck.exe counts C:\\ cdrive",
+    "outcome": "passed",
+    "evidence": "Scanner Completed in 66.4 s: 4,134,138 entries (3,449,581 files, 667,757 folders, 16,799 links), 599 unreadable (5x569, 363x28, 1920x2), 7 probe failures. The independent walk differed by -8 files, 0 folders, 0 links, 0 unreadable. The path diff was 1 onlyScanner and 9 onlyIndependent, all OneDrive log rotations, one temp file and the harness's own output files written after the scan. Unreadable sets identical. Peak working set 516 MiB. Charged sums equal Totals."
+   },
+   {
+    "what": "Second real volume D:\\ (NTFS, Samsung 990 Pro), bytes mode",
+    "command": "xcheck.exe bytes D:\\ ddrive",
+    "outcome": "passed",
+    "evidence": "531,781 paths each side, identical. 527,495 files all opened. Scanner EOF 1,33,80,12,09,473 and alloc 1,33,82,94,14,272, exactly equal to the handle sums. 0 mismatches, 97 links, the same 2 unreadable folders."
+   },
+   {
+    "what": "Real network volume Z:\\ (SMB, reports NTFS): does the listing fall back and still count correctly",
+    "command": "xcheck.exe counts Z:\\ zdrive 240",
+    "outcome": "passed",
+    "evidence": "The scanner reported fileIds=False, so it switched to FILE_FULL_DIR_INFO on a real volume. Completed in 120.9 s: 133,340 files, 15,081 folders, 0 links, 1 unreadable. The independent walk was identical: DELTA 0/0/0/0, path sets equal, 0 kind mismatches."
+   },
+   {
+    "what": "Real OneDrive placeholders at or above the 64 MiB large-file threshold: never opened (the O-014 shape)",
+    "command": "xcheck.exe scanonly C:\\ cdrive-cloud",
+    "outcome": "passed",
+    "evidence": "167,944 cloudOnly entries, 317 of them 64 MiB or more (187,705,095,999 bytes). 0 cloudOnly entries carry SizeProbed or ProbeFailed. The guard holds in today's code, but no test pins it (see O-014)."
+   },
+   {
+    "what": "Single-file self-contained publish (owed at validate by the project's packaging decision)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o %TEMP%\\fsa-validate\\publish",
+    "outcome": "passed",
+    "evidence": "Exit 0. The output is one FsAnalyser.App.exe of 139,756,184 bytes plus 2 pdbs."
+   },
+   {
+    "what": "Launch the published exe on a whole drive through the CLI argument with DOTNET_ROOT unset, observing only the process",
+    "command": "observe-app.ps1: Start-Process run-copy.exe -ArgumentList '\"C:\\\"', sample CPU and memory every 2 s, then Stop-Process on that pid",
+    "outcome": "passed",
+    "evidence": "It started on a machine with no .NET 10 runtime, so the self-contained publish works. CPU rose to 80.4 s and then went flat, and the working set rose to a 661 MiB peak (609 MiB peak paged), which matches a full C: scan. Responding=True, window title 'Filesystem Analyser'. It was stopped by this run."
+   },
+   {
+    "what": "Read the window's outcome text (Finished line, coverage line, unreadable list, notes) from the running app",
+    "command": "UI Automation read of the app's own window",
+    "outcome": "not-run",
+    "evidence": "The engine guard refused it: 'it would operate another program's windows (UI Automation ...)'. The displayed outcome was not observed."
+   },
+   {
+    "what": "O-014 discharged? (test pinning SizeProbe.IsDue's cloud-only guard on the large-file branch)",
+    "command": "Read src/FsAnalyser.Core/Scanning/SizeProbe.cs:26-30 and tests/FsAnalyser.Core.Tests/OnDiskSizeTests.cs:100-157",
+    "outcome": "failed",
+    "evidence": "IsDue is unchanged. AFileWhoseListingSaysNothingIsAllocatedIsProbedOnlyWhenItIsWof has only offline.txt at 1 MiB, with no 64 MiB+ OFFLINE file, and still asserts Probes == 2. No src or tests changed after 7d80237 (HEAD 2e4eb27 touched only .taad files)."
+   },
+   {
+    "what": "O-015 discharged? (narrow the rejected-root catch to ParamName == \"root\")",
+    "command": "Read src/FsAnalyser.App/MainWindow.xaml.cs:142",
+    "outcome": "failed",
+    "evidence": "The line is still `catch (ArgumentException e)` with no `when` filter. An ArgumentOutOfRangeException from ScanStore.At would still show 'Could not read' instead of 'Scan failed'."
+   },
+   {
+    "what": "Engine architecture-rule gate",
+    "command": "mcp Fitness op=check",
+    "outcome": "not-run",
+    "evidence": "NONE: this project declares no rules (.taad/fitness.yaml absent). Nothing was evaluated. The rules are enforced only by ArchitectureRulesTests, which passed 5/5."
+   },
+   {
+    "what": "Repository left untouched by validation",
+    "command": "git status --short; git diff --stat",
+    "outcome": "passed",
+    "evidence": "The only modifications are the pre-existing engine bookkeeping in .taad/slices/SL-020/code-review-1.json and index.json. .dotnet/, bin/ and obj/ are gitignored. The 140 MB publish artefacts in %TEMP% were deleted."
+   },
+   {
+    "what": "Scan of a FAT/exFAT volume",
+    "outcome": "not-run",
+    "evidence": "E:\\ and F:\\ are removable drives that were not ready. No FAT or exFAT volume was reachable, and creating one needs admin."
+   },
+   {
+    "what": "Cancellation on a real drive, and picking through OpenFolderDialog or the drive buttons",
+    "outcome": "not-run",
+    "evidence": "Both need clicks in the app window, which is off-limits to this agent. Cancellation is covered only by CancellationTests on temp trees."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "1. Read everything under a folder: a folder whose only child is a subfolder, three levels deep, beside an empty folder, a zero-byte file and hidden+system files and folders",
+    "met": "yes",
+    "how": "TraversalTests.ReadsEverythingUnderAFolder passed on real NTFS. On real drives, the scanner's path sets equal an independent FindFirstFileExW walk: C:\\Windows 355,506, C:\\Program Files 89,142, D:\\ 531,781, Z:\\ 148,421 (all exact), and C:\\ 4.13M (only 10 differences, all files created between the two walks)."
+   },
+   {
+    "criterion": "2. List one folder whose listing spans several 64 KiB buffers (about 2,000 entries with 100-character names)",
+    "met": "yes",
+    "how": "TraversalTests.ListsAFolderThatSpansSeveralBuffers passed. The real C:\\Windows tree, including WinSxS folders of tens of thousands of entries, matched the independent walk exactly."
+   },
+   {
+    "criterion": "3. Append entries to the store past 65,536 entries and onto a second name page (synthetic entries, no disk)",
+    "met": "yes",
+    "how": "ScanStoreTests.AppendsPastOnePageAndRollsNamesOntoASecondPage and ScanStoreBudgetTests.FiveMillionEntriesFitTheMemoryBudget passed. A real 4,134,138-entry C: store had charged sums equal to Totals, at 516 MiB peak working set in the harness and 661 MiB in the published app."
+   },
+   {
+    "criterion": "4. Reach a path Win32 would alter (over 400 characters, a 255-character component, trailing dot or space, NUL), and map a UNC root as a string",
+    "met": "yes",
+    "how": "LongPathTests.ReachesPathsWin32WouldAlter and the NormalisesTheRootOnce rows (including UNC) passed. This is test contact only: no such path was identified on the real drives."
+   },
+   {
+    "criterion": "5. Meet a link: junction, directory symlink and file symlink pointing outside the root, inside it, and to an ancestor",
+    "met": "yes",
+    "how": "LinkTests.JunctionsAndSymlinksAreRecordedAndNeverEntered passed. On real C:\\, the scanner's 16,799 links matched the independent tag-based walk with 0 kind mismatches and identical path sets, so none was entered. D:\\ had 97 links, also matched."
+   },
+   {
+    "criterion": "6. Count a file with more than one name: stale first-seen listing, three names in three folders, reverse visiting order",
+    "met": "yes",
+    "how": "HardlinkTests.AFileWithSeveralNamesIsChargedOnceAtItsTrueSize (3 rows) and TheListingOfTheNameNotWrittenThroughIsStale passed. On real C:\\Windows, 55,451 duplicates were found and 0 double-charged. Charged bytes and on-disk bytes equal the per-handle unique-FileId sums exactly."
+   },
+   {
+    "criterion": "7. Size a file NTFS stores smaller than its length: 4 KiB-in-64 MiB sparse file, LZNT-compressed text, plain 10,000-byte file",
+    "met": "yes",
+    "how": "OnDiskSizeTests.SparseCompressedAndPlainFilesTakeTheListingsOnDiskSize passed. The real on-disk totals for C:\\Windows and D:\\ equal the handle AllocationSize sums exactly."
+   },
+   {
+    "criterion": "8. Size a file whose listing says nothing is allocated: WOF, all-hole sparse, OFFLINE, resident under 4,096, and a WOF file whose probe open is denied",
+    "met": "yes",
+    "how": "OnDiskSizeTests.AFileWhoseListingSaysNothingIsAllocatedIsProbedOnlyWhenItIsWof passed. On real C:, the 317 cloud-only files of 64 MiB or more were not probed. Caveat: the large-file branch's cloud guard is still unpinned by any test (O-014, not discharged)."
+   },
+   {
+    "criterion": "9. Meet a folder that cannot be listed (deny-ListDirectory ACE) next to readable siblings",
+    "met": "yes",
+    "how": "UnreadableFolderTests passed. On real C:\\, 599 unreadable folders (569 access denied, 28 error 363, 2 error 1920) were recorded while the scan Completed. The set is identical to the independent walk's."
+   },
+   {
+    "criterion": "10. Start from a root: a regular file, a missing path, bare 'C:', a relative path, a junction picked as the root",
+    "met": "yes",
+    "how": "All RootTests passed. Real roots C:\\, D:\\, Z:\\, C:\\Windows and C:\\Program Files completed. The published exe given \"C:\\\" ran a full-drive scan (process-level evidence only)."
+   },
+   {
+    "criterion": "11. Cancel a scan: after the third folder of a ten-folder tree, and with an already-cancelled token",
+    "met": "yes",
+    "how": "CancellationTests (2) passed. Test contact only: cancellation was not exercised on a real drive or through the Cancel button."
+   },
+   {
+    "criterion": "12. List on a volume without the extended class (FILE_FULL_DIR_INFO, tag from EaSize, no FileId)",
+    "met": "yes",
+    "how": "ListingFallbackTests passed with the class forced on NTFS. On the real SMB drive Z:\\, the scanner fell back by itself (fileIds=False) and matched an independent walk exactly: 133,340 files, 15,081 folders, 1 unreadable."
+   },
+   {
+    "criterion": "13. Count a file with more than one name when only one of its names lies under the scan root and its listing size is stale",
+    "met": "yes",
+    "how": "HardlinkTests.ALoneNameUnderTheRootIsChargedAtItsListingSize passed. It pins the recorded limitation (charged at its listing size, 0 probes) as the design fixed it; it does not correct the stale size."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-014",
+    "verified": "no",
+    "evidence": "SizeProbe.cs:26-30 still has `!cloudOnly && (...)`. OnDiskSizeTests.AFileWhoseListingSaysNothingIsAllocatedIsProbedOnlyWhenItIsWof has no OFFLINE file of 64 MiB or more (only offline.txt at 1 MiB). No src or tests changed since 7d80237. The real C:\\ scan shows why the fix matters: 317 cloud-only files of 64 MiB or more (about 188 GB) take exactly the unpinned branch. The code is correct today (0 probed); only the test is missing. Owed to build-slice."
+   },
+   {
+    "key": "O-015",
+    "verified": "no",
+    "evidence": "MainWindow.xaml.cs:142 is still `catch (ArgumentException e)` with no `when (e.ParamName == \"root\")` filter, so an internal ArgumentOutOfRangeException would still end as 'Could not read'. Owed to build-slice."
+   },
+   {
+    "key": "O-002",
+    "verified": "yes",
+    "evidence": "On every real scan (C:\\ twice, D:\\, Z:\\, C:\\Windows, C:\\Program Files), the sums of ChargedSize and ChargedOnDisk over the store equal Totals.Bytes and Totals.BytesOnDisk."
+   },
+   {
+    "key": "O-004",
+    "verified": "yes",
+    "evidence": "The large-file rule and its tests are present and pass. On real C:\\Windows and D:\\, 0 of the charged files differ from their own handle. The only real disagreement found was a 3,738-byte OneDrive log being written in C:\\Program Files, below the 64 MiB threshold, which the design leaves to the listing."
+   },
+   {
+    "key": "O-009",
+    "verified": "yes",
+    "evidence": "CommandLineTests (6 rows) pass. The published exe given the argument quoted as \"C:\\\" ran about 80 s of CPU and peaked at 661 MiB, which is a whole-drive scan rather than a rejected path. The outcome text was not read."
+   },
+   {
+    "key": "O-013",
+    "verified": "cannot-tell",
+    "evidence": "The coverage line is in MainWindow.xaml.cs, but the running window's text could not be read: the engine refused UI Automation."
+   }
+  ],
+  "not_reached": [
+   "What the window actually shows: the Finished, Stopped, Could not read and Scan failed endings, the used-space coverage line, the unreadable-folders list and the notes. The engine refused UI Automation, so only process-level behaviour of the published exe was observed; a person should look at one C:\\ run.",
+   "Picking through the UI (OpenFolderDialog and the drive buttons from DriveInfo) needs a person to click. Only the CLI argument route and Scanner.Scan were exercised.",
+   "A FAT/exFAT volume: E:\\ and F:\\ were not ready, and no FAT media was available. The fallback was reached only on SMB (Z:\\).",
+   "Cancellation on a real drive and through the Cancel button, including Cancel during a blocked network or cloud call (m7, deferred).",
+   "What the 569 access-denied C:\\ folders hold (e.g. Program Files\\WindowsApps, System Volume Information, Hyper-V, Windows\\Temp): the part of 'everything underneath' an ordinary-user scan cannot reach. Requested via read-denied-folders.",
+   "A cold-cache scan time. Every C: run here was warm (49-66 s in the harness, about 80 s CPU in the app).",
+   "Large VM or WSL disks held open and growing during a scan. WSL was not running and was not started.",
+   "Whether the small-file stale-listing effect seen once (OneDrive log listed 0 bytes against 3,738 on its handle) ever reaches material sizes for actively written files under 64 MiB."
+  ],
+  "elevation": [
+   {
+    "op": "read-denied-folders",
+    "why": "As an ordinary user, the whole-C:\\ scan could not list 569 folders (error 5), and an independent FindFirstFileExW walk hit exactly the same set. The app reports about 50.7 GB of the volume as 'not seen'. Counting the entries and bytes behind the 107 non-WER folders listed would settle how much of that gap is real data an unelevated scan structurally cannot see, as opposed to NTFS metadata. The 107 include Program Files\\WindowsApps, System Volume Information, ProgramData\\Microsoft\\Windows\\Hyper-V, Windows\\Temp and other users' Recycle Bins. The 462 ProgramData\\Microsoft\\Windows\\WER\\ReportArchive crash-report folders were left out. This does not change any acceptance-criterion grade here, because criterion 9 only asks that unreadable folders be recorded and the scan continue. It quantifies how far short 'reads everything underneath it' falls without admin, which the coverage-panel slice needs. Decline if that is not wanted now.",
+    "paths": [
+     "C:\\$Recycle.Bin\\S-1-5-18",
+     "C:\\$Recycle.Bin\\S-1-5-21-1639447372-1566925923-317227936-1005",
+     "C:\\$Recycle.Bin\\S-1-5-21-1639447372-1566925923-317227936-1006",
+     "C:\\$Recycle.Bin\\S-1-5-21-1639447372-1566925923-317227936-500",
+     "C:\\Config.Msi",
+     "C:\\PerfLogs",
+     "C:\\Program Files\\ASUS\\ARMOURY CRATE One Package\\ACFL20260829102937",
+     "C:\\Program Files\\WindowsApps",
+     "C:\\Program Files (x86)\\ASUS\\CrashReports",
+     "C:\\ProgramData\\ASUS\\ASUS System Control Interface\\AsusSoftwareManager\\Abi",
+     "C:\\ProgramData\\DockerDesktop\\tmp-d4w",
+     "C:\\ProgramData\\Microsoft\\Crypto\\PCPKSP\\WindowsAIK",
+     "C:\\ProgramData\\Microsoft\\Crypto\\PCPKSP\\WindowsEK",
+     "C:\\ProgramData\\Microsoft\\Diagnosis",
+     "C:\\ProgramData\\Microsoft\\NetFramework\\BreadcrumbStore",
+     "C:\\ProgramData\\Microsoft\\Network\\Downloader",
+     "C:\\ProgramData\\Microsoft\\Provisioning\\AssetCache",
+     "C:\\ProgramData\\Microsoft\\Search\\Data",
+     "C:\\ProgramData\\Microsoft\\SmsRouter",
+     "C:\\ProgramData\\Microsoft\\Windows\\AppRepository",
+     "C:\\ProgramData\\Microsoft\\Windows\\CapabilityAccessManager",
+     "C:\\ProgramData\\Microsoft\\Windows\\Hyper-V",
+     "C:\\ProgramData\\Microsoft\\Windows\\LfSvc",
+     "C:\\ProgramData\\Microsoft\\Windows\\Models",
+     "C:\\ProgramData\\Microsoft\\Windows\\PackagedEventProviders",
+     "C:\\ProgramData\\Microsoft\\Windows\\Power Efficiency Diagnostics",
+     "C:\\ProgramData\\Microsoft\\Windows\\SystemData",
+     "C:\\ProgramData\\Microsoft\\Windows\\wfp",
+     "C:\\ProgramData\\Microsoft\\Windows\\WindowsApps",
+     "C:\\ProgramData\\Microsoft\\Windows\\WSAIFabric",
+     "C:\\ProgramData\\Microsoft\\Windows Defender\\Certificates",
+     "C:\\ProgramData\\Microsoft\\Windows Defender\\Clean Store",
+     "C:\\ProgramData\\Microsoft\\Windows Defender\\Definition Updates\\Backup",
+     "C:\\ProgramData\\Microsoft\\Windows Defender\\Definition Updates\\Default",
+     "C:\\ProgramData\\Microsoft\\Windows Defender\\Features",
+     "C:\\ProgramData\\Microsoft\\Windows Defender\\LocalCopy",
+     "C:\\ProgramData\\Microsoft\\Windows Defender\\Models",
+     "C:\\ProgramData\\Microsoft\\Windows Defender\\Network Inspection System",
+     "C:\\ProgramData\\Microsoft\\Windows Defender\\Payloads\\Immune",
+     "C:\\ProgramData\\Microsoft\\Windows Defender\\Payloads\\Intune",
+     "C:\\ProgramData\\Microsoft\\Windows Defender\\Payloads\\None",
+     "C:\\ProgramData\\Microsoft\\Windows Defender\\Quarantine",
+     "C:\\ProgramData\\Microsoft\\Windows Defender\\Scans",
+     "C:\\ProgramData\\Microsoft\\Windows Defender\\Support",
+     "C:\\ProgramData\\NVIDIA Corporation\\NVIDIA app\\NvDriverDiagnostics\\storage",
+     "C:\\ProgramData\\NVIDIA Corporation\\NvTelemetry",
+     "C:\\ProgramData\\Packages",
+     "C:\\ProgramData\\ssh\\logs",
+     "C:\\ProgramData\\Tailscale",
+     "C:\\ProgramData\\WindowsHolographicDevices",
+     "C:\\Recovery\\Customizations",
+     "C:\\Recovery\\OEM",
+     "C:\\System Volume Information",
+     "C:\\Users\\defaultuser100000",
+     "C:\\Users\\defaultuser100000.shubh_tuf24",
+     "C:\\Users\\defaultuser100001",
+     "C:\\Users\\WsiAccount",
+     "C:\\Windows\\appcompat\\AIDD",
+     "C:\\Windows\\appcompat\\appraiser",
+     "C:\\Windows\\appcompat\\Backup",
+     "C:\\Windows\\appcompat\\Programs",
+     "C:\\Windows\\appcompat\\UA",
+     "C:\\Windows\\LiveKernelReports",
+     "C:\\Windows\\Logs\\SystemRestore",
+     "C:\\Windows\\Microsoft\\Windows\\Models",
+     "C:\\Windows\\ModemLogs",
+     "C:\\Windows\\PLA\\Reports",
+     "C:\\Windows\\PLA\\Rules",
+     "C:\\Windows\\PLA\\Templates",
+     "C:\\Windows\\Prefetch",
+     "C:\\Windows\\Provisioning\\Autopilot",
+     "C:\\Windows\\Resources\\Themes\\aero\\VSCache",
+     "C:\\Windows\\security\\audit",
+     "C:\\Windows\\security\\cap",
+     "C:\\Windows\\ServiceProfiles\\LocalService",
+     "C:\\Windows\\ServiceProfiles\\NetworkService",
+     "C:\\Windows\\ServiceState",
+     "C:\\Windows\\System32\\Com\\dmp",
+     "C:\\Windows\\System32\\config",
+     "C:\\Windows\\System32\\Configuration",
+     "C:\\Windows\\System32\\drivers\\DriverData",
+     "C:\\Windows\\System32\\DriverState",
+     "C:\\Windows\\System32\\ias",
+     "C:\\Windows\\System32\\LogFiles\\WMI",
+     "C:\\Windows\\System32\\MsDtc",
+     "C:\\Windows\\System32\\networklist",
+     "C:\\Windows\\System32\\Recovery\\Settings",
+     "C:\\Windows\\System32\\SleepStudy",
+     "C:\\Windows\\System32\\spool\\PRINTERS",
+     "C:\\Windows\\System32\\spool\\SERVERS",
+     "C:\\Windows\\System32\\sru",
+     "C:\\Windows\\System32\\Tasks",
+     "C:\\Windows\\System32\\Tasks_Migrated",
+     "C:\\Windows\\System32\\wbem\\MOF",
+     "C:\\Windows\\System32\\WDI",
+     "C:\\Windows\\System32\\WebThreatDefSvc",
+     "C:\\Windows\\SystemTemp",
+     "C:\\Windows\\SysWOW64\\Com\\dmp",
+     "C:\\Windows\\SysWOW64\\config",
+     "C:\\Windows\\SysWOW64\\Configuration",
+     "C:\\Windows\\SysWOW64\\Msdtc",
+     "C:\\Windows\\SysWOW64\\NetworkList",
+     "C:\\Windows\\SysWOW64\\Recovery\\Settings",
+     "C:\\Windows\\SysWOW64\\sru",
+     "C:\\Windows\\SysWOW64\\Tasks",
+     "C:\\Windows\\Temp",
+     "C:\\Windows\\WUModels"
+    ]
+   }
+  ],
+  "planned": []
+ }
+}

@@ -1,0 +1,171 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-020",
+ "stage": "critique",
+ "attempt": 2,
+ "at": "2026-09-24T06:31:21.908Z",
+ "head": "",
+ "run_id": 730,
+ "summary": "Verdict: needs fixes. There are no blockers, 3 major findings and 11 minor ones. The build has already run the design end to end: a full C: scan, 72 tests on real NTFS trees, and a single-file publish. So nothing here stops the slice from delivering \"pick any drive or folder, read everything under it\".\n\nThe majors:\n- **M1.** The rule that a hardlink duplicate or a link is charged 0 bytes is written down only as a contract note. The public read API returns the raw sizes, so every later reader has to remember the rule, and a rollup that forgets it will double-count hardlinks without anything failing.\n- **M2.** \"Every Win32 call takes a \\\\?\\ path\" is also held only by call sites remembering it. The Win32 calls take plain strings, the public GetPath returns the display path, and the long-path test never runs the size probe, so the second place that opens files is untested at the shape that breaks it.\n- **M3.** Staleness of the directory listing is not limited to hardlinks. Wikipedia's NTFS article says the cached size in a folder entry \"is only guaranteed to be updated when a file is closed\". The design trusts that cached size for every single-name file. Large files held open during a scan, such as WSL or VM .vhdx disks, may show a stale size. This is neither measured nor recorded as an accepted limit.\n\nThe minors cover:\n- Scans that cross onto another volume through DFS links, which can match unrelated files as hardlinks.\n- An empty FAT/exFAT drive root, which would probably land in \"Could not read\".\n- A test for OFFLINE (cloud) files that passes whether or not the rule it tests exists.\n- Two architecture rules that are too narrow: the reparse-attribute rule covers only the scanning folder, and the no-skip rule misses xUnit v3's `Explicit = true`.\n- Two UI error paths: a crashed scan leaves the window stuck, and Cancel cannot interrupt a blocked network call.\n- The `\"C:\\\"` command-line quoting trap the build ran into.\n- A fallback for symlink error 1314 that cannot help: the spike shows .NET's own call already passes the unprivileged-create flag, so the fallback would fail the same way.\n- An unpinned, unverified SDK install script.\n- A design record now out of date against O-001 and the build's recorded deviations.\n\nOnly one proposal was composed, so none of it had been argued with before this review.\n\nI could not check any `cited` sources. The design's prior-art section was cut off, and the design itself says its prior-art lists were rebuilt from what was visible. Checking cited URLs therefore did not happen. Instead I checked the outside-the-repo claims the design leans on with web searches: listing staleness (Wikipedia NTFS, Microsoft's FindFirstFile page), xUnit v3 explicit tests (xunit.net), unprivileged symlinks (Windows Developer Blog) and the install-script docs (Microsoft Learn).\n\nThis review had only model-level contact with reality. The things that would settle M3, m2 and m9 by running are named in their findings.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "Verdict: needs fixes. There are no blockers, 3 major findings and 11 minor ones. The build has already run the design end to end: a full C: scan, 72 tests on real NTFS trees, and a single-file publish. So nothing here stops the slice from delivering \"pick any drive or folder, read everything under it\".\n\nThe majors:\n- **M1.** The rule that a hardlink duplicate or a link is charged 0 bytes is written down only as a contract note. The public read API returns the raw sizes, so every later reader has to remember the rule, and a rollup that forgets it will double-count hardlinks without anything failing.\n- **M2.** \"Every Win32 call takes a \\\\?\\ path\" is also held only by call sites remembering it. The Win32 calls take plain strings, the public GetPath returns the display path, and the long-path test never runs the size probe, so the second place that opens files is untested at the shape that breaks it.\n- **M3.** Staleness of the directory listing is not limited to hardlinks. Wikipedia's NTFS article says the cached size in a folder entry \"is only guaranteed to be updated when a file is closed\". The design trusts that cached size for every single-name file. Large files held open during a scan, such as WSL or VM .vhdx disks, may show a stale size. This is neither measured nor recorded as an accepted limit.\n\nThe minors cover:\n- Scans that cross onto another volume through DFS links, which can match unrelated files as hardlinks.\n- An empty FAT/exFAT drive root, which would probably land in \"Could not read\".\n- A test for OFFLINE (cloud) files that passes whether or not the rule it tests exists.\n- Two architecture rules that are too narrow: the reparse-attribute rule covers only the scanning folder, and the no-skip rule misses xUnit v3's `Explicit = true`.\n- Two UI error paths: a crashed scan leaves the window stuck, and Cancel cannot interrupt a blocked network call.\n- The `\"C:\\\"` command-line quoting trap the build ran into.\n- A fallback for symlink error 1314 that cannot help: the spike shows .NET's own call already passes the unprivileged-create flag, so the fallback would fail the same way.\n- An unpinned, unverified SDK install script.\n- A design record now out of date against O-001 and the build's recorded deviations.\n\nOnly one proposal was composed, so none of it had been argued with before this review.\n\nI could not check any `cited` sources. The design's prior-art section was cut off, and the design itself says its prior-art lists were rebuilt from what was visible. Checking cited URLs therefore did not happen. Instead I checked the outside-the-repo claims the design leans on with web searches: listing staleness (Wikipedia NTFS, Microsoft's FindFirstFile page), xUnit v3 explicit tests (xunit.net), unprivileged symlinks (Windows Developer Blog) and the install-script docs (Microsoft Learn).\n\nThis review had only model-level contact with reality. The things that would settle M3, m2 and m9 by running are named in their findings.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "cross-cutting-conformance",
+    "claim": "The rule that a hardlink duplicate or a link charges 0 bytes exists only as a contract note. The public read API exposes raw Size and OnDisk, so every later reader has to remember to zero HardlinkDuplicate and Link entries. That includes the tree slice's rollups and largest-first order, which the design itself defers. A rollup that sums Size() double-counts every hardlinked file, and on C: the WinSxS/System32 pairs add up to gigabytes. Nothing fails when that happens, and it breaks 'each byte is counted once'. A second problem: the probe corrects only the first-seen record. Duplicate names keep their stale listing sizes (b.bin shows 1 MiB while the charged a.bin shows 64 MiB), so two names of the same file display different sizes. Scanner Totals are the only place the rule is applied, which leaves Totals and any sum over the store as two sources of truth with no check between them.",
+    "evidence": "Contract 'ScanStore read API': \"The bytes charged for an entry are Size or OnDisk, except 0 for HardlinkDuplicate and Link entries.\" ScanStore component: \"Rollups, largest-first order and concurrent readers are left to the tree slice.\" Key decision: \"later names count as files with 0 bytes\"",
+    "fix": "Add public ChargedSize(i) and ChargedOnDisk(i), which return 0 for HardlinkDuplicate and Link, as the read API's byte accessors. Give duplicates a FileSize(i) that follows to the charged record. Add one assertion to every counting-rule test: the sum of ChargedSize and ChargedOnDisk over the store equals Totals.Bytes and Totals.BytesOnDisk. The rule then holds in the store's API, not in each reader."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "under-engineering",
+    "claim": "The rule 'every Win32 call takes an absolute \\\\?\\ path, children are concatenated and never re-normalised' is held by each call site remembering it. The Kernel32 LibraryImports take plain strings, and the public ScanStore.GetPath returns the display path. SizeProbe is a second place that opens files, and it may be building the path of the first-seen charged record, which sits in a different folder. It or any later caller (open in Explorer, delete, rescan a subtree) can pass an unprefixed string. That works in every short-path test. It fails only for paths over 260 characters and for names with a trailing dot or space or a device name like NUL. There it shows up as ProbeFailed or Unreadable, not as an error. The full C: run recorded 3 probe failures that nothing explains. The long-path case exercises DirectoryReader traversal only and never the probe, so the second call site is untested at exactly the shape that breaks it. This is the pattern of an invariant honoured at four call sites out of five.",
+    "evidence": "Key decision: \"Every Win32 call takes an absolute \\\\?\\ path ... Child paths are concatenated and never re-normalised. No longPathAware manifest is relied on.\" Native interop: \"LibraryImport declarations ... for CreateFileW\". Case 'reach a path Win32 would alter': \"GetPath must return the true path\", with no probe in the shape. SizeProbe case (2): \"corrects the record already charged\"",
+    "fix": "Make the Kernel32 imports private behind wrappers that accept only a Win32Path struct that LongPath alone can construct (from the root normalisation plus appending a child). Add GetNativePath(i) to the store for later readers. Add two architecture rules: `(LibraryImport|DllImport)` may appear only under src/FsAnalyser.Core/Native/**, and `Path\\.GetFullPath` only in LongPath.cs. Extend the long-path case with a hardlink pair and a WOF file under the >400-character path with a trailing-dot name, asserting SizeProbed is set and ProbeFailed is not."
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "claim": "The design treats a stale directory listing as a hardlink problem and a WOF problem only. It trusts the listing's EndOfFile and AllocationSize for every other file. NTFS caches these values in the directory entry and refreshes them only on close, so a file held open and growing during a scan can report an old size. Such files are large: WSL and Docker .vhdx disks, VM disks, databases, logs. The spike measured only the hardlink name that was not written through and WOF. The open-file case was neither measured nor recorded as an accepted limit, unlike the one-name-under-the-root hardlink limit. That leaves a possibly large miscount, invisible to the user, in the area the project says not to cut corners.",
+    "evidence": "Key decision: \"Take on-disk size from the listing. Correct it ... in two cases only\". Wikipedia NTFS (https://en.wikipedia.org/wiki/NTFS): \"this information is only guaranteed to be updated when a file is closed, and then only for the directory from which the file was opened ... Software can obtain up-to-date data using GetFileInformationByHandle\". FindFirstFile docs (https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirstfilea): \"file attribute information on NTFS file systems may not be current at the time this function is called\".",
+    "fix": "Choose one and write it into key_decisions. (a) Also probe files whose listing EndOfFile or AllocationSize is at least a threshold such as 64 MiB. That is a few thousand files on C:, so the cost is negligible, and it covers the byte-dominant cases. (b) Or record it as an accepted limit and show it in the UI note. To settle it by running: a documentary xUnit test holds a FileStream open, extends it to 64 MiB with Flush(true), then compares the listing's values with FILE_STANDARD_INFO while the handle is still open. Also count, on the real C: with WSL running, the files of 64 MiB or more where the listing and the probe disagree."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "Two things rest on 'a scan never leaves its volume': the hardlink key having no volume part, and choosing the listing class once per scan. But the classifier enters every reparse directory that is not one of the two link tags. That includes IO_REPARSE_TAG_DFS (0x8000000A) folders on the Network drives the drive row offers, and entering a DFS link continues the scan on another server's volume. NTFS FileIds (MFT index plus sequence) collide freely across volumes. A match would silently charge a real file 0 bytes as a 'hardlink'. If the target does not support FileIdExtd, every folder under the link becomes Unreadable (error 87) instead of falling back to the other listing class.",
+    "evidence": "Key decision: \"The key has no volume part because links and mount points are never followed, so a scan stays on one volume.\" and \"The fallback is decided once because a scan never leaves its volume\". EntryClassifier: \"Every other reparse directory (cloud, WCI, ProjFS) is a Folder and is entered.\" Main window: drive row shows \"Network drives\".",
+    "fix": "On each directory handle that is already open, query FileIdInfo, which returns VolumeSerialNumber: one call per folder. When the volume differs from the root's, either do not enter the folder (record it like a link) or key the dedup set by (volume, FileId). The cheaper alternative is to classify the DFS tag as a link."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "A volume root has no '.' or '..' entries, so an empty FAT or exFAT removable drive yields no entries on its first listing call. NT reports a first query with no match as 'not found', not 'no more files'. The design ends paging only on ERROR_NO_MORE_FILES and treats any first-call root error other than 1, 50 or 87 as a failure. So an empty USB stick picked from the drive row would probably land in 'Could not read: The system cannot find the file specified' instead of 'Finished: 0 files'.",
+    "evidence": "DirectoryReader case: \"The RestartInfo-then-Info paging loop ends on ERROR_NO_MORE_FILES.\" Scanner: \"error 1, 50 or 87 switches the whole scan\". FindFirstFile docs: \"If the function fails because no matching files can be found, the GetLastError function returns ERROR_FILE_NOT_FOUND.\"",
+    "fix": "Treat ERROR_FILE_NOT_FOUND on the RestartInfo call as an empty listing. Settling it needs a real empty FAT or exFAT volume (a USB stick). Mounting a VHD needs admin and unit tests cannot build one, so leave it for validate and say so."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "The case meant to prove that cloud placeholders are never probed can pass without the rule it tests. For the CloudOnly rule to be what stops a file from being opened, the file must have AllocationSize 0, EndOfFile of at least 4096, and no sparse attribute. An ordinary user can only produce that by WOF-compressing the file. If the builder uses a plain file with data or a sparse file, the size condition or the sparse condition rejects it first. The test then passes even with the CloudOnly check deleted.",
+    "evidence": "Case 'size a file whose listing says nothing is allocated': \"AllocationSize 0 with EndOfFile of at least 4,096: a WOF (xpress4k) file, an all-hole sparse file, and a file carrying OFFLINE\" and \"OFFLINE stands in for a cloud placeholder that must not be opened\".",
+    "fix": "Specify the fixture as `compact /c /exe:xpress4k`, then set OFFLINE with SetFileAttributes. Assert that the raw listing shows AllocationSize 0 and no sparse attribute before scanning, so the fixture proves its own shape. Then assert that SizeProbed is not set."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "The rule 'only the classifier reads the reparse attribute' is scoped to src/FsAnalyser.Core/Scanning/**. But ScanStore exposes Attributes publicly, and the next slice's rollups and tree will live in Store/** and the App. A 'skip reparse points' or 'is it a link' check written there brings back the 241.7 MiB and OneDrive loss the rule exists to prevent, and nothing fails. The regex also misses a literal 0x400 mask.",
+    "evidence": "architecture_rules 'only the classifier reads the reparse attribute': files \"src/FsAnalyser.Core/Scanning/**\". ScanStore read API lists \"Attributes\" as public.",
+    "fix": "Widen the rule's files to src/**, with EntryClassifier.cs as the only exception, and add `0x0*400\\b` to must_not_match."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "The 'never skipped' rule does not catch xUnit v3's Explicit tests. The xUnit docs describe them as \"tests which are normally not run unless it is requested\", and runners report them as 'not run' while the suite is green. The design leaves the xUnit major version to the template and already guards v3's Assert.Skip*, so v3 is an expected case. `[Fact(Explicit = true)]` on a counting-rule test gets past the rule.",
+    "evidence": "architecture_rules 'counting-rule tests are never skipped': must_not_match covers Skip= / Assert.Skip / Skip.If only. https://xunit.net/docs/getting-started/v3/whats-new: \"tests which are normally not run unless it is requested that all explicit tests run\".",
+    "fix": "Add `\\bExplicit\\s*=\\s*true` and `SkipException` to must_not_match. On v3, also run with --fail-skips."
+   },
+   {
+    "id": "m6",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "claim": "The UI has three designed endings and no path for Scan itself failing: a bug, OutOfMemory, or a malformed record. The LongRunning task faults, the 250 ms timer keeps polling, and the pickers stay disabled because 'there is never a second scan'. The only way out is to kill the app.",
+    "evidence": "Scanner: \"It never throws for a problem inside the tree.\" Main window contract: \"Pickers are disabled during a scan\" and \"ends in three visibly different states\". The relative-root ArgumentException already proves Scan can throw.",
+    "fix": "Have the window await the task. Any exception leads to the Could-not-read state, or a fourth 'Scan failed' state, showing the exception message, and the pickers are re-enabled."
+   },
+   {
+    "id": "m7",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "claim": "Cancel is checked once per folder, and the scan thread uses synchronous CreateFileW and listing calls. An unreachable SMB share (Network drives are in the drive row) or a cloud folder that its sync provider is populating can block a single call until the redirector or provider times out. For that whole time Cancel does nothing, even though the contract promises a Stopped ending.",
+    "evidence": "Scanner: \"It checks the CancellationToken once per folder.\" Main window: \"a Cancel button\". EntryClassifier: cloud directories \"are entered\".",
+    "fix": "Record the scan thread's handle when the scan starts. On Cancel, call CancelSynchronousIo on that thread as well, and treat ERROR_OPERATION_ABORTED (995) as cancellation rather than as an unreadable folder."
+   },
+   {
+    "id": "m8",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "claim": "Under Windows argv rules, a quoted path that ends in a backslash reaches the app with a literal trailing quote. The build measured \"C:\\\" arriving as C:\". The same happens to \"D:\\My Folder\\\". The contract routes that to 'Could not read', so the natural way to pass a drive root or a folder with spaces fails. The CLI is the route validate uses to drive 'any folder' and a full drive.",
+    "evidence": "Contract 'FsAnalyser.App.exe [path]': \"An invalid path lands in the 'Could not read' state\". Build record: \"the argument quoted as \\\"C:\\\\\\\" reached the app as C:\\\" (Windows argv escaping)\".",
+    "fix": "In the argument handler, replace a single trailing '\"' with '\\'. A trailing literal quote can only come from this escaping, and '\"' is illegal in Windows paths. Cover the mapping with a pure test."
+   },
+   {
+    "id": "m9",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "The named fallback for error 1314 cannot help. The symlink spike measured File/Directory.CreateSymbolicLink succeeding in a token that lacks SeCreateSymbolicLinkPrivilege. The Windows Developer Blog says unprivileged creation works only when SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE is passed, so .NET must already pass it. A 1314 would therefore mean Developer Mode is off or blocked by policy, and a hand-written CreateSymbolicLinkW with the same flag would fail the same way. This does not overturn Q-001: no skipping still stands. But the fix the design names is inert. The claim about .NET internals is inferred from the spike plus the blog; a search did not surface the runtime source.",
+    "evidence": "TempTree: \"If 1314 ever appears, a test-local CreateSymbolicLinkW passing SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE is the fix (Q-001)\". Spike symlink-fixture-in-test-context: \"SeCreateSymbolicLinkPrivilege is NOT in the token\" and \"[IO.Directory]::CreateSymbolicLink: OK\". https://blogs.windows.com/windowsdeveloper/2016/12/02/symlinks-windows-10: \"To enable the new behavior when using the CreateSymbolicLink API, there is an additional dwFlags option you will need to set\".",
+    "fix": "Replace the remedy with a failure message. A 1314 means Developer Mode is off or blocked by policy on this machine, and the test fails saying so. Drop the P/Invoke fallback."
+   },
+   {
+    "id": "m10",
+    "severity": "minor",
+    "dimension": "security",
+    "claim": "eng/dotnet.ps1 runs dotnet-install.ps1 with -ExecutionPolicy Bypass. The design does not say whether the script is committed or downloaded on each run, and it applies no verification to it. `-Channel 10.0` installs whatever 10.0 SDK is newest at that moment, so each fresh worktree (about 300 MB each) can build on a different SDK feature band than the one the slice was measured on. Microsoft documents signature validation for its install script.",
+    "evidence": "Bootstrap component: \"runs Microsoft's dotnet-install.ps1 (-Channel 10.0 -InstallDir .dotnet -NoPath)\". Build record: \"Each fresh worktree downloads about 300 MB\". https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-install-script has a section 'Signature validation of dotnet-install.sh'.",
+    "fix": "Commit the script under eng/, or check Get-AuthenticodeSignature for Status Valid and a Microsoft signer before running it. Pass -Version 10.0.401 (the version measured) instead of -Channel. global.json stays as decided."
+   },
+   {
+    "id": "m11",
+    "severity": "minor",
+    "dimension": "drift-from-design",
+    "claim": "In several places the design is now wrong compared with a person's newer decision or with what the build measured. The next slice reads this design, not the build log. (1) The hardlink index is described as a HashSet<int>, but O-001 decided on rule (c), which is not a BCL set. (2) `ServerGarbageCollector` is not an MSBuild property; the real one is ServerGarbageCollection. (3) A deny-ReadAttributes ACE does not stop a FILE_READ_ATTRIBUTES open, because the parent folder's list right grants it, so the denied-probe fixture as written does not work. (4) The sparse fixture must be flushed before scanning. (5) Three things the build had to decide are not in the contracts: totals exclude the root, CloudOnly is set only on files, and ScanResult.Root exists.",
+    "evidence": "ScanStore: \"The hardlink table is a HashSet<int> of entry indices\". Bootstrap: \"App.csproj pins ServerGarbageCollector=false\". TempTree: \"Deny ACEs use FileSystemAclExtensions with the current user's SID\". Build deviations list.",
+    "fix": "Amend the components and contracts to match the build's recorded deviations and O-001, so no later slice 'corrects' the code back to the design."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "Three findings. M3: the listing is assumed fresh for every single-name file. Wikipedia's NTFS article and Microsoft's FindFirstFile docs say it is refreshed only on close. m1: 'a scan never leaves its volume', which DFS links break. m9: the 1314 fallback cannot help, because the spike shows .NET already passes the unprivileged-create flag. The struct offsets, class numbers, RECALL/OFFLINE values and the tag-only link rule check out against the spike measurements and were not re-opened."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "One finding, m2: an empty volume root's first listing call probably returns 'not found', so an empty FAT/exFAT USB drive would show 'Could not read'. The DFS crossing is filed under m1. Considered and not filed: CDRom and Ram drives are missing from the drive row, but the folder dialog still reaches them. Alternate data streams are not required by the brief."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "One finding, M2: the \\\\?\\ path-form rule is held by each call site remembering it. The Win32 imports take plain strings, the public GetPath returns the display path, and no rule or type stops a caller from passing an unprefixed path."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "None. The paged struct-of-arrays store is justified by U-001 and by the measured 555.9 MiB retained versus 569.9 MiB peak (no doubling spikes). The ten test classes are required by the counting constraint. The UNC mapping and the listing fallback serve 'any drive'. The ScanOptions test seam is small."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "One finding, m8: a quoted path ending in a backslash reaches the CLI with a trailing quote (C:\"), which the build measured, and the contract rejects it. The build also filled some gaps: ScanResult.Root, totals excluding the root, and CloudOnly only on files. Those are filed under m11 as design drift."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "Two findings. m6: a faulted Scan leaves the window stuck with the pickers disabled and no ending. m7: Cancel cannot interrupt a synchronous call blocked on SMB or cloud-folder population. Unreadable folders, a failed probe and an unreadable root all have designed paths."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "One finding, m11. The design text is out of date against O-001 (the hardlink index) and against measured build deviations: the GC property name, the deny-ReadAttributes fixture, sparse flushing, and the semantics the build had to choose."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "Three findings. M1: the charged-bytes rule for hardlink duplicates and links must be remembered by every later reader. m4: the reparse-attribute rule is scoped to Scanning/** while Attributes is public. m5: the never-skipped rule misses xUnit v3 `Explicit = true`. The single-writer rule holds by construction through internal visibility."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "Three findings. m3: the OFFLINE fixture can pass without the CloudOnly check it is meant to test. M2: the size probe on a long or trailing-dot path is untested. M1: no test ties the store's charged sums to Totals. m2 (empty volume root) cannot be reached by unit tests and needs real hardware at validate."
+   },
+   {
+    "dimension": "security",
+    "result": "One finding, m10: the install script runs under ExecutionPolicy Bypass with no pinning or signature check, and -Channel is not reproducible. The design also rules out elevation and requires the manifest not to request it. Scanning an arbitrary path from the CLI is the user's own token reading their own files, so it crosses no boundary. Single-file native extraction to %TEMP% is same-user only."
+   }
+  ]
+ }
+}
