@@ -1,0 +1,229 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-031",
+ "stage": "code-review",
+ "attempt": 4,
+ "at": "2026-09-24T22:11:06.846Z",
+ "head": "fb129e933fd742d17b639a08ca168dc8eace5c71",
+ "run_id": 952,
+ "summary": "The M3 and m1 fixes (O-021, O-022) are correct and tested. But this slice is now in a loop, and I found two more gaps of the same class, filed together in this one pass.\n\n**The fixes.**\n- `Read-Lines` (`eng/rules-parity.ps1:65-75`) refuses a lone CR, U+0085, U+2028 or U+2029, with file:line.\n- `Read-Entries` (`:205-209`) refuses any column-0 line after `rules:` that is not a comment. It runs after the dash checks, so a bare dash keeps its own message.\n- C-005 (`tests/rules/RuleCases.ps1:389-419`) feeds all six shapes: a second `rules:` block, a `parked:` key, a `---` marker, and entries hidden behind a lone CR, U+0085 and U+2028. Each must give CANNOT-READ at the right line under both shells. I read those rows and they feed the shapes in.\n\n**What I re-ran on this tree:**\n- Parity gives AGREE on the real tree.\n- RuleCases C-001 to C-005: 8, 34, 26, 26 and 126 checks, none failing.\n- RuleCopiesAgreeTests plus ArchitectureRulesTests: 8/8.\n- The full harness against the real engine: CLEAN, 32/32 rows AS-RECORDED, exit 0. That is the seventh run with identical per-row verdicts.\n- `git status` was unchanged afterwards.\n\n**The loop.** Build attempts 2, 3 and 4 were each caused by code-review, and each patched one input spelling in `rules-parity.ps1`: M1 (gaps inside a list), M2 (a bare dash), M3 (column-0 keys) and m1 (line breaks). The shapes below were all present at attempt 1. I should have enumerated them then instead of one per lap.\n\n**The enumeration this time.** I scripted a probe on temp copies and checked each variant against the engine's own loader (`open(encoding='utf-8')` plus `yaml.safe_load`, under the engine's interpreter). Two families still read AGREE while the rules actually enforced differ:\n- **M4, the yaml reader.**\n  - A duplicate `must_not_match` key spelled `'must_not_match':`, `\"must_not_match\":`, `!!str must_not_match:` or `? must_not_match`. YAML keeps the last one, so Fitness's NoBcl rule enforces only the new pattern.\n  - A `# settled by SL-` comment inside the last twinned entry's list.\n  - A column-0 key led by U+00A0 or U+3000, which .NET's `\\s` skips and YAML does not. Fitness then has 9 rules, not 17.\n- **M5, the C# reader.** Nothing after the first call's `);` is ever read. A second call written `ArchitectureRulesTests.AssertNoMatch(...)`, or `if (true) AssertNoMatch(...)`, adds xUnit-only patterns and still reads AGREE. The same holds for an early `return;` before the call.\n\nOther variants were refused or break Fitness loudly: a tab or U+00A0 after an item's dash, an item at 3 spaces, and a column-0 U+00A0 key at the end of the file.\n\nBoth findings ask for a closed grammar in place of more denylist entries, the structure the builder itself proposed. With that, each reader accepts only the line shapes the file uses today. A person may decide instead to accept the remaining risk; these are unusual hand-edits, and the harness's rule-count check catches the U+00A0 case where the engine exists.\n\n**Stale statements.** Nothing now reads false in the files I passed. The `fitness.yaml` authoring rule (\"`rules:` stays the only top-level key\") is now enforced.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The M3 and m1 fixes (O-021, O-022) are correct and tested. But this slice is now in a loop, and I found two more gaps of the same class, filed together in this one pass.\n\n**The fixes.**\n- `Read-Lines` (`eng/rules-parity.ps1:65-75`) refuses a lone CR, U+0085, U+2028 or U+2029, with file:line.\n- `Read-Entries` (`:205-209`) refuses any column-0 line after `rules:` that is not a comment. It runs after the dash checks, so a bare dash keeps its own message.\n- C-005 (`tests/rules/RuleCases.ps1:389-419`) feeds all six shapes: a second `rules:` block, a `parked:` key, a `---` marker, and entries hidden behind a lone CR, U+0085 and U+2028. Each must give CANNOT-READ at the right line under both shells. I read those rows and they feed the shapes in.\n\n**What I re-ran on this tree:**\n- Parity gives AGREE on the real tree.\n- RuleCases C-001 to C-005: 8, 34, 26, 26 and 126 checks, none failing.\n- RuleCopiesAgreeTests plus ArchitectureRulesTests: 8/8.\n- The full harness against the real engine: CLEAN, 32/32 rows AS-RECORDED, exit 0. That is the seventh run with identical per-row verdicts.\n- `git status` was unchanged afterwards.\n\n**The loop.** Build attempts 2, 3 and 4 were each caused by code-review, and each patched one input spelling in `rules-parity.ps1`: M1 (gaps inside a list), M2 (a bare dash), M3 (column-0 keys) and m1 (line breaks). The shapes below were all present at attempt 1. I should have enumerated them then instead of one per lap.\n\n**The enumeration this time.** I scripted a probe on temp copies and checked each variant against the engine's own loader (`open(encoding='utf-8')` plus `yaml.safe_load`, under the engine's interpreter). Two families still read AGREE while the rules actually enforced differ:\n- **M4, the yaml reader.**\n  - A duplicate `must_not_match` key spelled `'must_not_match':`, `\"must_not_match\":`, `!!str must_not_match:` or `? must_not_match`. YAML keeps the last one, so Fitness's NoBcl rule enforces only the new pattern.\n  - A `# settled by SL-` comment inside the last twinned entry's list.\n  - A column-0 key led by U+00A0 or U+3000, which .NET's `\\s` skips and YAML does not. Fitness then has 9 rules, not 17.\n- **M5, the C# reader.** Nothing after the first call's `);` is ever read. A second call written `ArchitectureRulesTests.AssertNoMatch(...)`, or `if (true) AssertNoMatch(...)`, adds xUnit-only patterns and still reads AGREE. The same holds for an early `return;` before the call.\n\nOther variants were refused or break Fitness loudly: a tab or U+00A0 after an item's dash, an item at 3 spaces, and a column-0 U+00A0 key at the end of the file.\n\nBoth findings ask for a closed grammar in place of more denylist entries, the structure the builder itself proposed. With that, each reader accepts only the line shapes the file uses today. A person may decide instead to accept the remaining risk; these are unusual hand-edits, and the harness's rule-count check catches the U+00A0 case where the engine exists.\n\n**Stale statements.** Nothing now reads false in the files I passed. The `fitness.yaml` authoring rule (\"`rules:` stays the only top-level key\") is now enforced.",
+  "findings": [
+   {
+    "id": "M4",
+    "severity": "major",
+    "dimension": "missing-edge-cases",
+    "claim": "The yaml reader in rules-parity.ps1 still works as a list of refused shapes. Three families of legal YAML are neither read the way PyYAML reads them nor refused, so parity gives AGREE (exit 0) while Fitness enforces something else. I checked each on a temp copy with an engine-style open(encoding='utf-8') plus yaml.safe_load under the engine's interpreter.\n\n(a) A duplicate must_not_match key in another spelling, put after the NoBcl entry's real list: `    'must_not_match':`, `    \"must_not_match\":`, `    !!str must_not_match:`, or `    ? must_not_match` / `    :`, each followed by `      - '(?m)OnlyInYaml'`. All four gave 'AGREE 7 facts <- 10 twinned entries, 21 patterns'. YAML keeps the last duplicate, so Fitness's 'TheScannerMakesNoBclFileSystemCalls (*.cs)' must_not_match becomes ['(?m)OnlyInYaml'] and the real pattern is no longer enforced. The key count at :219 only matches the bare spelling `^\\s+must_not_match\\s*:`.\n\n(b) A `      # settled by SL-099` comment inside the last twinned entry's list, followed by a yaml-only item. This gave AGREE, while YAML reads both items. The marker search at :193 takes the first `^\\s*#\\s*settled by SL-` line at any indent, and the entry's range ends there.\n\n(c) A column-0 key led by U+00A0 or U+3000 (` parked:`) before the NoBcl entry. This gave AGREE with 10 twinned entries, while safe_load gives 9 rules: the NoBcl twin and all 7 settled rules move under that key. The column-0 refusal at :207 is `^[^\\s#]`, and .NET's `\\s` counts those characters as whitespace where YAML does not. It is M3's shape again, behind different whitespace.\n\nEach attempt since M1 patched one such spelling. The design's rule that 'both readers fail closed on any shape they cannot classify' still does not hold.",
+    "evidence": "eng/rules-parity.ps1:193 (marker search), :197-210 (entry-scan refusals), :219 (must_not_match key count). The consumer is taad3/fitness.py:301-302 (open + yaml.safe_load). Build attempts 2-4 in .taad/slices/SL-031/index.json were each caused by code-review and each fixed one spelling.",
+    "fix": "Replace the refusal list with a closed grammar for everything after `rules:`.\n(1) Any non-empty line whose leading whitespace is not all ASCII spaces is refused: `^ *[^\\S ]`, and `^(?! |#|$)` at column 0. This catches U+00A0, U+3000 and tab.\n(2) In each twinned entry, every line indented exactly 4 spaces that is not a comment and not a `-` item must be a bare identifier key, `^    [A-Za-z_][A-Za-z0-9_]*\\s*:`. That refuses quoted, tagged, `?` explicit and `<<` merge keys. No key name may appear twice in one entry.\n(3) The settled marker counts only when every line between it and the next `  - name:` (or end of file) is blank or a comment. Otherwise refuse with 'the settled marker sits inside an entry'.\nAdd C-005 rows for (a) with the quoted and the `?` spellings, (b), and (c) with U+00A0. Each must give CANNOT-READ under powershell.exe and pwsh."
+   },
+   {
+    "id": "M5",
+    "severity": "major",
+    "dimension": "missing-edge-cases",
+    "claim": "The C# reader examines only the lines of the first AssertNoMatch( call block. Lines in a Fact before the call, or after its `);`, are never classified, and a second call is refused only when it starts its line (`$callStart = '^\\s*AssertNoMatch\\('`). I checked each on a temp copy of ArchitectureRulesTests.cs with the real fitness.yaml and -ExpectFacts 7. All three gave 'rules-parity: AGREE 7 facts <- 10 twinned entries, 21 patterns', exit 0:\n(a) `        ArchitectureRulesTests.AssertNoMatch(Files(@\"src\\FsAnalyser.Core\\Scanning\", \"*.cs\"), @\"OnlyInCs\");` added after the NoBcl Fact's call.\n(b) The same call behind `if (true) ` on one line.\n(c) `        return;` added before the call.\nIn (a) and (b), xUnit enforces a pattern the yaml copy lacks. That is exactly the drift C3 exists to catch, and it contradicts the design's 'finds each [Fact]/[Theory] method and its single AssertNoMatch( call'. In (c), xUnit enforces nothing. That is behaviour, but the same closed grammar refuses it for free. The reflected Fact count does not help, because the count of Facts is unchanged.",
+    "evidence": "eng/rules-parity.ps1:140 (`$callStart`), :154-156 (a call is counted only where it starts a line), :162-169 (patterns read from after the files argument up to `);`; nothing after `);` or before the call is examined). The current file has every Fact body as exactly `{`, one call, `}` (tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs:15-22, 29-37, 40-48, 56-61, 68-72, 76-84, 91-97).",
+    "fix": "Close the Fact-body grammar in Read-Facts. Between the signature line and the call, allow only `{`, blank and `//` comment lines. After the call's `);`, the next non-blank, non-comment line must be `}`. Refuse anything else with file:line. Also refuse any unanchored `AssertNoMatch\\(` in a Fact's range beyond the one call. Add C-005 rows for (a), (b) and (c). Each must give CANNOT-READ under powershell.exe and pwsh."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "eng/rules-parity.ps1:205-209: `elseif ($lines[$i] -cmatch '^[^\\s#]') { Stop-Reading ... \"a column-0 line after 'rules:' ...\" }`, after the dash checks. tests/rules/RuleCases.ps1:393-407 feeds a second `rules:` block (CANNOT-READ at :256), `parked:` (:170) and `---` (:177). All held under both shells in my C-005 run (126 ok). This closes the ASCII column-0 shapes. The same shape led by U+00A0 or U+3000 still passes (M4c)."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "eng/rules-parity.ps1:65-75: Read-Lines refuses `[\\r\\u0085  ]` after the CRLF/LF split, with file:line and the code point. tests/rules/RuleCases.ps1:409-419 hides an entry behind each of a lone CR, U+0085 and U+2028. Each gives CANNOT-READ at fitness.yaml:174 under both shells in my run."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "The list loop still `continue`s on blank and comment lines (unchanged since attempt 2), and its C-005 rows pass today."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "eng/rules-parity.ps1:202-204: the `^ {0,2}-(\\s|$)` refusal is unchanged, and its bare-dash C-005 rows pass today."
+   },
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "The full harness re-ran on fb129e9: CLEAN, then 32/32 AS-RECORDED, exit 0. That is the seventh run with identical per-row verdicts, and harness.py and the row files are unchanged since attempt 1. Owed to validate-slice, which should still run it on its own."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "eng/rules-harness/harness.py:434-442 is unchanged: the two-step rename plus the listdir case check. D3, D4 and D9 are AS-RECORDED today."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "harness.py:518-523 and 658-662 are unchanged: DIVERGENCE-CLOSED gives exit 1. C-014 held 5/5 in attempt 1, and the code and rows are unchanged since."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "harness.py:667 is unchanged: `--engine-root` is required with no default."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "C-001 8/8 today."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "C-002 34/34 today."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "C-003 26/26 today."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "C-004 26/26 today."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "C-005 126 ok today for every shape the case lists. The shapes in M4 and M5 are not listed."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "harness.py is unchanged since my attempt-1 run of C-006 (17/17)."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "Today's run: 'clean: xunit 7 Facts, 0 hits | fitness pass, 17 rules, 43 files read ... CLEAN'."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "Today's run: F01-F16 AS-RECORDED."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "Today's run: P07c-e AS-RECORDED."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "Today's run: D1 and D2 AS-RECORDED."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "Today's run: D6, D7, D10, D11 and D13 AS-RECORDED."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "Today's run: D3, D4 and D9 AS-RECORDED."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "Today's run: D5 AS-RECORDED."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "C-014 5/5 in attempt 1; the code and rows are unchanged."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "RuleCases C-001 runs parity on the real repo under both shells, with and without -ExpectFacts 7. 8/8 today."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "C-002 feeds typos and dropped patterns into copies of each file. 34/34 today."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "C-003: the twin deleted, a split Fact changed, and entries above and below the marker. 26/26 today."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "C-004: a pattern without (?m), the three BOM-guard spellings and a literal U+FEFF, and the guard without '?'. 26/26 today."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:295-420 feeds every listed shape plus the O-019 to O-022 rows. 126 ok today. It does not feed the duplicate-key spellings, a marker inside a list, a column-0 key led by a non-ASCII space (M4), or code around the C# call (M5)."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "Unchanged: five engine-resolution shapes, 17/17 in attempt 1."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "Unchanged. Today's full run printed CLEAN."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "Unchanged. F01-F16 AS-RECORDED today."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "Unchanged. P07c-e AS-RECORDED today."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "D1 and D2 AS-RECORDED today."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "D6, D7, D10, D11 and D13 AS-RECORDED today."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "D3, D4 and D9 AS-RECORDED today."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "D5 AS-RECORDED today."
+   },
+   {
+    "key": "C-014",
+    "exercised": "yes",
+    "evidence": "Unchanged: the flipped D13 row gives DIVERGENCE-CLOSED, exit 1 (5/5 in attempt 1)."
+   }
+  ],
+  "matches_design": true,
+  "drift": [
+   "Nothing new departed from the design in attempt 4. The two new refusals are what the M3 and m1 decisions specified.",
+   "A loop fact that no single stage can see: build attempts 2, 3 and 4 were each caused by code-review, and each changed one line-classification rule in eng/rules-parity.ps1 plus its C-005 rows. M4 and M5 ask for closed grammars on both readers so that there is no attempt 5 for a fifth spelling. If a person would rather accept the remaining risk (all of these are unusual hand-edits), overriding M4 and M5 ends the loop just as well.",
+   "Still undeclared from attempt 1, and unchanged: harness.py applies rows in batches (divergences runs as 2); attribution looks back over the blank lines before a row's first planted line ('lead'); create-with accepts encoding 'utf8'.",
+   "Declared scope, noted for the next reader. Parity compares must_not_match only. A twinned entry gaining must_not_import, a scope entry moved below the settled marker, or code that changes what xUnit does at run time (see M5c) are the harness's to catch, and the harness runs only where the TAAD engine exists."
+  ],
+  "unreviewed": [
+   ".taad/slices/SL-031/build-slice-3.json and build-slice-4.json: the builder's own accounts. Not opened; I checked their claims against the tree.",
+   ".taad/slices/SL-031/code-review-3.json: my own attempt-3 record, which this pass replaces. Not re-read.",
+   ".taad/slices/SL-031/index.json: read only for the attempts' caused_by and changed facts, to identify the loop."
+  ]
+ }
+}

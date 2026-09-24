@@ -1,0 +1,87 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-031",
+ "stage": "build-slice",
+ "attempt": 2,
+ "at": "2026-09-24T21:50:18.492Z",
+ "head": "0120c5f643effa9f41f2eb0451843099c31ba78d",
+ "run_id": 945,
+ "summary": "I fixed O-019 (M1) in eng/rules-parity.ps1. The must_not_match list loop in Read-Entries now continues past blank lines and comment-only lines (^\\s*#). It ends only at a line that is neither blank nor a comment and is indented no deeper than the key; the loop stays bounded by the next entry or the settled marker. So a yaml-only pattern placed after a blank line or a comment is now read and gives DRIFT. Before the fix it gave AGREE: I confirmed that by running the committed (old) reader on the same shape. C-005 in tests/rules/RuleCases.ps1 gained four rows, each requiring DRIFT under both powershell.exe and pwsh: a yaml-only pattern after a blank line, after a comment at the key's indent, after a deeper comment, and after a blank line plus a comment. A fifth row is a control: a blank line and a comment between two real items still give AGREE on 21 patterns. The regressions pass: C-001 to C-005, C-007 and the 8 rule Facts.",
+ "payload": {
+  "status": "complete",
+  "summary": "I fixed O-019 (M1) in eng/rules-parity.ps1. The must_not_match list loop in Read-Entries now continues past blank lines and comment-only lines (^\\s*#). It ends only at a line that is neither blank nor a comment and is indented no deeper than the key; the loop stays bounded by the next entry or the settled marker. So a yaml-only pattern placed after a blank line or a comment is now read and gives DRIFT. Before the fix it gave AGREE: I confirmed that by running the committed (old) reader on the same shape. C-005 in tests/rules/RuleCases.ps1 gained four rows, each requiring DRIFT under both powershell.exe and pwsh: a yaml-only pattern after a blank line, after a comment at the key's indent, after a deeper comment, and after a blank line plus a comment. A fifth row is a control: a blank line and a comment between two real items still give AGREE on 21 patterns. The regressions pass: C-001 to C-005, C-007 and the 8 rule Facts.",
+  "files": [
+   {
+    "path": "eng/rules-parity.ps1",
+    "change": "modified",
+    "why": "O-019/M1: the must_not_match loop continues on blank and comment-only lines, and breaks only on a line that is neither, indented no deeper than the key. Items after a gap are no longer silently skipped."
+   },
+   {
+    "path": "tests/rules/RuleCases.ps1",
+    "change": "modified",
+    "why": "O-019: four C-005 rows put a yaml-only pattern after a blank line, a comment at the key's indent, a deeper comment, and a blank plus a comment; each must be DRIFT under both shells. A control row checks that a blank and a comment between real items still give AGREE."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-019",
+    "done": true,
+    "how": "Read-Entries now `continue`s on blank and ^\\s*# lines and breaks only on a non-blank, non-comment line indented no deeper than the key, with the loop still bounded by $end. C-005 now feeds a yaml-only '(?m)OnlyInYaml' after a blank line, after '    # a note' at the key's indent, after a deeper comment, and after a blank plus a comment. Each exits 1 with 'DRIFT 2 unpaired' and \"only in yaml 'OnlyInYaml'\" under powershell.exe and pwsh; the control row still gives AGREE. The committed reader gave AGREE (exit 0) on the blank-line shape and the new one gives DRIFT."
+   },
+   {
+    "key": "O-001",
+    "done": true,
+    "how": "Owed to validate-slice, and not changed this attempt. Attempt 1 ran the full harness three times with the same verdict for every row. This fix touches only the parity reader's list loop; the harness runs parity first, and the C-007 clean scenario still passes."
+   },
+   {
+    "key": "O-002",
+    "done": true,
+    "how": "Owed to validate-slice, and unchanged since attempt 1. The harness's two-step rename checks the folder listing shows the new case and not the old before trusting D3/D4/D9 (C-012)."
+   },
+   {
+    "key": "O-003",
+    "done": true,
+    "how": "Owed to validate-slice, and unchanged since attempt 1. C-014 flips D13's recorded outcome and the harness exits 1 with DIVERGENCE-CLOSED."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-005",
+    "test_name": "tests/rules/RuleCases.ps1::Case-C005",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-005"
+   }
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-005",
+    "outcome": "passed",
+    "note": "All checks held, including the 4 new yaml-only-after-a-gap rows (DRIFT, exit 1) and the control row (AGREE), each under powershell.exe and pwsh."
+   },
+   {
+    "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File <temp>/eng/rules-parity-old.ps1 -Root <temp copy with '(?m)OnlyInYaml' after a blank line>",
+    "outcome": "passed",
+    "note": "Reproduced M1 with the committed reader (git show HEAD:eng/rules-parity.ps1): it printed AGREE, exit 0. The fixed reader printed 'DRIFT 2 unpaired' on the same copy. The temp dir was removed."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-001 (and C-002, C-003, C-004)",
+    "outcome": "passed",
+    "note": "Regression after the reader change: C-001 8/8, C-002 34/34, C-003 26/26, C-004 26/26, 0 FAIL."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~RuleCopiesAgreeTests|FullyQualifiedName~ArchitectureRulesTests\"",
+    "outcome": "passed",
+    "note": "8/8, no warnings."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-007 -EnginePython C:\\Users\\sshub\\AppData\\Roaming\\taad3\\venv\\Scripts\\python.exe -EngineRoot C:\\Users\\sshub\\projets\\taad_v3\\backend",
+    "outcome": "passed",
+    "note": "The harness runs parity first; the clean scenario is still CLEAN (17 rules, 7 Facts) and the stray-hit bite still exits 2. 9/9 checks pass."
+   }
+  ],
+  "deviations": [],
+  "not_built": [],
+  "follow_ups": [
+   "The yaml reader still refuses (exit 2) some legal YAML shapes rather than reading them, for example flow-style lists and multi-line quoted scalars. That fails closed, which is the design's rule, but anyone hand-editing twinned entries must keep to the header's authoring rules."
+  ]
+ }
+}

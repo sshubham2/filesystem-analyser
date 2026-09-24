@@ -1,0 +1,139 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-031",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-09-24T23:01:51.497Z",
+ "head": "867092c5b379a696e5ea7a5d6164aef9d5000a80",
+ "run_id": 957,
+ "summary": "SL-031 moved the SL-022 measurement out of %TEMP% and into the repo as two tools. eng/rules-parity.ps1 is a text parity check for the patterns in ArchitectureRulesTests.cs and .taad/fitness.yaml, with RuleCopiesAgreeTests as its one caller. eng/rules-harness/harness.py is a port of the plant and divergence harness that runs against the real TAAD engine (32 rows, all AS-RECORDED, identical across three runs). tests/rules/RuleCases.ps1 (415 checks) tests both. It shipped after 5 builds and 9 code reviews. Four of those laps were one defect class: a line-regex reader that refused listed spellings instead of classifying every line. Validate then showed parity still reads AGREE over realistic scope, exemption and comment-flag edits.",
+ "payload": {
+  "status": "complete",
+  "summary": "SL-031 moved the SL-022 measurement out of %TEMP% and into the repo as two tools. eng/rules-parity.ps1 is a text parity check for the patterns in ArchitectureRulesTests.cs and .taad/fitness.yaml, with RuleCopiesAgreeTests as its one caller. eng/rules-harness/harness.py is a port of the plant and divergence harness that runs against the real TAAD engine (32 rows, all AS-RECORDED, identical across three runs). tests/rules/RuleCases.ps1 (415 checks) tests both. It shipped after 5 builds and 9 code reviews. Four of those laps were one defect class: a line-regex reader that refused listed spellings instead of classifying every line. Validate then showed parity still reads AGREE over realistic scope, exemption and comment-flag edits.",
+  "estimate_error": "Opened as medium size and low risk, and the low risk tier was wrong. The deliverable is a guard whose whole value is never silently agreeing, and that is not a low-risk thing to build. Low risk sized critique and critique-review out entirely, so the only adversarial pass happened in code-review, after the code existed. The result was 5 builds and 9 code-review runs (4 halted), plus a risk-spike that ran twice and a design that ran twice. All the rework landed in two files, eng/rules-parity.ps1 and tests/rules/RuleCases.ps1. Medium size was about right for the volume of code. The risk was underestimated, not the size.",
+  "what_went_wrong": [
+   "Build attempts 1-4 were each taken back as WRONG by code-review for the same class: a spelling of the rule files that the line reader neither read nor refused (M1-M5, m1). Each attempt added one refusal. The closed-grammar allow-list that ended the loop at attempt 5 had already been written out in M4's suggested fix. Four extra builds and four extra reviews were spent before the builder switched approach.",
+   "The triage of M1-M3 accepted the narrowest fix each time. For M2 the decision widened the reviewer's regex to '^ {0,2}-(\\s|$)', but it was still a refusal and not a grammar. Nothing reclassified the finding after the second one of the same class. The builder asked for an enumeration at attempt 3, and code-review still filed M3 and m1 at lap 5, then M4 and M5 at lap 7. At lap 7 the reviewer wrote 'this slice is now in a loop', and no engine mechanism acted on it. The builder changed approach on its own at attempt 5.",
+   "Critique and critique-review did not run, because a low-risk slice in a minimal project is sized out of them. The design's central sentence, 'both readers fail closed on any shape they cannot classify', was specified as 'line regexes' with no grammar, and nobody argued with it. The design record says nothing in it was disagreed with by anybody. Every major finding (M1-M5) was a counterexample to that one sentence.",
+   "Review effort went to spellings that editing the two files would not produce by accident: a whole entry hidden behind U+2028 or a lone CR, a `? must_not_match` key, a U+00A0 column-0 key. Meanwhile validate found realistic edits that parity still reads as AGREE: a narrowed `files` scope, a dropped `except_files` entry, a flipped `including_comments`, and a duplicate wider-scope twinned entry above the settled marker. Validate recorded that check as [failed] and the slice passed anyway, because the design had declared scope and exemption to be the harness's job. No stage was asked whether anything runs the harness.",
+   "The behavioural half repeats the failure the slice was meant to remove. The new fitness.yaml header says 'when a rule changes, run eng/rules-harness/harness.py', and nothing triggers that run. The design carried this as an open question, and no person answered it. All 8 design questions are still listed as open at the end of the slice.",
+   "The harness drift declared by code-review at attempt 1 was still undeclared and unchanged at attempt 9. Divergence rows are applied in 2 batches, and hit attribution looks back over blank lines before a row's first planted line. Both touch STRAY-HIT detection, which the design named as the guard against absorbed hits. Review flagged it every lap and nothing ever forced a fix or a declaration.",
+   "The risk-spike halted on 'harness-runs-from-clean-clone' with a no-go. The build-check had already recorded that the SL-022 scripts import taad3.fitness from outside the repo, and the design then accepted that no-go as true of the harness. The second spike pass was 'built anyway despite a no-go'. That premise was tested against a fact already on the record, which cost one halt.",
+   "The criteria and case text said '4 settled entries' and '14 rules', but this slice's own design appends 3 rules below the marker (7 settled, 17 rules in the clean scenario). Validate had to reconcile the criterion text. The design's coherence_check noted the append in (b) but did not carry it into the criteria."
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "dimension": "unfounded-assumptions",
+    "severity": "major",
+    "what": "The critique did not run (sized out by the low tier). The design's fail-closed claim for a line-regex YAML reader was never challenged: it gave no grammar, only 'accepts only ... any other line exits 2'. It did not ask what makes 'cannot classify' decidable when PyYAML reads shapes a line regex does not. Those shapes are: a bare `-` entry, column-0 keys, a quoted or `?` duplicate key, a settled marker inside a list, a U+00A0 or U+3000 leading character, and a lone CR or U+2028 line break. Every one of M1-M5 and m1 came from that gap. The check that would have caught it: for each reader, state the accepted grammar and require every line to match it or be refused.",
+    "caught_by": "code-review, over laps 1, 3, 5 and 7, and then the closed-grammar rebuild at build attempt 5"
+   },
+   {
+    "gate": "code-review",
+    "dimension": "missing-edge-cases",
+    "severity": "major",
+    "what": "M2, M3, M4 and M5 all existed in the attempt-1 diff: the `^  -\\s` refusal at :192, the `^[^\\s#]` column-0 check at :207, the marker search at :193, and the C# `$callStart` anchor at :140. Lap 1 filed only M1, and the others surfaced one lap at a time (laps 3, 5, 7). Asking the reviewer to enumerate at lap 3 still produced M3 and m1 at lap 5 and M4 and M5 at lap 7. A review of a reader should probe the class (every line kind the format allows), not the neighbours of the last finding.",
+    "caught_by": "code-review, later laps (the same reviewer, incrementally)"
+   },
+   {
+    "gate": "critique",
+    "dimension": "contract-gaps",
+    "severity": "major",
+    "what": "The design declared scope, exemption and `including_comments` drift to be 'the harness's job'. It did not notice that no gate runs the harness, and it did not list two blind spots. Pairing by pattern multiset with 'entries at least as many as Facts' lets a duplicate wider-scope twinned entry above the marker read AGREE. Flipping `including_comments` also reads AGREE, and neither tool sees it on an entry whose plants are code. Validate probes J (files narrowed), V (including_comments), W (except_files dropped) and T (duplicate entry) all read AGREE. A critique would have asked 'which properties of a rule does no tool compare, and which gate runs the tool that does?'",
+    "caught_by": "validate-slice (probes J, V, W, T); recorded as a [failed] check and not fixed"
+   },
+   {
+    "gate": "code-review",
+    "dimension": "over-engineering",
+    "severity": "minor",
+    "what": "Laps 3-7 filed and fixed exotic spellings: U+2028, U+0085 and lone-CR line breaks hiding a whole entry, `? must_not_match` explicit keys, a U+00A0 column-0 key. That is disguise and not drift between copies. No threat model (accident versus adversary) was stated in the design, so the line was drawn only at lap 9, where code-review recorded a 'remaining limit' rather than filing it. Realistic scope and comment-flag edits were never in any review finding.",
+    "caught_by": "code-review, lap 9 (self-corrected)"
+   }
+  ],
+  "learned": [
+   {
+    "kind": "process",
+    "lesson": "A slice that builds a reader, checker or guard over the two rule copies (eng/rules-parity.ps1, harness.py, or anything that must never silently agree) should open at medium risk or higher so critique runs. Its first design question is 'what is the accepted grammar, and what refuses everything else?' Do not open it low on the strength of small diff size.",
+    "evidence": "Critique and critique-review were skipped by tier. The whole adversarial pass then ran in code-review: 9 runs, 4 halted, 5 builds, all in eng/rules-parity.ps1 and tests/rules/RuleCases.ps1."
+   },
+   {
+    "kind": "process",
+    "lesson": "When a finding says 'the reader does not refuse shape S', the obligation should be 'classify every line', with an allow-list per file, not 'refuse S'. Prove closure by running the old reader (`git show HEAD:eng/rules-parity.ps1`) against every shape the reviewer filed, and require the new one to refuse each at its own line. Asking the reviewer to enumerate did not work here.",
+    "evidence": "Attempts 2-4 each added one refusal and each drew a new finding. Attempt 5 built closed grammars, ran the committed reader on the 7 M4/M5 shapes (AGREE, exit 0) against the new one (CANNOT-READ, exit 2), and code-review 9 found nothing."
+   },
+   {
+    "kind": "design",
+    "lesson": "Parity compares patterns only and its reach ends there. Scope narrowing, `except_files` removal, an `including_comments` flip, and a duplicate twinned entry above the settled marker all read AGREE. The harness sees scope and exemption changes only where a plant or the clean baseline exercises them. Only harness.py guards those, and nothing runs it. Do not describe fitness.yaml and ArchitectureRulesTests.cs as 'guarded' beyond patterns.",
+    "evidence": "Validate probes J, V, W and T read AGREE. The design says parity is 'patterns only' and the harness is 'run when a rule changes'. The pairing rule is 'entries must be at least as many as Facts'."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "To run the behavioural harness: `%APPDATA%\\taad3\\venv\\Scripts\\python.exe eng/rules-harness/harness.py --engine-root C:\\Users\\sshub\\projets\\taad_v3\\backend --scenario all`. --engine-root is required with no default, and exit 2 means the engine is not importable. The matrix is 32 rows: F01-F16, P07c-e and D1-D13. The clean scenario reports 17 Fitness rules (10 twinned + 7 settled), not the 14 the build-check baseline showed. It needs the repo-local .dotnet (SDK 10.0.401) and every run leaves `git status` unchanged. tests/rules/RuleCases.ps1 (-Case C-001..C-014 or All, 415 checks, about 205 s, with -EnginePython and -EngineRoot) is not run by any gate. It is where the eng/ script refusals are tested, and C-005 (230 checks) is the case that grows.",
+    "evidence": "Validate ran the harness twice with byte-identical output and a third time on a fresh clone. It also ran RuleCases -Case All at 415 ok / 0 FAIL / 205 s. O-004 and O-011 record the required engine root and the 17 rules."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "The settled-entry count in fitness.yaml is owned by the engine. It goes from 4 to 7 when a slice declares three architecture_rules, and it will grow again with every slice that declares rules. O-005 records C-001 asserting a summary line that includes '7 settled', so the next slice that declares architecture_rules will turn C-001 red when someone runs RuleCases. Nothing runs it automatically, so it would go unnoticed until then.",
+    "evidence": "Build-check said 4 settled entries. The tree now has 7 (the original 4 plus the 3 this design appended). The parity summary reads 'AGREE 7 facts <- 10 twinned entries, 21 patterns; 7 settled entries' and O-005 pins it."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "Editing ArchitectureRulesTests.cs now meets a closed grammar. The file may hold only its two prologue lines and one type. Every attribute must be `[Fact]` or `[Theory]` alone on its line. A Fact body is `{`, one AssertNoMatch( call and `}`. The files argument may use only the words Files, Except, Concat, Where, StartsWith, f, StringComparison and OrdinalIgnoreCase. A Fact rescoped with EndsWith, or a second class, `using` or helper, reads CANNOT-READ (exit 2) until the word list or grammar in eng/rules-parity.ps1 is extended. Twinned yaml entries allow a fixed key set and refuse `must_not_import`. A new twinned pattern must be single-quoted and start with (?m).",
+    "evidence": "Build-slice 5's declared limits, code-review 9 drift notes, and the C-005 rows at tests/rules/RuleCases.ps1:420-521."
+   },
+   {
+    "kind": "risk",
+    "lesson": "Parity reads text, not what names resolve to. A type named Regex, or a global using alias, added to FsAnalyser.Core.Tests in another file changes what the pinned AssertNoMatch does while both files stay unchanged. An AssertNoMatch overload disguised to keep the shape still reads AGREE. Only the harness could see this, and validate did not probe it.",
+    "evidence": "Build-slice 5 LEFT OPEN, code-review 9 'remaining limit', and validate marked the C# name-resolution limit not-run."
+   },
+   {
+    "kind": "process",
+    "lesson": "The reviewer named the loop at lap 7 ('this slice is now in a loop'), and the builder's own suggestion at attempt 5 was a design-level alternative: compare Fitness's parsed rules with parity's reading wherever the engine is available. That route removes the whole spelling class without hand-writing a second YAML grammar. Weigh it before adding another refusal to eng/rules-parity.ps1.",
+    "evidence": "Build-slice 5 LEFT OPEN, 'Loop observation'. The engine's yaml.safe_load was the oracle every M-finding was checked against."
+   }
+  ],
+  "candidates": [
+   {
+    "title": "Close parity's blind spots: compare files, except_files and including_comments per twinned entry, and refuse surplus twinned entries",
+    "urgency": "soon",
+    "why": "Validate probes J, V, W and T (scope narrowed, exemption dropped, comment flag flipped, duplicate wider-scope entry) all read AGREE, so a rule can silently weaken in yaml while RuleCopiesAgreeTests stays green. The alternative worth weighing is a check in the harness that compares Fitness's parsed rules against parity's reading, as the builder suggested at attempt 5."
+   },
+   {
+    "title": "Make a change to .taad/fitness.yaml or ArchitectureRulesTests.cs require a harness.py run",
+    "urgency": "soon",
+    "why": "The behavioural harness is the only guard for scope and exemption drift and for the D1-D13 divergences. Its only trigger is a comment in the fitness.yaml header, which repeats the failure this slice replaced. Options: a project constraint so validate runs it when either file is in the diff, or a git hook. Either needs a decision on how it reaches the engine at %APPDATA%\\taad3\\venv and C:\\Users\\sshub\\projets\\taad_v3\\backend."
+   },
+   {
+    "title": "Derive the settled-entry count in RuleCases C-001 instead of pinning '7 settled'",
+    "urgency": "soon",
+    "why": "Each slice that declares architecture_rules appends settled entries (4 became 7 here). O-005 records C-001 asserting the summary line with '7 settled', so the next such slice turns C-001 red in a suite no gate runs."
+   },
+   {
+    "title": "Engine-side: when code-review files a second finding of the same defect class on consecutive laps, reclassify it so the obligation is 'close the class', not another per-shape fix",
+    "urgency": "soon",
+    "why": "Here the disposal step took the narrowest fix on M1, M2 and M3, and asking the reviewer to enumerate still produced filings at laps 3, 5 and 7. The reviewer said 'now in a loop' at lap 7 and nothing acted on it. The class-level fix was already in M4's suggestion. This lives in taad_v3 and not in this project."
+   },
+   {
+    "title": "Engine-side: a floor on risk tier for slices whose deliverable is a checker, reader or guard that must not silently agree",
+    "urgency": "soon",
+    "why": "SL-031 was opened low, so critique and critique-review were sized out. Then 4 of its 9 code-review laps were spent on defects the design's own fail-closed sentence implied. A slice whose value is 'never silently passes' needs the adversarial pass before the build."
+   },
+   {
+    "title": "Settle harness.py's undeclared drift: divergences applied in 2 batches, and attribution that looks back over blank lines before a row's first planted line",
+    "urgency": "someday",
+    "why": "Code-review flagged it from attempt 1 to attempt 9 as undeclared and unchanged. It sits on the STRAY-HIT and attribution path the design relies on to keep an unplanted hit from being absorbed. Either declare it in the design or remove it."
+   },
+   {
+    "title": "Guard parity's C# name-resolution limit with a fitness rule: no `global using` alias and no type named Regex in tests/FsAnalyser.Core.Tests",
+    "urgency": "someday",
+    "why": "A Regex type or global using alias in another file changes what AssertNoMatch does with both compared files unchanged. Parity cannot see it and validate did not probe it. The engine's own Fitness can, at the cost of one architecture rule."
+   }
+  ],
+  "unknowns": [
+   "What is the guard's threat model: accidental drift from a person editing one copy, or deliberate disguise? The design never said, and it decides whether parity should grow to scope, exemption and comment-flag comparison (realistic edits) or stop at patterns with the exotic-spelling grammar it now has.",
+   "Will harness rows stay AS-RECORDED as taad_v3 changes? Every outcome was measured at taad_v3 72bfcb4 only. A Fitness change in the engine will turn a row into DIVERGENCE-CLOSED or MISSED-BY-FITNESS (exit 1) on a filesystem-analyser slice that never touched a rule, and nothing runs the harness to notice.",
+   "Does the person accept RuleCopiesAgreeTests shelling out to powershell.exe on every `dotnet test`? It was the design's own open question and no person answered it. It works today (0.5 s, under 5.1 and pwsh 7 on Windows 11), and Windows 10 was not tried."
+  ]
+ }
+}
