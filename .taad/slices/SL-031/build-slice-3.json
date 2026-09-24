@@ -1,0 +1,87 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-031",
+ "stage": "build-slice",
+ "attempt": 3,
+ "at": "2026-09-24T21:57:45.050Z",
+ "head": "0098ee939e2d701ca3085c9e8e2fe3003a907836",
+ "run_id": 948,
+ "summary": "Fixed O-020 (M2) in eng/rules-parity.ps1. Read-Entries now refuses any dash at column 0 to 2 that does not carry `name:` on the same line, using the regex `^ {0,2}-(\\s|$)` the decision specified. So a bare `  -` line with `name:` on the next line exits 2 with its file:line instead of being skipped or folded into the entry above it. List items sit at 4 or 6 spaces and never match. Three rows were added to C-005 in tests/rules/RuleCases.ps1, each requiring CANNOT-READ at the dash line under both powershell.exe and pwsh: a bare-dash entry first after `rules:`, one just above the settled marker, and one at column 0. On a copy with the first shape, the committed reader said AGREE (exit 0) and the fixed reader says CANNOT-READ at fitness.yaml:72. The regressions pass: C-001 to C-005, C-007 and the 8 rule Facts.",
+ "payload": {
+  "status": "complete",
+  "summary": "Fixed O-020 (M2) in eng/rules-parity.ps1. Read-Entries now refuses any dash at column 0 to 2 that does not carry `name:` on the same line, using the regex `^ {0,2}-(\\s|$)` the decision specified. So a bare `  -` line with `name:` on the next line exits 2 with its file:line instead of being skipped or folded into the entry above it. List items sit at 4 or 6 spaces and never match. Three rows were added to C-005 in tests/rules/RuleCases.ps1, each requiring CANNOT-READ at the dash line under both powershell.exe and pwsh: a bare-dash entry first after `rules:`, one just above the settled marker, and one at column 0. On a copy with the first shape, the committed reader said AGREE (exit 0) and the fixed reader says CANNOT-READ at fitness.yaml:72. The regressions pass: C-001 to C-005, C-007 and the 8 rule Facts.",
+  "files": [
+   {
+    "path": "eng/rules-parity.ps1",
+    "change": "modified",
+    "why": "O-020/M2: the entry refusal regex is now `^ {0,2}-(\\s|$)` (was `^  -\\s`), so an entry opened by a bare dash at column 0 to 2 exits 2 with file:line instead of being missed."
+   },
+   {
+    "path": "tests/rules/RuleCases.ps1",
+    "change": "modified",
+    "why": "O-020: three C-005 rows (a bare-dash entry first after rules:, one just above the settled marker, one at column 0), each requiring CANNOT-READ at the dash line under both shells. Get-LineOf gained an -Exact switch to locate the bare dash line."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-020",
+    "done": true,
+    "how": "The refusal at eng/rules-parity.ps1 is now `^ {0,2}-(\\s|$)`, the wider form the decision chose over the reviewer's. C-005 now feeds a `  -` / `    name: 'AYamlOnlyRule (*.cs)'` entry first after `rules:`, the same just above '# settled by SL-023', and a column-0 `-` variant. Each exits 2 with \"CANNOT-READ .taad/fitness.yaml:<dash line>: an entry that does not start with 'name:' on its dash line\" under powershell.exe and pwsh (12/12 checks). The committed reader gave AGREE, exit 0, on the first shape."
+   },
+   {
+    "key": "O-001",
+    "done": true,
+    "how": "Owed to validate-slice, and not changed this attempt. Attempt 1 ran the full harness three times with the same verdict for every row. This fix only touches the parity yaml reader's entry refusal; the C-007 clean scenario (the harness runs parity first) still passes."
+   },
+   {
+    "key": "O-002",
+    "done": true,
+    "how": "Owed to validate-slice, and unchanged since attempt 1. The harness checks the folder listing after the two-step rename before trusting D3/D4/D9 (C-012)."
+   },
+   {
+    "key": "O-003",
+    "done": true,
+    "how": "Owed to validate-slice, and unchanged since attempt 1. C-014 flips D13's recorded outcome and the harness exits 1 with DIVERGENCE-CLOSED."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-005",
+    "test_name": "tests/rules/RuleCases.ps1::Case-C005",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-005"
+   }
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-005",
+    "outcome": "passed",
+    "note": "102 checks, 0 FAIL, including the 3 new bare-dash rows (CANNOT-READ at fitness.yaml:72, :177 and :72) under both shells."
+   },
+   {
+    "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File <temp>/eng/rules-parity-old.ps1 -Root <temp copy with a bare-dash entry first after rules:>",
+    "outcome": "passed",
+    "note": "Reproduced M2 with the committed reader (git show HEAD:eng/rules-parity.ps1): AGREE, exit 0. The fixed reader on the same copy gave CANNOT-READ .taad/fitness.yaml:72, exit 2. The temp dir was removed."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-001 (and C-002, C-003, C-004)",
+    "outcome": "passed",
+    "note": "Regression: C-001 8/8, C-002 34/34, C-003 26/26, C-004 26/26, 0 FAIL."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~RuleCopiesAgreeTests|FullyQualifiedName~ArchitectureRulesTests\"",
+    "outcome": "passed",
+    "note": "8/8, no warnings."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-007 -EnginePython C:\\Users\\sshub\\AppData\\Roaming\\taad3\\venv\\Scripts\\python.exe -EngineRoot C:\\Users\\sshub\\projets\\taad_v3\\backend",
+    "outcome": "passed",
+    "note": "The harness runs parity first; the clean scenario is still CLEAN, and the stray-hit bite still exits 2. All checks held."
+   }
+  ],
+  "deviations": [],
+  "not_built": [],
+  "follow_ups": [
+   "Two review laps (M1, M2) each found a YAML spelling that the line reader neither read nor refused. Other legal spellings may still slip past it: flow mappings (`  - {name: ...}`), anchors and aliases, a `name:` key written as `? name`, and tabs. It may be worth one more look to enumerate them, or a cross-check against a count of entries from the engine where the TAAD engine is present (harness step 1 already compares Fitness's rule count with twinned + settled on the clean scenario)."
+  ]
+ }
+}

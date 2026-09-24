@@ -62,7 +62,17 @@ function Read-Lines([string] $rel) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Stop-Reading $rel "file not found under $Root" }
     $text = [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false))
     if ($text.StartsWith($Bom, [StringComparison]::Ordinal)) { $text = $text.Substring(1) }
-    return , ($text -split "`r?`n")
+    $lines = $text -split "`r?`n"
+    # Python's universal newlines break a line at a lone CR, and YAML also at U+0085, U+2028 and U+2029, so
+    # a whole entry could sit inside what this reader takes for one line. Refuse them rather than guess.
+    $breaks = '[' + [char]13 + [char]0x85 + [char]0x2028 + [char]0x2029 + ']'
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $found = [regex]::Match($lines[$i], $breaks)
+        if ($found.Success) {
+            Stop-Reading "${rel}:$($i + 1)" ('a line break that Python and YAML read and this reader does not (U+{0:X4}); save the file with CRLF or LF line ends only' -f [int]$found.Value[0])
+        }
+    }
+    return , $lines
 }
 
 # ---- The C# copy ----
@@ -192,6 +202,11 @@ function Read-Entries {
         # Any other dash at the entries' depth or shallower, including a bare '  -' with name: on the next
         # line, is an entry YAML reads and this does not: refuse it. List items sit deeper and never match.
         elseif ($lines[$i] -cmatch '^ {0,2}-(\s|$)') { Stop-Reading "${YamlRel}:$($i + 1)" "an entry that does not start with 'name:' on its dash line" }
+        # Any other column-0 line that is not a comment (a second 'rules:', another key, '---' or '...')
+        # changes which list YAML, and so Fitness, reads as the rules. 'rules:' stays the only top-level key.
+        elseif ($lines[$i] -cmatch '^[^\s#]') {
+            Stop-Reading "${YamlRel}:$($i + 1)" "a column-0 line after 'rules:', which must stay the only top-level key and the last thing in the file: $(Show $lines[$i])"
+        }
     }
 
     $entries = New-Object System.Collections.Generic.List[object]

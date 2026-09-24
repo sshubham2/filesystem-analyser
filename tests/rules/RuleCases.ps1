@@ -115,11 +115,16 @@ function Edit-File([string] $root, [string] $rel, [string] $old, [string] $new, 
     [System.IO.File]::WriteAllText($path, $text, $Utf8)
 }
 
-function Get-LineOf([string] $root, [string] $rel, [string] $needle, [switch] $Exact) {
+function Get-LineOf([string] $root, [string] $rel, [string] $needle, [switch] $Exact, [switch] $Last) {
     $lines = [System.IO.File]::ReadAllLines((Join-Path $root $rel), $Utf8)
+    $found = 0
     for ($i = 0; $i -lt $lines.Count; $i++) {
-        if (($Exact -and $lines[$i] -ceq $needle) -or (-not $Exact -and $lines[$i].Contains($needle))) { return $i + 1 }
+        if (($Exact -and $lines[$i] -ceq $needle) -or (-not $Exact -and $lines[$i].Contains($needle))) {
+            $found = $i + 1
+            if (-not $Last) { return $found }
+        }
     }
+    if ($found) { return $found }
     throw "case setup: $(Show $needle) is not in $rel"
 }
 
@@ -378,6 +383,38 @@ function Case-C005 {
             param($root)
             Edit-File $root $YamlRel $old $new
             "rules-parity: CANNOT-READ .taad/fitness.yaml:$(Get-LineOf $root $YamlRel $dash -Exact): an entry that does not start with 'name:' on its dash line"
+        } 2
+    }
+
+    # A column-0 line after 'rules:' changes which list YAML, and so Fitness, reads as the rules: a second
+    # 'rules:' replaces the first, and another key takes every entry after it (O-021).
+    $oneRule = "  - name: 'OnlyRule (*.cs)'`n    files: 'src/**/*.cs'`n    must_not_match:`n      - '(?m)OnlyInYaml'`n"
+    $noBclEntry = "  - name: 'TheScannerMakesNoBclFileSystemCalls (*.cs)'"
+    $topLevel = @(
+        @('a second rules: block at the end', 'rules:', { param($root) [System.IO.File]::AppendAllText((Join-Path $root $YamlRel), ("`nrules:`n" + $oneRule).Replace("`n", "`r`n"), $Utf8) }),
+        @('a column-0 key between twinned entries', 'parked:', { param($root) Edit-File $root $YamlRel $noBclEntry ("parked:`n" + $noBclEntry) }),
+        @('a document marker above the settled marker', '---', { param($root) Edit-File $root $YamlRel '  # settled by SL-023' "---`n  # settled by SL-023" })
+    )
+    foreach ($shape in $topLevel) {
+        $name, $line, $insert = $shape
+        Test-Parity $name {
+            param($root)
+            & $insert $root
+            "rules-parity: CANNOT-READ .taad/fitness.yaml:$(Get-LineOf $root $YamlRel $line -Exact -Last): a column-0 line after 'rules:'"
+        } 2
+    }
+
+    # A whole entry hidden inside one CRLF line by a lone CR, U+0085 or U+2028, which Python's universal
+    # newlines and YAML break on and this reader would not (O-022). The separator is built from [char].
+    $noBclLast = "      - '(?m)\b(File|Directory|DirectoryInfo|FileInfo|DriveInfo)\.'`n    including_comments: true"
+    foreach ($code in @(13, 0x85, 0x2028)) {
+        $sep = [string][char]$code
+        Test-Parity ('an entry hidden behind U+{0:X4}' -f $code) {
+            param($root)
+            $hidden = $sep + "  - name: 'Hidden (*.cs)'" + $sep + "    files: 'src/**/*.cs'" + $sep + '    must_not_match:' + $sep + "      - '(?m)OnlyInYaml'"
+            Edit-File $root $YamlRel $noBclLast ($noBclLast + $hidden)
+            'rules-parity: CANNOT-READ .taad/fitness.yaml:{0}: a line break that Python and YAML read and this reader does not (U+{1:X4})' -f `
+                ((Get-LineOf $root $YamlRel "'(?m)\b(File|Directory|DirectoryInfo|FileInfo|DriveInfo)\.'") + 1), $code
         } 2
     }
 }
