@@ -14,12 +14,23 @@
 # engines walk, decode and match files differently. Both are the job of eng/rules-harness/harness.py,
 # which needs the TAAD engine. RuleCopiesAgreeTests runs this script on every test run.
 #
-# What the readers accept, and they refuse everything else:
-#   C#   Each [Fact] or [Theory] of ArchitectureRulesTests makes one AssertNoMatch( call. Its first
-#        argument (the files) ends a line, and every line after it is one verbatim @"..." literal
-#        ending ',' or ');'.
-#   yaml Entries at two spaces ('  - name:'), read up to the first '# settled by SL-' line. Entries below
-#        it have no xUnit twin and are only counted. Each must_not_match item is one single-quoted scalar.
+# Both readers are closed grammars: every line is classified, and a line that fits none of the shapes
+# below is refused with file:line, never skipped. The other reader of each file (the C# compiler, YAML)
+# reads every line, so a line skipped here could change what one copy enforces while this says AGREE.
+#   C#   The file holds 'using System.Text.RegularExpressions;', 'namespace FsAnalyser.Core.Tests;' and
+#        one type, 'public class ArchitectureRulesTests'. No block comment, preprocessor directive, raw
+#        string or string that runs onto the next line. An attribute is '[Fact]' or '[Theory]' alone on
+#        its line, and each is followed by 'public void Name()'. A Fact's body is '{', one AssertNoMatch(
+#        call and '}', with blank and // lines anywhere. The call's files argument uses only the words in
+#        $FilesWords and ends its line; every line after it is one verbatim @"..." literal ending ',' or
+#        ');'. AssertNoMatch is named once in each Fact and declared once, and its body is pinned below,
+#        because the normaliser rests on what that body does with a pattern.
+#   yaml Before 'rules:', comments and blank lines only. After it, indentation is ASCII spaces, and only
+#        comments and '  - name: ' entry starts sit at indent 0-3. The entries above the first
+#        '# settled by SL-' comment are twinned: a single-quoted name, then keys at indent 4, each at most
+#        once, from $EntryKeys. The list keys hold single-quoted items at one indent; the others hold one
+#        single-quoted scalar, or true or false. The marker must stand between entries. The entries below
+#        it have no xUnit twin and are only counted.
 # The normaliser is the yaml header's authoring rules and nothing else. A twinned yaml pattern must start
 # with (?m), which is stripped: xUnit applies RegexOptions.Multiline to every pattern, so a yaml pattern
 # without it is drift. '^\ufeff?' (the escape in either case, or a literal U+FEFF) reads as '^'. '' in
@@ -77,45 +88,119 @@ function Read-Lines([string] $rel) {
 
 # ---- The C# copy ----
 
-# Where the files argument of the AssertNoMatch( call starting at ($line, $col) ends: the line holding
-# its comma. Strings and char literals are skipped, so a paren or comma inside one does not count.
-function Find-FilesArgumentEnd([string[]] $lines, [int] $line, [int] $col) {
-    $depth = 0
-    for ($i = $line; $i -lt $lines.Count; $i++) {
+# The words a Fact's files argument may use. The argument is code, and code can do more than choose files,
+# so a scope written with any other word is refused rather than read.
+$FilesWords = @('Files', 'Except', 'Concat', 'Where', 'StartsWith', 'f', 'StringComparison', 'OrdinalIgnoreCase')
+
+# The AssertNoMatch the normaliser was written against: each pattern compiled as given, with
+# RegexOptions.Multiline, and matched one line at a time. A change to it changes what a pattern means to
+# xUnit, so it is refused until the normaliser and this copy change with it. Compared with runs of
+# whitespace collapsed.
+$AssertNoMatchText = @'
+    private static void AssertNoMatch(IEnumerable<string> files, params string[] patterns)
+    {
+        var checkedFiles = files.ToList();
+        Assert.NotEmpty(checkedFiles);
+        var regexes = patterns.Select(p => new Regex(p, RegexOptions.Multiline)).ToList();
+        var violations = new List<string>();
+        foreach (string file in checkedFiles)
+        {
+            string[] lines = File.ReadAllLines(Path.Combine(Repo, file));
+            for (int n = 0; n < lines.Length; n++)
+            {
+                foreach (Regex regex in regexes)
+                {
+                    if (regex.IsMatch(lines[n]))
+                        violations.Add($"{file}:{n + 1}: /{regex}/ in: {lines[n].Trim()}");
+                }
+            }
+        }
+        Assert.True(violations.Count == 0, "Architecture rule broken:\n" + string.Join("\n", violations));
+    }
+'@
+$AssertNoMatchDeclaration = '^    private static void AssertNoMatch\(IEnumerable<string> files, params string\[\] patterns\)\s*$'
+
+function Get-Collapsed([string[]] $text) { ((($text -join ' ') -replace '\s+', ' ')).Trim() }
+
+# Each line of the C# file as code only: comments dropped, each string literal left as "" ($"" when it
+# is interpolated) and each char literal as ''. Refuses what a line-by-line reading cannot place: a block
+# comment, a preprocessor directive, a raw string, a string that runs onto the next line, and a literal
+# inside an interpolation hole. Any of those can hide a [Fact] or a call from this reader and not from
+# the compiler.
+function Get-CsCode([string[]] $lines) {
+    $out = New-Object 'string[]' $lines.Count
+    for ($i = 0; $i -lt $lines.Count; $i++) {
         $s = $lines[$i]
-        $c = if ($i -eq $line) { $col } else { 0 }
+        $where = "${CsRel}:$($i + 1)"
+        if ($s -cmatch '^\s*#') { Stop-Reading $where "a preprocessor directive: $(Show $s.Trim())" }
+        $code = New-Object System.Text.StringBuilder
+        $c = 0
         while ($c -lt $s.Length) {
             $ch = $s[$c]
-            if ($ch -ceq '@' -and $c + 1 -lt $s.Length -and $s[$c + 1] -ceq '"') {
-                $c += 2
-                while ($true) {
-                    if ($c -ge $s.Length) { Stop-Reading "${CsRel}:$($i + 1)" 'a verbatim string runs onto the next line' }
-                    if ($s[$c] -ceq '"') {
-                        if ($c + 1 -lt $s.Length -and $s[$c + 1] -ceq '"') { $c += 2; continue }
-                        $c++
-                        break
-                    }
-                    $c++
-                }
-                continue
+            if ($ch -ceq '/' -and $c + 1 -lt $s.Length) {
+                if ($s[$c + 1] -ceq '/') { break }
+                if ($s[$c + 1] -ceq '*') { Stop-Reading $where 'a block comment' }
             }
-            if ($ch -ceq '"') {
-                if ($s.Substring($c).StartsWith('"""', [StringComparison]::Ordinal)) { Stop-Reading "${CsRel}:$($i + 1)" 'a raw string literal' }
-                $c++
-                while ($true) {
-                    if ($c -ge $s.Length) { Stop-Reading "${CsRel}:$($i + 1)" 'a string runs onto the next line' }
-                    if ($s[$c] -ceq '\') { $c += 2; continue }
-                    if ($s[$c] -ceq '"') { $c++; break }
-                    $c++
+            if ($ch -ceq '"' -or $ch -ceq '$' -or $ch -ceq '@') {
+                $rest = $s.Substring($c)
+                if ($rest -cmatch '^\$*"""') { Stop-Reading $where 'a raw string literal' }
+                if ($rest -cmatch '^(\$@|@\$|@|\$)?"') {
+                    $prefix = [string]$Matches[1]
+                    $verbatim = $prefix.Contains('@')
+                    $interpolated = $prefix.Contains('$')
+                    $c += $Matches[0].Length
+                    $hole = 0
+                    while ($true) {
+                        if ($c -ge $s.Length) { Stop-Reading $where 'a string literal that runs onto the next line' }
+                        $x = $s[$c]
+                        if ($hole -gt 0) {
+                            if ($x -ceq '"' -or $x -ceq "'") { Stop-Reading $where 'a string or char literal inside an interpolation hole' }
+                            if ($x -ceq '{') { $hole++ } elseif ($x -ceq '}') { $hole-- }
+                            $c++
+                            continue
+                        }
+                        if ($interpolated -and $x -ceq '{') {
+                            if ($c + 1 -lt $s.Length -and $s[$c + 1] -ceq '{') { $c += 2 } else { $hole = 1; $c++ }
+                            continue
+                        }
+                        if (-not $verbatim -and $x -ceq '\') { $c += 2; continue }
+                        if ($x -ceq '"') {
+                            if ($verbatim -and $c + 1 -lt $s.Length -and $s[$c + 1] -ceq '"') { $c += 2; continue }
+                            $c++
+                            break
+                        }
+                        $c++
+                    }
+                    [void]$code.Append($(if ($interpolated) { '$""' } else { '""' }))
+                    continue
                 }
-                continue
             }
             if ($ch -ceq "'") {
-                $close = $s.IndexOf("'", $c + $(if ($c + 1 -lt $s.Length -and $s[$c + 1] -ceq '\') { 3 } else { 2 }))
-                if ($close -lt 0) { Stop-Reading "${CsRel}:$($i + 1)" 'a char literal the reader cannot close' }
+                $from = $c + $(if ($c + 1 -lt $s.Length -and $s[$c + 1] -ceq '\') { 3 } else { 2 })
+                $close = if ($from -le $s.Length) { $s.IndexOf("'", $from) } else { -1 }
+                if ($close -lt 0) { Stop-Reading $where 'a char literal the reader cannot close' }
+                [void]$code.Append("''")
                 $c = $close + 1
                 continue
             }
+            [void]$code.Append($ch)
+            $c++
+        }
+        $out[$i] = $code.ToString()
+    }
+    return , $out
+}
+
+# Where the files argument of the AssertNoMatch( call starting at ($line, $col) ends -- the line holding
+# its top-level comma -- and its code. It may not run to line $limit, the Fact's closing brace.
+function Read-FilesArgument([string[]] $code, [int] $line, [int] $col, [int] $limit) {
+    $depth = 0
+    $text = New-Object System.Text.StringBuilder
+    for ($i = $line; $i -lt $limit; $i++) {
+        $s = $code[$i]
+        [void]$text.Append(' ')
+        for ($c = $(if ($i -eq $line) { $col } else { 0 }); $c -lt $s.Length; $c++) {
+            $ch = $s[$c]
             if ($ch -ceq '(' -or $ch -ceq '[') { $depth++ }
             elseif ($ch -ceq ')' -or $ch -ceq ']') {
                 $depth--
@@ -125,41 +210,98 @@ function Find-FilesArgumentEnd([string[]] $lines, [int] $line, [int] $col) {
                 if ($s.Substring($c + 1).Trim().Length -ne 0) {
                     Stop-Reading "${CsRel}:$($i + 1)" 'the files argument of AssertNoMatch( must end its line, with each pattern on a line of its own'
                 }
-                return $i
+                return [pscustomobject]@{ End = $i; Code = $text.ToString() }
             }
-            $c++
+            [void]$text.Append($ch)
         }
     }
     Stop-Reading "${CsRel}:$($line + 1)" 'AssertNoMatch( never reaches its patterns'
 }
 
+function Test-FilesArgument([string] $text, [string] $where, [string] $name) {
+    $allowed = "only $($FilesWords -join ', '), string literals and . ( ) [ ] , ! =>"
+    foreach ($word in [regex]::Matches($text, '[A-Za-z_][A-Za-z0-9_]*')) {
+        if ($FilesWords -cnotcontains $word.Value) { Stop-Reading $where "Fact $name's files argument uses $($word.Value); it may use $allowed" }
+    }
+    $odd = [regex]::Match([regex]::Replace($text, '[A-Za-z_][A-Za-z0-9_]*|=>|""', ''), '[^ \t.(),\[\]!]')
+    if ($odd.Success) { Stop-Reading $where "Fact $name's files argument holds '$(Show $odd.Value)'; it may use $allowed" }
+}
+
 function Read-Facts {
     $lines = Read-Lines $CsRel
+    $code = Get-CsCode $lines
     $attribute = '^\s*\[(Fact|Theory)(\(.*\))?\]\s*$'
-    $signature = '^\s*public\s+(?:async\s+)?(?:void|Task)\s+(\w+)\s*\('
-    $callStart = '^\s*AssertNoMatch\('
+    $signature = '^\s*public\s+(?:async\s+)?(?:void|Task)\s+(\w+)\s*\([^()]*\)\s*$'
     $literal = '^\s*@"((?:[^"]|"")*)"\s*(,|\);)\s*$'
+    $blank = '^\s*$'
+    $classLine = '^public class ArchitectureRulesTests\s*$'
+    $prologue = @('using System.Text.RegularExpressions;', 'namespace FsAnalyser.Core.Tests;')
 
-    $attributeLines = @(for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -cmatch $attribute) { $i } })
+    # One type, the test class, and nothing before it but the two lines the file has always had. Another
+    # type could carry Facts that xUnit runs and the reflected count does not see.
+    $classAt = -1
+    for ($i = 0; $i -lt $code.Count; $i++) {
+        if ($code[$i] -cnotmatch '\b(class|struct|interface|enum|record|delegate)\b') { continue }
+        if ($classAt -lt 0 -and $code[$i] -cmatch $classLine) { $classAt = $i; continue }
+        Stop-Reading "${CsRel}:$($i + 1)" "a type declaration other than 'public class ArchitectureRulesTests': $(Show $lines[$i].Trim())"
+    }
+    if ($classAt -lt 0) { Stop-Reading $CsRel "no line 'public class ArchitectureRulesTests'" }
+    for ($i = 0; $i -lt $classAt; $i++) {
+        if ($code[$i] -cmatch $blank -or $prologue -ccontains $code[$i].TrimEnd()) { continue }
+        Stop-Reading "${CsRel}:$($i + 1)" "a line before the class other than '$($prologue -join "' and '")': $(Show $lines[$i].Trim())"
+    }
+
+    # Every attribute is '[Fact]' or '[Theory]' alone on its line, so each one is a Fact this reads.
+    $attributeLines = @(for ($i = 0; $i -lt $code.Count; $i++) { if ($code[$i] -cmatch $attribute) { $i } })
+    if ($attributeLines.Count -eq 0) { Stop-Reading $CsRel 'zero [Fact]s found' }
+    for ($i = 0; $i -lt $code.Count; $i++) {
+        if ($attributeLines -contains $i) { continue }
+        if ($code[$i] -cmatch '^\s*\[' -or $code[$i] -cmatch '\b(Fact|Theory)(Attribute)?\b') {
+            Stop-Reading "${CsRel}:$($i + 1)" "an attribute, or a Fact or Theory name, that is not '[Fact]' or '[Theory]' alone on its line: $(Show $lines[$i].Trim())"
+        }
+    }
+
     $facts = New-Object System.Collections.Generic.List[object]
+    $bodies = New-Object System.Collections.Generic.List[object]
     for ($k = 0; $k -lt $attributeLines.Count; $k++) {
         $start = $attributeLines[$k]
         $end = if ($k + 1 -lt $attributeLines.Count) { $attributeLines[$k + 1] } else { $lines.Count }
         $j = $start + 1
-        while ($j -lt $end -and $lines[$j] -cmatch '^\s*\[') { $j++ }
-        if ($j -ge $end -or $lines[$j] -cnotmatch $signature) {
-            Stop-Reading "${CsRel}:$($start + 1)" 'a [Fact] that is not followed by a public method the reader can name'
+        if ($j -ge $end -or $code[$j] -cnotmatch $signature) {
+            Stop-Reading "${CsRel}:$($start + 1)" 'a [Fact] that is not followed on the next line by a public method the reader can name, alone on its line'
         }
         $name = $Matches[1]
-        $calls = @(for ($i = $j + 1; $i -lt $end; $i++) { if ($lines[$i] -cmatch $callStart) { $i } })
-        if ($calls.Count -eq 0) { Stop-Reading "${CsRel}:$($j + 1)" "Fact $name makes no AssertNoMatch( call" }
-        if ($calls.Count -gt 1) { Stop-Reading "${CsRel}:$($calls[1] + 1)" "Fact $name makes more than one AssertNoMatch( call" }
 
-        $call = $calls[0]
-        $afterFiles = (Find-FilesArgumentEnd $lines $call ($lines[$call].IndexOf('AssertNoMatch(') + 'AssertNoMatch('.Length)) + 1
+        # The body: '{' alone on a line, and the first '}' after it at the same indent.
+        $o = $j + 1
+        while ($o -lt $end -and $code[$o] -cmatch $blank) { $o++ }
+        $opened = if ($o -lt $end) { [regex]::Match($code[$o], '^(\s*)\{\s*$') } else { [regex]::Match('', 'x') }
+        if (-not $opened.Success) { Stop-Reading "${CsRel}:$($o + 1)" "Fact $name's body does not open with '{' alone on a line" }
+        $closeShape = '^' + [regex]::Escape($opened.Groups[1].Value) + '\}\s*$'
+        $close = -1
+        for ($i = $o + 1; $i -lt $end; $i++) { if ($code[$i] -cmatch $closeShape) { $close = $i; break } }
+        if ($close -lt 0) { Stop-Reading "${CsRel}:$($o + 1)" "Fact $name's body never closes with '}' at the indent of its '{'" }
+        $bodies.Add(@($o, $close))
+
+        $named = @(for ($i = $o + 1; $i -lt $close; $i++) { foreach ($m in [regex]::Matches($code[$i], '\bAssertNoMatch\b')) { $i } })
+        if ($named.Count -eq 0) { Stop-Reading "${CsRel}:$($j + 1)" "Fact $name makes no AssertNoMatch( call" }
+        if ($named.Count -gt 1) {
+            Stop-Reading "${CsRel}:$($named[1] + 1)" "Fact $name names AssertNoMatch more than once; its body is one AssertNoMatch( call and nothing else"
+        }
+
+        # Before the call: blank and // lines only.
+        $call = $o + 1
+        while ($call -lt $close -and $code[$call] -cmatch $blank) { $call++ }
+        if ($code[$call] -cnotmatch '^\s*AssertNoMatch\(') {
+            Stop-Reading "${CsRel}:$($call + 1)" "a line in Fact $name before its AssertNoMatch( call that is not blank or a // comment: $(Show $lines[$call].Trim())"
+        }
+        $files = Read-FilesArgument $code $call ($code[$call].IndexOf('AssertNoMatch(') + 'AssertNoMatch('.Length) $close
+        Test-FilesArgument $files.Code "${CsRel}:$($call + 1)" $name
+
         $patterns = New-Object System.Collections.Generic.List[string]
         $closed = $false
-        for ($i = $afterFiles; $i -lt $end -and -not $closed; $i++) {
+        $i = $files.End + 1
+        for (; $i -lt $close -and -not $closed; $i++) {
             if ($lines[$i] -cnotmatch $literal) {
                 Stop-Reading "${CsRel}:$($i + 1)" "a line in Fact $name's AssertNoMatch( call that is not one verbatim @`"...`" literal ending ',' or ');': $(Show $lines[$i].Trim())"
             }
@@ -167,82 +309,167 @@ function Read-Facts {
             $closed = $Matches[2] -ceq ');'
         }
         if (-not $closed) { Stop-Reading "${CsRel}:$($call + 1)" "Fact $name's AssertNoMatch( call never ends with ');'" }
-        if ($patterns.Count -eq 0) { Stop-Reading "${CsRel}:$($call + 1)" "Fact $name has zero patterns" }
+
+        # After the call: blank and // lines only, up to the closing '}'.
+        for (; $i -lt $close; $i++) {
+            if ($code[$i] -cnotmatch $blank) {
+                Stop-Reading "${CsRel}:$($i + 1)" "a line in Fact $name after its AssertNoMatch( call that is not blank or a // comment: $(Show $lines[$i].Trim())"
+            }
+        }
         $facts.Add([pscustomobject]@{ Name = $name; Where = "${CsRel}:$($j + 1)"; Patterns = $patterns.ToArray() })
+    }
+
+    # Outside the Facts, AssertNoMatch is named once: its declaration, whose body is the pinned one. A
+    # second declaration could be the overload a call binds to, and another caller is not read.
+    $declared = -1
+    for ($i = 0; $i -lt $code.Count; $i++) {
+        if ($code[$i] -cnotmatch '\bAssertNoMatch\b') { continue }
+        if (@($bodies | Where-Object { $i -gt $_[0] -and $i -lt $_[1] }).Count) { continue }
+        if ($declared -lt 0 -and $code[$i] -cmatch $AssertNoMatchDeclaration -and [regex]::Matches($code[$i], '\bAssertNoMatch\b').Count -eq 1) { $declared = $i; continue }
+        Stop-Reading "${CsRel}:$($i + 1)" "AssertNoMatch named outside a Fact's one call and its one declaration: $(Show $lines[$i].Trim())"
+    }
+    if ($declared -lt 0) { Stop-Reading $CsRel "no declaration 'private static void AssertNoMatch(IEnumerable<string> files, params string[] patterns)'" }
+    $end = -1
+    for ($i = $declared + 2; $i -lt $code.Count; $i++) { if ($code[$i] -cmatch '^    \}\s*$') { $end = $i; break } }
+    if ($end -lt 0 -or (Get-Collapsed $lines[$declared..$end]) -cne (Get-Collapsed ($AssertNoMatchText -split "`r?`n"))) {
+        Stop-Reading "${CsRel}:$($declared + 1)" ('the body of AssertNoMatch is not the one the normaliser rests on (each pattern compiled as given with ' +
+            'RegexOptions.Multiline and matched one line at a time); change the normaliser and the copy in eng/rules-parity.ps1 with it')
     }
     return , $facts.ToArray()
 }
 
 # ---- The yaml copy ----
 
+# The keys a twinned entry may hold besides name. The list keys take block lists, the others one scalar.
+$EntryKeys = @('files', 'except_files', 'must_not_match', 'including_comments', 'because')
+$ListKeys = @('except_files', 'must_not_match')
+
 function Read-SingleQuoted([string] $value, [string] $where, [string] $what) {
-    if ($value -cmatch "^'((?:[^']|'')*)'\s*(#.*)?$") { return $Matches[1].Replace("''", "'") }
+    if ($value -cmatch "^'((?:[^']|'')*)'( +#.*| *)$") { return $Matches[1].Replace("''", "'") }
     $kind = if ($value.StartsWith('"')) { 'a double-quoted scalar' }
         elseif ($value -cmatch '^[|>]') { 'a block scalar' }
-        elseif ($value.StartsWith("'")) { 'a single-quoted scalar that does not end on its line' }
+        elseif ($value.StartsWith("'")) { 'a single-quoted scalar that does not end on its line, or has more than a comment after it' }
+        elseif ($value.Length -eq 0) { 'empty' }
         else { 'a plain scalar' }
     Stop-Reading $where "$what is $kind; only a single-quoted scalar on one line is read: $(Show $value)"
 }
 
 function Read-Entries {
     $lines = Read-Lines $YamlRel
-    $rulesAt = -1
-    for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -cmatch '^rules:\s*$') { $rulesAt = $i; break } }
-    if ($rulesAt -lt 0) { Stop-Reading $YamlRel "no top-level 'rules:' line" }
-    $markerAt = $lines.Count
-    for ($i = $rulesAt + 1; $i -lt $lines.Count; $i++) { if ($lines[$i] -cmatch '^\s*#\s*settled by SL-') { $markerAt = $i; break } }
+    $blank = '^ *$'
+    $comment = '^ *#'
+    $entryStart = '^  - name:( |$)'
 
+    # Before 'rules:', comments and blank lines only, so 'rules' is the one top-level key.
+    $rulesAt = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -cmatch '^rules:( +#.*| *)$') { $rulesAt = $i; break }
+        if ($lines[$i] -cnotmatch $blank -and $lines[$i] -cnotmatch $comment) {
+            Stop-Reading "${YamlRel}:$($i + 1)" "a line before 'rules:' that is not blank or a comment; 'rules:' must be the only top-level key: $(Show $lines[$i])"
+        }
+    }
+    if ($rulesAt -lt 0) { Stop-Reading $YamlRel "no top-level 'rules:' line" }
+
+    # After it, every line: blank, a comment, an entry start at indent 2, or deeper. Indentation is ASCII
+    # spaces only, because .NET counts U+00A0, U+3000 and tab as whitespace and YAML does not.
+    $markerAt = -1
     $starts = New-Object System.Collections.Generic.List[int]
     $settled = 0
     for ($i = $rulesAt + 1; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -cmatch '^(\s*)-\s+name\s*:') {
-            if ($Matches[1] -cne '  ') { Stop-Reading "${YamlRel}:$($i + 1)" 'an entry that is not indented two spaces' }
-            if ($i -lt $markerAt) { $starts.Add($i) } else { $settled++ }
+        $line = $lines[$i]
+        $where = "${YamlRel}:$($i + 1)"
+        if ($line -cmatch $blank) { continue }
+        $odd = [regex]::Match($line, '^ *([^\S ])')
+        if ($odd.Success) {
+            Stop-Reading $where ('leading whitespace that is not an ASCII space (U+{0:X4}), which YAML does not read as indentation' -f [int]$odd.Groups[1].Value[0])
         }
-        # Any other dash at the entries' depth or shallower, including a bare '  -' with name: on the next
-        # line, is an entry YAML reads and this does not: refuse it. List items sit deeper and never match.
-        elseif ($lines[$i] -cmatch '^ {0,2}-(\s|$)') { Stop-Reading "${YamlRel}:$($i + 1)" "an entry that does not start with 'name:' on its dash line" }
-        # Any other column-0 line that is not a comment (a second 'rules:', another key, '---' or '...')
-        # changes which list YAML, and so Fitness, reads as the rules. 'rules:' stays the only top-level key.
-        elseif ($lines[$i] -cmatch '^[^\s#]') {
-            Stop-Reading "${YamlRel}:$($i + 1)" "a column-0 line after 'rules:', which must stay the only top-level key and the last thing in the file: $(Show $lines[$i])"
+        if ($line -cmatch $comment) {
+            if ($markerAt -lt 0 -and $line -cmatch '^ *# *settled by SL-') { $markerAt = $i }
+            continue
+        }
+        if ($line -cmatch $entryStart) {
+            if ($markerAt -lt 0) { $starts.Add($i) } else { $settled++ }
+            continue
+        }
+        $indent = ([regex]::Match($line, '^ *')).Length
+        if ($indent -lt 4) {
+            if ($line -cmatch '^ {0,2}-(\s|$)') { Stop-Reading $where "an entry that does not start with 'name:' on its dash line" }
+            if ($indent -eq 0) {
+                Stop-Reading $where "a column-0 line after 'rules:', which must stay the only top-level key and the last thing in the file: $(Show $line)"
+            }
+            Stop-Reading $where "a line at indent $indent, where only comments and '  - name: ' entry starts may sit: $(Show $line)"
+        }
+        if ($markerAt -lt 0 -and $starts.Count -eq 0) { Stop-Reading $where "a line after 'rules:' and before its first entry: $(Show $line)" }
+    }
+
+    # The marker stands between entries: after it, nothing but blank and comment lines before the next
+    # entry start. Otherwise YAML reads what follows it as part of the twinned entry above it.
+    if ($markerAt -ge 0) {
+        for ($i = $markerAt + 1; $i -lt $lines.Count -and $lines[$i] -cnotmatch $entryStart; $i++) {
+            if ($lines[$i] -cnotmatch $blank -and $lines[$i] -cnotmatch $comment) {
+                Stop-Reading "${YamlRel}:$($markerAt + 1)" "the settled marker sits inside an entry: line $($i + 1) after it is not blank, a comment or an entry start"
+            }
         }
     }
 
+    $regionEnd = if ($markerAt -ge 0) { $markerAt } else { $lines.Count }
     $entries = New-Object System.Collections.Generic.List[object]
     for ($k = 0; $k -lt $starts.Count; $k++) {
         $start = $starts[$k]
-        $end = if ($k + 1 -lt $starts.Count) { $starts[$k + 1] } else { $markerAt }
-        [void]($lines[$start] -cmatch '^  -\s+name\s*:\s*(.*)$')
-        $rawName = $Matches[1].Trim()
-        $name = if ($rawName.StartsWith("'")) { Read-SingleQuoted $rawName "${YamlRel}:$($start + 1)" 'the name' } else { $rawName }
-        $keys = @(for ($i = $start + 1; $i -lt $end; $i++) { if ($lines[$i] -cmatch '^\s+must_not_match\s*:') { $i } })
-        if ($keys.Count -eq 0) { Stop-Reading "${YamlRel}:$($start + 1)" "twinned entry $(Show-Name $name) has no must_not_match" }
-        if ($keys.Count -gt 1) { Stop-Reading "${YamlRel}:$($keys[1] + 1)" "twinned entry $(Show-Name $name) has two must_not_match keys" }
-        $key = $keys[0]
-        [void]($lines[$key] -cmatch '^(\s+)must_not_match\s*:\s*(.*)$')
-        $indent = $Matches[1].Length
-        if ($Matches[2].Trim().Length -ne 0) {
-            Stop-Reading "${YamlRel}:$($key + 1)" "must_not_match of $(Show-Name $name) is not a block list with one item per line"
-        }
-        # YAML carries a list on past blank and comment lines, so this does too: stopping at one would leave
-        # the items after it unread here while Fitness still enforces them. The list ends only at a line
-        # that is neither, indented no deeper than the key; the loop never passes the next entry ($end).
+        $end = if ($k + 1 -lt $starts.Count) { $starts[$k + 1] } else { $regionEnd }
+        [void]($lines[$start] -cmatch '^  - name:(.*)$')
+        $name = Read-SingleQuoted ($Matches[1] -replace '^ +', '') "${YamlRel}:$($start + 1)" 'the name of a twinned entry'
+        $keys = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+        [void]$keys.Add('name')
+        $list = $null
+        $listAt = -1
+        $listIndent = -1
+        $listItems = 0
         $patterns = New-Object System.Collections.Generic.List[string]
-        for ($i = $key + 1; $i -lt $end; $i++) {
+        # YAML carries a list on past blank and comment lines, so this does too.
+        for ($i = $start + 1; $i -lt $end; $i++) {
             $line = $lines[$i]
-            if ($line -cmatch '^(\s*)-\s+(.*)$' -and $Matches[1].Length -ge $indent) {
-                $patterns.Add((Read-SingleQuoted $Matches[2].Trim() "${YamlRel}:$($i + 1)" "a pattern of $(Show-Name $name)"))
+            if ($line -cmatch $blank -or $line -cmatch $comment) { continue }
+            $where = "${YamlRel}:$($i + 1)"
+            if ($null -ne $list -and $line -cmatch '^( +)- (.*)$' -and $Matches[1].Length -ge 4) {
+                $n = $Matches[1].Length
+                $value = $Matches[2] -replace '^ +', ''
+                if ($listIndent -lt 0) { $listIndent = $n }
+                elseif ($n -ne $listIndent) { Stop-Reading $where "an item of $list in $(Show-Name $name) at indent $n, where the items before it sit at $listIndent" }
+                $what = if ($list -ceq 'must_not_match') { "a pattern of $(Show-Name $name)" } else { "an item of $list in $(Show-Name $name)" }
+                $item = Read-SingleQuoted $value $where $what
+                if ($list -ceq 'must_not_match') { $patterns.Add($item) }
+                $listItems++
                 continue
             }
-            if ($line.Trim().Length -eq 0 -or $line -cmatch '^\s*#') { continue }
-            if (($line.Length - $line.TrimStart().Length) -le $indent) { break }
-            Stop-Reading "${YamlRel}:$($i + 1)" "a pattern of $(Show-Name $name) runs onto the next line"
+            if ($line -cmatch '^    ([A-Za-z_][A-Za-z0-9_]*):(.*)$') {
+                $key = $Matches[1]
+                $rest = $Matches[2]
+                if ($null -ne $list -and $listItems -eq 0) { Stop-Reading "${YamlRel}:$($listAt + 1)" "$list of $(Show-Name $name) has no items" }
+                if (-not $keys.Add($key)) { Stop-Reading $where "the key $key appears twice in $(Show-Name $name); YAML keeps the last one, and Fitness reads only that" }
+                if ($EntryKeys -cnotcontains $key) { Stop-Reading $where "a key $key in twinned entry $(Show-Name $name); a twinned entry holds only name, $($EntryKeys -join ', ')" }
+                if ($rest.Length -gt 0 -and -not $rest.StartsWith(' ')) { Stop-Reading $where "the key $key has no space after its colon" }
+                $value = $rest -replace '^ +', ''
+                if ($ListKeys -ccontains $key) {
+                    if ($value.Length -ne 0 -and -not $value.StartsWith('#')) { Stop-Reading $where "$key of $(Show-Name $name) is not a block list with one item per line" }
+                    $list = $key
+                    $listAt = $i
+                    $listIndent = -1
+                    $listItems = 0
+                }
+                else {
+                    if ($value -cnotmatch '^(true|false)( +#.*| *)$') { [void](Read-SingleQuoted $value $where "$key of $(Show-Name $name)") }
+                    $list = $null
+                }
+                continue
+            }
+            Stop-Reading $where "a line in twinned entry $(Show-Name $name) that is not a key at indent 4, an item under must_not_match or except_files, a comment or blank: $(Show $line)"
         }
-        if ($patterns.Count -eq 0) { Stop-Reading "${YamlRel}:$($key + 1)" "twinned entry $(Show-Name $name) has zero patterns" }
+        if ($null -ne $list -and $listItems -eq 0) { Stop-Reading "${YamlRel}:$($listAt + 1)" "$list of $(Show-Name $name) has no items" }
+        if (-not $keys.Contains('must_not_match')) { Stop-Reading "${YamlRel}:$($start + 1)" "twinned entry $(Show-Name $name) has no must_not_match" }
         $entries.Add([pscustomobject]@{ Name = $name; Where = "${YamlRel}:$($start + 1)"; Patterns = $patterns.ToArray() })
     }
-    return [pscustomobject]@{ Entries = $entries.ToArray(); Settled = $settled; MarkerFound = $markerAt -lt $lines.Count }
+    return [pscustomobject]@{ Entries = $entries.ToArray(); Settled = $settled; MarkerFound = $markerAt -ge 0 }
 }
 
 # ---- Normalising and pairing ----

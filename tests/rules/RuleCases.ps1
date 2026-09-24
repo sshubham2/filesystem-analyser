@@ -417,6 +417,108 @@ function Case-C005 {
                 ((Get-LineOf $root $YamlRel "'(?m)\b(File|Directory|DirectoryInfo|FileInfo|DriveInfo)\.'") + 1), $code
         } 2
     }
+
+    # The yaml reader is a closed grammar (O-023). Each shape below is legal YAML that PyYAML, and so
+    # Fitness, reads otherwise than a line-by-line reading would, and each must be refused at its line.
+    $noBclPattern = "'(?m)\b(File|Directory|DirectoryInfo|FileInfo|DriveInfo)\.'"
+    $noBclItem = "      - $noBclPattern`n"
+    $yamlOnly = "      - '(?m)OnlyInYaml'`n"
+    $noBclRule = "'TheScannerMakesNoBclFileSystemCalls (*.cs)'"
+    $notAKey = "a line in twinned entry $noBclRule that is not a key at indent 4"
+    $dupKeys = @(
+        @('bare', '    must_not_match:', "the key must_not_match appears twice in $noBclRule"),
+        @('single-quoted', "    'must_not_match':", $notAKey),
+        @('double-quoted', '    "must_not_match":', $notAKey),
+        @('tagged', '    !!str must_not_match:', $notAKey),
+        @('explicit', "    ? must_not_match`n    :", $notAKey)
+    )
+    foreach ($shape in $dupKeys) {
+        $spelling, $key, $says = $shape
+        Test-Parity "a second must_not_match key, $spelling, after the real list" {
+            param($root)
+            Edit-File $root $YamlRel $noBclItem ($noBclItem + $key + "`n" + $yamlOnly)
+            "rules-parity: CANNOT-READ .taad/fitness.yaml:$((Get-LineOf $root $YamlRel $noBclPattern) + 1): $says"
+        } 2
+    }
+    Test-Parity 'a must_not_import key in a twinned entry' {
+        param($root)
+        Edit-File $root $YamlRel $noBclItem ($noBclItem + "    must_not_import:`n      - 'FsAnalyser.App*'`n")
+        "rules-parity: CANNOT-READ .taad/fitness.yaml:$((Get-LineOf $root $YamlRel $noBclPattern) + 1): a key must_not_import in twinned entry $noBclRule"
+    } 2
+    Test-Parity 'a deeper line after a scalar key, which YAML folds into the value' {
+        param($root)
+        Edit-File $root $YamlRel ($noBclItem + "    including_comments: true`n") ($noBclItem + "    including_comments: true`n" + $yamlOnly)
+        "rules-parity: CANNOT-READ .taad/fitness.yaml:$((Get-LineOf $root $YamlRel $noBclPattern) + 2): $notAKey"
+    } 2
+    Test-Parity 'a plain scalar value in a twinned entry' {
+        param($root)
+        Edit-File $root $YamlRel "    files: 'src/FsAnalyser.Core/Scanning/**/*.cs'" '    files: src/FsAnalyser.Core/Scanning/**/*.cs'
+        "rules-parity: CANNOT-READ .taad/fitness.yaml:$(Get-LineOf $root $YamlRel '    files: src/FsAnalyser.Core/Scanning/**/*.cs' -Exact): files of 'TheScannerListsDirectoriesOnlyThroughDirectoryReader (*.cs)' is a plain scalar"
+    } 2
+    Test-Parity 'a settled marker inside the last twinned entry''s list' {
+        param($root)
+        Edit-File $root $YamlRel $noBclItem ($noBclItem + "      # settled by SL-099`n" + $yamlOnly)
+        "rules-parity: CANNOT-READ .taad/fitness.yaml:$(Get-LineOf $root $YamlRel '      # settled by SL-099' -Exact): the settled marker sits inside an entry"
+    } 2
+    Test-Parity 'a key before rules:' {
+        param($root)
+        Edit-File $root $YamlRel "rules:`n" "parked: 1`nrules:`n"
+        "rules-parity: CANNOT-READ .taad/fitness.yaml:$(Get-LineOf $root $YamlRel 'parked: 1' -Exact): a line before 'rules:' that is not blank or a comment"
+    } 2
+    foreach ($code in @(0xA0, 0x3000, 9)) {
+        $lead = [string][char]$code
+        Test-Parity ('a column-0 key behind U+{0:X4}' -f $code) {
+            param($root)
+            Edit-File $root $YamlRel $noBclEntry ($lead + "parked:`n" + $noBclEntry)
+            'rules-parity: CANNOT-READ .taad/fitness.yaml:{0}: leading whitespace that is not an ASCII space (U+{1:X4})' -f (Get-LineOf $root $YamlRel ($lead + 'parked:') -Exact), $code
+        } 2
+    }
+
+    # The C# reader is a closed grammar too (O-024): a Fact's body is '{', one AssertNoMatch( call and
+    # '}', and nothing in the file can hide a Fact from it or change what AssertNoMatch does with a pattern.
+    $bclFact = 'TheScannerMakesNoBclFileSystemCalls'
+    $bclCall = $noBcl + "`n"
+    $bclHead = "    [Fact]`n    public void $bclFact()"
+    $second = 'ArchitectureRulesTests.AssertNoMatch(Files(@"src\FsAnalyser.Core\Scanning", "*.cs"), @"OnlyInCs");'
+    $filesHelper = '    private static IEnumerable<string> Files('
+    $declaration = '    private static void AssertNoMatch(IEnumerable<string> files, params string[] patterns)'
+    $csShapes = @(
+        @('a second, qualified AssertNoMatch call after the call', $bclCall, ($bclCall + "        $second`n"), "        $second",
+            "Fact $bclFact names AssertNoMatch more than once"),
+        @('a second call behind if (true)', $bclCall, ($bclCall + "        if (true) $second`n"), 'if (true) ArchitectureRulesTests',
+            "Fact $bclFact names AssertNoMatch more than once"),
+        @('a return before the call', "$bclHead`n    {`n", ("$bclHead`n    {`n        return;`n"), '        return;',
+            "a line in Fact $bclFact before its AssertNoMatch( call"),
+        @('another statement after the call', $bclCall, ($bclCall + "        Assert.True(true);`n"), '        Assert.True(true);',
+            "a line in Fact $bclFact after its AssertNoMatch( call"),
+        @('a files argument that reads the files', $noBcl,
+            $noBcl.Replace('"*.cs"),', '"*.cs").Where(f => !File.ReadAllText(f).Contains("OnlyInCs")),'), '.Where(f => !File.ReadAllText',
+            "Fact $bclFact's files argument uses File"),
+        @('an interpolated files argument', $noBcl, $noBcl.Replace('@"src\FsAnalyser.Core\Scanning"', '$"{Environment.CurrentDirectory}"'),
+            'Environment.CurrentDirectory', ("Fact $bclFact's files argument holds " + '''$''')),
+        @('a Fact in a block comment', $bclHead, ("    /*`n    [Fact]`n    public void Decoy() { }`n    */`n" + $bclHead), '    /*', 'a block comment'),
+        @('a Fact behind a preprocessor directive', $bclHead, ("#if NEVER`n" + $bclHead), '#if NEVER', 'a preprocessor directive'),
+        @('a Fact written on one line', $filesHelper, ("    [Fact] public void OneLine() => AssertNoMatch(Files(`"src`", `"*.cs`"), @`"OnlyInCs`");`n`n" + $filesHelper),
+            '[Fact] public void OneLine()', "an attribute, or a Fact or Theory name, that is not '[Fact]' or '[Theory]' alone on its line"),
+        @('a nested class with a Fact', $filesHelper,
+            ("    public class Nested`n    {`n        [Fact]`n        public void Decoy()`n        {`n            AssertNoMatch(Files(`"src`", `"*.cs`"),`n                @`"OnlyInCs`");`n        }`n    }`n`n" + $filesHelper),
+            '    public class Nested', "a type declaration other than 'public class ArchitectureRulesTests'"),
+        @('a second AssertNoMatch declaration', $declaration,
+            ("    private static void AssertNoMatch(IEnumerable<string> files, string pattern) => AssertNoMatch(files, pattern, @`"OnlyInCs`");`n`n" + $declaration),
+            'string pattern) => AssertNoMatch', "AssertNoMatch named outside a Fact's one call and its one declaration"),
+        @('an AssertNoMatch that changes what a pattern means', 'new Regex(p, RegexOptions.Multiline)', 'new Regex(p, RegexOptions.Multiline | RegexOptions.IgnoreCase)',
+            $declaration, 'the body of AssertNoMatch is not the one the normaliser rests on'),
+        @('another using before the class', "using System.Text.RegularExpressions;`n", "using System.Text.RegularExpressions;`nusing static System.Math;`n",
+            'using static System.Math;', 'a line before the class other than')
+    )
+    foreach ($shape in $csShapes) {
+        $label, $anchor, $replacement, $needle, $says = $shape
+        Test-Parity "C# $label" {
+            param($root)
+            Edit-File $root $CsRel $anchor $replacement
+            "rules-parity: CANNOT-READ tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs:$(Get-LineOf $root $CsRel $needle): $says"
+        } 2
+    }
 }
 
 function Case-C006 {

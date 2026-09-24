@@ -1,0 +1,93 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-031",
+ "stage": "build-slice",
+ "attempt": 4,
+ "at": "2026-09-24T22:06:30.539Z",
+ "head": "fb129e933fd742d17b639a08ca168dc8eace5c71",
+ "run_id": 951,
+ "summary": "I fixed O-021 (M3) and O-022 (m1) in eng/rules-parity.ps1. For M3, Read-Entries now refuses any non-blank, non-comment line at column 0 after `rules:` (`^[^\\s#]`), with file:line. That covers a second `rules:`, another top-level key and `---`/`...` markers. The dash checks run first, so a bare-dash entry keeps its own message. For m1, Read-Lines now refuses a lone CR, U+0085, U+2028 or U+2029 with file:line, because Python and YAML break lines there and this reader would not. C-005 gained six rows, each requiring CANNOT-READ at the right line under powershell.exe and pwsh: a second `rules:` block at the end, a `parked:` key between twinned entries, a `---` above the settled marker, and an entry hidden behind a lone CR, U+0085 or U+2028. On copies with the second-rules, parked and lone-CR shapes the committed reader said AGREE, exit 0; the fixed reader refuses all three. The regressions pass: C-001 to C-005, C-007 and the 8 rule Facts.",
+ "payload": {
+  "status": "complete",
+  "summary": "I fixed O-021 (M3) and O-022 (m1) in eng/rules-parity.ps1. For M3, Read-Entries now refuses any non-blank, non-comment line at column 0 after `rules:` (`^[^\\s#]`), with file:line. That covers a second `rules:`, another top-level key and `---`/`...` markers. The dash checks run first, so a bare-dash entry keeps its own message. For m1, Read-Lines now refuses a lone CR, U+0085, U+2028 or U+2029 with file:line, because Python and YAML break lines there and this reader would not. C-005 gained six rows, each requiring CANNOT-READ at the right line under powershell.exe and pwsh: a second `rules:` block at the end, a `parked:` key between twinned entries, a `---` above the settled marker, and an entry hidden behind a lone CR, U+0085 or U+2028. On copies with the second-rules, parked and lone-CR shapes the committed reader said AGREE, exit 0; the fixed reader refuses all three. The regressions pass: C-001 to C-005, C-007 and the 8 rule Facts.",
+  "files": [
+   {
+    "path": "eng/rules-parity.ps1",
+    "change": "modified",
+    "why": "O-021/M3: refuses any column-0 non-comment line after `rules:`, checked after the dash checks. O-022/m1: Read-Lines refuses a lone CR, U+0085, U+2028 or U+2029 with file:line, with the characters built from [char]."
+   },
+   {
+    "path": "tests/rules/RuleCases.ps1",
+    "change": "modified",
+    "why": "O-021/O-022: six C-005 rows (second rules: block, column-0 key, --- marker, and entries hidden behind a lone CR, U+0085 and U+2028), each requiring CANNOT-READ under both shells. Get-LineOf gained a -Last switch."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-021",
+    "done": true,
+    "how": "Read-Entries now Stop-Reads on any line after `rules:` matching `^[^\\s#]` that is not an entry or a bare dash. C-005 feeds a second `rules:` block appended at the end (CANNOT-READ at fitness.yaml:256), a `parked:` key before the NoBcl entry (:170) and a `---` above the settled marker (:177), each under powershell.exe and pwsh. The committed reader gave AGREE, exit 0, on the first two."
+   },
+   {
+    "key": "O-022",
+    "done": true,
+    "how": "Read-Lines refuses a lone CR, U+0085, U+2028 or U+2029 with file:line and the code point. C-005 hides a whole 'Hidden (*.cs)' entry behind each of a lone CR, U+0085 and U+2028 on the NoBcl entry's `including_comments: true` line. Each gives CANNOT-READ at fitness.yaml:174 under both shells. The committed reader gave AGREE, exit 0, on the lone-CR copy."
+   },
+   {
+    "key": "O-001",
+    "done": true,
+    "how": "Owed to validate-slice, and not changed this attempt. Attempt 1 ran the full harness three times with the same verdict for every row. This attempt touches only the parity reader; the C-007 clean scenario (the harness runs parity first) still passes."
+   },
+   {
+    "key": "O-002",
+    "done": true,
+    "how": "Owed to validate-slice, and unchanged since attempt 1. The harness checks the folder listing after the two-step rename before trusting D3/D4/D9 (C-012)."
+   },
+   {
+    "key": "O-003",
+    "done": true,
+    "how": "Owed to validate-slice, and unchanged since attempt 1. C-014 flips D13's recorded outcome and the harness exits 1 with DIVERGENCE-CLOSED."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-005",
+    "test_name": "tests/rules/RuleCases.ps1::Case-C005",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-005"
+   }
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-005",
+    "outcome": "passed",
+    "note": "126 checks, 0 FAIL, including the 6 new rows (second rules:, parked:, ---, lone CR, U+0085, U+2028), each under powershell.exe and pwsh."
+   },
+   {
+    "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File <temp>/rules-parity-old.ps1 -Root <temp copies: second rules:, parked:, lone CR>",
+    "outcome": "passed",
+    "note": "Reproduced M3 and m1 with the committed reader (git show HEAD:eng/rules-parity.ps1): AGREE, exit 0, on all three copies. The fixed reader gave CANNOT-READ, exit 2, at :256, :170 and :174. The temp dir was removed."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-001 (and C-002, C-003, C-004)",
+    "outcome": "passed",
+    "note": "Regression: C-001 8/8, C-002 34/34, C-003 26/26, C-004 26/26, 0 FAIL."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~RuleCopiesAgreeTests|FullyQualifiedName~ArchitectureRulesTests\"",
+    "outcome": "passed",
+    "note": "8/8, no warnings."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-007 -EnginePython C:\\Users\\sshub\\AppData\\Roaming\\taad3\\venv\\Scripts\\python.exe -EngineRoot C:\\Users\\sshub\\projets\\taad_v3\\backend",
+    "outcome": "passed",
+    "note": "The harness's parity step and clean scenario are unaffected. All checks held."
+   }
+  ],
+  "deviations": [],
+  "not_built": [],
+  "follow_ups": [
+   "This is the third build lap in a row sent back for the same class of finding: a YAML spelling the line reader neither reads nor refuses (M1 gaps in a list, M2 a bare dash, M3 column-0 keys, m1 odd line breaks). Each lap patched one spelling. A structural alternative is a closed grammar for everything after `rules:`: every line must be blank, a comment, `  - name:`, a key at 4 spaces, a list item at 4 or more spaces, or a scalar continuation deeper than its key, and anything else is refused. The design and the reviews asked for per-shape fixes, so that is not built here. A person should decide whether the next review lap should look for that instead of the next spelling.",
+   "Another cross-check remains available: where the TAAD engine is present, the harness already compares Fitness's loaded rule count with twinned + settled on the clean scenario, which catches any reader/YAML disagreement about the number of entries. Parity alone cannot do that without a YAML parser, which the design rules out."
+  ]
+ }
+}
