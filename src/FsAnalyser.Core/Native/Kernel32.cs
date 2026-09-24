@@ -28,6 +28,7 @@ internal static unsafe partial class Kernel32
     // Reparse tags that make an entry a link
     public const uint IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003;
     public const uint IO_REPARSE_TAG_SYMLINK = 0xA000000C;
+    public const uint IO_REPARSE_TAG_DFS = 0x8000000A;
 
     // FILE_INFO_BY_HANDLE_CLASS
     public const int FileStandardInfo = 1;

@@ -14,7 +14,8 @@ namespace FsAnalyser.Core.Store;
 /// columns, so no key is stored twice.
 /// Reads are public. Writes are internal to Core, so the scanner is the only writer. A hardlink probe
 /// corrects an already-written entry's Size and OnDisk in place (aligned 8-byte writes), so a reader
-/// must not assume those values never change once written.
+/// must not assume those values never change once written. Anything that adds bytes up reads
+/// <see cref="ChargedSize"/> and <see cref="ChargedOnDisk"/>, which hold the count-each-byte-once rule.
 /// </remarks>
 public sealed class ScanStore
 {
@@ -63,11 +64,32 @@ public sealed class ScanStore
     /// <summary>The Win32 attributes as listed, including bits <see cref="FileAttributes"/> does not name.</summary>
     public FileAttributes Attributes(int index) => (FileAttributes)At(index, out int i).Attributes[i];
 
-    /// <summary>Logical size in bytes (EndOfFile).</summary>
+    /// <summary>
+    /// Logical size in bytes (EndOfFile), as this name was listed or probed. Do not sum it: a later name
+    /// of a hardlinked file carries the file's size again. Sum <see cref="ChargedSize"/>.
+    /// </summary>
     public long Size(int index) => At(index, out int i).Size[i];
 
-    /// <summary>Space taken on disk in bytes (AllocationSize).</summary>
+    /// <summary>Space taken on disk in bytes (AllocationSize). Do not sum it; sum <see cref="ChargedOnDisk"/>.</summary>
     public long OnDisk(int index) => At(index, out int i).OnDisk[i];
+
+    /// <summary>
+    /// The logical bytes this entry adds to any total, so each byte is counted once: its Size, or 0 for
+    /// a link and for a later name of a file already charged. Summed over entries 1..Count-1 this is
+    /// the scan's <c>Totals.Bytes</c>.
+    /// </summary>
+    public long ChargedSize(int index)
+    {
+        Page page = At(index, out int i);
+        return Charges(page, i) ? Volatile.Read(ref page.Size[i]) : 0;
+    }
+
+    /// <summary>The on-disk bytes this entry adds to any total; see <see cref="ChargedSize"/>.</summary>
+    public long ChargedOnDisk(int index)
+    {
+        Page page = At(index, out int i);
+        return Charges(page, i) ? Volatile.Read(ref page.OnDisk[i]) : 0;
+    }
 
     /// <summary>The volume's 128-bit file ID, or 0 when the volume did not supply one.</summary>
     public UInt128 FileId(int index)
@@ -184,6 +206,9 @@ public sealed class ScanStore
     internal int FileIdTableSlots => _fileIds.Slots;
 
     // ---- Internals ----
+
+    private static bool Charges(Page page, int i) =>
+        page.Kind[i] != (byte)EntryKind.Link && (page.Flags[i] & (byte)EntryFlags.HardlinkDuplicate) == 0;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private Page At(int index, out int offset)

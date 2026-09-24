@@ -17,6 +17,7 @@ public class EntryClassifierTests
     [InlineData(Dir | Reparse, 0xA0000003u, true, EntryKind.Link, false)]      // junction / mount point
     [InlineData(Dir | Reparse, 0xA000000Cu, true, EntryKind.Link, false)]      // directory symlink
     [InlineData(Archive | Reparse, 0xA000000Cu, false, EntryKind.Link, false)] // file symlink
+    [InlineData(Dir | Reparse, 0x8000000Au, true, EntryKind.Link, false)]      // DFS link: another server's volume
     // Reparse files that are data.
     [InlineData(Archive | Reparse, 0x8000001Bu, false, EntryKind.File, false)] // APPEXECLINK
     [InlineData(Archive | Reparse, 0x80000023u, false, EntryKind.File, false)] // AF_UNIX

@@ -162,7 +162,7 @@ public static class Scanner
 
             _bytes += raw.EndOfFile;
             _bytesOnDisk += raw.AllocationSize;
-            if (SizeProbe.IsWofSuspect(raw.AllocationSize, raw.EndOfFile, raw.Attributes, cloudOnly))
+            if (SizeProbe.IsDue(raw.AllocationSize, raw.EndOfFile, raw.Attributes, cloudOnly))
                 ProbeAndCorrect(entry, LongPath.Child(parentPath, name));
         }
 

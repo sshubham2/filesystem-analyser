@@ -8,8 +8,30 @@ namespace FsAnalyser.Core.Tests;
 /// <summary>Running a scan and finding entries in it.</summary>
 internal static class Scans
 {
-    public static ScanResult Run(string root, ScanOptions? options = null) =>
-        Scanner.Scan(root, new ScanProgress(), CancellationToken.None, options ?? ScanOptions.Default);
+    /// <summary>Scans <paramref name="root"/> and checks the store's charged bytes add up to the totals.</summary>
+    public static ScanResult Run(string root, ScanOptions? options = null)
+    {
+        ScanResult result = Scanner.Scan(root, new ScanProgress(), CancellationToken.None, options ?? ScanOptions.Default);
+        AssertChargedBytesAreTheTotals(result);
+        return result;
+    }
+
+    /// <summary>
+    /// Each byte counted once holds in the store's own API, not only in the scanner's running totals:
+    /// ChargedSize and ChargedOnDisk summed over every entry under the root are Totals.Bytes and
+    /// Totals.BytesOnDisk.
+    /// </summary>
+    public static void AssertChargedBytesAreTheTotals(ScanResult result)
+    {
+        long size = 0, onDisk = 0;
+        for (int i = 1; i < result.Store.Count; i++)
+        {
+            size += result.Store.ChargedSize(i);
+            onDisk += result.Store.ChargedOnDisk(i);
+        }
+        Assert.Equal(result.Totals.Bytes, size);
+        Assert.Equal(result.Totals.BytesOnDisk, onDisk);
+    }
 
     public static Dictionary<string, int> ByPath(ScanStore store)
     {

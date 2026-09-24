@@ -127,15 +127,26 @@ public partial class MainWindow : Window
         _timer.Start();
 
         ScanResult? result = null;
+        long? volumeInUse = null;
         string? rejected = null;
+        Exception? failure = null;
         try
         {
-            result = await Task.Factory.StartNew(() => Scanner.Scan(path, progress, token),
+            (result, volumeInUse) = await Task.Factory.StartNew(() =>
+                {
+                    ScanResult scan = Scanner.Scan(path, progress, token);
+                    return (scan, VolumeInUse(scan));
+                },
                 CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
         catch (ArgumentException e)
         {
             rejected = e.ParamName is null ? e.Message : e.Message.Replace($" (Parameter '{e.ParamName}')", "");
+        }
+        catch (Exception e)
+        {
+            // A bug, OutOfMemory, anything the scanner did not expect: say so, and let a new scan start.
+            failure = e;
         }
         finally
         {
@@ -148,10 +159,36 @@ public partial class MainWindow : Window
             SetPickersEnabled(true);
         }
 
-        if (result is null)
-            ShowCouldNotRead(path, rejected!);
+        if (failure is not null)
+            ShowProblem($"Scan failed: {path}",
+                $"The scan stopped on an error it did not expect, so nothing it read is shown.\n{failure.GetType().Name}: {failure.Message}");
+        else if (result is null)
+            ShowProblem($"Could not read {path}", rejected!);
         else
-            ShowOutcome(result);
+            ShowOutcome(result, volumeInUse);
+    }
+
+    // For a scan of a whole drive, the volume's own count of bytes in use, so the outcome can say how
+    // much of the drive the scan could not see.
+    private static long? VolumeInUse(ScanResult scan)
+    {
+        string root = scan.Root;
+        bool driveRoot = root.Length == 3 && char.IsAsciiLetter(root[0]) && root[1] == ':' && root[2] == '\\';
+        if (!driveRoot || scan.Status == ScanStatus.RootUnreadable)
+            return null;
+        try
+        {
+            var drive = new DriveInfo(root);
+            return drive.TotalSize - drive.TotalFreeSpace;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     private void OnCancel(object sender, RoutedEventArgs e)
@@ -172,11 +209,11 @@ public partial class MainWindow : Window
 
     // ---- Outcomes ----
 
-    private void ShowOutcome(ScanResult result)
+    private void ShowOutcome(ScanResult result, long? volumeInUse)
     {
         if (result.Status == ScanStatus.RootUnreadable)
         {
-            ShowCouldNotRead(result.Root, $"{Win32Message(result.RootError)} (Windows error {result.RootError})");
+            ShowProblem($"Could not read {result.Root}", $"{Win32Message(result.RootError)} (Windows error {result.RootError})");
             return;
         }
 
@@ -191,6 +228,7 @@ public partial class MainWindow : Window
         OutcomeDetail.Text =
             $"{Count(t.Files, "file")} and {Count(t.Folders, "folder")}; {Count(t.Links, "link")} not followed\n" +
             $"{FormatSize(t.Bytes)} in files, taking {FormatSize(t.BytesOnDisk)} on disk\n" +
+            (volumeInUse is long used ? Coverage(finished, t.BytesOnDisk, used) + "\n" : "") +
             $"Read in {result.Elapsed.TotalSeconds:N1} s";
 
         var notes = new List<string>();
@@ -217,10 +255,24 @@ public partial class MainWindow : Window
         OutcomePanel.Visibility = Visibility.Visible;
     }
 
-    private void ShowCouldNotRead(string root, string why)
+    // What the scan saw against what the volume says is in use. The gap is not explained here yet:
+    // metafiles, unreadable folders and the rest belong to the coverage panel of a later slice.
+    private static string Coverage(bool finished, long seenOnDisk, long volumeInUse)
+    {
+        long unseen = volumeInUse - seenOnDisk;
+        if (unseen < 0)
+            return $"The volume reports {FormatSize(volumeInUse)} in use; this scan counted {FormatSize(-unseen)} more than that.";
+        return finished
+            ? $"The volume reports {FormatSize(volumeInUse)} in use, so {FormatSize(unseen)} of it was not seen by this scan " +
+              "(file-system metadata, folders it could not read, and anything else an ordinary account cannot list)."
+            : $"The volume reports {FormatSize(volumeInUse)} in use; {FormatSize(unseen)} of it is not in this partial scan.";
+    }
+
+    // Could not read, and Scan failed: nothing to show but why.
+    private void ShowProblem(string title, string why)
     {
         Paint(CouldNotRead);
-        OutcomeTitle.Text = $"Could not read {root}";
+        OutcomeTitle.Text = title;
         OutcomeDetail.Text = why;
         OutcomeNotes.Visibility = Visibility.Collapsed;
         UnreadableExpander.Visibility = Visibility.Collapsed;

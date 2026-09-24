@@ -9,7 +9,7 @@ public enum EntryKind : byte
     /// <summary>A file. Includes WOF-compressed, AppExecLink, AF_UNIX, WSL-symlink and dedup files.</summary>
     File = 1,
 
-    /// <summary>A junction or symbolic link (tag 0xA0000003 or 0xA000000C). Charged 0 bytes and never entered.</summary>
+    /// <summary>A junction, symbolic link or DFS link (tag 0xA0000003, 0xA000000C or 0x8000000A). Charged 0 bytes and never entered.</summary>
     Link = 2,
 }
 

@@ -5,9 +5,10 @@ namespace FsAnalyser.Core.Scanning;
 
 /// <summary>
 /// Decides what a listed entry is. This is the only place that reads the reparse attribute: a reparse
-/// point is a link only when its tag is a junction/mount point (0xA0000003) or a symbolic link
-/// (0xA000000C). Every other reparse folder (cloud, WCI, ProjFS) is entered, and every other reparse
-/// file (AppExecLink, AF_UNIX, WSL symlink, dedup) is a file. WOF files carry no reparse bit at all.
+/// point is a link only when its tag is a junction/mount point (0xA0000003), a symbolic link
+/// (0xA000000C) or a DFS link (0x8000000A, which leads to another server's volume). Every other reparse
+/// folder (cloud, WCI, ProjFS) is entered, and every other reparse file (AppExecLink, AF_UNIX, WSL
+/// symlink, dedup) is a file. WOF files carry no reparse bit at all.
 /// </summary>
 public static class EntryClassifier
 {
@@ -23,7 +24,7 @@ public static class EntryClassifier
     public static (EntryKind Kind, bool CloudOnly) Classify(uint attributes, uint reparseTag, bool isDirectory)
     {
         bool isLink = (attributes & Kernel32.FILE_ATTRIBUTE_REPARSE_POINT) != 0
-            && (reparseTag == Kernel32.IO_REPARSE_TAG_MOUNT_POINT || reparseTag == Kernel32.IO_REPARSE_TAG_SYMLINK);
+            && reparseTag is Kernel32.IO_REPARSE_TAG_MOUNT_POINT or Kernel32.IO_REPARSE_TAG_SYMLINK or Kernel32.IO_REPARSE_TAG_DFS;
         if (isLink)
             return (EntryKind.Link, false);
         if (isDirectory)

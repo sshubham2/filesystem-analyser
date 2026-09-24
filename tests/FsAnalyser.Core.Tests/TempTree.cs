@@ -120,7 +120,7 @@ internal sealed class TempTree : IDisposable
     public string DirectorySymlink(string relativeLink, string target)
     {
         string link = PathOf(relativeLink);
-        Directory.CreateSymbolicLink(link, target);
+        CreateSymlink(link, () => Directory.CreateSymbolicLink(link, target));
         _links.Add((link, true));
         return link;
     }
@@ -128,9 +128,27 @@ internal sealed class TempTree : IDisposable
     public string FileSymlink(string relativeLink, string target)
     {
         string link = PathOf(relativeLink);
-        System.IO.File.CreateSymbolicLink(link, target);
+        CreateSymlink(link, () => System.IO.File.CreateSymbolicLink(link, target));
         _links.Add((link, false));
         return link;
+    }
+
+    // .NET already asks for unprivileged creation, which works only under Developer Mode, so error 1314
+    // has no workaround here: it means Developer Mode is off or blocked by policy. The test fails
+    // saying so and is never skipped (Q-001).
+    private static void CreateSymlink(string link, Action create)
+    {
+        const int ErrorPrivilegeNotHeld = 1314;
+        try
+        {
+            create();
+        }
+        catch (Exception e) when ((e.HResult & 0xFFFF) == ErrorPrivilegeNotHeld)
+        {
+            throw new InvalidOperationException(
+                $"Windows refused to create the symbolic link {link} (error 1314, a required privilege is not held). " +
+                "Developer Mode is off or blocked by policy on this machine; the link tests need it and are not skipped.", e);
+        }
     }
 
     /// <summary>A second name for an existing file.</summary>
@@ -224,7 +242,8 @@ internal sealed class TempTree : IDisposable
             new FileInfo(path).SetAccessControl((FileSecurity)security);
     }
 
-    private static void Write(FileStream stream, long length)
+    /// <summary>Writes <paramref name="length"/> incompressible bytes at the stream's position.</summary>
+    public static void Write(FileStream stream, long length)
     {
         byte[] block = Pattern((int)Math.Min(length, MiB));
         for (long written = 0; written < length; written += block.Length)

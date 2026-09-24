@@ -39,6 +39,8 @@ public class LinkTests
             Assert.Equal(EntryKind.Link, store.Kind(entry));
             Assert.Equal(0, store.ChildCount(entry));
             Assert.Equal(-1, store.FirstChild(entry));
+            Assert.Equal(0, store.ChargedSize(entry));
+            Assert.Equal(0, store.ChargedOnDisk(entry));
         }
         Assert.Empty(Scans.UnderLinks(store));
         Assert.Equal(1 + 1 + 1 + links.Length, store.Count); // root, inside, real.txt, the links

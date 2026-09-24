@@ -20,6 +20,21 @@ public class LongPathTests
         File.WriteAllBytes($@"{ext}\space ", new byte[5]);
         File.WriteAllBytes($@"{ext}\NUL", new byte[7]);
 
+        // The probe is the scanner's second way into the file system. A WOF file and a hardlink pair
+        // go under the deep path in a trailing-dot folder, with trailing-dot names, so both probe cases
+        // open paths that only work in \\?\ form. They are made at short paths and moved in.
+        string probeFolder = $@"{deep}\probe.";
+        Directory.CreateDirectory($@"{ext}\{probeFolder}");
+        string wofSource = tree.TextFile("wof-source.txt", 1 * TempTree.MiB);
+        TempTree.WofCompress(wofSource);
+        File.Move(wofSource, $@"{ext}\{probeFolder}\wof.");
+        string linkSource = tree.File("link-a.bin", 10_000);
+        TempTree.Hardlink(tree.PathOf("link-b.bin"), linkSource);
+        File.Move(linkSource, $@"{ext}\{probeFolder}\a.");
+        File.Move(tree.PathOf("link-b.bin"), $@"{ext}\{probeFolder}\b.");
+        string probePath = $@"{tree.Root}\{probeFolder}";
+        Assert.Equal(0, Scans.Listing(probePath)["wof."].AllocationSize); // precondition: listed as WOF
+
         ScanResult result = Scans.Run(tree.Root);
 
         Assert.Equal(ScanStatus.Completed, result.Status);
@@ -35,7 +50,19 @@ public class LongPathTests
         Assert.Equal(3, store.Size(Scans.Find(result, $@"{tree.Root}\dot.\file.")));
         Assert.Equal(5, store.Size(Scans.Find(result, $@"{tree.Root}\space ")));
         Assert.Equal(7, store.Size(Scans.Find(result, $@"{tree.Root}\NUL")));
-        Assert.Equal(new ScanTotals(Files: 4, Folders: 4, Links: 0, Bytes: 57, BytesOnDisk: result.Totals.BytesOnDisk), result.Totals);
+
+        Assert.True(probePath.Length > 400, $"the probe folder's path is {probePath.Length} characters");
+        int wof = Scans.Find(result, $@"{probePath}\wof.");
+        Assert.Equal(EntryFlags.SizeProbed, store.Flags(wof)); // set, and ProbeFailed not
+        Assert.Equal(1 * TempTree.MiB, store.Size(wof));
+        Assert.InRange(store.OnDisk(wof), 1, TempTree.MiB / 2);
+        int charged = Scans.Find(result, $@"{probePath}\a.");
+        Assert.Equal(EntryFlags.SizeProbed, store.Flags(charged)); // probed through the repeat's own path, b.
+        Assert.Equal(EntryFlags.HardlinkDuplicate, store.Flags(Scans.Find(result, $@"{probePath}\b.")));
+        Assert.Equal(2, result.Probes);
+        Assert.Equal(0, result.ProbeFailures);
+
+        Assert.Equal(new ScanTotals(Files: 7, Folders: 5, Links: 0, Bytes: 57 + TempTree.MiB + 10_000, BytesOnDisk: result.Totals.BytesOnDisk), result.Totals);
 
         // A share root cannot be made in a test; its mapping is checked as a string.
         Assert.Equal((@"\\server\share\folder", @"\\?\UNC\server\share\folder"), LongPath.NormalizeRoot(@"\\server\share\folder"));

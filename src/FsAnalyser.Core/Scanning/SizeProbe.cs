@@ -7,13 +7,27 @@ namespace FsAnalyser.Core.Scanning;
 /// <summary>
 /// Reads one file's true EndOfFile and AllocationSize when its listing cannot be trusted. Opens with
 /// FILE_READ_ATTRIBUTES only and never reads data; without OPEN_REPARSE_POINT, so the WOF filter
-/// answers for compressed files. Runs in two cases only: a WOF suspect, and the first repeat of a
-/// FileId. Cloud-only files are never passed to it.
+/// answers for compressed files. Runs in three cases only: a WOF suspect, a large file, and the first
+/// repeat of a FileId, and never twice for one file. Cloud-only files are never passed to it.
 /// </summary>
 internal static unsafe class SizeProbe
 {
     /// <summary>Below this a file can live inside its MFT record and truly take 0 clusters.</summary>
     public const long ResidentLimit = 4096;
+
+    /// <summary>
+    /// From this size the listing is not trusted. A file held open and growing (a VM or WSL disk, a
+    /// database, a log) can show a size in its directory entry that is older than the file's own, and
+    /// such files carry most of a drive's bytes. There are few of them, so the extra opens cost little.
+    /// </summary>
+    public const long LargeFileThreshold = 64L * 1024 * 1024;
+
+    /// <summary>Whether a newly seen file's listing sizes must be checked against the file itself.</summary>
+    public static bool IsDue(long allocationSize, long endOfFile, uint attributes, bool cloudOnly) =>
+        !cloudOnly
+        && (IsWofSuspect(allocationSize, endOfFile, attributes, cloudOnly)
+            || endOfFile >= LargeFileThreshold
+            || allocationSize >= LargeFileThreshold);
 
     /// <summary>
     /// The listing says nothing is allocated for a file too big to live in its MFT record, and nothing

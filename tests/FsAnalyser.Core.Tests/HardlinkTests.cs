@@ -44,15 +44,20 @@ public class HardlinkTests
         Assert.Equal(64 * MiB, store.Size(charged));
         Assert.True(store.OnDisk(charged) >= 64 * MiB, $"the charged name takes {store.OnDisk(charged)} bytes on disk");
         Assert.Equal(EntryFlags.SizeProbed, store.Flags(charged));
+        Assert.Equal(64 * MiB, store.ChargedSize(charged));
         for (int i = 1; i < names; i++)
         {
             int repeat = Scans.Find(result, paths[i]);
             Assert.True(charged < repeat);
             Assert.Equal(EntryFlags.HardlinkDuplicate, store.Flags(repeat));
             Assert.Equal(store.FileId(charged), store.FileId(repeat));
+            Assert.Equal(0, store.ChargedSize(repeat));
+            Assert.Equal(0, store.ChargedOnDisk(repeat));
         }
         Assert.Equal(new ScanTotals(Files: names, Folders: names, Links: 0, Bytes: 64 * MiB, BytesOnDisk: store.OnDisk(charged)), result.Totals);
-        Assert.Equal(1, result.Probes); // only the first repeat
+        // One probe per file: the first repeat, or, when the current name is seen first, the large-file
+        // rule, after which the repeat has nothing left to correct.
+        Assert.Equal(1, result.Probes);
         Assert.Equal(0, result.ProbeFailures);
     }
 

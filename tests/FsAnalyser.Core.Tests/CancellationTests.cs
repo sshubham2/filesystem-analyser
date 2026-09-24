@@ -31,6 +31,7 @@ public class CancellationTests
         Assert.Equal(ScanStatus.Cancelled, result.Status);
         Assert.Equal([1, 2, 3], listed); // the root, f0, f1
         Assert.Equal(new ScanTotals(Files: 2, Folders: 10, Links: 0, Bytes: 20, BytesOnDisk: result.Totals.BytesOnDisk), result.Totals);
+        Scans.AssertChargedBytesAreTheTotals(result);
         Assert.Equal(1 + 10 + 2, result.Store.Count);
         Assert.Equal(1, result.Store.ChildCount(Scans.Find(result, tree.PathOf("f1"))));
         Assert.Equal(0, result.Store.ChildCount(Scans.Find(result, tree.PathOf("f2"))));

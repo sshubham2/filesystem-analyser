@@ -42,6 +42,7 @@ public class RootTests
         ScanResult result = Scanner.Scan(drive, new ScanProgress(), cts.Token, options);
 
         Assert.Equal(ScanStatus.Cancelled, result.Status);
+        Scans.AssertChargedBytesAreTheTotals(result);
         ScanStore store = result.Store;
         Assert.Equal(drive + @"\", store.Name(0).ToString());
         var children = Enumerable.Range(store.FirstChild(0), store.ChildCount(0)).Select(i => store.Name(i).ToString()).ToList();
