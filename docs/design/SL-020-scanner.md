@@ -123,9 +123,20 @@ so it becomes `\` again.
     - a listing blocked on a cloud placeholder whose provider never answers (build-slice 2 re-spike, run
       with the scanner's real calls: 1 ms or less, and CloseHandle 0 ms afterwards).
 
-    Two shapes are **not** guaranteed, because nobody could measure them here: a share that stops
-    answering once its session is established (spike 3 never ran), and I/O held by a filter driver
-    (CancelSynchronousIo can itself wait behind on-access antivirus).
+    Two shapes are **not** covered by the 2 s:
+    - **A share that stops answering once its session is established.** Measured in SL-024 build 3 with
+      `StalledShareTests`: an SMBLibrary server on 127.0.0.1, reached through `New-SmbMapping -TcpPort`,
+      that stops answering at one folder's listing. Cancel() returned in about 1 ms. The SMB client held
+      the listing, and the canceller's CancelSynchronousIo with it, until it gave up on the server, and
+      the scan returned **62 to 66 s** after Cancel (two runs). It ended Cancelled, with the stalled folder not committed
+      and its handle closed on a pool thread. Only abandoning the scan thread would return sooner.
+    - **I/O held by a filter driver.** CancelSynchronousIo can itself wait behind on-access antivirus.
+      This is unmeasured.
+  - **The loopback SMB test is opt-in too.** `CancellingAScanOfAShareThatStoppedAnsweringNeverHangsInTheClose`
+    carries `Trait("Network", "SMB-LOOPBACK")`. It needs the Windows 11 24H2 SMB client (`-TcpPort`)
+    and takes about 70 s. It uses SMBLibrary and SMBLibrary.Win32 (LGPL-3.0-or-later) in the test
+    project only. SMBServer's public `Start` listens only on port 445, so the fixture calls its private
+    overload that takes a port.
   - **The TEST-NET-1 share tests are opt-in (m5).** `CancelReturnsFromAScanBlockedOnAnUnreachableShare`
     and `CancelReturnsFromTheSameUnreachableShareScannedTwice` carry `Trait("Network", "TEST-NET-1")`.
     The test project's default `VSTestTestCaseFilter` leaves them out of every run that names no filter.
