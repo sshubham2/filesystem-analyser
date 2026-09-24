@@ -1,0 +1,244 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-024",
+ "stage": "validate-slice",
+ "attempt": 1,
+ "at": "2026-09-24T17:56:54.302Z",
+ "head": "eaabbe8cd3b4e96426c3ccb67f01d603479d452f",
+ "run_id": 892,
+ "summary": "I validated SL-024 at eaabbe8 against real environments: a live SMB share, the real SMB redirector against unreachable TEST-NET-1 addresses, a stalled loopback SMB session and a real 531k-entry NVMe drive. I also ran the App's own MainWindow and published exe. Criteria 1 to 13 are met; criterion 14 is not checked.\n\nUnreachable share (criteria 1 and 12):\n- The opt-in TEST-NET-1 tests passed 2/2.\n- I hosted the App's real MainWindow in my own process and called its own OnCancel handler on the UI thread. OnCancel held the UI thread 0.7 to 1.2 ms, and the 'Stopped' ending came 30 to 33 ms after Cancel (3 runs, 3 different addresses).\n- The control run with no cancel blocked 21.2 s and ended 'Could not read' with error 53, which matches spike 1.\n\nLive network share Z:\\ (133,368 files, 15,083 folders):\n- A live token that is never cancelled and CancellationToken.None gave identical results across all 148,452 entries, with Unreadable(5) kept in both (criterion 11).\n- 39 cancelled scans, 21 of them with a CancelSynchronousIo landing inside a live SMB call. Every one ended Cancelled within 113 ms of Cancel. Cancel() took at most 0.47 ms.\n- In every run: no partly committed folder when compared with the reference, no Unreadable(995), charged bytes equal to the totals, no stray cancel on the scan thread afterwards, and the background closes drained.\n\nD:\\ (531,782 entries): 103 runs cancelled at random moments (57 ended cancelled, 46 completed first) showed the same invariants, with a worst return of 15 ms after Cancel.\n\nStalled loopback SMB session (criterion 13): the test passed. Cancel() took 0.7 ms, but the scan returned only 59.9 s after Cancel, because the SMB client held the listing. The aborted handle's close had been handed to a pool thread and was already done when the scan returned. So the cleanup does not extend the hang, but Cancel does not free a stalled session quickly; this is the limit the design already declared.\n\nOther checks:\n- Default suite 119/119, and the 33 cancel tests 5/5 on repeat runs.\n- All 14 Fitness rules hold.\n- The published exe on Z:\\ ended Finished with the volume line.\n- The SL-023 window cases passed 12/12.\n\nStill open, not mine: O-033 and O-034 are owed to build-slice and are unfixed at HEAD. My App runs confirm O-033's premise: a Stopped ending never shows the volume line, while docs/design/SL-020-scanner.md:45-47 says it does. Merge cannot proceed until build-slice clears them.\n\nNot reached: a real cloud-placeholder scan with the shipped Scanner, and the OpenThread-failure fallback.\n\nThe tracked tree is unchanged. My scratch is in %TEMP%\\taad-sl024-validate (the logs z-run.log and d-run.log) and %TEMP%\\taad-sl024-validate-app. I also republished the gitignored artifacts/publish.",
+ "payload": {
+  "status": "complete",
+  "verdict": "passes",
+  "contact": "real",
+  "summary": "I validated SL-024 at eaabbe8 against real environments: a live SMB share, the real SMB redirector against unreachable TEST-NET-1 addresses, a stalled loopback SMB session and a real 531k-entry NVMe drive. I also ran the App's own MainWindow and published exe. Criteria 1 to 13 are met; criterion 14 is not checked.\n\nUnreachable share (criteria 1 and 12):\n- The opt-in TEST-NET-1 tests passed 2/2.\n- I hosted the App's real MainWindow in my own process and called its own OnCancel handler on the UI thread. OnCancel held the UI thread 0.7 to 1.2 ms, and the 'Stopped' ending came 30 to 33 ms after Cancel (3 runs, 3 different addresses).\n- The control run with no cancel blocked 21.2 s and ended 'Could not read' with error 53, which matches spike 1.\n\nLive network share Z:\\ (133,368 files, 15,083 folders):\n- A live token that is never cancelled and CancellationToken.None gave identical results across all 148,452 entries, with Unreadable(5) kept in both (criterion 11).\n- 39 cancelled scans, 21 of them with a CancelSynchronousIo landing inside a live SMB call. Every one ended Cancelled within 113 ms of Cancel. Cancel() took at most 0.47 ms.\n- In every run: no partly committed folder when compared with the reference, no Unreadable(995), charged bytes equal to the totals, no stray cancel on the scan thread afterwards, and the background closes drained.\n\nD:\\ (531,782 entries): 103 runs cancelled at random moments (57 ended cancelled, 46 completed first) showed the same invariants, with a worst return of 15 ms after Cancel.\n\nStalled loopback SMB session (criterion 13): the test passed. Cancel() took 0.7 ms, but the scan returned only 59.9 s after Cancel, because the SMB client held the listing. The aborted handle's close had been handed to a pool thread and was already done when the scan returned. So the cleanup does not extend the hang, but Cancel does not free a stalled session quickly; this is the limit the design already declared.\n\nOther checks:\n- Default suite 119/119, and the 33 cancel tests 5/5 on repeat runs.\n- All 14 Fitness rules hold.\n- The published exe on Z:\\ ended Finished with the volume line.\n- The SL-023 window cases passed 12/12.\n\nStill open, not mine: O-033 and O-034 are owed to build-slice and are unfixed at HEAD. My App runs confirm O-033's premise: a Stopped ending never shows the volume line, while docs/design/SL-020-scanner.md:45-47 says it does. Merge cannot proceed until build-slice clears them.\n\nNot reached: a real cloud-placeholder scan with the shipped Scanner, and the OpenThread-failure fallback.\n\nThe tracked tree is unchanged. My scratch is in %TEMP%\\taad-sl024-validate (the logs z-run.log and d-run.log) and %TEMP%\\taad-sl024-validate-app. I also republished the gitignored artifacts/publish.",
+  "checks": [
+   {
+    "what": "Full rebuild of the solution at HEAD eaabbe8",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build FsAnalyser.slnx -nologo --no-incremental",
+    "outcome": "passed",
+    "evidence": "Build succeeded, 0 warnings, 0 errors (repo-local SDK 10.0.401 in .dotnet/)."
+   },
+   {
+    "what": "Default test suite (the opt-in Network traits are left out by the csproj's VSTestTestCaseFilter)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx -nologo --no-build",
+    "outcome": "passed",
+    "evidence": "Passed 119, Failed 0, Skipped 0, 9 s."
+   },
+   {
+    "what": "Flakiness: the cancel-related test classes repeated 5 times",
+    "command": "eng/dotnet.ps1 test ... --filter \"FullyQualifiedName~SynchronousIoCancelTests|FullyQualifiedName~CancelledFolderTests|FullyQualifiedName~CancellationTests&Network!=TEST-NET-1\" (x5)",
+    "outcome": "passed",
+    "evidence": "33/33 passed in each of the 5 runs, about 7 s each."
+   },
+   {
+    "what": "Opt-in real-network tests: cancel a scan blocked opening an unreachable TEST-NET-1 share, once and twice in one session",
+    "command": "eng/dotnet.ps1 test FsAnalyser.slnx -nologo --no-build --filter \"Network=TEST-NET-1\"",
+    "outcome": "passed",
+    "evidence": "CancelReturnsFromAScanBlockedOnAnUnreachableShare passed (539 ms). CancelReturnsFromTheSameUnreachableShareScannedTwice passed (1 s). Each test fails as VOID if the scan ends before 500 ms, and asserts CancelsDelivered >= 1."
+   },
+   {
+    "what": "Opt-in stalled-session test: a real Windows SMB client against a loopback SMBLibrary server that stops answering at one folder's listing",
+    "command": "eng/dotnet.ps1 test FsAnalyser.slnx -nologo --no-build --filter \"Network=SMB-LOOPBACK\" --logger \"console;verbosity=detailed\"",
+    "outcome": "passed",
+    "evidence": "Server stalled 726 ms after it started. Cancel() took 0.7 ms. The scan returned 59,909 ms after Cancel (not within 2 s: the SMB client held the call). CancelSynchronousIo: 1 attempt, 1 delivered. Closes handed off: 1, none pending when the scan returned, drained within 1 s. Result Cancelled, root error 0, no unreadable folder. Afterwards no 127.0.0.1\\fsaXXXXXXXX SMB mapping was left (Get-SmbMapping filtered to the fixture's pattern: 0)."
+   },
+   {
+    "what": "Architecture rules, including the two SL-024 rules (filesystem calls go through the guard; no BCL filesystem calls in Scanning)",
+    "command": "mcp Fitness op=check",
+    "outcome": "passed",
+    "evidence": "14 rules checked against 38 files; every declared rule holds."
+   },
+   {
+    "what": "Single-file publish of the App at HEAD",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o artifacts/publish",
+    "outcome": "passed",
+    "evidence": "artifacts/publish/FsAnalyser.App.exe, 139,777,176 bytes, written 23:31:53."
+   },
+   {
+    "what": "Published App on the real network drive Z:\\ (DriveType Network, NTFS) with a live token that is never cancelled, read through the project's own report seam",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/read-window.ps1 -Root 'Z:\\' -TimeoutSec 900",
+    "outcome": "passed",
+    "evidence": "EXIT 0. 'Finished: Z:\\'. 133,368 files and 15,083 folders; 3.2 GB in files, 3.5 GB on disk. The volume line was shown ('The volume reports 3.5 GB in use, so 29.9 MB of it was not seen...'). Read in 127.4 s. So the O-031 no-cancel path still waits for the volume query on a real network drive."
+   },
+   {
+    "what": "The App's real MainWindow hosted in my own process, scanning an unreachable \\\\192.0.2.N\\s and cancelled at 0.5 s through its own OnCancel handler on the UI thread (3 runs)",
+    "command": "dotnet %TEMP%\\taad-sl024-validate-app\\bin\\Release\\net10.0-windows\\validateapp.dll <App.dll> \\\\192.0.2.N\\s 0.5",
+    "outcome": "passed",
+    "evidence": "N=197, 118, 58. OnCancel held the UI thread 0.70, 0.69 and 1.16 ms, and the scanning title read 'Stopping...'. The ending came 30, 32 and 33 ms after Cancel. Status Cancelled, store 0, unreadable 0. Title 'Stopped: \\\\192.0.2.N\\s\\. This is only what was read...'. The longest gap between 20 ms UI-thread timer ticks was 37 ms."
+   },
+   {
+    "what": "Control for the check above: the same App MainWindow scanning an unreachable share with no cancel",
+    "command": "dotnet validateapp.dll <App.dll> \\\\192.0.2.117\\s -1",
+    "outcome": "passed",
+    "evidence": "The ending came at 21,177 ms: RootUnreadable, 'The network path was not found. (Windows error 53)'. This matches spike 1's control (21 s, error 53), so the cancelled runs really were blocked."
+   },
+   {
+    "what": "App MainWindow on the real local D:\\ drive, cancelled from the UI thread mid-scan",
+    "command": "dotnet validateapp.dll <App.dll> D:\\ 3 | 0.15 | 0.3",
+    "outcome": "passed",
+    "evidence": "The 3 s run finished first (531,782 entries in 0.5 s, Finished with the volume line). The 0.15 s and 0.3 s runs: OnCancel held the UI thread 0.80 and 0.76 ms, and the Stopped ending came 10 ms after Cancel (stores 111,577 and 301,977). The Stopped ending carried no volume line, which is what O-033 says the code now does, and which the design doc contradicts."
+   },
+   {
+    "what": "Core cancel harness on the live network share Z:\\ through the shipped Scanner.Scan. Reference scans with a live token and with None, a pre-cancelled token, cancels at 0.05, 0.2, 0.5, 1, 2, 5, 10, 30 and 60 s, and 30 random cancels in [0, 20 s]. Each run gets a whole-folder check against the reference, a check that charged bytes equal the totals, a check for 995 among the unreadable folders, and a stray-cancel check on the scan thread",
+    "command": "dotnet %TEMP%\\taad-sl024-validate\\bin\\Release\\net10.0-windows\\validate.dll Z:\\ 1 30 20 0.05 0.2 0.5 1 2 5 10 30 60  (log: %TEMP%\\taad-sl024-validate\\z-run.log)",
+    "outcome": "passed",
+    "evidence": "Live vs None: both Completed, totals equal, unreadable equal ([5]), 0 entries only in either, 0 differing (148,452 entries; 160 s and 167 s). The live token opened a thread handle and made 45,280 calls with 0 cancel attempts. Pre-cancelled: Cancelled with 0 calls and no thread handle. 39 cancelled runs: all Cancelled, 0 problems. 21 runs had a CancelSynchronousIo delivered into a live SMB call and returned 32 to 113 ms after Cancel, each with 1 close handed off. The other 18 hit between calls and returned in 0 to 25 ms. Worst Cancel() 0.47 ms. 0 partly committed folders, 0 new Unreadable flags, no Unreadable(995); the only code seen was 5. No stray cancel, and pending closes drained. Exit 0."
+   },
+   {
+    "what": "The same Core cancel harness on the real local D:\\ drive (531,782 entries), with 100 random cancels in [0, 0.7 s] plus 3 fixed ones",
+    "command": "dotnet validate.dll D:\\ 1 100 0.7 0.001 0.01 0.05  (log: %TEMP%\\taad-sl024-validate\\d-run.log)",
+    "outcome": "passed",
+    "evidence": "Live vs None identical (unreadable [5,5] in both). 103 runs: 57 Cancelled, 46 completed first, 0 problems. Worst return 15 ms after Cancel, worst Cancel() 0.80 ms. Every cancelled run had 0 partly committed folders. No cancel was delivered mid-call here, because local calls are too short, so this run exercised the between-calls path."
+   },
+   {
+    "what": "SL-023 App window regression cases against the freshly published exe (MainWindow changed in this slice)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case All",
+    "outcome": "passed",
+    "evidence": "PASSED: C-001, C-002, C-003, C-004, C-005, C-007, C-008, C-009, C-010, C-011, C-013, C-014. EXIT 0."
+   },
+   {
+    "what": "Whether O-033 and O-034 (owed to build-slice by code-review 2) are fixed in the tree",
+    "command": "Read src/FsAnalyser.App/MainWindow.xaml.cs, docs/design/SL-020-scanner.md",
+    "outcome": "failed",
+    "evidence": "Neither is fixed at eaabbe8. MainWindow.xaml.cs:147-148 still passes `() => VolumeInUse(scan)`, which captures the whole ScanResult (O-034). docs/design/SL-020-scanner.md:45-47 still says 'Finished and Stopped also show the volume's used space'. The partial-scan branch of Coverage (MainWindow.xaml.cs:296-299) is still there and cannot run (O-033). My D:\\ App runs confirm that Stopped endings carry no volume line."
+   },
+   {
+    "what": "Code-graph test-gap scan of the changed files",
+    "command": "mcp CodeGraph op=changes",
+    "outcome": "passed",
+    "evidence": "It lists MainWindow, StartScan and UnlessCancelled as reached by no test. That is true: there is no App test project, and O-031's only proof is the untracked reflection harness. It also lists SynchronousIoCancel.Enter/Exit/Query and DirectoryReader.List as untested, which is a parser miss: SynchronousIoCancelTests and CancelledFolderTests call them directly."
+   },
+   {
+    "what": "Compiler diagnostics through a language server",
+    "command": "mcp Lsp op=diagnostics path=src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs",
+    "outcome": "not-run",
+    "evidence": "No C# language server is installed on this machine. The build reported 0 warnings instead."
+   },
+   {
+    "what": "The shipped Scanner, with its shipped guard, against a real cloud-filter placeholder folder whose provider never answers",
+    "outcome": "not-run",
+    "evidence": "It needs registering a cloud-filter sync root (CfRegisterSyncRoot) and running a provider process, which is a platform registration outside what I may change on this machine. Build-slice 2's re-spike (.taad/slices/SL-024/build-slice-2-respike/run2.log, read but not re-run) measured the scanner's real CreateFileW + GetFileInformationByHandleEx on a placeholder, with a harness copy of the guard. The control blocked 22 s and then returned SUCCESS with only . and .., and 7/7 guarded trials were freed by a single cancel and settled to 995. The shipped SynchronousIoCancel class itself was never run against a cloud placeholder."
+   },
+   {
+    "what": "Re-run of build 4's O-031 reflection harness on MainWindow.UnlessCancelled",
+    "outcome": "not-run",
+    "evidence": "Code-review attempt 2 already re-ran it (4/4). Instead I exercised the real MainWindow end to end: the no-cancel path on Z:\\ and D:\\ (volume line shown), and the cancel-during-scan path on D:\\ and TEST-NET-1 (no volume line). I did not exercise a Cancel that lands while a real GetDiskFreeSpaceEx is blocked."
+   },
+   {
+    "what": "OpenThread failure fallback (criterion 14)",
+    "outcome": "not-run",
+    "evidence": "There is no unelevated way to make OpenThread(THREAD_TERMINATE) on the calling thread's own id fail. The design marked the case non-material, with no test. Reading SynchronousIoCancel.cs:61-74: an invalid handle is disposed and nothing is registered, so Cancel falls back to the folder boundary."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "1. Cancel a scan: the root is an unreachable SMB share (\\\\192.0.2.N\\s) and the first CreateFileW blocks about 21 s",
+    "met": "yes",
+    "how": "Real network: the TEST-NET-1 tests passed 2/2. The App's real MainWindow, cancelled from the UI thread at 0.5 s, returned 30 to 33 ms after Cancel on 3 addresses, with status Cancelled, no unreadable folder and Cancel() at most 1.2 ms. The control with no cancel blocked 21.2 s and ended with error 53."
+   },
+   {
+    "criterion": "2. Cancel a blocked synchronous call: a thread inside Enter is blocked in a local synchronous named-pipe WaitForConnection",
+    "met": "yes",
+    "how": "SynchronousIoCancelTests.CancelInterruptsACallBlockedInTheKernel passed in the 119 and in 5/5 repeat runs. It asserts the thread returns within 2 s, Exit reports the cancel, Cancel() takes under 250 ms, and CancelsDelivered >= 1. Real SMB also: in 21 Z:\\ runs a delivered CancelSynchronousIo freed a live SMB call within 113 ms."
+   },
+   {
+    "criterion": "3. Cancel a call that has not reached the kernel (the first CancelSynchronousIo returns ERROR_NOT_FOUND)",
+    "met": "yes",
+    "how": "CancelIsResentUntilACallThatHadNotReachedTheKernelIsInterrupted passed, 5/5 on repeat. It asserts CancelAttempts > CancelsDelivered and that the wait was freed within 2 s. Code-level contact only."
+   },
+   {
+    "criterion": "4. Start a call after cancel: the token is already cancelled before Enter or before the scan",
+    "met": "yes",
+    "how": "NoCallStartsOnceCancelIsRequested and AnAlreadyCancelledTokenReadsNothing passed. On real Z:\\ and D:\\, a pre-cancelled scan returned Cancelled with 0 calls, no thread handle and an empty store. In 142 real runs with a cancel, no stray cancel reached the scan thread afterwards."
+   },
+   {
+    "criterion": "5. Trust the result of a cancelled call: a cancel issued during a call that then returns SUCCESS with zero entries",
+    "met": "yes",
+    "how": "CancelAtAnyCallCommitsOnlyWholeFolders(duringTheCall: true) sweeps every guarded call, including an empty folder's SUCCESS-with-nothing, and SettleDiscards...(0, true) gives 995. Both passed. On real SMB, 21 mid-call cancels on Z:\\ committed no partial folder. A real cloud placeholder with the shipped class was not reached; build 2's measurement of the real calls (read, not re-run) shows the OS returns SUCCESS with only . and .. after a cancel."
+   },
+   {
+    "criterion": "6. Cancel a populating cloud-placeholder listing that re-blocks after a cancel",
+    "met": "yes",
+    "how": "CancelIsResentWhileACallBlocksAgainAfterACancel (a call that re-blocks 3 times, freed within 2 s) passed, 5/5 on repeat. Code-level only for the shipped class; the real cloud check was not reached (see not_reached). Build 2's re-spike log shows that on the real call one cancel was enough."
+   },
+   {
+    "criterion": "7. Cancel a listing that spans several GetFileInformationByHandleEx buffers, with the cancel landing between them",
+    "met": "yes",
+    "how": "CancelAtAnyCallCommitsOnlyWholeFolders(false) and AnAbortedListingKeepsNothingOfTheBuffersBeforeIt passed. Real data: 57 cancelled D:\\ scans and 39 cancelled Z:\\ scans had 0 folders whose child count differed from the reference, and no new Unreadable flags."
+   },
+   {
+    "criterion": "8. Report an error 995 when no cancel was requested",
+    "met": "yes",
+    "how": "OnlyARequestedCancelMakesAnAbortedCallACancellation, A995WindowsReturnsWithNoCancelKeepsWhatWasListed and A995WindowsReturnsWithNoCancelIsAnUnreadableFolderAndTheScanCarriesOn passed. Code-level only: I cannot make Windows return an unsolicited 995 on a real volume."
+   },
+   {
+    "criterion": "9. Probe a file size when the probe is aborted or refused by a cancelled token",
+    "met": "yes",
+    "how": "The CancelledFolderTests sweep cancels at each probe's open and query, and asserts ProbeFailures == 0 with no size written. It passed. Real D:\\ and Z:\\ cancelled runs had probeFailures 0 and charged bytes equal to the totals. Code-level for the probe-abort itself."
+   },
+   {
+    "criterion": "10. Cancel racing the scan's own completion, at random moments across many scans",
+    "met": "yes",
+    "how": "CancelAtRandomMomentsEndsEveryScanCleanlyAndLeavesNoStrayCancel passed (100 runs, 5/5 repeats). Real data: D:\\ 103 runs across [0, 0.7 s] (57 cancelled, 46 completed) and Z:\\ 39 runs, with no exception, no hang, no stray cancel on the scan thread, and pending closes drained."
+   },
+   {
+    "criterion": "11. Scan with a live, never-cancelled token or CancellationToken.None, including the counting-rule trees and the error-5 tree",
+    "met": "yes",
+    "how": "ALiveTokenThatIsNeverCancelledChangesNothing (3 shapes) passed. Real data: live vs None on Z:\\ (148,452 entries) and D:\\ (531,782 entries) were identical entry by entry, with Unreadable(5) kept. The published exe on Z:\\ ended Finished with the volume line, and the window cases passed 12/12."
+   },
+   {
+    "criterion": "12. Run the share test again: the same unreachable address twice in one session",
+    "met": "yes",
+    "how": "CancelReturnsFromTheSameUnreachableShareScannedTwice passed on the real network. My 4 App-level runs on other 192.0.2.N addresses in the same session all blocked (the control 21.2 s), so the redirector did not turn them into fast failures."
+   },
+   {
+    "criterion": "13. Close the handle after an abort on an SMB session that was established and then stopped responding",
+    "met": "yes",
+    "how": "The SMB-LOOPBACK test passed. The real Windows SMB client, stalled by a loopback server, had its close handed to the pool. 0 closes were pending when the scan returned, and they drained within 1 s, so the close did not move the hang into cleanup. Caveat, as the design declares: the call itself held 59.9 s after Cancel, and CancelSynchronousIo does not cut a stalled session short."
+   },
+   {
+    "criterion": "14. Fall back when OpenThread fails (material: false)",
+    "met": "not-checked",
+    "how": "I could not make OpenThread fail unelevated, and the design chose no test. I only read the code (SynchronousIoCancel.cs:61-74)."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "verified": "yes",
+    "evidence": "No new wrapped call starts after an interrupt. NoCallStartsOnceCancelIsRequested and the 100-run random-cancel stress test both passed (5/5 repeats). The stress test checks for a stray cancel with a synchronous pipe wait on the scan thread after each scan. My real-data harness ran the same check after each of 142 cancelled or raced runs (103 on D:\\, 39 on Z:\\, 21 of them with a CancelSynchronousIo delivered into a live SMB call): no wait was ever interrupted. Enter publishes InCall and then checks the token (SynchronousIoCancel.cs:193-203). Dispose joins the canceller before closing the thread handle (:216-229)."
+   },
+   {
+    "key": "O-002",
+    "verified": "yes",
+    "evidence": "The interrupter does not block the thread that requests cancellation. Real UI thread: the App's own OnCancel held the WPF UI thread 0.69 to 1.16 ms (3 TEST-NET-1 runs, 2 D:\\ runs). Stalled SMB, where CancelSynchronousIo itself blocked about 60 s: Cancel() took 0.7 ms. Z:\\: worst Cancel() 0.47 ms over 39 runs. The token callback only starts the scan-cancel thread (SynchronousIoCancel.cs:268-277)."
+   },
+   {
+    "key": "O-003",
+    "verified": "yes",
+    "evidence": "The cleanup after an interrupted call returns promptly. Stalled loopback SMB session (real Windows client): closes handed off 1, 0 pending when the scan returned, drained within 1 s. Z:\\: the 21 delivered-cancel runs each handed 1 close to the pool, and all drained. The unrelated limit remains: on a stalled session the interrupted call itself returned 59.9 s after Cancel, which the design declares."
+   },
+   {
+    "key": "O-033",
+    "verified": "no",
+    "evidence": "Owed to build-slice, not to me, and still unfixed at eaabbe8. docs/design/SL-020-scanner.md:45-47 still says Finished and Stopped show the volume line, and Coverage's partial branch (MainWindow.xaml.cs:296-299) is still present and unreachable. My real D:\\ App runs confirm the premise: a Stopped ending never shows the volume line."
+   },
+   {
+    "key": "O-034",
+    "verified": "no",
+    "evidence": "Owed to build-slice, not to me, and still unfixed at eaabbe8. MainWindow.xaml.cs:147-148 still passes `() => VolumeInUse(scan)`, so an orphaned query keeps the whole ScanResult and its ScanStore alive."
+   }
+  ],
+  "not_reached": [
+   "A real cloud-filter placeholder folder whose provider never answers, scanned by the shipped Scanner and SynchronousIoCancel. It needs a CfRegisterSyncRoot registration and a provider process, which I did not do because that platform registration is outside what I may change here. Only build 2's re-spike measured the real calls, with a harness copy of the guard.",
+   "A Cancel that lands while the App's volume query (GetDiskFreeSpaceEx) is really blocked on a mapped drive whose server stopped answering. The real MainWindow was exercised only on a healthy Z:\\ (no cancel) and with cancels during the scan.",
+   "A real network share that stops answering mid-scan (Wi-Fi loss, VPN drop, resume from sleep). Only the loopback SMBLibrary stand-in stall was measured: 59.9 s from Cancel to return, bounded by the SMB client's own timeout.",
+   "A Windows-generated 995 with no cancel requested, on a real volume. It is covered only through the test-only OverrideQueryError seam.",
+   "CancelSynchronousIo held up behind an on-access antivirus or other filter driver. The design leaves this unmeasured, and I did not measure it either.",
+   "The OpenThread-failure fallback. I cannot provoke it unelevated.",
+   "Clicking the App's real Cancel button in a separately launched exe. I called the window's own OnCancel handler in my own process instead of driving another program's window. Clicking the button would add only the XAML Click wiring."
+  ],
+  "planned": []
+ }
+}

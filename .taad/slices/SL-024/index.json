@@ -46,59 +46,123 @@
   },
   {
    "stage": "build-slice",
-   "issue": "Design decision for a person: if a share that stops answering mid-session drops, Cancel leaves the scan blocked for 62 to 66 s, and the UI stays in 'cancelling' for that long. The only in-process remedy is the design's rejected fallback: stop awaiting the scan thread on Cancel and let it finish in the background. If that wait is not acceptable, it belongs back at design-slice."
+   "issue": "A scan that completed without a Cancel still waits for the volume query. On a mapped drive whose server stopped answering, that can be as long as the SMB client waits. Cancel stays enabled during that wait and ends it. Whether to also skip the query for DriveType.Network roots is a product choice; the reviewer offered it as optional."
   },
   {
    "stage": "build-slice",
-   "issue": "O-003 (owed to validate-slice) now has evidence on the stalled shape. The aborted listing's close ran on a pool thread and was not pending when the scan returned. The scan thread is never held by the close; what holds it is the listing itself, until the SMB client gives up."
+   "issue": "The stalled-session limit from build 3 still stands: a Cancel on a share that stops answering mid-listing waits 62 to 66 s for the SMB client. Only abandoning the scan thread, the design's rejected fallback, would shorten it. That is a decision for design-slice or a person."
   },
   {
    "stage": "build-slice",
-   "issue": "The stalled-share test takes about 65 s and needs the Windows 11 24H2 SMB client (New-SmbMapping -TcpPort). It is opt-in for that reason and would fail on Windows 10, which the platform constraint still supports."
+   "issue": "Scratch folders %TEMP%\\taad-sl024-o031, %TEMP%\\taad-sl024-smb and %TEMP%\\taad-sl024-respike, and the gitignored artifacts/publish, are left in place. Their evidence is copied into the slice, so they can be deleted."
   },
   {
    "stage": "build-slice",
-   "issue": "Scratch folders %TEMP%\\taad-sl024-smb (the precheck) and %TEMP%\\taad-sl024-respike (attempt 2) are left in place. Their sources and logs are copied into the slice, so both can be deleted."
+   "issue": "deviation: O-031 is fixed by not waiting for the volume query, not by guarding it in Core. The disposition allows either. Build 3 measured that on a stalled, established session even CancelSynchronousIo waits f…"
   },
   {
    "stage": "build-slice",
-   "issue": "deviation: The rebuild note asked that 'the scan returns within a set time after cancel'. On this shape the time is the SMB client's own limit, not Cancel's: the client keeps the unanswered QUERY_DIRECTORY, and…"
-  },
-  {
-   "stage": "build-slice",
-   "issue": "deviation: The note says the hung folder must be 'reported as an error, not Completed with 0 files'. The test asserts Status Cancelled, never Completed, with the hung folder not committed and never reported as …"
-  },
-  {
-   "stage": "build-slice",
-   "issue": "deviation: Two additions the note did not name. SMBLibrary.Win32 is added next to SMBLibrary, for NTDirectoryFileSystem, a real-folder INTFileStore; SMBLibrary itself ships none. And SMBServer's public Start li…"
-  },
-  {
-   "stage": "build-slice",
-   "issue": "deviation: The fixture store answers STATUS_INVALID_INFO_CLASS where SMBLibrary would throw on a class it cannot encode: FileIdExtdDirectoryInformation (60), which the Windows client passes through. That is how…"
+   "issue": "deviation: O-032 adds a third test-only seam to the guard, OverrideQueryError. Nothing else can make Windows return a 995 without a cancel through the real reader, which is what the new tests need."
   },
   {
    "stage": "code-review",
-   "issue": "drift: The design's Scanner component told build to bracket the 'volume-usage query'. It is MainWindow.VolumeInUse on the scan thread and is still unguarded. Build 2 listed it only as an out-of-scope follow…"
+   "issue": "drift: O-031 has no test in the repository. Its only executable proof is the untracked harness in .taad/slices/SL-024/build-slice-4-o031, which reaches the private MainWindow.UnlessCancelled by reflection. …"
   },
   {
    "stage": "code-review",
-   "issue": "drift: StalledShareTests runs the whole scan on the FILE_FULL_DIR_INFO fallback class, because the fixture answers STATUS_INVALID_INFO_CLASS to class 60. That was declared. The consequence for the next read…"
+   "issue": "drift: If Cancel arrives while a completed scan's volume query is blocked, the window goes from 'Stopping...' to a 'Finished' ending with no volume line. The scan did finish, so this is correct, but neither…"
   },
   {
    "stage": "code-review",
-   "issue": "drift: The stalled-share test asserts only that the aborted handle was handed to the pool. The pool close finishing is logged, not asserted. On this shape the close cannot block in any case, because the lis…"
+   "issue": "drift: A completed, uncancelled scan of a mapped drive that stopped answering still waits for GetDiskFreeSpaceEx, up to the SMB client's limit. Cancel ends that wait. This was declared as a follow-up, and s…"
   },
   {
    "stage": "code-review",
-   "issue": "not reviewed: .taad/slices/SL-024/build-slice-2-respike/Program.cs: evidence harness, not product or test code. I read only its README for O-023."
+   "issue": "not reviewed: .taad/slices/SL-024/build-slice-4-o031/README.md and readwindow-D.txt: evidence files. I read and re-ran the harness (Program.cs, o031.csproj) and read o031.log, but did not open these two."
   },
   {
-   "stage": "code-review",
-   "issue": "not reviewed: .taad/slices/SL-024/build-slice-3-smb/precheck-Program.cs and precheck-smbcheck.csproj: precheck harness evidence, not built by the solution."
+   "stage": "validate-slice",
+   "issue": "not reached: A real cloud-filter placeholder folder whose provider never answers, scanned by the shipped Scanner and SynchronousIoCancel. It needs a CfRegisterSyncRoot registration and a provider process, which I did not do because that platform registration is outside what I may change here. Only build 2's re-spike measured the real calls, with a harness copy of the guard."
   },
   {
-   "stage": "code-review",
-   "issue": "not reviewed: .taad/slices/SL-024/build-slice-2-respike/*.log, build-slice-3-smb/precheck.log, test-run6-measure.txt: run logs. Only test-run5.txt and test-run7.txt were read."
+   "stage": "validate-slice",
+   "issue": "not reached: A Cancel that lands while the App's volume query (GetDiskFreeSpaceEx) is really blocked on a mapped drive whose server stopped answering. The real MainWindow was exercised only on a healthy Z:\\ (no cancel) and with cancels during the scan."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A real network share that stops answering mid-scan (Wi-Fi loss, VPN drop, resume from sleep). Only the loopback SMBLibrary stand-in stall was measured: 59.9 s from Cancel to return, bounded by the SMB client's own timeout."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A Windows-generated 995 with no cancel requested, on a real volume. It is covered only through the test-only OverrideQueryError seam."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: CancelSynchronousIo held up behind an on-access antivirus or other filter driver. The design leaves this unmeasured, and I did not measure it either."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The OpenThread-failure fallback. I cannot provoke it unelevated."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Clicking the App's real Cancel button in a separately launched exe. I called the window's own OnCancel handler in my own process instead of driving another program's window. Clicking the button would add only the XAML Click wiring."
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The design's Scanner component said the 'volume-usage query' must be inside a bracket, but every component lived in FsAnalyser.Core. The query is DriveInfo/GetDiskFreeSpaceEx in MainWindow.xaml.cs on the scan thread after Scan returns, and the design also said 'Cancel button: code does not change'.…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: Settle returns 995 both for the guard's synthesised abort and for an OS-produced 995, and the design said they are told apart 'by ct.IsCancellationRequested in Scanner'. Nobody asked how DirectoryReader.List, which discards its buffers before Scanner sees the code, knows which one it has. Build 2 r…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The design and the critique triage accepted that a stalled, established SMB session 'cannot be exercised here' and left it as an open question for an absent person. The critique's own fix offered only Samba under WSL. Nobody asked whether an in-process .NET SMB2 server (SMBLibrary) could stand in w…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "code-review missed: The O-031 fix prescription and its triage ('skip the query once Cancel was requested'; the doc should say a cancelled scan 'may omit' the line) did not check that every Stopped ending already has Cancel requested. The fix therefore made the Stopped volume line permanently unreachable, left SL-020-s…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Is a ~60 s wait after Cancel on an established-but-stalled SMB session acceptable if the Stopping state says so, or should the scan thread be abandoned (the design's rejected fallback)? If abandoned, what keeps its ScanStore and handles from breachi…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does the shipped Scanner with its shipped SynchronousIoCancel free a scan blocked on a real cloud-placeholder folder whose provider never answers? Only build 2's re-spike, with a harness copy of the guard, measured the real calls, and validate could…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Can CancelSynchronousIo itself sit behind an on-access antivirus or filter driver over a slow link (MS Q&A 258819) and leave the scan thread blocked without bound? Nobody measured it; the canceller thread keeps the UI free but the scan's return is u…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Spike 3 (stalled SMB session) recorded NOT RUN on a Defender/impacket block, and its method forbade changing the target. The design halted on an unanswered question, and TAAD then decided it with the owner away. The same measurement was made in buil…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Spike 2 measured a stand-in call because the spike could not identify the scanner's real one, though the survey had it at DirectoryReader.cs:101. The design passed with a would_force_resynthesis disagreement, the critique caught it as M5, and the re…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The volume query on the scan thread was in the design's own scope. Build 2 mislocated it ('UI thread') and called it out of scope, build 3 dropped it from the open list, and only code-review #1 caught it. The fix then took build attempt 4 plus code-…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Build 2 justified resetting the listing on any 995 with 'List cannot tell a guard abort from an OS 995', which was false. It was accepted as a declared deviation until code-review #1 read the guard's _aborted. That is a partial-listing undercount on…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The fix for O-031 created O-033 and O-034. They passed code-review #4 as accepted-pending, validate marked their check [failed] and still passed the slice, and reflect inherits both open. The slice therefore ships with owed work and a retention path…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The slice's headline is only partly delivered. An unreachable connect and a cloud listing are freed, but a share that drops mid-scan still takes about 60 s to return after Cancel. Validate lists 7 'not reached' items: the shipped guard on a real clo…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Everything after sizing was decided by a model: 18 findings across critique, critique-review and two code-review laps, plus the design halt. All of it counts as untriaged in gate precision, so this slice adds no evidence that the gates were right be…"
   }
  ],
  "stages": [
@@ -181,7 +245,7 @@
    "stage": "build-slice",
    "title": "Build",
    "order": 7,
-   "state": "sent back",
+   "state": "passed",
    "attempts": [
     {
      "n": 1,
@@ -228,6 +292,35 @@
       "measured_by_git": 12
      },
      "details": "build-slice-3.json"
+    },
+    {
+     "n": 4,
+     "state": "passed",
+     "at": "2026-09-24T17:45:05.646Z",
+     "head": "eaabbe8cd3b4e96426c3ccb67f01d603479d452f",
+     "summary": "Both obligations are fixed.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-031), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-031 (fix): M1 (major): The design's Scanner component says every Win32 filesystem call the scan thread makes, and names the 'volume-usage query', must be inside a bracket. That query is MainWindow.VolumeInUse. It runs `new DriveInfo(root)` and TotalSize/TotalFreeSpace (GetDiskFreeSpaceEx) on the same LongRunning scan thread, right after Scanner.Scan returns (MainWindow.xaml.cs:145-150, 185-204). It runs for… T…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-031",
+       "O-032"
+      ]
+     },
+     "changed": {
+      "src": 3,
+      "tests": 1,
+      "docs": 1,
+      "config": 5,
+      "listed": 10,
+      "measured_by_git": 13
+     },
+     "details": "build-slice-4.json"
     }
    ]
   },
@@ -246,6 +339,60 @@
      "caused_by": null,
      "changed": {},
      "details": "code-review-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-24T17:51:11.493Z",
+     "head": "eaabbe8cd3b4e96426c3ccb67f01d603479d452f",
+     "summary": "This review covered attempt 4 (ae20467..eaabbe8) and what it reaches.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "code-review passed on 2026-09-24T17:45:05.363Z, and build-slice has judged since (2026-09-24T17:51:11.218Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-2.json"
+    }
+   ]
+  },
+  {
+   "stage": "validate-slice",
+   "title": "Validate",
+   "order": 9,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-24T17:56:54.302Z",
+     "head": "eaabbe8cd3b4e96426c3ccb67f01d603479d452f",
+     "summary": "I validated SL-024 at eaabbe8 against real environments: a live SMB share, the real SMB redirector against unreachable TEST-NET-1 addresses, a stalled loopback SMB session and a real 531k-entry NVMe drive.",
+     "caused_by": null,
+     "changed": {},
+     "details": "validate-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "reflect",
+   "title": "Reflect",
+   "order": 10,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-24T18:20:24.131Z",
+     "head": "eaabbe8cd3b4e96426c3ccb67f01d603479d452f",
+     "summary": "SL-024 added an in-place CancelSynchronousIo guard (SynchronousIoCancel.cs) to the SL-020 scanner.",
+     "caused_by": null,
+     "changed": {},
+     "details": "reflect-1.json"
     }
    ]
   }

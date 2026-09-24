@@ -1,0 +1,153 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-024",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-09-24T18:20:24.131Z",
+ "head": "eaabbe8cd3b4e96426c3ccb67f01d603479d452f",
+ "run_id": 893,
+ "summary": "SL-024 added an in-place CancelSynchronousIo guard (SynchronousIoCancel.cs) to the SL-020 scanner. All Win32 filesystem calls on the scan thread now go through it, an aborted folder commits nothing, and the App's volume query no longer holds the Stopping state. Validation confirmed the two shapes that were measured: an unreachable SMB connect and a cloud-placeholder listing. Cancel returned in ≤113 ms on live Z:\\ and D:\\ runs. It did not free an established-but-stalled SMB session, which still takes about 60 s. The slice ran 6 builds, 4 code reviews and 2 spikes, mostly because two measurements were missing upstream, and it ends with O-033 and O-034 unfixed.",
+ "payload": {
+  "status": "complete",
+  "summary": "SL-024 added an in-place CancelSynchronousIo guard (SynchronousIoCancel.cs) to the SL-020 scanner. All Win32 filesystem calls on the scan thread now go through it, an aborted folder commits nothing, and the App's volume query no longer holds the Stopping state. Validation confirmed the two shapes that were measured: an unreachable SMB connect and a cloud-placeholder listing. Cancel returned in ≤113 ms on live Z:\\ and D:\\ runs. It did not free an established-but-stalled SMB session, which still takes about 60 s. The slice ran 6 builds, 4 code reviews and 2 spikes, mostly because two measurements were missing upstream, and it ends with O-033 and O-034 unfixed.",
+  "estimate_error": "Risk tier was right; size was too small. High risk was justified: the critique filed 5 majors against a single-voice design, the critique review added a 6th, and the guard has real races (Enter/canceller/Dispose). Size was opened as a 'someday' deferral (m7) with no acceptance list, and it became the largest scanner slice so far. It needed 2 spikes, 2 design runs, 6 build runs, 4 code-review runs, 33 new tests (86 to 119), a new Core file, two architecture rules and an in-process SMB server test. It also reached into FsAnalyser.App, which the design said would not change. The slice text's 'cannot be tested unelevated here' was wrong twice: spike 1 tested the unreachable share, and build 5 built a stalled session with SMBLibrary loopback.",
+  "learned": [
+   {
+    "kind": "risk",
+    "lesson": "CancelSynchronousIo frees the connect phase and cloud listings but NOT an established-but-stalled SMB session. Cancel() returns in under 1 ms, but the scan returns only when the SMB client's own timeout fires (about 60 s). Any later slice that promises a responsive Cancel on network volumes must scope the promise by phase: connect, cloud listing, or established session. Only abandoning the scan thread would change the stalled case, and the design rejected that.",
+    "evidence": "Validate criterion 13: Cancel() 0.7 ms, scan returned 59.9 s later, closes already drained. Build 3 measured 62-66 s. Spike 1: 10/10 cancels in ≤17 ms against a 21 s control. Spike 2 repeated cancels returned in 0.13 s."
+   },
+   {
+    "kind": "process",
+    "lesson": "The tooling wall that stopped spike 3 was not a wall. Defender blocks impacket, but SMBLibrary 1.5.8.1 and SMBLibrary.Win32 load in-process with no admin and no Defender change. A real Windows client then authenticates with signing required and stalls at one folder's listing (StalledShareTests, Trait Network=SMB-LOOPBACK). Any future slice that needs an SMB server on this machine should reuse that loopback harness, not try impacket or ask a person for an exclusion.",
+    "evidence": "Spike 3 NOT RUN (impacket flagged HackTool:Python/Impacket). Build 3 halted on O-018. Build 4 was ordered to rebuild. Build 5 discharged it with SMBLibrary loopback. Validate ran the test and it passed."
+   },
+   {
+    "kind": "process",
+    "lesson": "The risk-spike is not handed the survey's call sites. Spike 2 measured FindFirstFileExW because it 'could not identify the Core scanner's real enumeration call', while the survey had already recorded GetFileInformationByHandleEx at DirectoryReader.cs:101. The design then passed with a would_force_resynthesis disagreement, and the critique had to catch it as M5. The measurement was routed to build, not back to the spike, and cost build runs #1 (halt) and #2 (rebuild order). When a spike's assumption names a code path, check that the survey's file:line was in its brief.",
+    "evidence": "Spike 2 evidence text. Critique M5. Build-slice #1 halted, #2 fail 'Measure first, then build'. O-023 discharged by build 2's own re-spike copy in %TEMP%\\taad-sl024-respike."
+   },
+   {
+    "kind": "design",
+    "lesson": "The design listed the volume-usage query as a call that must be bracketed, but every component lived in FsAnalyser.Core. The call is DriveInfo/GetDiskFreeSpaceEx in FsAnalyser.App/MainWindow.xaml.cs, on the scan thread after Scan returns. The design also asserted 'Cancel button: code does not change', and MainWindow did have to change. The architecture rules (TheScannerMakesNoBclFileSystemCalls) cover only Core/Scanning, so nothing flagged it. The next slice that adds a blocking call on the scan thread must check App/MainWindow too, and a design that says the UI is unchanged needs to name what the UI does after Scan returns.",
+    "evidence": "O-031 found by code-review #1. Build 2 raised it as 'on the UI thread' and 'outside scope'. Build 3 dropped it from the open list."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "The guard's shape is now fixed, and later scanner slices should extend it rather than call Kernel32 directly. SynchronousIoCancel.cs holds OpenDirectory, OpenForAttributes, Query and Close, each doing Enter/Call/Exit/Settle. The guard is always created; a token that cannot cancel skips only OpenThread and the registration. It is per scan thread and throws InvalidOperationException on any other thread, so a parallel-listing slice needs one guard per worker. LastCallAborted separates the guard's own abort from an OS 995. After any abort, handles close on ThreadPool (PendingCloses). Two twinned architecture rules bring the count to 14.",
+    "evidence": "O-019, O-020, O-022, O-026, O-032 discharged; Fitness reports all 14 rules hold; docs/design/SL-020-scanner.md holds the invariant note."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "The strongest test from this slice is the deterministic cancel-at-the-k-th-guarded-call sweep: CancelledFolderTests.CancelAtAnyCallCommitsOnlyWholeFolders, built on the internal BeforeCall/AfterCall hooks in Enter and a folder that spans several listing buffers. It compares every committed folder with an uncancelled baseline. Reuse it for any change to what a folder commits, or to where probes run relative to Append. IsDue probes now run over raw entries before the first Append, because ScanStore has no rollback.",
+    "evidence": "M-add-1 (added by critique-review) and O-030, O-021, O-012, O-014. Code review reran it 6/6, and mutations of List's reset failed the O-032 tests as expected."
+   },
+   {
+    "kind": "process",
+    "lesson": "The default `dotnet test` does not exercise a real blocked SMB call. The test csproj's VSTestTestCaseFilter excludes Trait Network=TEST-NET-1 and Network=SMB-LOOPBACK, and a skip was not an option because CountingRuleTestsAreNeverSkipped forbids it. A regression in the real-network cancel path is invisible to the 119/119 default run. Any slice that touches Scanner, DirectoryReader, SizeProbe or SynchronousIoCancel must also run `--filter Network=TEST-NET-1` and `--filter Network=SMB-LOOPBACK`, as validate did.",
+    "evidence": "O-028 discharge text; validate ran both filters explicitly and both passed; build 4 reported 119 passed 'opt-in network tests left out by the default filter'."
+   },
+   {
+    "kind": "process",
+    "lesson": "A reviewer's fix prescription needs an 'always or sometimes' check. Code-review #1 and its triage prescribed 'skip the volume query once Cancel was requested' and told the doc to say a cancelled scan 'may omit' the line. In fact every Stopped ending has Cancel requested, so it always omits it. That left the Stopped half of O-013 unreachable, the design doc false, Coverage's partial-scan branch dead, and the orphaned query's closure holding the whole ScanResult. It took a second code-review lap to find. When a fix changes what a state shows, grep for the branch it kills and for what a new closure captures.",
+    "evidence": "O-033 and O-034 raised by code-review #3. Scanner.cs:73, :79, :139 and ClassifyReadError all require ct.IsCancellationRequested for Cancelled."
+   },
+   {
+    "kind": "process",
+    "lesson": "A slice can pass validate with owed fixes. Minor obligations accepted-pending at code-review #4 get no build lap. Validate then checked O-033 and O-034 in the tree, marked that check [failed], and still passed the slice. Reflect inherits them open, so whoever opens the next slice on FsAnalyser.App has to be told, or MainWindow.UnlessCancelled stays holding a store during the 1 GB budget window (U-001 measured 699 MiB for one 5M-entry scan).",
+    "evidence": "validate [failed] 'Whether O-033 and O-034 ... are fixed in the tree'; STILL OWED lists both open at reflect."
+   },
+   {
+    "kind": "process",
+    "lesson": "Every halt and every finding on this slice was disposed by a model with no person contact after sizing: 11 critique findings, 1 from the critique review, and 6 from code review across two laps. The design halt was decided 'by TAAD while the owner was away'. The precision numbers this slice adds to the gates are all untriaged, so do not read a clean tally as confirmation that the gates were right.",
+    "evidence": "Gate contact fields in 'How this slice actually ran': critique #2, critique-review #2, code-review #2 and #4 all say 'answered by a model, counted as untriaged'."
+   }
+  ],
+  "candidates": [
+   {
+    "title": "Close O-033 and O-034 on MainWindow (doc drift, dead Coverage branch, orphaned-query closure)",
+    "urgency": "soon",
+    "why": "Both were accepted-pending at code-review and never got a build lap. Validate marked their check [failed]. Fix: SL-020-scanner.md:45-47 should say only Finished shows the volume line, Coverage's partial-scan branch should be deleted, and UnlessCancelled should capture root and status instead of the whole ScanResult. The closure keeps the previous ScanStore alive against a 699 MiB-per-scan budget."
+   },
+   {
+    "title": "Decide what Cancel does on an established-but-stalled SMB session (about 60 s wait)",
+    "urgency": "soon",
+    "why": "Measured at 59.9 s (validate) and 62-66 s (build 3): Cancel() is instant but the scan returns only on the SMB client's timeout. This is the commonest real case (Wi-Fi loss, VPN drop, sleep resume). The options are to abandon the scan thread (the design's rejected fallback, with a retention cost), or to keep the wait and say so in the Stopping state. This needs a person's decision and a design pass before any build."
+   },
+   {
+    "title": "Put a repository test on MainWindow.UnlessCancelled (O-031)",
+    "urgency": "soon",
+    "why": "Its only executable proof is the untracked harness in .taad/slices/SL-024/build-slice-4-o031, which reaches the private method by reflection. Code review flagged it as drift and validate did not re-run it. The App has no unit-test project, so the options are a WindowCases.ps1 case or extracting the wait into Core."
+   },
+   {
+    "title": "Hand the survey's cited call sites to risk-spike briefs",
+    "urgency": "soon",
+    "why": "Spike 2 used a stand-in call because it 'could not identify the scanner's real enumeration call', although the survey had recorded DirectoryReader.cs:101. That produced a would_force_resynthesis disagreement and burned two of six build runs on a measurement that belonged to the spike."
+   },
+   {
+    "title": "risk-spike: before recording NOT RUN on a tooling block, try substitutes in the same class",
+    "urgency": "soon",
+    "why": "Spike 3 stopped on Defender/impacket and its method forbade swapping the target, but the target was the SMB server, not impacket. SMBLibrary loopback, tried in build 5, needed no admin. The stop cost a design question to an absent owner and builds #3-#5."
+   },
+   {
+    "title": "A build's declared follow-up must not vanish from the next build's open list",
+    "urgency": "soon",
+    "why": "Build 2 raised the volume-query follow-up (mislocated), and attempt 3 dropped it without a word. Only code-review #1 rediscovered it, as a major. The loop's 'left open' list appears to be each stage's latest account, so a builder can drop an item by not restating it. This needs checking against the engine's carry logic."
+   },
+   {
+    "title": "Skip or bound the volume query for DriveType.Network roots on a completed scan",
+    "urgency": "someday",
+    "why": "An uncancelled scan of a mapped drive that stopped answering still waits for GetDiskFreeSpaceEx, up to the SMB client's limit (62-66 s measured). Cancel ends the wait, but the choice to omit the line for network roots is a product decision that build 4 and code-review 2 both left open."
+   },
+   {
+    "title": "Track the cloud-placeholder harness as an opt-in test against the shipped Scanner",
+    "urgency": "someday",
+    "why": "The only real cloud evidence is build 2's harness copy of the guard in %TEMP%\\taad-sl024-respike, which is disposable scratch (the evidence was copied into the slice). Validate could not reach the shipped Scanner and SynchronousIoCancel on a real cf-filter folder. A separate-process provider with sync-root flag 2 ran unelevated, so a Trait-gated test is feasible."
+   }
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "dimension": "cross-cutting-conformance",
+    "severity": "major",
+    "what": "The design's Scanner component said the 'volume-usage query' must be inside a bracket, but every component lived in FsAnalyser.Core. The query is DriveInfo/GetDiskFreeSpaceEx in MainWindow.xaml.cs on the scan thread after Scan returns, and the design also said 'Cancel button: code does not change'. Critique M1 even named DriveInfo but scoped its BCL rule to Core/Scanning and never asked which project the query lives in. Critique-review passed it too. A check that would have caught it: for every call the design says must be guarded, name its file and fail if that file is not under a component's lives_at.",
+    "caught_by": "code-review #1 (O-031), after builds 2 and 3 had mislocated and then dropped it"
+   },
+   {
+    "gate": "critique",
+    "dimension": "contract-gaps",
+    "severity": "minor",
+    "what": "Settle returns 995 both for the guard's synthesised abort and for an OS-produced 995, and the design said they are told apart 'by ct.IsCancellationRequested in Scanner'. Nobody asked how DirectoryReader.List, which discards its buffers before Scanner sees the code, knows which one it has. Build 2 reset the listing on any 995 and declared 'List cannot tell' as its reason, which was false because the guard already recorded _aborted. Coherence_check item 4(iii) noticed the ambiguity and resolved it at the wrong layer.",
+    "caught_by": "code-review #1 (O-032, DirectoryReader.cs:105-109)"
+   },
+   {
+    "gate": "critique",
+    "dimension": "unfounded-assumptions",
+    "severity": "major",
+    "what": "The design and the critique triage accepted that a stalled, established SMB session 'cannot be exercised here' and left it as an open question for an absent person. The critique's own fix offered only Samba under WSL. Nobody asked whether an in-process .NET SMB2 server (SMBLibrary) could stand in with no admin and no Defender exclusion. That assumption cost build runs #3 (halt on O-018), #4 (rebuild order) and #5.",
+    "caught_by": "build-slice obligation O-018, discharged in build 5 with SMBLibrary loopback"
+   },
+   {
+    "gate": "code-review",
+    "dimension": "drift-from-design",
+    "severity": "minor",
+    "what": "The O-031 fix prescription and its triage ('skip the query once Cancel was requested'; the doc should say a cancelled scan 'may omit' the line) did not check that every Stopped ending already has Cancel requested. The fix therefore made the Stopped volume line permanently unreachable, left SL-020-scanner.md:45-47 false, left Coverage's partial-scan branch dead, and added an orphaned-query closure that captures the whole ScanResult.",
+    "caught_by": "code-review #3 (O-033, O-034), one lap later"
+   }
+  ],
+  "what_went_wrong": [
+   "Spike 3 (stalled SMB session) recorded NOT RUN on a Defender/impacket block, and its method forbade changing the target. The design halted on an unanswered question, and TAAD then decided it with the owner away. The same measurement was made in build 5 with SMBLibrary loopback and no admin. The cost was build runs #3-#5 (halt, rebuild order, pass).",
+   "Spike 2 measured a stand-in call because the spike could not identify the scanner's real one, though the survey had it at DirectoryReader.cs:101. The design passed with a would_force_resynthesis disagreement, the critique caught it as M5, and the re-measurement was routed to build, not the spike. In total 4 of 6 build runs went on two measurements that upstream stages should have delivered.",
+   "The volume query on the scan thread was in the design's own scope. Build 2 mislocated it ('UI thread') and called it out of scope, build 3 dropped it from the open list, and only code-review #1 caught it. The fix then took build attempt 4 plus code-review laps 3 and 4.",
+   "Build 2 justified resetting the listing on any 995 with 'List cannot tell a guard abort from an OS 995', which was false. It was accepted as a declared deviation until code-review #1 read the guard's _aborted. That is a partial-listing undercount on a rare shape, and it broke the design contract 'every other error passes through unchanged'.",
+   "The fix for O-031 created O-033 and O-034. They passed code-review #4 as accepted-pending, validate marked their check [failed] and still passed the slice, and reflect inherits both open. The slice therefore ships with owed work and a retention path that keeps two ScanStores live on a stalled mapped drive.",
+   "The slice's headline is only partly delivered. An unreachable connect and a cloud listing are freed, but a share that drops mid-scan still takes about 60 s to return after Cancel. Validate lists 7 'not reached' items: the shipped guard on a real cloud folder, a real mid-scan stall, filter-driver-held I/O, an OS 995 on a real volume, the OpenThread fallback (criterion 14), a mapped drive stalled during the volume query, and a click on the real Cancel button.",
+   "Everything after sizing was decided by a model: 18 findings across critique, critique-review and two code-review laps, plus the design halt. All of it counts as untriaged in gate precision, so this slice adds no evidence that the gates were right beyond the fact that they found things."
+  ],
+  "unknowns": [
+   "Is a ~60 s wait after Cancel on an established-but-stalled SMB session acceptable if the Stopping state says so, or should the scan thread be abandoned (the design's rejected fallback)? If abandoned, what keeps its ScanStore and handles from breaching the 1 GB budget (U-001: 699 MiB for one 5M-entry scan)?",
+   "Does the shipped Scanner with its shipped SynchronousIoCancel free a scan blocked on a real cloud-placeholder folder whose provider never answers? Only build 2's re-spike, with a harness copy of the guard, measured the real calls, and validate could not reach it.",
+   "Can CancelSynchronousIo itself sit behind an on-access antivirus or filter driver over a slow link (MS Q&A 258819) and leave the scan thread blocked without bound? Nobody measured it; the canceller thread keeps the UI free but the scan's return is unbounded."
+  ]
+ }
+}
