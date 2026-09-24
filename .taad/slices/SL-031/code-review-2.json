@@ -1,0 +1,206 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-031",
+ "stage": "code-review",
+ "attempt": 2,
+ "at": "2026-09-24T21:53:15.662Z",
+ "head": "0120c5f643effa9f41f2eb0451843099c31ba78d",
+ "run_id": 946,
+ "summary": "The M1 fix (O-019) is correct and tested, but I found one more gap that lets the parity check report AGREE over real drift.\n\n**The fix.** It is in commit 0120c5f. Read-Entries in `eng/rules-parity.ps1` (lines 211-224) now skips blank lines and comment-only lines inside a `must_not_match` list. The list ends only at a line that is neither, indented no deeper than the key, and the loop still stops at the next entry or the settled marker. `RuleCases.ps1` C-005 gained four rows, each putting a yaml-only pattern after a gap: a blank line, a comment at the key's indent, a deeper comment, and a blank line plus a comment. Each must give DRIFT. A control row, a blank line and a comment between two real items, must still give AGREE. I read the tests and they feed those shapes in.\n\n**What I re-ran on this tree:**\n- Parity gives AGREE under both powershell.exe and pwsh (7 Facts, 10 twinned entries, 21 patterns, 7 settled).\n- RuleCases C-001 to C-005: 8, 34, 26, 26 and 90 checks, none failing.\n- RuleCopiesAgreeTests plus ArchitectureRulesTests: 8/8.\n- Fitness: 17 rules hold.\n- The full harness against the real engine: CLEAN, 32/32 rows AS-RECORDED, exit 0. That makes five runs with the same verdict for every row.\n- `git status` was unchanged afterwards.\n\n**The new gap (M2).** It is in the same reader, so I should have caught it in attempt 1. An entry opened by a bare `  -` line, with `name:` on the next line, is legal YAML. When it is the first entry after `rules:`, the reader never sees it. I checked this on a temp copy: such a yaml-only rule gave AGREE, exit 0, while `yaml.safe_load` read 18 rules. The same spelling later in the list makes a must_not_import entry pass without a word, even though the normal `  - name:` spelling of that entry gives CANNOT-READ.\n\n**Stale statements.** Nothing else in the files I passed described the old stop-at-blank behaviour, so none are now false. The C-005 title was updated. The only change in behaviour is correct: a comment deeper than the key, which used to exit 2, is now skipped as YAML does.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The M1 fix (O-019) is correct and tested, but I found one more gap that lets the parity check report AGREE over real drift.\n\n**The fix.** It is in commit 0120c5f. Read-Entries in `eng/rules-parity.ps1` (lines 211-224) now skips blank lines and comment-only lines inside a `must_not_match` list. The list ends only at a line that is neither, indented no deeper than the key, and the loop still stops at the next entry or the settled marker. `RuleCases.ps1` C-005 gained four rows, each putting a yaml-only pattern after a gap: a blank line, a comment at the key's indent, a deeper comment, and a blank line plus a comment. Each must give DRIFT. A control row, a blank line and a comment between two real items, must still give AGREE. I read the tests and they feed those shapes in.\n\n**What I re-ran on this tree:**\n- Parity gives AGREE under both powershell.exe and pwsh (7 Facts, 10 twinned entries, 21 patterns, 7 settled).\n- RuleCases C-001 to C-005: 8, 34, 26, 26 and 90 checks, none failing.\n- RuleCopiesAgreeTests plus ArchitectureRulesTests: 8/8.\n- Fitness: 17 rules hold.\n- The full harness against the real engine: CLEAN, 32/32 rows AS-RECORDED, exit 0. That makes five runs with the same verdict for every row.\n- `git status` was unchanged afterwards.\n\n**The new gap (M2).** It is in the same reader, so I should have caught it in attempt 1. An entry opened by a bare `  -` line, with `name:` on the next line, is legal YAML. When it is the first entry after `rules:`, the reader never sees it. I checked this on a temp copy: such a yaml-only rule gave AGREE, exit 0, while `yaml.safe_load` read 18 rules. The same spelling later in the list makes a must_not_import entry pass without a word, even though the normal `  - name:` spelling of that entry gives CANNOT-READ.\n\n**Stale statements.** Nothing else in the files I passed described the old stop-at-blank behaviour, so none are now false. The C-005 title was updated. The only change in behaviour is correct: a comment deeper than the key, which used to exit 2, is now skipped as YAML does.",
+  "findings": [
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "missing-edge-cases",
+    "claim": "The reader misses an entry opened by a bare dash line: `  -` with `name:` on the next line, which is legal YAML and which PyYAML, and so Fitness, reads as an entry. The entry scan only knows `^(\\s*)-\\s+name\\s*:`, and its catch-all refusal `^  -\\s` needs a character after the dash. A bare `  -` line therefore matches neither pattern and is never recognised as an entry. Two results, both checked on a temp copy. (a) As the first entry after `rules:`, a yaml-only rule in this form ('AYamlOnlyRule (*.cs)', must_not_match '(?m)OnlyInYaml') lies before any recognised entry and is never read: 'rules-parity: AGREE 7 facts <- 10 twinned entries, 21 patterns', exit 0, while yaml.safe_load reads 18 rules. (b) Further down the list, the entry is folded into the one before it. If it has a must_not_match, that gives a misleading 'two must_not_match keys' (exit 2). If it is a must_not_import rule, it gives AGREE, exit 0, where the same entry spelled `  - name:` gives 'has no must_not_match' (exit 2). This is the same consequence as M1: a rule Fitness enforces and xUnit does not gets past RuleCopiesAgreeTests. It is the C-003 shape ('a yaml entry above the settled marker with no Fact') in a spelling the reader neither reads nor refuses, which breaks the design's rule that both readers refuse any shape they cannot classify.",
+    "evidence": "eng/rules-parity.ps1:187-193. Line 188 is `if ($lines[$i] -cmatch '^(\\s*)-\\s+name\\s*:')`. Line 192 is `elseif ($lines[$i] -cmatch '^  -\\s') { Stop-Reading ... \"an entry that does not start with 'name:'\" }`. Lines are split on `\\r?\\n`, so a bare `  -` has nothing after the dash for `\\s` to match. No case in tests/rules/RuleCases.ps1 (C-003 at 233-261, C-005 at 290-364) feeds this spelling.",
+    "fix": "At eng/rules-parity.ps1:192, change the refusal regex from '^  -\\s' to '^  -(\\s|$)', so a bare `  -` line anywhere in the list exits 2 with file:line. Add a C-005 (or C-003) row that puts a `  -` / `    name: ...` entry first after `rules:` and one before the settled marker, and requires CANNOT-READ under both powershell.exe and pwsh, never AGREE."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "eng/rules-parity.ps1:211-224: `if ($line.Trim().Length -eq 0 -or $line -cmatch '^\\s*#') { continue }` comes before the indent-based break, and the loop is bounded by `$end`. tests/rules/RuleCases.ps1:342-364 has the four hidden-pattern rows (each DRIFT 2 unpaired with \"only in yaml 'OnlyInYaml'\") and the AGREE control. C-005 gave 90 ok and 0 FAIL in my run under both shells. This closes the shapes M1 named. M2 is a separate entry-level shape."
+   },
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "The full harness re-ran on 0120c5f: CLEAN, then 32/32 AS-RECORDED, exit 0. That is the same per-row verdicts as the builder's three runs and my attempt-1 run, five runs in all. harness.py is unchanged since attempt 1. Owed to validate-slice, which should still run it on its own."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "eng/rules-harness/harness.py:434-442 is unchanged: the two-step rename, then a listdir check that the new case is shown and the old is not, else PLANT-BROKEN. D3, D4 and D9 are AS-RECORDED in today's run."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "harness.py:518-523 and 658-662 are unchanged: a split row whose two outcomes match gets DIVERGENCE-CLOSED, and any label other than AS-RECORDED gives exit 1. C-014 held 5/5 in my attempt-1 run, and neither harness.py nor divergences.json has changed since."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "harness.py:667 is unchanged: `--engine-root` is required with no default. load_engine at 99-125."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "RuleCases C-001 8/8 on the fixed reader, under both shells."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "RuleCases C-002 34/34 on the fixed reader."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "RuleCases C-003 26/26 on the fixed reader, for the shapes the case lists. The bare-dash spelling is not fed (M2)."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "RuleCases C-004 26/26 on the fixed reader."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "RuleCases C-005 90 ok, 0 FAIL on the fixed reader, covering every listed shape plus the O-019 rows."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "harness.py is unchanged since my attempt-1 run of C-006 (17/17)."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "Today's harness run printed 'clean: xunit 7 Facts, 0 hits | fitness pass, 17 rules, 43 files read ... CLEAN'. C-007 held 9/9 in attempt 1, and the builder re-ran it after the fix."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "Today's run: F01-F16 all AS-RECORDED (32/32 rows). The C-008 bites held in attempt 1, and neither plants.json nor harness.py has changed."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "Today's run: P07c-e AS-RECORDED. The C-009 bites held in attempt 1; the code is unchanged."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "Today's run: D1 and D2 AS-RECORDED (xunit fire, fitness quiet)."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "Today's run: D6, D7, D10, D11 and D13 AS-RECORDED."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "Today's run: D3, D4 and D9 AS-RECORDED. The C-012 bite held in attempt 1."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "Today's run: D5 AS-RECORDED (xunit quiet, fitness fire)."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "C-014 5/5 in attempt 1; harness.py and divergences.json are unchanged."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:194-202 runs parity on the real repo under both shells, with and without -ExpectFacts 7. 8/8 today."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:204-231: yaml typos in a split scope entry and in a one-scope twin, and one pattern dropped from C# and one from yaml. 34/34 today."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:233-261: the twin deleted, a split Fact changed, a new entry above the marker (spelled `  - name:`), and the same entry below a new marker. It does not feed the bare `  -` entry spelling (M2)."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:263-288: (?m) stripped, the BOM guard in lower, upper and mixed case and as a literal U+FEFF, and the BOM guard without '?'. 26/26 today."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:290-364: all the listed unclassifiable C# and yaml shapes, plus the four new yaml-only-pattern-after-a-gap rows (DRIFT) and the blank+comment control (AGREE). 90 ok today under both shells."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:343-376 (unchanged): a missing root, the repo as the root, no argument, a fake engine lacking 'unran' that also checks TAAD3_HOME, and a taad3 that raises on import. 17/17 in attempt 1."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:378-392 (unchanged): the clean scenario plus the stray-DllImport bite. Today's full run printed CLEAN."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:396-417 (unchanged): F01-F16 inserted into existing files, plus the yaml-scope and xUnit-scope bites. F01-F16 AS-RECORDED today."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1:419-437 (unchanged): P07c-e appended to the three exempted files, plus the FIRED-WHEN-EXEMPT and dropped-exemption bites."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "D1 (a new file under packages/) and D2 (under dist/), AS-RECORDED today."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "D6 and D11 (UTF-16LE with BOM), D7 and D10 (padded past 2 MB), and D13 (cp1252 with byte 0xE9), each carrying a violating line. AS-RECORDED today."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "D3, D4 and D9 are real case-only renames through '.fsa-rename', checked with listdir (harness.py:420-443). AS-RECORDED today; the PLANT-BROKEN bite held in attempt 1."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "D5 inserts 'using' and '    System.Windows;' on two lines of Scanner.cs. AS-RECORDED today."
+   },
+   {
+    "key": "C-014",
+    "exercised": "yes",
+    "evidence": "RuleCases.ps1 C-014 (unchanged) flips D13's recorded fitness outcome in a temporary row file and requires DIVERGENCE-CLOSED and exit 1. 5/5 in attempt 1."
+   }
+  ],
+  "matches_design": true,
+  "drift": [
+   "Nothing new departed from the design in attempt 2. The only change in behaviour: a comment line deeper than the key inside a must_not_match list used to exit 2 ('runs onto the next line') and is now skipped. That matches YAML's own reading and the design's intent that the reader agree with what Fitness reads.",
+   "Still undeclared from attempt 1, and unchanged. harness.py applies each scenario's rows in batches, each with its own test run, Fitness run and restore (divergences runs as 2 batches, because D4 and D9 both rename TestNative.cs); the design described one apply/test/restore per scenario. Attribution widens a row's line window back over the blank lines before its first planted line ('lead', harness.py:378-382 and 495), which no current row exercises. create-with accepts encoding 'utf8' (D7, D10), which is not in the design's list.",
+   "Declared and still true: 7 settled entries and 17 Fitness rules instead of 4 and 14. --engine-root is required, with no TAAD3_BACKEND fallback. The harness has extra options. tests/rules/RuleCases.ps1 was added. D13 pins cp1252 as an agreement, because the design's case 11 premise was measured false."
+  ],
+  "unreviewed": [
+   ".taad/slices/SL-031/build-slice-1.json: the builder's own account of attempt 1. Not opened; its claims were in the brief and I checked them against the tree.",
+   ".taad/slices/SL-031/build-slice-2.json: the builder's own account of attempt 2 (untracked). Not opened, for the same reason.",
+   ".taad/slices/SL-031/code-review-1.json: my own attempt-1 record, which this pass replaces. Not re-read.",
+   ".taad/slices/SL-031/index.json: an engine-derived index, not code; it changed only by gaining attempt lines. Not re-read this pass."
+  ]
+ }
+}

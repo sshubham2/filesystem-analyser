@@ -115,9 +115,11 @@ function Edit-File([string] $root, [string] $rel, [string] $old, [string] $new, 
     [System.IO.File]::WriteAllText($path, $text, $Utf8)
 }
 
-function Get-LineOf([string] $root, [string] $rel, [string] $needle) {
+function Get-LineOf([string] $root, [string] $rel, [string] $needle, [switch] $Exact) {
     $lines = [System.IO.File]::ReadAllLines((Join-Path $root $rel), $Utf8)
-    for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i].Contains($needle)) { return $i + 1 } }
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if (($Exact -and $lines[$i] -ceq $needle) -or (-not $Exact -and $lines[$i].Contains($needle))) { return $i + 1 }
+    }
     throw "case setup: $(Show $needle) is not in $rel"
 }
 
@@ -361,6 +363,23 @@ function Case-C005 {
         param($root)
         Edit-File $root $YamlRel "      - '(?m)EnumerationOptions'`n" ("      - '(?m)EnumerationOptions'`n`n    # a note`n")
     } 0 @('rules-parity: AGREE 7 facts <- 10 twinned entries, 21 patterns')
+
+    # An entry opened by a bare dash, with name: on the next line: legal YAML that Fitness reads as a rule,
+    # so the reader must refuse it wherever it sits, never skip it or fold it into its neighbour (O-020).
+    $bareBody = "    name: 'AYamlOnlyRule (*.cs)'`n    files: 'src/**/*.cs'`n    must_not_match:`n      - '(?m)OnlyInYaml'`n    including_comments: true`n`n"
+    $bare = @(
+        @('first after rules:', "rules:`n", ("rules:`n  -`n" + $bareBody), '  -'),
+        @('just above the settled marker', '  # settled by SL-023', ("  -`n" + $bareBody + '  # settled by SL-023'), '  -'),
+        @('at column 0, first after rules:', "rules:`n", ("rules:`n-`n" + $bareBody), '-')
+    )
+    foreach ($shape in $bare) {
+        $name, $old, $new, $dash = $shape
+        Test-Parity "a bare-dash entry $name" {
+            param($root)
+            Edit-File $root $YamlRel $old $new
+            "rules-parity: CANNOT-READ .taad/fitness.yaml:$(Get-LineOf $root $YamlRel $dash -Exact): an entry that does not start with 'name:' on its dash line"
+        } 2
+    }
 }
 
 function Case-C006 {

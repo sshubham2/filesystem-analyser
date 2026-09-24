@@ -189,7 +189,9 @@ function Read-Entries {
             if ($Matches[1] -cne '  ') { Stop-Reading "${YamlRel}:$($i + 1)" 'an entry that is not indented two spaces' }
             if ($i -lt $markerAt) { $starts.Add($i) } else { $settled++ }
         }
-        elseif ($lines[$i] -cmatch '^  -\s') { Stop-Reading "${YamlRel}:$($i + 1)" "an entry that does not start with 'name:'" }
+        # Any other dash at the entries' depth or shallower, including a bare '  -' with name: on the next
+        # line, is an entry YAML reads and this does not: refuse it. List items sit deeper and never match.
+        elseif ($lines[$i] -cmatch '^ {0,2}-(\s|$)') { Stop-Reading "${YamlRel}:$($i + 1)" "an entry that does not start with 'name:' on its dash line" }
     }
 
     $entries = New-Object System.Collections.Generic.List[object]
