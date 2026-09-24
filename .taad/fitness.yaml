@@ -10,15 +10,25 @@
 # The name is the [Fact]'s method name with the scope in parentheses, so a violation here points at
 # the xUnit test that fails with it. Five rules, eight entries.
 #
-# Fitness matches whole-file text and xUnit matches one line at a time, so \s and [^)]* may span a
-# line break here and not there, and a (?m)^\s* match is reported at the first of any blank lines
-# before the offending line. In a UTF-8 file under 2 MB, with or without a byte-order mark, every
-# violation xUnit reports is also reported here in the same file; only that line number can differ.
-# KNOWN DIVERGENCES, where xUnit fails and these rules pass: a UTF-16 (or UTF-32) file, because
-# Fitness decodes every file as UTF-8 with errors replaced, so no pattern here can match it; and a
-# file over 2 MB, which Fitness skips unread. No pattern in this repo can close either one. The fix
-# is in the engine (taad3/fitness.py, where it opens and sizes covered files). Until then the xUnit
-# test is the backstop.
+# ArchitectureRulesTests (xUnit) is the authority. These rules are a quicker copy of it that the
+# engine can run at every gate, and they can pass where xUnit fails. Known differences, given as
+# examples and not as a complete list:
+#   - A match that spans a line break. Fitness matches whole-file text and xUnit one line at a time,
+#     so \s, [^)]* and [^>]* can cross a line break here and not there: `using` and `System.Windows;`
+#     on two lines fail here and pass xUnit. A (?m)^\s* match is also reported at the first of any
+#     blank lines before the offending line, so the line number can differ.
+#   - A file that is not UTF-8, such as UTF-16 or UTF-32. Fitness decodes every file as UTF-8 with
+#     errors replaced, so no pattern here matches it; xUnit decodes it by its byte-order mark and
+#     fails it.
+#   - A file over 2 MB, which Fitness skips unread.
+#   - A file under a folder the engine skips by name at any depth (SKIP_DIRS in taad3/fitness.py):
+#     packages/, dist/, target/, node_modules/, venv/, .venv/, .vs/, .idea/, .next/, __pycache__/,
+#     .git/ and more, besides bin/ and obj/. xUnit skips only bin/ and obj/.
+#   - Upper and lower case in an exempted file's name. Fitness's except_files ignore case and xUnit's
+#     .Except([...]) does not, so a case-only rename of an exempted file such as EntryClassifier.cs
+#     or TestNative.cs fails xUnit and passes here.
+# No pattern in this repo can close the last four; the fixes belong in the engine. Until then the
+# xUnit test is the backstop.
 #
 # AUTHORING RULES, for anyone editing or appending (by hand or through a design's architecture_rules).
 # Each one exists because breaking it makes a rule pass silently:
@@ -35,7 +45,8 @@
 #   - Every regex is a YAML single-quoted scalar ('' for a quote). Double quotes turn \b into a
 #     backspace and reject \s.
 #   - Every `files` glob is rooted at src/ or tests/. A bare **/*.cs also reads the gitignored .dotnet/,
-#     artifacts/ and TestResults/, which Fitness does not prune (it prunes bin/ and obj/ by name).
+#     artifacts/ and TestResults/, which Fitness does not prune (it prunes only a fixed list of
+#     directory names, such as bin/, obj/ and packages/).
 #   - A glob must match at least one file. op=check lists any rule that MATCHED NO FILES; that list
 #     must stay empty.
 #   - `rules:` stays the only top-level key and the last thing in the file, with entries indented two
