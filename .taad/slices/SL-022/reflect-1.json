@@ -1,0 +1,127 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-022",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-09-24T13:01:58.052Z",
+ "head": "8eb711ac7461960d98e810eff6cad8faa16c7bb9",
+ "run_id": 819,
+ "summary": "SL-022 hand-wrote .taad/fitness.yaml, 8 must_not_match entries, one per (xUnit Fact, scope glob) pair, translated from ArchitectureRulesTests.cs. Fitness now reads '8 rule(s) checked ... Every declared rule holds', which closes C1, C2 and C4. C3's mechanism half was left to the engine by decision (Q-009). The rules were right at attempt 1: validate #4 found 16 of 16 planted violations matching xUnit. Attempts 2 and 3 were both spent correcting false prose in the file's header about how Fitness and xUnit differ, so the slice ran 3 builds, 5 code reviews and 5 validates for one comment block. The file had not reached uat when the slice ended, and no slice cut after the merge has been observed reading it.",
+ "payload": {
+  "status": "complete",
+  "summary": "SL-022 hand-wrote .taad/fitness.yaml, 8 must_not_match entries, one per (xUnit Fact, scope glob) pair, translated from ArchitectureRulesTests.cs. Fitness now reads '8 rule(s) checked ... Every declared rule holds', which closes C1, C2 and C4. C3's mechanism half was left to the engine by decision (Q-009). The rules were right at attempt 1: validate #4 found 16 of 16 planted violations matching xUnit. Attempts 2 and 3 were both spent correcting false prose in the file's header about how Fitness and xUnit differ, so the slice ran 3 builds, 5 code reviews and 5 validates for one comment block. The file had not reached uat when the slice ended, and no slice cut after the merge has been observed reading it.",
+  "estimate_error": "Opened medium, low risk, one designer, sized by a person. Low risk was right on impact: nothing under src/ or tests/ changed and xUnit stayed the backstop. It was wrong on effort, in the direction of too little scrutiny for the part that mattered. The low tier skipped critique and critique-review by sizing, so no gate looked at the design before build. The design had collapsed spike 4's constraint (skips bin, obj, .vs, packages, dist, target, node_modules and more) into 'bin/obj by name only', and its per-line-versus-whole-text reasoning stopped at `$`. Both fed the header claims that cost two laps. The risk sat in the comment block, not the eight patterns. Expect two laps on any low-tier config slice whose file carries prose claiming equivalence with another enforcer.",
+  "what_went_wrong": [
+   "Two full build, code-review and validate laps (attempts 2 and 3) went to header comment text. Validate #4 had already found all 8 rules behaving correctly, with 16 of 16 planted violations equal to xUnit. Only the prose was wrong.",
+   "The divergences between Fitness and xUnit were found one class per lap, though all six were readable in taad3/fitness.py in one pass. Lap 1 found decode and BOM (m1, fitness.py:422). Lap 2 found skip-by-name (:325-327, :408) and re.I versus ordinal .Except (:216, m2). Lap 3, by the builder's own measurement, found the split-line false positive (D5). The 2 MB skip (:420) and UTF-16 were named along the way. This is the one-straggler-a-lap pattern from a-judge-with-no-memory.",
+   "Attempt 2's fix made the header claim stronger where the m1 decision asked for it to be narrower. The decision said to name UTF-16 as a known divergence. The builder wrote 'in a UTF-8 file under 2 MB, with or without a BOM, every violation xUnit reports is also reported here', and that was false (m2). Attempt 3 only came out right because the builder measured on a scratch copy before writing.",
+   "The design case text said 'the engine prunes bin/obj by name only'. Spike 4's own constraint listed bin, obj, .vs, packages, dist, target, node_modules and more. The header repeated the collapsed version.",
+   "The design's per-line-versus-whole-text reasoning stopped at `$` (the `\\r?` transform). `^\\s*using\\s+` also matches across newlines in whole-file text. A split `using` fires Fitness and passes xUnit. A blank line before a using directive reports :11 in Fitness against :12 in xUnit.",
+   "Validate's last lap re-ran everything for a diff of `#` lines only: the full-suite build (86/86), the 16-plant copy and six divergence measurements. Code-review had an incremental mode for that lap and validate did not.",
+   "The measurement harnesses live in %TEMP% (%TEMP%\\sl022-fitness\\divergences.ps1, %TEMP%\\sl022-val3\\analyse3.py). They are not in the repo, so the next slice that edits a rule rebuilds them from scratch.",
+   "The 'everything left open so far' block still lists build-check C1-C4 as 'missing' and design questions Q-009 and Q-010, all settled by the build or by a person. A reader has to cross-check it against later stage passes."
+  ],
+  "missed": [
+   {
+    "gate": "code-review",
+    "dimension": "unfounded-assumptions",
+    "severity": "minor",
+    "what": "The first code-review pass found the BOM divergence (m1) but accepted header claims that Fitness and xUnit 'fail on the same files' and that Fitness prunes only bin/obj. The rules never changed between attempts, so these divergences were already in attempt 1's file and were readable in taad3/fitness.py. They are skip-by-name (:325-327, :408), re.I versus ordinal .Except (:216), the 2 MB skip (:420) and UTF-16 decode (:422). Review should have checked each header equivalence claim against the engine's whole read path (walk, prune, size, decode, glob case, whole-text versus per-line) instead of stopping at the first divergence it measured.",
+    "caught_by": "code-review on the next lap (m2, attempt 2's review), then enforced by validate #4 as O-008. The extra lap was a full build, review and validate."
+   },
+   {
+    "gate": "code-review",
+    "dimension": "missing-edge-cases",
+    "severity": "minor",
+    "what": "Every shape planted across the reviews and validates was a false-pass (Fitness misses what xUnit catches). Nobody planted the reverse. `(?m)^\\s*using\\s+...` runs on whole-file text, so `\\s` crosses newlines. A `using` split across two lines fails Fitness at Scanner.cs:6/7 while xUnit passes, and a blank line before a using directive reports :11 in Fitness against :12 in xUnit. The header had said only the line number could differ.",
+    "caught_by": "the builder's own scratch measurement in attempt 3 (D5), then confirmed by validate #5's DIV3 copy"
+   }
+  ],
+  "learned": [
+   {
+    "kind": "codebase",
+    "lesson": "For the FsAnalyser architecture rules, .taad/fitness.yaml (8 entries) and tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs are the only current sources. The SL-020 design record .taad/slices/SL-020/design-slice-1.json holds four pre-amendment rules and was deliberately not back-filled. Do not derive rules from slice records. Any rule edit must change both files, and the yaml header names xUnit as the authority.",
+    "evidence": "Survey: design-slice-1.json:183-234 has 4 rules with no interop rule, no widened reparse rule and no extended never-skipped rule. O-001 found each of the 8 yaml patterns equal to its xUnit literal plus a leading (?m)."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "Fitness (taad3/fitness.py) and xUnit are two enforcers with measured differences. Fitness reads utf-8 with errors=replace (:422), so BOM and UTF-16 need an escape or are missed. It skips files over 2,000,000 bytes (:420). It prunes a fixed list of directory names, including packages and dist, where xUnit prunes only bin and obj. It compiles except_files with re.I (:216) where .Except is ordinal. It matches whole-file text, so `\\s` crosses newlines. The CLI exits 0 on a violated verdict. The yaml header now records these as examples, not a complete list. Read it before editing a rule.",
+    "evidence": "Attempt 3 D1-D5 measured; validate #5 DIV3 re-measured target/, Testnative.cs, a 2,091,043-byte file, a UTF-16 file and a split `using`; spikes 1 and 4 saw all 10 violated copies exit 0."
+   },
+   {
+    "kind": "process",
+    "lesson": "A prose claim in a deliverable that two enforcers agree is a claim to be measured before it is written, in both directions (Fitness passes where xUnit fails, and the reverse). Reasoning about equivalence was wrong three times here (attempt 1 'same files', attempt 2 'every violation', the design's 'bin/obj only'). Measuring on a scratch copy before writing passed on the first try in attempt 3. When a decision asks to narrow a claim, delete or narrow it; do not restate it stronger.",
+    "evidence": "m1 asked to name UTF-16 as a divergence, attempt 2 added a parity guarantee, and that became m2. Attempt 3 measured D1-D5 first and closed O-008 in one lap."
+   },
+   {
+    "kind": "process",
+    "lesson": "A design that mirrors one check in another engine should read the mirror engine's whole read path once (walk, prune, size, decode, glob case, per-line versus whole-text) and list every divergence up front, as cases. This design's 13 cases covered anchors, comments, globs, CRLF and build output, but not decode, size, case or multi-line.",
+    "evidence": "Five of the six header-named differences were found only in later laps, though all sit in a few lines of fitness.py."
+   },
+   {
+    "kind": "process",
+    "lesson": "Both minors this slice were decided accepted-pending and each spent a full lap. m1 was a real pattern gap (line-1 BOM). m2 changed only comments and still triggered a full-suite build, 16 plants and six divergence measurements at validate. Apply a-minor-is-not-worth-a-lap: a comment-only fix should ride the next real change, or be carried to the backlog, unless it makes a stated guarantee false.",
+    "evidence": "Validate #5 re-ran the 86/86 suite and both plant copies for a diff of `#` lines only."
+   },
+   {
+    "kind": "risk",
+    "lesson": "The file helps only slices cut after SL-022 merges. Fitness reads <slice worktree>/.taad/fitness.yaml only, and uat did not have the file when this slice ended. A slice cut or resumed before the merge reads NONE. Per Q-010, SL-021 if resumed adds its rules to the trunk file and does not create it, and rebases onto trunk if its branch adds the file.",
+    "evidence": "Validate #5 criterion 13 failed (`git ls-tree uat -- .taad/fitness.yaml` empty). Spike 2: a trunk-only file gives NONE. Q-010 was answered."
+   },
+   {
+    "kind": "design",
+    "lesson": "A later slice that declares architecture_rules gets rules appended by design._append_rules without including_comments and without (?m), at a two-space indent. The record schema has no field for either. Put an inline (?m) in must_not_match, accept that comment-only violations pass, or hand-edit the file. O-004 checked only that the append keeps the existing 8 entries as an exact prefix and gives 9 loadable rules.",
+    "evidence": "Validate #5 read design.py:940-1068 against the header. Spike 1: a bare ^ fires only on line 1, and a comment-only plant passes without the flag."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "This machine has no .NET 10 SDK. eng/dotnet.ps1 downloads 10.0.401 into each worktree's .dotnet (5,578 files, 770 MB, about 44 s to build), and xUnit in any scratch copy needs DOTNET_ROOT and PATH pointed at one. Reuse another slice's .dotnet, as spike 1 did from filesystem-analyser-v2-wt/SL-022/.dotnet. A spike that plants violations should budget for it.",
+    "evidence": "Survey side effect (SDK installed into the worktree). Spike 1 (copied an SDK). Spike 4 (downloaded one into a clone)."
+   },
+   {
+    "kind": "process",
+    "lesson": "At reflect, the 'everything left open so far' block does not filter out criteria the build later met or questions a person answered. Cross-check it against later stage passes and the ANSWERED list before treating any line as work.",
+    "evidence": "At the end of this slice it still lists C1-C4 as 'missing' and Q-009 and Q-010, all resolved."
+   }
+  ],
+  "candidates": [
+   {
+    "title": "Verify the file survives merge and is read by the next slice: after SL-022 merges to uat, confirm commit-slice, merge and reflect leave .taad/fitness.yaml intact, and the first slice cut afterwards reads 8 rules at its own validate",
+    "urgency": "now",
+    "why": "Validate could not observe the merge (uat has no file yet). Survival through commit-slice, merge and reflect was measured only in spike 3's scripted-model run, and criterion 13 failed. Every later slice's gate depends on this."
+   },
+   {
+    "title": "Engine (taad_v3): make Fitness report what it did not read, and add an option for case-sensitive exemptions",
+    "urgency": "soon",
+    "why": "fitness.py skips packages, dist, target, node_modules and more by name (:325-327, :408). It silently skips files over 2 MB (:420) and decodes non-UTF-8 as errors=replace (:422, so BOM and UTF-16 slip through). It compiles except_files with re.I (:216). A rule can pass over files it never read while the covered glob still counts as matched. Prune by .gitignore, or list skipped files in the report."
+   },
+   {
+    "title": "Engine (taad_v3): let a declared architecture rule ask for comments and line anchors",
+    "urgency": "soon",
+    "why": "_append_rules writes neither including_comments nor (?m), and the record has no field for either. Every later slice that declares rules silently gets a rule that fires only on line 1 and ignores comment-only violations (spike 1). It is the mechanism half of C3 that this slice left to the engine."
+   },
+   {
+    "title": "Engine (taad_v3): a rule that matched no files must not read as a plain pass, and a violated CLI run must not exit 0",
+    "urgency": "soon",
+    "why": "The typo'd-glob control listed the rule as unmatched but the verdict stayed pass, and validate did not reach how gates treat that. `python -m taad3.fitness --op check` exited 0 on all 10 violated copies. This slice's acceptance had to be worded around both."
+   },
+   {
+    "title": "Keep the planted-violation harness (16 plants, xUnit versus Fitness, plus the divergence shapes) in the repo, with a check that ArchitectureRulesTests and fitness.yaml patterns still agree",
+    "urgency": "someday",
+    "why": "The two copies of the rules are kept in step by a header comment only. The harness that measured them is in %TEMP% (analyse3.py, divergences.ps1) and is lost after this slice. The design rejected a parser in the .NET project as over-built, so this would live under eng/ as a script."
+   },
+   {
+    "title": "Validate: an incremental scope when the fix diff is comment-only",
+    "urgency": "someday",
+    "why": "Validate #5 re-ran the 86-test build, both plant copies and the divergence measurements for a diff with no non-`#` change, while code-review already read that lap incrementally. Two minor laps cost this slice a full measurement each."
+   }
+  ],
+  "unknowns": [
+   "Do commit-slice, merge and reflect leave .taad/fitness.yaml intact on the real repo, and does the first slice cut after the merge read 8 rules at its own validate? Only spike 3's scripted model, on a scratch repo, has shown it.",
+   "How do the engine's gates treat a Fitness report whose verdict is 'pass' but whose unmatched list is non-empty? The typo control showed the rule listed, but no gate's reading of it was reached.",
+   "Does a real design stage with non-empty architecture_rules append cleanly onto this hand-written file? Only _append_rules called directly on a scratch copy was measured, and the appended rule has no (?m) or including_comments.",
+   "Is the header's list of Fitness-versus-xUnit differences complete? It says 'examples, not a complete list', and six classes were found across three laps of measurement, not by enumeration.",
+   "Are validate's Fitness runs through the MCP path (worktree-only) equal to the in-process module runs used for the planted and divergence shapes? The clean-tree text was identical; the shapes were not run through MCP."
+  ]
+ }
+}
