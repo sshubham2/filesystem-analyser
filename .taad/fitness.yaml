@@ -282,3 +282,65 @@ rules:
     because: 'C-012 and O-016 assert exit 70, which only the app''s own handlers may produce.
       A hook that exits or shuts down the process makes those cases unable to fail. The throw
       spike relied on exactly this: with the handler removed the exit was 0xE0434352, not 70.'
+
+  # settled by SL-038
+  - name: the stopping wording is a pure function of elapsed time
+    files: src/FsAnalyser.App/StoppingWait*.cs
+    must_not_import:
+    - System.Windows*
+    - System.IO*
+    - Microsoft.Win32*
+    must_not_match:
+    - \bDriveInfo\b
+    - \b(?:Directory|File)\.\w+\(
+    because: The file is also compiled into Core.Tests, which has no WPF, so a WPF type breaks
+      that build. The UI-thread tick that calls it must never touch a drive or share that may
+      be stalled (spike 3's invariant), or the line that explains the hang would itself hang.
+  - name: Cancel does not abandon the scan thread
+    files: src/FsAnalyser.App/**/*.cs
+    must_not_match:
+    - '[Ss]can\w*\.WaitAsync\('
+    - '\bScan\(.*\.WaitAsync\('
+    - 'Task\.WhenAny\(.*[Ss]can'
+    because: Racing the scan against the cancel token returns the window while the scan thread
+      keeps writing into a store the app has moved on from. That is option (a) and it is not
+      decided. It brings unbounded retention against the 1 GB budget and needs a late-write
+      fence in the Scan Engine at counting-rule risk. The existing WaitAsync(token) on the post-scan
+      volume query is legitimate. If the pattern hits it on trunk, narrow the pattern, do not
+      delete the rule. The first pattern has no leading \b because an underscore is a word character,
+      so \b[Ss]can let _scanTask.WaitAsync( through (SL-038 critique m2); the second catches a scan
+      started and awaited against the token in one expression.
+  - name: only the rig changes the machine's SMB mappings
+    files: tests/**/*.cs
+    must_not_match:
+    - '\b(?:New|Remove)-SmbMapping\b'
+    - '\bNew-SmbGlobalMapping\b'
+    - '(?i)\bnet(?:\.exe)?\s+use\b'
+    - '\bWNet(?:Add|Cancel)Connection'
+    because: A default dotnet test or a build-check that maps or unmaps SMB shares changes machine
+      state, which build-check refused to do. Spike 1 also found the old `fsa<8hex>` sweep deleting
+      other concurrent runs' mappings. The rig file makes the only mapping and removes only its own
+      and, under its machine-wide lock, the rig mappings a killed run left behind (127.0.0.1 and
+      fsa<8hex>, never another server's). One entry per file type, because files takes one glob.
+    except_files:
+    - tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs
+  - name: only the rig changes the machine's SMB mappings (tests ps1)
+    files: tests/**/*.ps1
+    must_not_match:
+    - '\b(?:New|Remove)-SmbMapping\b'
+    - '\bNew-SmbGlobalMapping\b'
+    - '(?i)\bnet(?:\.exe)?\s+use\b'
+    - '\bWNet(?:Add|Cancel)Connection'
+    because: The cmdlets are PowerShell, and WindowCases.ps1 runs the stall rig's lifecycle, so it is
+      where a 'clean up after a killed rig' removal would naturally go. That is the cross-run deletion
+      this rule exists to stop, and a loose filter there could remove a person's own mapped drive.
+      The rig sweeps its own leftovers; scripts only read mappings (Get-SmbMapping).
+  - name: only the rig changes the machine's SMB mappings (eng ps1)
+    files: eng/**/*.ps1
+    must_not_match:
+    - '\b(?:New|Remove)-SmbMapping\b'
+    - '\bNew-SmbGlobalMapping\b'
+    - '(?i)\bnet(?:\.exe)?\s+use\b'
+    - '\bWNet(?:Add|Cancel)Connection'
+    because: As for tests ps1. Build and validation tooling never maps or unmaps a share; only the
+      rig file does.

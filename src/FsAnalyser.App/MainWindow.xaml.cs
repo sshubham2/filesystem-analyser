@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -25,12 +26,17 @@ public partial class MainWindow : Window
     private ScanProgress? _progress;
     private ScanResult? _result;
     private bool _scanning;
+    private Stopwatch? _stoppingClock; // from Cancel until the scan returns; null otherwise
 
     public MainWindow(string? launchPath)
     {
         InitializeComponent();
         _launchPath = launchPath;
-        _timer.Tick += (_, _) => ShowProgress();
+        _timer.Tick += (_, _) =>
+        {
+            ShowProgress();
+            ShowStopping();
+        };
     }
 
     /// <summary>
@@ -161,6 +167,7 @@ public partial class MainWindow : Window
         finally
         {
             _timer.Stop();
+            EndStopping(); // every ending: cancelled, failed, or finished before the cancel took effect
             ScanningPanel.Visibility = Visibility.Collapsed;
             _cancel.Dispose();
             _cancel = null;
@@ -220,11 +227,29 @@ public partial class MainWindow : Window
         }
     }
 
+    // Cancel does not abandon the scan: the window waits for it to return, however long the drive takes
+    // (SL-038). On a share that stopped answering that is the SMB client's timeout, and the Stopping state
+    // says so once 2 s have passed. The progress timer keeps running until the scan returns.
     private void OnCancel(object sender, RoutedEventArgs e)
     {
         _cancel?.Cancel();
         CancelButton.IsEnabled = false;
         ScanningTitle.Text = "Stopping...";
+        _stoppingClock = Stopwatch.StartNew();
+    }
+
+    // Derived from the clock alone on every tick: nothing here can touch the drive the scan is waiting on.
+    private void ShowStopping()
+    {
+        string? wait = _stoppingClock is { } clock ? StoppingWait.For(clock.Elapsed) : null;
+        StoppingDetail.Text = wait ?? "";
+        StoppingDetail.Visibility = wait is null ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void EndStopping()
+    {
+        _stoppingClock = null;
+        ShowStopping();
     }
 
     private void ShowProgress()

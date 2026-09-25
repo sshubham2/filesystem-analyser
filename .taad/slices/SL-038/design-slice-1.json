@@ -1,0 +1,385 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-038",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-25T04:24:20.534Z",
+ "head": "f3c3dfab762ca83e862c98317ecddf4dac4b5a5c",
+ "run_id": 1013,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "One proposal (practice), taken as the core with four changes. It fits what was measured. Spike 1 found 0/15 early returns (CancelSynchronousIo waits 57-66 s, err 121; CancelIoEx err 6), so no third 'interrupt' option exists. Spike 3 found the UI never hung (max tick gap 237 ms) through a 64-70 s stall. Spike 4 found the process gone in 345 ms or less after Close, in 6/6 runs. Those three remove the reasons to abandon the scan thread. What abandoning would still buy is starting another scan within the minute without relaunching, and it would cost a late-write fence inside the Scan Engine at counting-rule risk, an unbounded retention window against the U-001 699 MiB peak and 1 GB budget, and a lifecycle change that is expensive to back out of. Option (b) is a UI-only change, leaves the scanner and its tests alone, and does not rule out (a) later. Nothing in the survey says otherwise: the Stopping state exists (C5 partial, MainWindow.xaml.cs:223-228) and there is no abandon mechanism (C4 missing). C1 is cut and not re-designed. The rig-class extraction only lets the new window case reuse the rig and fixes spike 1's pre-removal defect, so the C1 baseline test keeps its behaviour and its trait. The four changes I made, each against a gap the proposal left. (1) The 90 s wording branch cannot be produced by the rig, because the Windows client gives up at 60 s, so the wording moves into a pure function that default-run xUnit tests can hit at its boundaries. (2) The on-screen sentence 'Closing the window quits at once' is a promise measured only in a scratch hook copy, so the repo gets an opt-in case for it. (3) The hook's marker and delay env names are taken from the spike's proven ones. (4) Retiring C4 is made explicit, so the loop does not demand both branches of one choice. C2 is still a person's call: this document recommends (b) and does not decide it.",
+  "components": [
+   {
+    "name": "StoppingWait (pure wording)",
+    "responsibility": "`internal static string? For(TimeSpan sinceCancel)`. Returns null under 2 s and for negative spans. From 2 s to under 90 s it returns 'Still waiting for the drive to answer (N s). If a network connection dropped, Windows usually gives up on its own after about a minute. Closing the window quits at once.' From 90 s it returns 'Still waiting for the drive to answer (N s). This is longer than Windows usually takes. Closing the window quits at once.' N is whole seconds, floored. The text is ASCII only. The file has no WPF, System.IO or DriveInfo use. It is also compiled into Core.Tests as a linked source file, so its boundaries run in the default suite without an App test project.",
+    "lives_at": "src/FsAnalyser.App/StoppingWait.cs",
+    "key_interactions": "Called only by the MainWindow tick. Linked into tests/FsAnalyser.Core.Tests via <Compile Include=... Link=...>, with no project reference to App."
+   },
+   {
+    "name": "Stopping state wiring",
+    "responsibility": "OnCancel keeps its current behaviour (CancelButton disabled, ScanningTitle = 'Stopping...') and also sets a nullable `_stoppingClock = Stopwatch.StartNew()`. On each existing progress-timer tick, StoppingDetail's text and visibility are derived from `_stoppingClock is null ? null : StoppingWait.For(elapsed)`. If that timer is stopped in OnCancel today, it is kept running while stopping, and no second timer is added. A single `EndStopping()` sets the clock to null and collapses the line. It is called from the completion path of the scan await (:145-146) for every outcome, cancelled, faulted or finished on its own. The tick reads a Stopwatch and sets text only. It makes no filesystem, DriveInfo or share call, so spike 3's invariant holds.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "key_interactions": "OnCancel (:223-228) starts the clock. The await at :145-146 calls EndStopping in its finally. UnlessCancelled (:185-198) and Scanner, SynchronousIoCancel and the store are untouched."
+   },
+   {
+    "name": "StoppingDetail element",
+    "responsibility": "One named, wrapping TextBlock directly under ScanningTitle, Visibility=Collapsed by default. It has no button. The window's own close is the escape.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml",
+    "key_interactions": "Written only by the MainWindow tick and EndStopping. Read by FsaWindowHook through FindName."
+   },
+   {
+    "name": "Hook: stopping log and armed-marker timing",
+    "responsibility": "After Cancel is pressed (any mode), a 250 ms DispatcherTimer on the UI thread appends `stopping ms=<since cancel> title=<ScanningTitle.Text> detail=<StoppingDetail.Text or ->` to FSA_HOOK_LOG until the window closes or the report is written. It is optional and backward compatible: with FSA_HOOK_ARMED (a marker file path) set, the hook waits for the rig's stall-armed marker, then presses Cancel at FSA_HOOK_CANCEL_DELAY_MS (default 3000) and, if set, closes the window at FSA_HOOK_CLOSE_DELAY_MS (both relative to the marker). These names are the ones spike 4's scratch copy already proved. With FSA_HOOK_ARMED unset, stop, throw and close behave exactly as today. If the marker never appears within the case timeout, the hook does not act.",
+    "lives_at": "tests/window/FsaWindowHook/StartupHook.cs",
+    "key_interactions": "Uses the same Pressable/RaiseEvent(Click) and app.MainWindow.Close() as today. WindowCases.ps1 parses the log."
+   },
+   {
+    "name": "Window cases",
+    "responsibility": "Default run: C-006 (local cancel) also asserts that every `stopping` line has detail `-`. Opt-in run (-IncludeNetwork, mirroring the Network=SMB-LOOPBACK trait exclusion) adds two cases against the StallRig. Case 1 (wait line): the first non-empty detail comes 1.9 to 3 s after Cancel, N never decreases, the report is written, the process exits 0, and detail is `-` after the scan returns. Cancel-to-return is recorded as a measured number and never asserted against 60 s. Case 2 (close escape): after Cancel then Close, and after Close with no prior Cancel, the window is gone within 1 s and the process within 5 s. Validate must run -IncludeNetwork once on purpose and record its output. It is never part of the default run.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "Builds the hook and StallRig through the existing Update-Hook path via eng/dotnet.ps1 into gitignored artifacts/. Reads the report through eng/read-window.ps1. Report schema 1 is unchanged."
+   },
+   {
+    "name": "StallRig console",
+    "responsibility": "A minimal net10.0-windows console, outside FsAnalyser.slnx and built like the hook. It links the extracted rig source, starts the loopback SMBLibrary share, makes one non-persistent New-SmbMapping under a unique name, prints the UNC root on stdout, and writes the marker file when the listing of `hung` stalls. It unmaps only the mapping it created, when stdin closes or on kill.",
+    "lives_at": "tests/window/StallRig",
+    "key_interactions": "Compiles tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs by link, with the same SMBLibrary and SMBLibrary.Win32 versions as Core.Tests (1.5.8.1). It contains no New-SmbMapping of its own. Started and stopped by the opt-in window cases."
+   },
+   {
+    "name": "Rig classes extracted",
+    "responsibility": "LoopbackShare and StallingFileStore move out of StalledShareTests into their own xUnit-free file. StalledShareTests keeps its behaviour and its Network=SMB-LOOPBACK trait. The `fsa<8hex>` mapping pre-removal is narrowed to the exact name this run created, because spike 1 showed the regex deletes other runs' mappings.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs",
+    "key_interactions": "Used by StalledShareTests and linked by StallRig. It is the only file allowed to run New-SmbMapping or Remove-SmbMapping (architecture rule)."
+   },
+   {
+    "name": "StoppingWait boundary tests",
+    "responsibility": "Default-run xUnit Facts on the linked pure function: 1.999 s gives null, 2.0 s gives the elapsed line, 89.999 s gives the 'about a minute' wording, 90 s gives the 'longer than Windows usually takes' wording, a negative span gives null, N is floored, and the text is ASCII.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/StoppingWaitTests.cs",
+    "key_interactions": "Runs in the default 120-test suite. Uses no share and no Network trait."
+   },
+   {
+    "name": "Decision record",
+    "responsibility": "Extends the section that already documents this shape. It records that the wait is kept and shown (once the person accepts), why abandoning was rejected again (spike 1, 3 and 4 numbers, the retention and late-write fence cost), that real Wi-Fi, VPN and sleep disconnects are unmeasured, and what would reopen the question: a real disconnect that never returns or waits many minutes.",
+    "lives_at": "docs/design/SL-020-scanner.md",
+    "key_interactions": "None at runtime. It cites the measured figures and does not re-measure them (C1 is cut from this slice)."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "Stopping state text",
+    "kind": "ui",
+    "notes": "0 to under 2 s after Cancel: 'Stopping...' only, as now. 2 s to under 90 s: StoppingDetail shows the elapsed-seconds line with the 'usually about a minute' clause and the close escape. 90 s and over: the line says 'longer than Windows usually takes' plus the close escape. On scan return the line collapses and the existing cancelled state follows. There is never a countdown, a promised end time, or a new button. ASCII only, so the hook log survives PowerShell 5.1's codepage. The wording does not claim the drive is a network drive ('if a network connection dropped') and no DriveType or UNC detection is added.",
+    "error_cases": "The scan never returns (a real disconnect, unmeasured): the counter keeps climbing, the 90 s wording shows, and closing the window is the escape. A local cancel returning within 2 s: the line never appears. The scan faults or finishes while Stopping: the line collapses through the same EndStopping path."
+   },
+   {
+    "name": "StoppingWait.For",
+    "kind": "function",
+    "notes": "`string? For(TimeSpan sinceCancel)`. null under 2.0 s and for negative spans, wording A from 2.0 s up to but not including 90 s, wording B from 90 s. Pure: no clock, no IO, no WPF. The caller supplies elapsed time from a Stopwatch, which is monotonic, so N cannot go down when the wall clock changes.",
+    "error_cases": "None thrown. Out-of-range input returns null."
+   },
+   {
+    "name": "Hook stopping log line and timing env",
+    "kind": "cli",
+    "notes": "`stopping ms=<int> title=<text> detail=<text|->`, one line every 250 ms after Cancel, in FSA_HOOK_LOG. Existing hook log lines are unchanged. FSA_HOOK_ARMED=<marker path>, FSA_HOOK_CANCEL_DELAY_MS and FSA_HOOK_CLOSE_DELAY_MS are optional. When FSA_HOOK_ARMED is unset, behaviour is exactly as today.",
+    "error_cases": "The marker does not appear within the case timeout: the case fails and says the rig did not arm. The hook never presses Cancel early."
+   },
+   {
+    "name": "StallRig launch",
+    "kind": "cli",
+    "notes": "`StallRig.exe --marker <path>` prints the UNC root on stdout, writes the marker when the stall is armed, and exits (unmapping only its own mapping) when stdin closes.",
+    "error_cases": "New-SmbMapping fails: exit non-zero with the error text, and the case fails without launching the app. Killed without a clean exit: the mapping is non-persistent and goes at sign-out, and the next run uses a new unique name and never deletes another run's."
+   },
+   {
+    "name": "WindowCases.ps1 -IncludeNetwork",
+    "kind": "cli",
+    "notes": "Off by default. When given, it runs the stalled-share wait-line case and the close-escape case. Each takes about 70 s and changes the machine's SMB client mapping state while it runs. Validate runs it deliberately, once, and records the measured Cancel-to-return.",
+    "error_cases": "Without the switch, nothing touches SMB mappings and the two cases are reported as not run, never as passed."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Recommend option (b) as the answer to C2: keep the wait and say so in the Stopping state. This is a recommendation for the person's decision and is not decided here. If the person accepts this design, C4 (option (a) implemented) is retired as not applicable, because C4 and C5 are the two branches of one choice. If they choose (a), this design is replaced, not extended.",
+    "reversibility": "cheap",
+    "rationale": "Spike 1 rules out an in-process interrupt (0/15 under 2 s). Spike 3 shows the UI stays live through the stall. Spike 4 shows quitting ends the wait in 345 ms or less. That leaves abandoning with only 'scan something else without relaunching', against a late-write fence in the Scan Engine at counting-rule tier, an unbounded retention window against U-001's 699 MiB peak and the 1 GB budget, and SL-020's own rejection. (b) is a UI change that does not block adding (a) later, whereas backing out of (a) means unpicking the scanner's lifecycle."
+   },
+   {
+    "decision": "The wait line appears only once 2 s have passed since Cancel and the scan has not returned.",
+    "reversibility": "cheap",
+    "rationale": "2 s is the cancel bound SL-020 already promises except for the documented slow shapes (SL-020-scanner.md:139-145), so an ordinary local cancel never flashes the line. Past 2 s the person needs an explanation. The gate is a constant in StoppingWait, testable at 1.999 s and 2.0 s."
+   },
+   {
+    "decision": "Show elapsed seconds, never a countdown or end time. The wording changes at 90 s rather than assuming the wait always ends.",
+    "reversibility": "cheap",
+    "rationale": "The ~60 s figure is measured only on the loopback rig (client SessionTimeout 60, 57-66 s). The real disconnects (spike 2) were not run, and the page fetched on SMB timeouts describes the CIFS/SMB1-era timers, not the 60 s SMB2 figure. An elapsed counter stays true whatever the real bound is. 90 s matches the ClientGivesUp figure StalledShareTests already uses."
+   },
+   {
+    "decision": "The wording lives in a pure function in its own file, `src/FsAnalyser.App/StoppingWait.cs`, linked into Core.Tests as source. This is my change to the proposal, which kept the branches inline in code-behind.",
+    "reversibility": "cheap",
+    "rationale": "The 90 s branch cannot be produced by the rig, because the Windows client gives up at 60 s and the server cannot extend it, so an inline branch would ship with no test. The project forbids an App test project and keeps xUnit in Core.Tests only. Linking one pure source file satisfies both without a new project. Moving it back inline costs one edit."
+   },
+   {
+    "decision": "No Quit button and no re-enabled Cancel. The line names the window's own close as the escape, and a second opt-in window case proves that promise. This is my addition to the proposal.",
+    "reversibility": "cheap",
+    "rationale": "The sentence 'Closing the window quits at once' is a claim on screen. It was measured (spike 4) only in a scratch hook copy. A scan thread made foreground later would turn it into a 60 s wait with nothing failing, so the repo needs its own case. A second button would duplicate close and need its own test."
+   },
+   {
+    "decision": "Scanner, SynchronousIoCancel and the store are not edited, and the scan is never abandoned in App code.",
+    "reversibility": "cheap",
+    "rationale": "This keeps the slice off the counting-rule surface, so the existing 120-test suite only has to stay green. Abandoning is option (a), which the person has not chosen. An architecture rule makes crossing it fail instead of leaving it to review."
+   },
+   {
+    "decision": "The line's state is derived each tick from a nullable Stopwatch, and a single EndStopping() in the scan await's completion path clears it for every outcome.",
+    "reversibility": "cheap",
+    "rationale": "A stale line or counter after a faulted or self-finished scan is the 'past shown as present' shape. Deriving from a nullable clock leaves no flag to forget to reset, so the next scan starts clean without a reset step."
+   },
+   {
+    "decision": "Prove the line with the hook log: a default-run negative check (a local cancel never shows the line), the pure-function boundary tests, and two opt-in cases on the loopback stall rig. Report schema 1 is unchanged and no App xUnit project is added.",
+    "reversibility": "cheap",
+    "rationale": "The recorded testing decisions allow App verification only through the published exe and the hook. Spike 3 already proved a hook DispatcherTimer can read UI text through a stall. The opt-in cases mirror the trait exclusion, because the rig calls New-SmbMapping, which build-check correctly refused to run."
+   },
+   {
+    "decision": "StallRig is a linked-source console under tests/window/StallRig, outside the slnx and built like the hook. The rig classes move into tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs, and the mapping pre-removal is narrowed to the run's own unique name.",
+    "reversibility": "cheap",
+    "rationale": "Every spike rebuilt this rig in scratch and none of the copies survived, so one linked copy is the honest fix. Spike 1 showed the `fsa<8hex>` sweep deletes concurrent runs' mappings, which would break two validate or spike runs at once."
+   },
+   {
+    "decision": "Record the decision in the existing section of docs/design/SL-020-scanner.md rather than in a new document.",
+    "reversibility": "cheap",
+    "rationale": "Whoever asks 'why doesn't Cancel return sooner on a dead share' will look where the shape is already documented, and a second document would leave two places to disagree."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal, so it has not been disagreed with by anyone. Taken as the core: option (b), the UI change, the hook log, and the rig extraction. Changed: the wording moved into a pure function linked into Core.Tests, a close-escape window case added, the hook env names taken from spike 4's proven ones, C4's retirement made explicit, and derived-from-clock state instead of a reset step."
+   }
+  ],
+  "coherence_check": "One proposal, so there is no composition across proposals to check, and nothing here has yet survived a disagreement. The first things to argue with are the choice of (b) itself and the unmeasured premise that real disconnects wait about a minute. I checked the proposal against the survey, the spikes and itself. (1) The survey's C4 (implement abandonment) and C5 (say the wait) are two branches of one choice. Left as they are, the loop would demand both, so the design retires C4 explicitly if (b) is accepted. (2) The proposal's claim that the tick makes no share call is now enforced by a rule on the pure wording file and derived from spike 3. The hook's own UI-thread timer is test-only and only reads. (3) The 90 s branch had no way to be exercised by the rig, since the client gives up at 60 s. I redesigned that seam by moving the branch into a pure function with boundary tests in the default suite. (4) 'Closing the window quits at once' was a promise measured only in a scratch copy, so a repo case now owns it. (5) The proposal's marker env name differed from the spike's proven one, so I adopted the spike's, and the hook stays byte-for-byte compatible when the marker is unset. (6) The proposal put a New-SmbMapping-using rig behind an opt-in switch. The architecture rule makes 'only the rig maps shares' fail rather than depend on remembering. (7) Per Q-010, this slice's rules are appended to the existing rules file on trunk after SL-022 merges, and the file is not created again. (8) C1 is cut and untouched. Only the rig fixture is extracted, and StalledShareTests keeps its behaviour and trait. Not contested by anyone: the 2 s gate, the 90 s boundary, the wording, and linking an App source file into Core.Tests, which is a taste call.",
+  "architecture_rules": [
+   {
+    "name": "the stopping wording is a pure function of elapsed time",
+    "files": "src/FsAnalyser.App/StoppingWait*.cs",
+    "must_not_import": [
+     "System.Windows*",
+     "System.IO*",
+     "Microsoft.Win32*"
+    ],
+    "must_not_match": [
+     "\\bDriveInfo\\b",
+     "\\b(?:Directory|File)\\.\\w+\\("
+    ],
+    "because": "The file is also compiled into Core.Tests, which has no WPF, so a WPF type breaks that build. The UI-thread tick that calls it must never touch a drive or share that may be stalled (spike 3's invariant), or the line that explains the hang would itself hang.",
+    "except_files": []
+   },
+   {
+    "name": "Cancel does not abandon the scan thread",
+    "files": "src/FsAnalyser.App/**/*.cs",
+    "must_not_match": [
+     "\\b[Ss]can\\w*\\.WaitAsync\\(",
+     "Task\\.WhenAny\\(.*[Ss]can"
+    ],
+    "because": "Racing the scan against the cancel token returns the window while the scan thread keeps writing into a store the app has moved on from. That is option (a) and it is not decided. It brings unbounded retention against the 1 GB budget and needs a late-write fence in the Scan Engine at counting-rule risk. The existing WaitAsync(token) on the post-scan volume query is legitimate. If the pattern hits it on trunk, narrow the pattern, do not delete the rule.",
+    "except_files": []
+   },
+   {
+    "name": "only the rig changes the machine's SMB mappings",
+    "files": "tests/**/*.cs",
+    "must_not_match": [
+     "\\b(?:New|Remove)-SmbMapping\\b"
+    ],
+    "because": "A default dotnet test or a build-check that maps or unmaps SMB shares changes machine state, which build-check refused to do. Spike 1 also found the old `fsa<8hex>` sweep deleting other concurrent runs' mappings. Keeping the calls in the one rig file, which removes only its own unique name, is what stops two parallel runs breaking each other.",
+    "except_files": [
+     "tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs"
+    ]
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "cancel a scan",
+    "shape": "local tree, and the scan returns within 2 s of Cancel",
+    "why": "The wait line must never flash on an ordinary cancel. This is the default-run negative check: every `stopping` hook line in C-006 has detail `-`.",
+    "material": true
+   },
+   {
+    "behaviour": "cancel a scan of a stalled SMB share",
+    "shape": "session established, server stops answering, Cancel pressed 3 s after the stall is armed",
+    "why": "The commonest real case. Spike 1 measured 0/15 early returns. The first non-empty detail must appear 1.9 to 3 s after Cancel and N must never decrease. If OnCancel stops the progress timer, the line never updates and this case fails, which is how that risk is caught.",
+    "material": true
+   },
+   {
+    "behaviour": "the stalled scan finally returns",
+    "shape": "the SMB client gives up (about 57-66 s on the rig)",
+    "why": "The line must collapse, the cancelled state must follow, the report must be written and the process must exit 0. That proves the wait ended and the UI is not left stuck in Stopping.",
+    "material": true
+   },
+   {
+    "behaviour": "choose the wording for an elapsed time",
+    "shape": "1.999 s, 2.0 s, 89.999 s, 90 s, and a negative TimeSpan",
+    "why": "These are the branch boundaries. The 90 s wording cannot be produced by the rig (the client gives up at 60 s), so it is exercised only by default-run boundary tests on the pure function. N must be floored and the text ASCII.",
+    "material": true
+   },
+   {
+    "behaviour": "close the window while the wait line is shown",
+    "shape": "stalled share, Cancel then Close, and Close with no prior Cancel",
+    "why": "The text promises 'Closing the window quits at once'. It was measured only in a scratch hook copy. A foreground scan thread would turn it into a 60 s wait. The window must be gone within 1 s and the process within 5 s.",
+    "material": true
+   },
+   {
+    "behaviour": "scan ends while the Stopping state is showing",
+    "shape": "cancelled cleanly, faulted, or finished on its own before the cancel took effect",
+    "why": "The line must be gone in every completion path, not only the cancelled one. EndStopping is called from one completion finally. The existing throw and stop cases must still pass with the hook's added timer.",
+    "material": true
+   },
+   {
+    "behaviour": "run the stall rig",
+    "shape": "another run's `fsa<8hex>` mapping already exists on the machine (two rig runs at once)",
+    "why": "The old pre-removal deleted other runs' mappings (spike 1). With the exact-name fix, both runs' mappings must survive and both stalls must arm.",
+    "material": true
+   },
+   {
+    "behaviour": "start a new scan after a stalled cancel",
+    "shape": "the previous scan ended after the wait line had been shown",
+    "why": "State is derived each tick from a nullable Stopwatch and cleared in EndStopping, so nothing persists to go stale. The hook cannot easily start a second scan, so a test would cost more than the branch it covers.",
+    "material": false
+   },
+   {
+    "behaviour": "show the wait line for a local drive that stalls",
+    "shape": "a spun-down local disk taking more than 2 s to cancel",
+    "why": "Nothing branches on drive type, because no DriveType detection is added. The wording is conditional ('if a network connection dropped') and true for both, so a test would only re-read the string.",
+    "material": false
+   },
+   {
+    "behaviour": "the hook reads UI text",
+    "shape": "read from the hook's own thread instead of the UI thread",
+    "why": "A cross-thread read would show up as a missing detail line and fail the stalled-share case loudly. A separate test would test the harness, not the app.",
+    "material": false
+   },
+   {
+    "behaviour": "the wait on a real disconnect",
+    "shape": "Wi-Fi off, `tailscale down`, or sleep and resume mid-scan",
+    "why": "Spike 2 ran 0 of 9 because these change the person's network state. It needs a person to run three of each. It is not an obligation the engine can discharge. It stays on the matrix and in open_questions, and the wording is built to stay true whether the wait is short, about a minute, or unbounded.",
+    "material": false
+   },
+   {
+    "behaviour": "the hook waits for the armed marker",
+    "shape": "the marker file never appears before the case timeout",
+    "why": "The failure is a loud timeout in WindowCases.ps1 that says the rig did not arm, and exercising it would test the harness.",
+    "material": false
+   }
+  ],
+  "decidable_disagreements": [
+   {
+    "question": "On the commonest real disconnects (Wi-Fi off, VPN or tunnel down, sleep and resume), does the wait from Cancel to scan return end in about a minute, fail fast, or run for many minutes or never end?",
+    "positions": "The single proposal assumes a bounded wait of about 60 s and words the line to stay true if not (elapsed counter, a 90 s reword, close as the escape). Nobody argued the other side. If real waits are commonly minutes long or unbounded, the balance tips to (a), abandoning the scan thread, which changes the scanner's lifecycle and the store's retention contract. Only a person can run the 3 x 3 timed disconnects, because spike 2 could not (0 of 9).",
+    "would_force_resynthesis": true
+   }
+  ],
+  "taste_disagreements": [
+   "Wording as a pure function in its own file linked into Core.Tests (this design) versus inline branches in MainWindow.xaml.cs proved only through the hook (the proposal). The link keeps the 90 s branch under test without an App test project, at the price of one linked file.",
+   "Recording the decision in the existing SL-020-scanner.md section (the proposal, kept) versus a new SL-038 document. Either is findable, but two places can disagree.",
+   "A 2 s gate with a 90 s second wording versus one wording with no boundary. One wording would remove a branch, but it would either claim about a minute where that is unmeasured or say nothing useful past it.",
+   "StallRig as a linked-source console outside the slnx versus a project inside it or a rig mode in the hook. The chosen form matches how the hook is already built and kept out of the default build.",
+   "Whether 'Closing the window quits at once' should be on screen at all, or whether the escape stays unspoken. It is kept because the person has nothing else to do for a minute. It is backed by its own opt-in case.",
+   "Naming the hook env vars after spike 4's scratch copy (FSA_HOOK_ARMED, FSA_HOOK_CANCEL_DELAY_MS, FSA_HOOK_CLOSE_DELAY_MS) versus the proposal's FSA_HOOK_CANCEL_AFTER_MARKER."
+  ],
+  "open_questions": [
+   "C2: does the person accept option (b), keep the wait and show it (which retires C4), or choose (a), abandoning the scan thread? (a) replaces this design and needs spike 2 run first for a retention bound, a late-write fence in the Scan Engine at counting-rule risk tier, and a rule for holding an abandoned store and a new scan against the 1 GB budget. A softer variant (return to a cancelled state at once and block a new scan until the old one releases) carries the same fence and retention costs.",
+   "Will the person run the timed real disconnects (Wi-Fi off, `tailscale down`, sleep about 2 minutes mid-scan, 3 runs each, timing Cancel to scan return against a slow second-host share) before or at validate? Only they can, and the result decides whether 'usually about a minute' is true and whether (b) still stands."
+  ],
+  "stack_chosen": [],
+  "whats_reused": [
+   "The existing Stopping state (OnCancel, MainWindow.xaml.cs:223-228), the progress DispatcherTimer, the scan await at :145-146 and UnlessCancelled at :185-198.",
+   "Scanner, SynchronousIoCancel and the store, all untouched, with the 120-test default suite required to stay green.",
+   "The FsaWindowHook (DOTNET_STARTUP_HOOKS, FSA_HOOK_MODE, FSA_HOOK_LOG), WindowCases.ps1's Update-Hook build path, the C-006 cancel case, and eng/read-window.ps1 with report schema 1.",
+   "LoopbackShare and StallingFileStore from StalledShareTests (SMBLibrary 1.5.8.1) and its Network=SMB-LOOPBACK trait exclusion.",
+   "Spike 3 and 4's scratch techniques: a hook DispatcherTimer reading UI text, and a marker file with delays around Cancel and Close.",
+   "The SL-020-scanner.md:139-145 section as the home of the decision record, and eng/dotnet.ps1 for building the hook and rig."
+  ],
+  "whats_new": [
+   "src/FsAnalyser.App/StoppingWait.cs: a pure function giving the elapsed-seconds wording (null under 2 s, 'about a minute' wording to 90 s, then 'longer than Windows usually takes'), also linked into Core.Tests.",
+   "StoppingDetail TextBlock in MainWindow.xaml, plus a nullable Stopwatch and EndStopping() in MainWindow.xaml.cs, with the line derived on the existing tick.",
+   "tests/FsAnalyser.Core.Tests/StoppingWaitTests.cs: default-run boundary tests at 1.999, 2.0, 89.999 and 90 s and for a negative span.",
+   "Hook: `stopping ms= title= detail=` log lines after Cancel, and optional FSA_HOOK_ARMED, FSA_HOOK_CANCEL_DELAY_MS and FSA_HOOK_CLOSE_DELAY_MS timing against the rig's marker.",
+   "C-006 also asserts that a local cancel never shows the wait line.",
+   "WindowCases.ps1 -IncludeNetwork: an opt-in stalled-share wait-line case (appears, counts up, clears, exits 0, Cancel-to-return recorded) and an opt-in close-escape case (window gone within 1 s, process within 5 s).",
+   "tests/window/StallRig: a linked-source console around the loopback rig, built outside the slnx.",
+   "tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs: the rig classes extracted from StalledShareTests, with the mapping pre-removal narrowed to the run's own unique name.",
+   "Three architecture rules: a pure wording file, no scan-thread abandonment in App code, and SMB mapping calls only in the rig file.",
+   "A decision record in the existing SL-020-scanner.md section, citing spikes 1, 3 and 4, the unmeasured real disconnects, and what would reopen the question."
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Web browsers waiting on an unresponsive host",
+   "pattern": "When a network wait cannot be interrupted, the browser says what it is waiting on and keeps the window responsive. Closing the tab is always an escape that does not depend on the wait ending. It does not invent an ETA.",
+   "transfer_found": true,
+   "rationale": "The operation's end belongs to the network stack, not the application, so the honest design keeps the UI responsive, names the wait, counts up, and leaves the escape available. That is option (b). The analogy stops at 'stop and retry': a browser can drop a socket, but this app cannot drop a thread blocked in the kernel redirector, which spike 1 settled.",
+   "invariants": [
+    {
+     "precondition": "The UI thread is not blocked by the wait, so the explanation can render and update",
+     "status": "holds",
+     "evidence": "Spike ui-keeps-pumping-through-smb-stall: the largest UI tick gap was 237 ms over 64-70 s SMB stalls and IsHungAppWindow was never true, in 3 runs. The design keeps it true by adding no share, DriveInfo or filesystem call on the tick, and an architecture rule enforces it on the wording file."
+    },
+    {
+     "precondition": "An escape exists that does not depend on the wait ending",
+     "status": "holds",
+     "evidence": "Spike closing-window-ends-process-during-stall: window hidden in 29 ms or less and process gone in 345 ms or less, 6 of 6 runs, using a scratch copy of the hook. The design adds a repo-owned opt-in case, because the on-screen text promises it."
+    },
+    {
+     "precondition": "The wait ends on its own, so 'Windows usually gives up after about a minute' is true in the common real cases",
+     "status": "must-verify",
+     "evidence": "True only on the loopback rig (57-66 s, SessionTimeout 60). Spike real-disconnect-wait-matches-rig ran 0 of 9 timed disconnects. The line stays true if this fails, because it counts up rather than counting down and rewords at 90 s. A wait of many minutes would tip the choice toward (a)."
+    }
+   ]
+  },
+  "prior_art": [
+   {
+    "pattern": "Windows' SMB client redirector, not the application, decides how long a request to an unresponsive server waits before the connection is declared lost, and the application cannot shorten it from inside. The page covers the CIFS/SMB1-era timers. The ~60 s SMB2 figure comes from the rig's measured SessionTimeout, not from this page.",
+    "where": "https://learn.microsoft.com/en-us/archive/blogs/openspecification/cifs-and-smb-timeouts-in-windows",
+    "authority": "official",
+    "basis": "cited"
+   },
+   {
+    "pattern": "How long a lost connection takes to be detected varied between clients and versions (a 30 s scan period with an echo probe; 32 s and 48 s seen on the wire). That supports showing elapsed time rather than promising a fixed figure.",
+    "where": "https://lists.samba.org/archive/samba-technical/2012-December/089209.html",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2012-12-02"
+   },
+   {
+    "pattern": "Cancelling in-flight SMB I/O works only where the application owns the SMB client (go-smb2 rebinding the caller's context). Before that change, a cancelled rclone operation sat until a transport or OS-level timeout gave up. With the Windows kernel redirector there is no such hook, which spike 1 measured.",
+    "where": "https://github.com/rclone/rclone/pull/9792",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-08-20"
+   },
+   {
+    "pattern": "A failure mode to avoid: process exit waiting minutes on an SMB disconnect response, so quitting does not end the wait. This app avoids it because its scan threads block in the kernel redirector and do not hold the process open (spike 4). The design adds a repo case so that stays true.",
+    "where": "https://github.com/jborean93/smbprotocol/issues/297",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2024-10-29"
+   },
+   {
+    "pattern": "Abandon the wait, not the work: Task.WaitAsync(CancellationToken) / 'cancel non-cancelable operations'. The known costs are an orphaned operation keeping its state alive, late writes into shared state, and unobserved exceptions. This is option (a), and those costs are why it is not recommended.",
+    "where": ".NET Task.WaitAsync (.NET 6+); Stephen Toub, 'How do I cancel non-cancelable async operations?', .NET blog",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "The Explorer copy dialog switches to 'Cancelling...' and waits for in-flight network I/O to finish rather than abandoning it.",
+    "where": "Windows File Explorer copy/move progress dialog",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Response-time limits (about 1 s is noticed, about 10 s loses attention). Past a short wait, give an explanation and show progress or elapsed time. This is the basis for the 2 s gate and the elapsed counter.",
+    "where": "Nielsen, 'Response Times: The 3 Important Limits' (NN/g)",
+    "authority": "community",
+    "basis": "recalled"
+   }
+  ],
+  "channeled_experts": []
+ }
+}

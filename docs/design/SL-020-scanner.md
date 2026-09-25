@@ -142,9 +142,56 @@ so it becomes `\` again.
       that stops answering at one folder's listing. Cancel() returned in about 1 ms. The SMB client held
       the listing, and the canceller's CancelSynchronousIo with it, until it gave up on the server, and
       the scan returned **62 to 66 s** after Cancel (two runs). It ended Cancelled, with the stalled folder not committed
-      and its handle closed on a pool thread. Only abandoning the scan thread would return sooner.
+      and its handle closed on a pool thread. Only abandoning the scan thread would return sooner, and
+      SL-038 chose not to (below).
     - **I/O held by a filter driver.** CancelSynchronousIo can itself wait behind on-access antivirus.
       This is unmeasured.
+  - **What Cancel does on a share that stopped answering: wait, and say so (SL-038).** The window waits
+    for the scan to return and never abandons the scan thread. From 2 s after Cancel the Stopping state
+    shows a line under its title (`StoppingDetail`, worded by `StoppingWait.For`, a pure function of the
+    time since Cancel): "Still waiting for the drive to answer (N s). If a network connection dropped,
+    this can take a minute or more. Closing the window quits at once." From 90 s it drops the estimate:
+    "Still waiting for the drive to answer (N s). Closing the window quits at once." N counts up from a
+    Stopwatch. There is no countdown, no end time and no new button. The line is derived on every 250 ms
+    progress tick and cleared in the scan's one `finally`, however the scan ended.
+    - *Why not abandon the thread (option a).* SL-038's spikes measured three things. No in-process cancel
+      returns the call sooner: CancelSynchronousIo waited 57 to 66 s in 15 of 15 runs (error 121), and
+      CancelIoEx on the find handle failed with error 6. The UI thread kept running through a 64 to 70 s
+      stall (longest tick gap 237 ms, never hung). Closing the window ended the process during the stall
+      (window gone within 29 ms, process within 345 ms, 6 of 6 runs). All abandoning would still buy is a
+      new scan within that minute without relaunching. It would cost a late-write fence in the Scan
+      Engine at the counting rules' risk tier, an abandoned store held for an unbounded time against the
+      1 GB budget (699 MiB peak measured at 5M entries, U-001), and a scanner lifecycle change that is
+      expensive to back out of. Waiting is a UI change that leaves the scanner alone and does not rule
+      (a) out later.
+    - *What is not measured.* No real disconnect was timed (Wi-Fi off, a VPN or Tailscale tunnel down,
+      sleep and resume mid-scan: 0 of 9 runs, because they change the person's network state). "A minute
+      or more" rests on the loopback rig and this PC's SMB SessionTimeout of 60 s, which is why the line
+      gives no frequency and no upper bound. "Closing the window quits at once" also rests on the rig
+      only, where the connection stays up and the server simply stops answering. The protocol a person
+      runs to settle both: for each of Wi-Fi off, `tailscale down` and a sleep of about 2 minutes, 3 runs
+      that scan a slow share on a second host, cut the link, press Cancel 3 s later and time Cancel to
+      scan return with the link kept down; and one more run per mode that closes the window while the
+      line shows and times how long until the window is gone and until `Get-Process` no longer lists the
+      app.
+    - *What would reopen it.* A real disconnect whose scan never returns or waits many minutes, or a
+      close that hides the window while the process lingers with the scan still in memory.
+    - *Who decided.* Option (b) was built as the design recommended, on the fork decision recorded as
+      SL-038 O-002. The person's own acceptance (C2) is still open. Choosing (a) replaces this rather
+      than extending it.
+    - *How it is tested.* `StoppingWaitTests` (Core.Tests, which compiles `StoppingWait.cs` by link) pins
+      the wording at 1.999 s, 2 s, 89.999 s, 90 s and negative spans; the rig cannot reach the 90 s
+      wording, because its client gives up at about 60 s. The default window run proves only that the
+      line does NOT appear on an ordinary cancel (C-006). `WindowCases.ps1 -IncludeNetwork` adds N-001
+      (the line first shows 1.9 to 3 s after Cancel, counts up, the UI thread never goes a second
+      unheard, the line is gone when the scan returns), N-002 (closing ends the app, with and without a
+      Cancel first) and N-003 and N-004 (rig isolation). They change the machine's SMB mappings, so they
+      are opt-in.
+    - *The rig* (`tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs`, also built as `tests/window/StallRig`)
+      serialises runs with one mutex per sign-in session, because the SMB client allows one port per
+      server name: a second run waits for the first, or fails saying so. Under the mutex it removes rig
+      mappings a killed run left behind (`\\127.0.0.1\fsa` and 8 hex digits, never anything else) before
+      making its own.
   - **The loopback SMB test is opt-in too.** `CancellingAScanOfAShareThatStoppedAnsweringNeverHangsInTheClose`
     carries `Trait("Network", "SMB-LOOPBACK")`. It needs the Windows 11 24H2 SMB client (`-TcpPort`)
     and takes about 70 s. It uses SMBLibrary and SMBLibrary.Win32 (LGPL-3.0-or-later) in the test
