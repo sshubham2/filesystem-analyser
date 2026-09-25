@@ -2,12 +2,14 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 /// <summary>
@@ -16,8 +18,9 @@ using System.Windows.Threading;
 /// </summary>
 /// <remarks>
 /// <code>
-///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close  FSA_HOOK_LOG=&lt;file&gt;
-///   [FSA_HOOK_ARMED=&lt;marker file&gt;  FSA_HOOK_CANCEL_DELAY_MS=&lt;n&gt;  FSA_HOOK_CLOSE_DELAY_MS=&lt;n&gt;]
+///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|watch|measure
+///   FSA_HOOK_LOG=&lt;file&gt;  [FSA_HOOK_ARMED=&lt;marker file&gt;  FSA_HOOK_CANCEL_DELAY_MS=&lt;n&gt;  FSA_HOOK_CLOSE_DELAY_MS=&lt;n&gt;]
+///   [FSA_HOOK_SLOW_REFRESH_MS=&lt;n&gt;]
 /// </code>
 /// The runtime calls <see cref="Initialize"/> before the app's Main, in every .NET process that inherits the
 /// variable: pwsh 7, dotnet.exe and MSBuild nodes too. So it does nothing unless FSA_HOOK_MODE is set and the
@@ -49,6 +52,26 @@ using System.Windows.Threading;
 /// "stopping ms=n title=text detail=text" every 250 ms from the UI thread (ms since the press; detail is "-"
 /// while StoppingDetail is collapsed or empty), "returned ms=n title=text detail=text" at the moment the scan
 /// returns, and one last "stopping ... final=True" line as the app shuts down.
+///
+/// Two modes read the results list (SL-039), TopLevelList, whose items are the app's own TopLevelRow objects,
+/// read by reflection because the hook shares no code with the app. Neither is armed.
+/// <list type="bullet">
+/// <item>watch waits up to 30 s for the scan to be running (CancelButton pressable) while the list already
+/// holds a Folder row with Bytes over 0 and another still NotRead. It logs "watch rows=n folderBytes=n
+/// notRead=n containers=n skipped=n armed=b running=True" (containers: the most items the list had realized
+/// once any refresh so far was laid out; skipped and armed: the window's refresh-skip state), then
+/// "acted mode=watch ..." and presses Cancel as stop does. With
+/// FSA_HOOK_SLOW_REFRESH_MS it also waits until a tick has skipped its refresh and the next skip is armed
+/// again, so the scan's final snapshot arrives right after a skipped tick, with the skip still armed. On
+/// timeout it logs "watch timeout ..." and presses Cancel, so the case fails on the missing watch line.</item>
+/// <item>measure presses nothing. While the scan runs it posts an Input-priority no-op every 50 ms and
+/// records how long each waited, and records the window's own time for each refresh of the list (handler
+/// and layout). When the scan returns it logs "measured refreshes=n refreshP95=ms refreshMax=ms probes=n
+/// inputP95=ms inputMax=ms skipped=n rows=n containers=n".</item>
+/// </list>
+/// FSA_HOOK_SLOW_REFRESH_MS=n (watch and measure only) sleeps n ms on the UI thread inside every refresh of
+/// the list, as a slow machine would, so the window's rule that a refresh over 100 ms skips the next tick is
+/// exercised.
 /// </remarks>
 internal class StartupHook
 {
@@ -57,6 +80,8 @@ internal class StartupHook
     private static readonly TimeSpan MarkerDeadline = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan Poll = TimeSpan.FromMilliseconds(25);
     private static readonly TimeSpan StoppingEvery = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan WatchDeadline = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ProbeEvery = TimeSpan.FromMilliseconds(50);
 
     private static readonly Stopwatch Clock = new();
     private static readonly object LogGate = new();
@@ -97,12 +122,30 @@ internal class StartupHook
         try
         {
             Log($"loaded mode={mode} pid={Environment.ProcessId}");
-            if (mode is not ("stop" or "throw" or "close"))
+            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure"))
             {
                 Log($"refused mode={mode} reason=unknown mode");
                 return;
             }
+            if (!Delay("FSA_HOOK_SLOW_REFRESH_MS", out int? pad))
+            {
+                Log($"refused mode={mode} reason=FSA_HOOK_SLOW_REFRESH_MS is not a whole number of milliseconds");
+                return;
+            }
             string? marker = Environment.GetEnvironmentVariable("FSA_HOOK_ARMED");
+            if (mode is "watch" or "measure")
+            {
+                if (!string.IsNullOrEmpty(marker))
+                    Log($"refused mode={mode} reason={mode} mode is not armed");
+                else
+                    WatchList(mode, pad ?? 0);
+                return;
+            }
+            if (pad is not null)
+            {
+                Log($"refused mode={mode} reason=FSA_HOOK_SLOW_REFRESH_MS is for watch and measure only");
+                return;
+            }
             if (string.IsNullOrEmpty(marker))
             {
                 Drive(mode);
@@ -231,6 +274,212 @@ internal class StartupHook
             });
         }
     }
+
+    // SL-039: the results list. Finds it, and hooks every refresh of it: the pad, and the window's own time
+    // for the refresh, read once its Loaded-priority marker has run. Then watches or measures.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void WatchList(string mode, int pad)
+    {
+        if (WaitForApplication(mode) is not { } app)
+            return;
+        var seen = new ListSeen(); // the UI thread's only
+        ListBox? list = null;
+        while (list is null)
+        {
+            if (Clock.Elapsed > Deadline)
+            {
+                Log($"refused mode={mode} reason=no TopLevelList within {Deadline.TotalSeconds:N0} s");
+                return;
+            }
+            try
+            {
+                list = app.Dispatcher.Invoke(() =>
+                {
+                    if (app.MainWindow is not { } window || window.FindName("TopLevelList") is not ListBox found)
+                        return null;
+                    DependencyPropertyDescriptor.FromProperty(ItemsControl.ItemsSourceProperty, typeof(ListBox))
+                        .AddValueChanged(found, (_, _) =>
+                        {
+                            if (found.ItemsSource is null)
+                                return;
+                            if (pad > 0)
+                                Thread.Sleep(pad);
+                            // Below Loaded and Render: the window has timed this refresh and laid the list out.
+                            app.Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+                            {
+                                seen.RefreshMs.Add(WindowState<TimeSpan>(window, "LastRefresh").TotalMilliseconds);
+                                seen.Containers = Math.Max(seen.Containers, Containers(found));
+                            });
+                        });
+                    return found;
+                }, DispatcherPriority.Normal);
+            }
+            catch (OperationCanceledException) when (app.Dispatcher.HasShutdownStarted)
+            {
+                Log($"refused mode={mode} reason=the app shut down before TopLevelList was found");
+                return;
+            }
+            if (list is null)
+                Thread.Sleep(Poll);
+        }
+        if (mode == "measure")
+            Measure(app, list, seen);
+        else
+            Watch(app, list, seen, padded: pad > 0);
+    }
+
+    /// <summary>
+    /// What the hook saw of the list's refreshes, after each had been laid out: the window's own time for it,
+    /// and the most items the list had realized. Read and written on the UI thread only.
+    /// </summary>
+    private sealed class ListSeen
+    {
+        public List<double> RefreshMs { get; } = [];
+
+        public int Containers { get; set; }
+    }
+
+    // The watch: reads the window and presses Cancel in one callback, so the state it logs is the state it
+    // pressed in.
+    private static void Watch(Application app, ListBox list, ListSeen seen, bool padded)
+    {
+        string last = "nothing read";
+        while (Clock.Elapsed < WatchDeadline)
+        {
+            bool pressed = false;
+            try
+            {
+                app.Dispatcher.Invoke(() =>
+                {
+                    Window window = app.MainWindow!;
+                    var button = window.FindName("CancelButton") as FrameworkElement;
+                    bool running = button is not null && Pressable(button);
+                    (int rows, long folderBytes, int notRead) = ReadRows(list);
+                    int skipped = WindowState<int>(window, "SkippedRefreshes");
+                    bool armed = WindowState<bool>(window, "SkipsNextRefresh");
+                    last = $"rows={rows} folderBytes={folderBytes} notRead={notRead} containers={seen.Containers} skipped={skipped} armed={armed} running={running}";
+                    if (!running || folderBytes <= 0 || notRead == 0 || (padded && (skipped == 0 || !armed)))
+                        return;
+                    Log($"watch {last}");
+                    Log($"acted mode=watch enabled={button!.IsEnabled} visible={button.IsVisible} ms={Clock.ElapsedMilliseconds}");
+                    Pressing(app, "watch", () => Act("stop", app, button));
+                    pressed = true;
+                }, DispatcherPriority.Normal);
+            }
+            catch (OperationCanceledException) when (app.Dispatcher.HasShutdownStarted)
+            {
+                Log($"refused mode=watch reason=the app shut down first; last seen {last}");
+                return;
+            }
+            if (pressed)
+                return;
+            Thread.Sleep(Poll);
+        }
+        Log($"watch timeout {last}");
+        // Stopped anyway, so the run ends; the case fails on the missing watch line.
+        OnUiThread(app, "watch", () =>
+        {
+            if (app.MainWindow?.FindName("CancelButton") is not FrameworkElement button || !Pressable(button))
+                return "CancelButton not pressable at the watch timeout";
+            Pressing(app, "watch", () => Act("stop", app, button));
+            return null;
+        });
+    }
+
+    // The measure: an Input-priority probe every 50 ms from its own thread while the scan runs, and one line
+    // when the scan returns (ScanningPanel collapses), before the ending's own refresh.
+    private static void Measure(Application app, ListBox list, ListSeen seen)
+    {
+        var inputMs = new List<double>();
+        var ended = new ManualResetEventSlim();
+        var prober = new Thread(() =>
+        {
+            while (!ended.IsSet)
+            {
+                var waited = Stopwatch.StartNew();
+                try
+                {
+                    app.Dispatcher.Invoke(() => { }, DispatcherPriority.Input);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                lock (inputMs)
+                    inputMs.Add(waited.Elapsed.TotalMilliseconds);
+                ended.Wait(ProbeEvery);
+            }
+        }) { IsBackground = true, Name = "FsaWindowHook-probe" };
+        prober.Start();
+
+        OnUiThread(app, "measure", () =>
+        {
+            Window window = app.MainWindow!;
+            if (window.FindName("ScanningPanel") is not UIElement panel)
+                return "no ScanningPanel";
+            bool logged = false;
+            DependencyPropertyDescriptor.FromProperty(UIElement.VisibilityProperty, panel.GetType()).AddValueChanged(panel, (_, _) =>
+            {
+                if (logged || panel.Visibility == Visibility.Visible)
+                    return;
+                logged = true;
+                ended.Set();
+                double[] input;
+                lock (inputMs)
+                    input = [.. inputMs];
+                Log($"measured refreshes={seen.RefreshMs.Count} refreshP95={P95(seen.RefreshMs)} refreshMax={Max(seen.RefreshMs)} " +
+                    $"probes={input.Length} inputP95={P95(input)} inputMax={Max(input)} " +
+                    $"skipped={WindowState<int>(window, "SkippedRefreshes")} rows={list.Items.Count} containers={seen.Containers}");
+            });
+            return null;
+        });
+    }
+
+    // How many rows the list holds, the largest Folder row's Bytes, and how many Folder rows are NotRead.
+    private static (int Rows, long FolderBytes, int NotRead) ReadRows(ItemsControl list)
+    {
+        int rows = 0, notRead = 0;
+        long folderBytes = 0;
+        foreach (object item in list.Items)
+        {
+            rows++;
+            Type type = item.GetType();
+            if (type.GetProperty("Kind")?.GetValue(item)?.ToString() != "Folder")
+                continue;
+            folderBytes = Math.Max(folderBytes, (long)(type.GetProperty("Bytes")?.GetValue(item) ?? 0L));
+            if (type.GetProperty("State")?.GetValue(item)?.ToString() == "NotRead")
+                notRead++;
+        }
+        return (rows, folderBytes, notRead);
+    }
+
+    // The list's realized items: with virtualization on, about a screenful, however many rows it holds.
+    private static int Containers(DependencyObject element)
+    {
+        int count = 0;
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(element); i++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(element, i);
+            count += child is ListBoxItem ? 1 : Containers(child);
+        }
+        return count;
+    }
+
+    // The window's refresh state (MainWindow's internal LastRefresh, SkippedRefreshes, SkipsNextRefresh).
+    private static T WindowState<T>(Window window, string property) =>
+        (T)(window.GetType().GetProperty(property, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(window)
+            ?? throw new InvalidOperationException($"the window has no {property}"));
+
+    private static string P95(IReadOnlyCollection<double> ms)
+    {
+        if (ms.Count == 0)
+            return "-";
+        double[] sorted = [.. ms.Order()];
+        return sorted[(int)Math.Ceiling(0.95 * sorted.Length) - 1].ToString("F1", CultureInfo.InvariantCulture);
+    }
+
+    private static string Max(IReadOnlyCollection<double> ms) =>
+        ms.Count == 0 ? "-" : ms.Max().ToString("F1", CultureInfo.InvariantCulture);
 
     private static Application? WaitForApplication(string mode)
     {

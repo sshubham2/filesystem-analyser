@@ -57,9 +57,12 @@ public static class Scanner
     private sealed class Run(string display, string win32Root, ScanProgress progress, CancellationToken ct, ScanOptions options,
         SynchronousIoCancel io) : IDisposable
     {
+        private const int RootRow = -1; // the root's own listing, which belongs to no row
         private readonly ScanStore _store = new();
         private readonly DirectoryReader _reader = new(io);
-        private readonly Stack<(int Entry, string Path)> _pending = new();
+        // Row: the folder's top-level row in the tracker, inherited from the root child it is under.
+        private readonly Stack<(int Entry, string Path, int Row)> _pending = new();
+        private readonly TopLevelTracker _topLevel = new(progress, display, options.TopLevelInterval);
         private readonly List<UnreadableFolder> _unreadable = [];
         private readonly List<DueProbe> _dueProbes = [];
         private readonly HashSet<UInt128> _settled = [];
@@ -80,14 +83,14 @@ public static class Scanner
                     ? Finish(ScanStatus.Cancelled)
                     : Finish(ScanStatus.RootUnreadable, error);
             }
-            if (FolderDone(rootEntry, win32Root, error))
+            if (FolderDone(rootEntry, win32Root, RootRow, error))
                 return Finish(ScanStatus.Cancelled);
 
             while (_pending.Count > 0)
             {
-                (int folder, string path) = _pending.Pop();
+                (int folder, string path, int row) = _pending.Pop();
                 error = _reader.Read(path, _fullClass);
-                if (FolderDone(folder, path, error))
+                if (FolderDone(folder, path, row, error))
                     return Finish(ScanStatus.Cancelled);
             }
 
@@ -133,8 +136,10 @@ public static class Scanner
 
         // Probes what the listing cannot be trusted for, appends the listing as the folder's children,
         // queues its subfolders, publishes progress, and reports whether the scan must stop. An aborted
-        // listing or probe commits nothing and stops the scan.
-        private bool FolderDone(int folder, string folderPath, int error)
+        // listing or probe commits nothing and stops the scan. The one exit of every folder's listing, so
+        // the top-level tracker hears of each committed folder once, here: the root's listing seeds its rows,
+        // and every other folder is credited to its row.
+        private bool FolderDone(int folder, string folderPath, int row, int error)
         {
             if (ClassifyReadError(error, ct.IsCancellationRequested) == ReadOutcome.Cancelled || !ProbeListing(folderPath))
                 return true;
@@ -152,12 +157,21 @@ public static class Scanner
                 _unreadable.Add(new UnreadableFolder(folder, error));
             }
 
-            // Pushed last-first so folders are visited in listing order.
+            // Pushed last-first so folders are visited in listing order. A root child is its own row.
+            int pushed = 0;
             for (int k = count - 1; k >= 0; k--)
             {
                 if (_store.Kind(first + k) == EntryKind.Folder)
-                    _pending.Push((first + k, LongPath.Child(folderPath, _store.Name(first + k))));
+                {
+                    _pending.Push((first + k, LongPath.Child(folderPath, _store.Name(first + k)), row == RootRow ? k : row));
+                    pushed++;
+                }
             }
+
+            if (row == RootRow)
+                _topLevel.Seed(_store, folder, first, count, Totals);
+            else
+                _topLevel.FolderExited(folder, row, error != 0, pushed, Totals);
 
             _foldersListed++;
             progress.Publish(Totals, _unreadable.Count, folderPath);
@@ -264,16 +278,20 @@ public static class Scanner
                 return;
             }
 
-            _bytes += size - _store.Size(charged);
-            _bytesOnDisk += onDisk - _store.OnDisk(charged);
+            long bytes = size - _store.Size(charged), onDiskBytes = onDisk - _store.OnDisk(charged);
+            _bytes += bytes;
+            _bytesOnDisk += onDiskBytes;
             _store.CorrectSizes(charged, size, onDisk);
+            _topLevel.Moved(charged, bytes, onDiskBytes); // the charged name's row, whatever listing this is
             _store.AddFlags(charged, EntryFlags.SizeProbed);
         }
 
         private ScanTotals Totals => new(_files, _folders, _links, _bytes, _bytesOnDisk);
 
+        // Every return of a ScanResult comes through here, so the last top-level snapshot is always published.
         private ScanResult Finish(ScanStatus status, int rootError = 0) => new()
         {
+            TopLevel = _topLevel.Finish(status == ScanStatus.Completed, Totals),
             Status = status,
             Root = display,
             RootError = rootError,

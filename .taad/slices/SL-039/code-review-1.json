@@ -1,0 +1,212 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-039",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-09-25T13:37:05.557Z",
+ "head": "7fa507f2d14d554201a015b08beff99c38639fed",
+ "run_id": 1087,
+ "summary": "SL-039 does what the design and the critique dispositions asked, with every departure declared except one wrong sentence in the design note. The scanner thread's TopLevelTracker credits each committed listing to a row carried on the _pending stack (Scanner.cs:64, :166, :171-174). An aborted listing returns at Scanner.cs:144-145 before anything is added, so it is never credited. Corrections go through Moved from Correct (Scanner.cs:285). ScanResult.TopLevel is `required` and is set in the only place a result is built, Run.Finish (Scanner.cs:292-294). Snapshots copy their rows behind Array.AsReadOnly (TopLevelSnapshot.cs:98). The window compares snapshots by reference and never lets the skip rule drop the final snapshot (MainWindow.xaml.cs:213, :303-323).\n\nWhat I ran:\n- Build: 0 warnings, 0 errors.\n- Core tests: 170/170 pass (155 existing, unchanged, plus 15 new).\n- Fitness op=check: all 28 rules hold.\n- Window cases L-001, L-002, L-003 and C-002: all pass. L-001 read the list mid-scan: 20 rows, a folder at 196,608 bytes, 17 not read, Cancel still pressable. L-002 had 3,000 rows, 5 containers, 1 skipped tick and the skip still armed at Cancel, and the ending still showed the final snapshot.\n- HookCases H-001 and H-002: pass.\n- M-001 at 100,000 rows: refresh p95 25.8 ms, max 52.5 ms; Input p95 11.8 ms; 5 containers. This matches the builder's figures.\n\nThe published exe postdates every source file, and the tree matches HEAD.\n\nI read every matrix case's test and each one feeds its shape in:\n- The stale hardlink is grown through the second name, so the first name's row is Done at 1 MiB before it is corrected.\n- The in-flight cancel sweeps every call of d\\big: 2,000 names of 100 characters, so about 10 buffers of 64 KiB.\n- The held-snapshot test checks that the other rows really changed afterwards.\n\nOnly the fault-after-rows sub-shape of case 10 is not fed. The build declared this with a correct reason: hook 'throw' mode faults the UI thread, not the scan.\n\nThe undeclared departure is the design note's claim that Moved's Parent walk runs only for hardlink repeats. In the code it runs for every probe correction that succeeds. The behaviour is correct and the cost is negligible, so I recorded it as drift and filed no finding. Still open for a person, not for this review: the network pass (N-001 to N-004 and SMB-LOOPBACK) is stale, and the design's one-level-list question is unanswered.",
+ "payload": {
+  "status": "complete",
+  "verdict": "clean",
+  "summary": "SL-039 does what the design and the critique dispositions asked, with every departure declared except one wrong sentence in the design note. The scanner thread's TopLevelTracker credits each committed listing to a row carried on the _pending stack (Scanner.cs:64, :166, :171-174). An aborted listing returns at Scanner.cs:144-145 before anything is added, so it is never credited. Corrections go through Moved from Correct (Scanner.cs:285). ScanResult.TopLevel is `required` and is set in the only place a result is built, Run.Finish (Scanner.cs:292-294). Snapshots copy their rows behind Array.AsReadOnly (TopLevelSnapshot.cs:98). The window compares snapshots by reference and never lets the skip rule drop the final snapshot (MainWindow.xaml.cs:213, :303-323).\n\nWhat I ran:\n- Build: 0 warnings, 0 errors.\n- Core tests: 170/170 pass (155 existing, unchanged, plus 15 new).\n- Fitness op=check: all 28 rules hold.\n- Window cases L-001, L-002, L-003 and C-002: all pass. L-001 read the list mid-scan: 20 rows, a folder at 196,608 bytes, 17 not read, Cancel still pressable. L-002 had 3,000 rows, 5 containers, 1 skipped tick and the skip still armed at Cancel, and the ending still showed the final snapshot.\n- HookCases H-001 and H-002: pass.\n- M-001 at 100,000 rows: refresh p95 25.8 ms, max 52.5 ms; Input p95 11.8 ms; 5 containers. This matches the builder's figures.\n\nThe published exe postdates every source file, and the tree matches HEAD.\n\nI read every matrix case's test and each one feeds its shape in:\n- The stale hardlink is grown through the second name, so the first name's row is Done at 1 MiB before it is corrected.\n- The in-flight cancel sweeps every call of d\\big: 2,000 names of 100 characters, so about 10 buffers of 64 KiB.\n- The held-snapshot test checks that the other rows really changed afterwards.\n\nOnly the fault-after-rows sub-shape of case 10 is not fed. The build declared this with a correct reason: hook 'throw' mode faults the UI thread, not the scan.\n\nThe undeclared departure is the design note's claim that Moved's Parent walk runs only for hardlink repeats. In the code it runs for every probe correction that succeeds. The behaviour is correct and the cost is negligible, so I recorded it as drift and filed no finding. Still open for a person, not for this review: the network pass (N-001 to N-004 and SMB-LOOPBACK) is stale, and the design's one-level-list question is unanswered.",
+  "findings": [],
+  "matches_design": true,
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "Scanner.cs:142-180: FolderDone is the one exit, and an aborted listing or probe returns at :144-145 before AddEntry, so nothing is committed or credited. TopLevelTracker.cs:77-101 credits the change in totals since the last credit to the row carried on the stack. :107-122 Moved credits the corrected record's row and moves _credited forward. :129 Debug.Assert(_credited == totals). TopLevelTests.Watch (:450-459) asserts that every snapshot's sums equal progress's running totals, and AssertSnapshotsHold (:507-508) asserts that the rows add up to those sums."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "WindowCases.ps1 Test-L001 with the hook's Watch (StartupHook.cs, Watch/ReadRows) reading TopLevelList while CancelButton is pressable. I re-ran it: 'watch rows=20 folderBytes=196608 notRead=17 containers=5 running=True', and PASSED."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "TopLevelTests.cs:53-71: 1-folder\\a.bin is hardlinked as 2-folder\\b.bin. The charged row holds 1 MiB and 1 file; the repeat row holds 0 bytes and 1 file. The rows equal Totals, and AssertRowsAreTheStore compares every row with the store."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "TopLevelTests.cs:80-107: TempTree.Append grows current.bin through the second name. The first snapshot with 1-folder Done shows it at 1 MiB while 2-folder is NotRead. The final shows 64 MiB in 1-folder's row, and 2-folder's row is 0 bytes in every snapshot. This goes through Scanner.cs:285 to TopLevelTracker.Moved."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "TopLevelTests.cs:111-132: a real top-level junction, directory symlink and file symlink. Every snapshot has them as Link/NotFollowed with 0 bytes. TempTree.CreateSymlink (TempTree.cs:136-150) fails and never skips, as Q-001 requires."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "TopLevelTests.cs:139-159: 'top' holds a junction, a directory symlink and a cyclic junction under a, plus ordinary folders a, a1 and b. The row goes Reading then Done with Folders=4. Scanner.cs:161-169 raises pending only for pushed EntryKind.Folder entries."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "TopLevelTests.cs:162-181: b-denied is denied FILE_LIST_DIRECTORY. The row is Unreadable with 0 bytes, Folders=1 and UnreadableBelow=0, and the scan Completes with rows equal to Totals. TopLevelTracker.cs:88-92 sets OwnUnreadable for the row's own folder."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "TopLevelTests.cs:184-204: top\\b-denied is denied. The top row is Done with Folders=4 and UnreadableBelow=1. The settled-row freeze in AssertSnapshotsHold (:529-540) runs on this tree."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "TopLevelTests.cs:213-238: cancel fires in AfterFolder at n==3 (root, f0, f0\\s0). f0 is StoppedPartway with 11 bytes and is the only such row; 9 rows are NotRead; Totals are exact. TopLevelTracker.Finish (:130-136) turns Started rows with pending above 0 into StoppedPartway."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "TopLevelTests.cs:251-340: both before and during every guarded call, through SynchronousIoCancel.Created with BeforeCall/AfterCall. d\\big holds 2,000 names of 100 characters and DirectoryReader.BufferSize is 64 KiB (DirectoryReader.cs:34), so the listing takes several buffers and each one is interrupted in turn. The test asserts that no row changes at the stop and that the rows equal Totals. The design's 'partial adds' reason was corrected under the M4 disposition."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "TopLevelTests.cs:349-385 feeds an already-cancelled token, a missing root and a file as root (TopLevel null, no snapshots), and an empty root (Completed, 0 rows). WindowCases L-003 checks the window for empty, missing and relative roots; I re-ran it and it PASSED. The scan-fault sub-shape is not fed at window level, which the build declared: 'throw' mode posts to the UI thread (StartupHook.cs:553-558). Its clearing path, MainWindow.xaml.cs:213 through ShowFinalTopLevel(null), is shared with the endings L-003 covers."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "TopLevelTests.cs:394-428 holds the snapshot taken after listing 2. At the end its values are unchanged, while rows 1-5 have new objects and new states. Rows is not a TopLevelRow[], and setting an item throws NotSupportedException. TopLevelSnapshot.cs:98 clones the array and wraps it with Array.AsReadOnly."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "WindowCases.ps1 Test-L002: 3,000 top-level folders, with FSA_HOOK_SLOW_REFRESH_MS=150 sleeping inside the hook's ItemsSource-changed handler, so the window's own _refreshClock counts it. I re-ran it: 'rows=3000 containers=5 skipped=1 armed=True running=True', topLevel final=true against core, PASSED. In the code, ShowFinalTopLevel (MainWindow.xaml.cs:317-323) bypasses _skipNextRefresh."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "WindowCases.ps1 Test-L001 builds Recognizable-Top-00..19 and checks that the raw report text contains no name and not the prefix. PASSED on my run. WindowReport.cs adds only counts to topLevel."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "Scanner.cs:171-174: one FolderExited(folder, row, error != 0, pushed) call after the push loop, and FolderDone is the only exit. Aborted folders return at :144-145 before it. TopLevelTracker.cs:86-87 applies pending += pushed-1 and Debug.Assert(r.Pending >= 0)."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "TopLevelTests.cs:529-540: once a row is Done, Unreadable or NotFollowed, its State, Files, Folders and UnreadableBelow are frozen. Bytes and OnDisk are exempt only for rows named in correctedRows, which only the in-place correction test passes. This runs on every tree, including the unreadable-deeper and link-folder trees."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "TopLevelSnapshot.cs:98 uses Array.AsReadOnly((TopLevelRow[])rows.Clone()). .taad/fitness.yaml adds '\\bpublic\\s+I(?:List|Collection|Dictionary|Set)<' and the public-field pattern ending [;=](?!>). Fitness op=check: 28 rules hold."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "(1) TopLevelTests.CancelAtAnyCall... reuses the SynchronousIoCancel.Created with BeforeCall/AfterCall seam on a multi-buffer deeper listing. (2) The hook's FSA_HOOK_SLOW_REFRESH_MS (StartupHook.cs, the WatchList pad), exercised by L-002, which PASSED on my run."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "ScanResult.cs: 'public required TopLevelSnapshot? TopLevel { get; init; }'. Scanner.cs:292-294: Run.Finish, the only object initializer that builds a ScanResult, sets TopLevel = _topLevel.Finish(...). TopLevelTracker.Finish always publishes once the tracker is seeded."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "MainWindow.xaml.cs:305 compares with ReferenceEquals(snapshot, _shownTopLevel). StartScan (:163) calls ClearTopLevel, which nulls _shownTopLevel and _skipNextRefresh (:350-357). :167 creates a new ScanProgress for each scan. The ScanProgress.TopLevel doc states this."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "Scanner.cs:64 carries Row in the _pending tuple, and :166 passes 'row == RootRow ? k : row'. TopLevelTracker.FolderExited indexes _rows[row] and reads nothing from the store. The design note's statement about how often Moved's Parent walk runs is wrong (see drift), which does not affect this obligation."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "The hook's Measure mode (StartupHook.cs) with WindowCases Test-M001, recorded in docs/design/SL-039-live-results.md:134-150. I re-ran M-001: refreshes=31, refreshP95=25.8 ms, refreshMax=52.5 ms, inputP95=11.8 ms, inputMax=104.5 ms, containers=5, PASSED."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": ".taad/fitness.yaml, rule 'the window never touches the scan store': '\\bScanStore\\b', '(?<!\\bresult)\\.Store\\b' and '\\bStore\\s*:'. The only App use is result.Store.GetPath after the scan (MainWindow.xaml.cs:410). '_result.Store' would still match, because there is no word boundary between '_' and 'r'. Fitness op=check passes."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "WindowCases L-001 with hook watch mode: it acts only when Cancel is pressable, a Folder row has Bytes>0 and another row is NotRead. My run: rows=20 folderBytes=196608 notRead=17 running=True, PASSED."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "TopLevelTests.AHardlinkAcrossTwoTopFoldersIsChargedOnceToTheRowOfTheFirstName (:53-71): a real NTFS hardlink across 1-folder and 2-folder. The charged row has 1 MiB and the repeat row 0 bytes and 1 file."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "TopLevelTests.AnInPlaceCorrectionOfAnEarlierNameIsCreditedToThatNamesRow (:80-107): the file is grown by 63 MiB through 2-folder\\current.bin, so 1-folder\\stale.bin's entry is stale. The test asserts that a snapshot has 1-folder Done at 1 MiB before 2-folder is read, and 64 MiB at the end, with 2-folder at 0 bytes in every snapshot."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "TopLevelTests.TopLevelLinksAreNotFollowedRowsWithNothingCounted (:111-132): a real top-level junction, directory symlink and file symlink pointing at a 1 MiB target outside the tree. Every snapshot has them as Link/NotFollowed with 0 bytes, and none is skipped."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "TopLevelTests.AFolderRowHoldingLinkFoldersIsDoneWhenTheScanCompletes (:139-159): 'top' holds a junction, a directory symlink and a cyclic junction, plus ordinary a\\a1 and b. It goes Reading then Done with Folders=4, and the scan Completes."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "TopLevelTests.AnUnreadableTopFolderIsAnUnreadableRowAndTheScanCompletes (:162-181): a Deny ACE on the top-level folder itself gives Win32 error 5 and an Unreadable row."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "TopLevelTests.AnUnreadableFolderDeeperInsideLetsItsRowFinishWithOneUnreadableBelow (:184-204): the Deny is on top\\b-denied inside readable 'top'. The row is Done with UnreadableBelow=1, and the freeze check runs."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "TopLevelTests.CancelBetweenListingsLeavesAFinalSnapshotThatAddsUpToTheTotals (:213-238): cancel in AfterFolder at the third listing. f0 is StoppedPartway, 9 rows are NotRead, and Totals are exact."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "TopLevelTests.CancelAtAnyCallLeavesAFinalSnapshotThatAddsUpToTheTotals(duringTheCall: true) (:251-340): AfterCall cancels during each guarded call in turn, including every 64 KiB buffer of d\\big (2,000 names of 100 characters). It asserts that no row changes at the stop and that the rows equal Totals. The reason was corrected under M4, because an interrupted listing commits nothing."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "The Core test NothingToShowIsNoSnapshotOrAnEmptyOne (:349-385) feeds an already-cancelled token, a missing root, a file as root and an empty root. WindowCases L-003 covers empty, missing and relative roots at the window (PASSED on my run). The 'scan faults after rows were shown' alternative is not fed. The build declared this: hook throw mode faults the UI thread, not Scanner.Scan."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "TopLevelTests.ASnapshotHeldEarlyNeverChangesWhileTheScanGoesOn (:394-428): holds progress.TopLevel after listing 2, and checks that its values are unchanged at the end while rows 1-5 were replaced by new objects in new states."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "WindowCases L-002: 3,000 top-level folders, every refresh padded to 150 ms by the hook, so the next tick skips. Cancel is pressed only when skipped>=1 and armed=True. My run: containers=5, skipped=1, armed=True, and the ending showed final=true with rows, bytes and files equal to core."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "WindowCases L-001 builds folders named Recognizable-Top-NN and asserts that the raw report text contains neither any name nor the prefix. PASSED on my run."
+   },
+   {
+    "key": "C-014",
+    "exercised": "yes",
+    "evidence": "Marked material:false in the design. Part of it is fed anyway: CancelAtAnyCall's baseline tree has probes\\large.bin as a 64 MiB sparse file with nothing allocated (OnDisk < Bytes). It is probed and credited through Moved, and AssertRowsAreTheStore checks the row's OnDisk against ChargedOnDisk. No path over 260 characters is fed; the longest is about 170. The design's reason for not treating this as material still holds: attribution is by the stack-carried row and Parent, never by path."
+   }
+  ],
+  "drift": [
+   "docs/design/SL-039-live-results.md:33-36 and the build's deviation text say Moved's Parent walk 'is the only Parent walk, and it runs once per first repeat of a hardlinked file'. In the code, Scanner.Correct calls _topLevel.Moved (Scanner.cs:285) on every probe correction that succeeds. That includes a first name's own probe through AddEntry (Scanner.cs:253-254), which happens for every file of 64 MiB or more and every WOF-suspect file (SizeProbe.IsDue). The design likewise limited Moved to corrections of an EARLIER record. The behaviour is correct: the walk lands on the current listing's row, and _credited moves forward, so nothing is counted twice. The cost is negligible next to the probe's own open. But the as-built note misstates how often the walk runs, and a later slice reading it for per-listing cost would be misled. Fix: reword the note to 'once per successful size probe correction'."
+  ],
+  "unreviewed": [
+   ".taad/slices/SL-039/*.json (engine ledger and stage accounts, not code; only index.json was consulted for attempt shape: one attempt per stage, no loop)"
+  ]
+ }
+}
