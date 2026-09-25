@@ -65,10 +65,14 @@ build measured. Where it and the slice's design disagree, this file is right.
 
 - `TopLevelList`, a ListBox with virtualization on (`IsVirtualizing`, `VirtualizationMode=Recycling`,
   `CanContentScroll`), under a header `TopLevelHeader`, in its own panel below the scanning and outcome
-  panels. It is the window's last child, so it gets the rest of the height, which is what lets it
-  virtualize. The design put it under the counters inside the scanning panel; that panel collapses at the
-  ending, and the list has to stay after it, so it moved. The outcome panel is now docked at the top, and
-  the unreadable list inside it has a MaxHeight of 200.
+  panels. The design put it under the counters inside the scanning panel; that panel collapses at the
+  ending, and the list has to stay after it, so it moved. The unreadable list inside the outcome panel has
+  a MaxHeight of 200. Since SL-040 (O-025) the outcome panel and this one are the two rows of the window's
+  last child, a Grid: each row is star-sized only while its panel is shown, so while a scan runs this
+  panel gets all the height left, and after an ending the two share it 2 to 1, with the outcome never
+  below 316 px (328 px while its unreadable folders are open). The list always has a bounded height, which
+  is what lets it virtualize. At the default 880x600 that floor leaves it its header and part of a row
+  after an ending (SL-040's B-007 measures it).
 - Two TextBlocks a row, formatted by a converter (`TopLevelRowText`) so only the rows on screen are ever put
   into words: the name with its state ("reading...", "not read yet", "stopped partway", "could not be
   opened", "link, not followed"), and the size, on-disk size, files and folders inside, and "N folders

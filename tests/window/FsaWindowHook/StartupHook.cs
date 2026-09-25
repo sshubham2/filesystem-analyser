@@ -22,6 +22,7 @@ using System.Windows.Threading;
 ///   FSA_HOOK_LOG=&lt;file&gt;  [FSA_HOOK_ARMED=&lt;marker file&gt;  FSA_HOOK_CANCEL_DELAY_MS=&lt;n&gt;  FSA_HOOK_CLOSE_DELAY_MS=&lt;n&gt;]
 ///   [FSA_HOOK_SLOW_REFRESH_MS=&lt;n&gt;]  (watch and measure only)
 ///   [FSA_HOOK_MISSING=&lt;the root folder, under %TEMP%&gt;]  (rescan only)
+///   [FSA_HOOK_EXPAND=1]  (watch only)
 /// </code>
 /// The runtime calls <see cref="Initialize"/> before the app's Main, in every .NET process that inherits the
 /// variable: pwsh 7, dotnet.exe and MSBuild nodes too. So it does nothing unless FSA_HOOK_MODE is set and the
@@ -85,9 +86,11 @@ using System.Windows.Threading;
 /// <list type="bullet">
 /// <item>watch waits up to 30 s for the scan to be running (CancelButton pressable) while the list already
 /// holds a Folder row with Bytes over 0 and another still NotRead. It logs "watch rows=n folderBytes=n
-/// notRead=n containers=n skipped=n armed=b running=True" (containers: the most items the list had realized
-/// once any refresh so far was laid out; skipped and armed: the window's refresh-skip state), then
-/// "acted mode=watch ..." and presses Cancel as stop does. With
+/// notRead=n containers=n skipped=n armed=b running=True listHeight=px" (containers: the most items the list
+/// had realized once any refresh so far was laid out; skipped and armed: the window's refresh-skip state;
+/// listHeight: the list's ActualHeight as it is pressed, SL-040), then "acted mode=watch ..." and presses
+/// Cancel as stop does. With FSA_HOOK_EXPAND=1 it also opens the unreadable-folders list once the Cancel's
+/// ending shows the largest files, exactly as expand mode does after its ending, with expand's lines. With
 /// FSA_HOOK_SLOW_REFRESH_MS it also waits until a tick has skipped its refresh and the next skip is armed
 /// again, so the scan's final snapshot arrives right after a skipped tick, with the skip still armed. On
 /// timeout it logs "watch timeout ..." and presses Cancel, so the case fails on the missing watch line.</item>
@@ -164,12 +167,23 @@ internal class StartupHook
                 return;
             }
             string? marker = Environment.GetEnvironmentVariable("FSA_HOOK_ARMED");
+            string? expandAfter = Environment.GetEnvironmentVariable("FSA_HOOK_EXPAND");
+            if (!string.IsNullOrEmpty(expandAfter) && (mode != "watch" || expandAfter != "1"))
+            {
+                Log($"refused mode={mode} reason=FSA_HOOK_EXPAND is 1, and for watch only");
+                return;
+            }
             if (mode is "watch" or "measure")
             {
                 if (!string.IsNullOrEmpty(marker))
+                {
                     Log($"refused mode={mode} reason={mode} mode is not armed");
-                else
-                    WatchList(mode, pad ?? 0);
+                    return;
+                }
+                // Before the window loads, as expand mode does: the Cancel's ending then opens the list.
+                if (!string.IsNullOrEmpty(expandAfter))
+                    DriveAfterList("expand", null);
+                WatchList(mode, pad ?? 0);
                 return;
             }
             if (pad is not null)
@@ -563,7 +577,8 @@ internal class StartupHook
                     (int rows, long folderBytes, int notRead) = ReadRows(list);
                     int skipped = WindowState<int>(window, "SkippedRefreshes");
                     bool armed = WindowState<bool>(window, "SkipsNextRefresh");
-                    last = $"rows={rows} folderBytes={folderBytes} notRead={notRead} containers={seen.Containers} skipped={skipped} armed={armed} running={running}";
+                    string height = list.ActualHeight.ToString("F1", CultureInfo.InvariantCulture);
+                    last = $"rows={rows} folderBytes={folderBytes} notRead={notRead} containers={seen.Containers} skipped={skipped} armed={armed} running={running} listHeight={height}";
                     if (!running || folderBytes <= 0 || notRead == 0 || (padded && (skipped == 0 || !armed)))
                         return;
                     Log($"watch {last}");

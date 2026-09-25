@@ -33,19 +33,20 @@
 # rows, timed by the hook's measure mode against the limits spike live-refresh-expanded-100k-folder passed
 # under. It builds 100,000 folders and runs only when named, never in All.
 #
-# B-001 to B-005 (SL-040) are the largest-files list: the report's largestFiles* scalars and the list's
+# B-001 to B-007 (SL-040) are the largest-files list: the report's largestFiles* scalars and the list's
 # section against a planted tree, the caption for an unreadable folder, for a tree with nothing to rank and
 # for a stopped scan (B-005, under the hook), and the list at 100 rows beside a filled unreadable-folders
 # list, its first row a name with an unpaired surrogate, with that list closed and then opened (B-003, the
 # second run under the hook's expand mode). Planted names carry "plantedname", which the report
 # must never hold. An unreadable folder is made with an icacls deny of list-folder for this user, and the
 # deny is removed before the tree is. B-006 is a second scan after the first has shown its list (the hook's
-# rescan mode), read through eng/read-window.ps1 at that second point.
+# rescan mode), read through eng/read-window.ps1 at that second point. B-007 is the largest-files list full
+# beside the results list after Completed and Cancelled endings, the unreadable folders closed and opened.
 
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
-        'L-001', 'L-002', 'L-003', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'N-001', 'N-002', 'N-003', 'N-004')]
+        'L-001', 'L-002', 'L-003', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'N-001', 'N-002', 'N-003', 'N-004')]
     [string] $Case,
     [switch] $IncludeNetwork
 )
@@ -60,8 +61,8 @@ $HookDll = Join-Path $Repo 'artifacts\window-hook\FsaWindowHook.dll'
 $RigProject = Join-Path $Repo 'tests\window\StallRig\StallRig.csproj'
 $RigExe = Join-Path $Repo 'artifacts\stall-rig\StallRig.exe'
 $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS',
-    'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING'
-$HookedCases = 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'N-001', 'N-002'
+    'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND'
+$HookedCases = 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'N-001', 'N-002'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004'
 $RigOnlyCases = 'N-003', 'N-004'
 $KiB64 = 64KB
@@ -661,7 +662,7 @@ function Read-WatchLine($log) {
     $line = @($log | Where-Object { $_.StartsWith('watch rows=') })
     if ($line.Count -ne 1) { return $null }
     $fields = @{}
-    foreach ($key in 'rows', 'folderBytes', 'notRead', 'containers', 'skipped', 'armed', 'running') {
+    foreach ($key in 'rows', 'folderBytes', 'notRead', 'containers', 'skipped', 'armed', 'running', 'listHeight') {
         $fields[$key] = Field $line[0] $key
     }
     [pscustomobject]$fields
@@ -1493,6 +1494,7 @@ function Test-B003 {
             CheckEqual $false $read.Report.window.UnreadableExpander.expanded 'UnreadableExpander is closed'
             CheckEqual $true $read.Report.window.UnreadableExpander.visible 'UnreadableExpander is on screen'
             CheckEqual $true $read.Report.window.UnreadableExpander.inView 'UnreadableExpander is inside the panel, not pushed out by the list'
+            CheckEqual $true $read.Report.window.TopLevelList.inView "TopLevelList is inside the window below the outcome ($($read.Report.window.TopLevelList.actualHeight) px)"
         }
 
         Write-Output '  the unreadable folders opened'
@@ -1512,6 +1514,7 @@ function Test-B003 {
         CheckEqual $true $window.UnreadableExpander.expanded 'the report: UnreadableExpander is open'
         CheckEqual $true $window.UnreadableExpander.inView 'the report: UnreadableExpander is inside the panel'
         CheckEqual $true $window.UnreadableList.inView 'the report: UnreadableList is inside the panel'
+        CheckEqual $true $window.TopLevelList.inView "the report: TopLevelList is inside the window below the outcome ($($window.TopLevelList.actualHeight) px)"
         $built = $window.LargestFilesList.realizedRows
         Check ($built -gt 0 -and $built -lt 100) "LargestFilesList still virtualizes: $built of 100 rows built"
         Check ($window.LargestFilesList.actualHeight -ge 40) "LargestFilesList keeps room for two rows or more ($($window.LargestFilesList.actualHeight) px)"
@@ -1652,9 +1655,104 @@ function Test-B006 {
     }
 }
 
+# O-025: after an ending, the outcome's lists and the results list below it (SL-039) are on screen together,
+# each inside the window with some height: none pushed another off it.
+function CheckBothLists($window, [bool] $opened) {
+    CheckEqual $true $window.LargestFilesList.inView "LargestFilesList is inside the window ($($window.LargestFilesList.actualHeight) px)"
+    CheckEqual $true $window.TopLevelPanel.visible 'TopLevelPanel is on screen'
+    CheckEqual $true $window.TopLevelList.inView "TopLevelList is inside the window ($($window.TopLevelList.actualHeight) px, $($window.TopLevelList.realizedRows) rows built)"
+    CheckEqual $opened $window.UnreadableExpander.expanded "UnreadableExpander is $(if ($opened) { 'open' } else { 'closed' })"
+    CheckEqual $true $window.UnreadableExpander.inView 'UnreadableExpander is inside the window'
+    if ($opened) {
+        CheckEqual $true $window.UnreadableList.inView "UnreadableList is inside the window ($($window.UnreadableList.actualHeight) px)"
+    }
+}
+
+# B-007 (O-025, O-026): the largest-files list full and the results list both on screen after an ending, at
+# the window's default size. The tree, in listing order: 4 top-level folders of 26 non-empty files (104), 12
+# folders the scan cannot read, and 20 folders of 1,500 empty folders each, which take the scan past a
+# second. Four endings: Completed, with the unreadable folders closed and then opened (the hook's expand
+# mode); and Cancelled, pressed by the hook's watch mode once the files are read and the slow folders are
+# not, closed and then opened (FSA_HOOK_EXPAND). Mid-scan, with no outcome on screen, the results list has
+# more height than it keeps beside the outcome after the ending (watch's listHeight).
+function Test-B007 {
+    $case = New-CaseFolder
+    $denied = @()
+    try {
+        $root = Join-Path $case 'tree'
+        for ($d = 1; $d -le 4; $d++) {
+            for ($f = 1; $f -le 26; $f++) {
+                New-File (Join-Path $root "a$d-$Planted\$Planted-$f.bin") $KiB64
+            }
+        }
+        for ($k = 1; $k -le 12; $k++) {
+            $folder = Join-Path $root ('b{0:D2}-{1}' -f $k, $Planted)
+            [void][System.IO.Directory]::CreateDirectory($folder)
+            Deny-Listing $folder
+            $denied += $folder
+        }
+        for ($s = 1; $s -le 20; $s++) {
+            $slow = Join-Path $root ('c{0:D2}-{1}' -f $s, $Planted)
+            for ($j = 0; $j -lt 1500; $j++) {
+                [void][System.IO.Directory]::CreateDirectory((Join-Path $slow "m$j"))
+            }
+        }
+        $unread = ' Files in 12 unreadable folders are not included.'
+
+        foreach ($opened in $false, $true) {
+            Write-Output "  Completed, the unreadable folders $(if ($opened) { 'opened' } else { 'closed' })"
+            if ($opened) {
+                $run = Invoke-WithHook 'expand' $HookDll { Read-Window $root }
+                $before = $script:Failures.Count
+                CheckActed $run 'expand'
+                if ($script:Failures.Count -gt $before) { continue }
+                $read = $run.Result
+            }
+            else {
+                $read = Read-Window $root
+            }
+            CheckEqual 'EXIT 0' $read.Exit 'exit code'
+            Check ($null -ne $read.Report) 'a report was written'
+            if ($null -eq $read.Report) { continue }
+            CheckEqual "Finished: $root" $read.Report.window.OutcomeTitle 'OutcomeTitle'
+            CheckLargestFiles $read 100 $KiB64 "Top 100 of 104 files scanned.$unread"
+            CheckTopLevel $read.Report.topLevel @{ rows = 36; unreadable = 12; final = $true } 'against the tree'
+            CheckBothLists $read.Report.window $opened
+        }
+
+        foreach ($opened in $false, $true) {
+            Write-Output "  Cancelled, the unreadable folders $(if ($opened) { 'opened' } else { 'closed' })"
+            $variables = if ($opened) { @{ FSA_HOOK_EXPAND = '1' } } else { @{} }
+            $run = Invoke-HookedRun 'watch' $root (Join-Path $case 'report.json') $variables
+            $before = $script:Failures.Count
+            CheckActed $run 'watch'
+            if ($opened) { CheckActed $run 'expand' }
+            if ($script:Failures.Count -gt $before) { continue }
+            $watch = Read-WatchLine $run.Log
+            Check ($null -ne $watch) "the hook logged one 'watch rows=' line"
+            CheckEqual '0' $run.Exit 'exit code'
+            Check ($null -ne $run.Report) 'a report was written'
+            if ($null -eq $watch -or $null -eq $run.Report) { continue }
+            CheckEqual 'Cancelled' $run.Report.core.status 'core.status'
+            $files = ("$($run.Report.window.OutcomeDetail[0])" -split ' and ')[0]
+            $read = [pscustomobject]@{ Report = $run.Report; Text = ($run.Report | ConvertTo-Json -Depth 8) }
+            CheckLargestFiles $read 100 $KiB64 "Top 100 of $files scanned in the part read before the scan stopped.$unread"
+            CheckTopLevel $run.Report.topLevel @{ rows = 36; unreadable = 12; final = $true } 'against the tree'
+            Check ([int]$run.Report.topLevel.notRead -ge 1) "some slow folders were not read before the stop ($($run.Report.topLevel.notRead))"
+            CheckBothLists $run.Report.window $opened
+            $after = $run.Report.window.TopLevelList.actualHeight
+            Check ([double]$watch.listHeight -gt $after) "mid-scan, with no outcome on screen, TopLevelList had more height ($($watch.listHeight) px) than beside the outcome after the stop ($after px)"
+        }
+    }
+    finally {
+        foreach ($folder in $denied) { Undo-DenyListing $folder }
+        Remove-CaseFolder $case
+    }
+}
+
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006') + $NetworkCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007') + $NetworkCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })
