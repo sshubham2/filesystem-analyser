@@ -457,9 +457,15 @@ public partial class MainWindow : Window
         LargestFilesPanel.Visibility = Visibility.Visible;
     }
 
+    // The outcome's texts row takes their natural height at most, so the lists get the rest (MainWindow.xaml).
+    // Set once the texts are laid out, and never under the row's MinHeight: before that their height is 0.
+    private void OnOutcomeTextsSizeChanged(object sender, SizeChangedEventArgs e) =>
+        OutcomeTextsRow.MaxHeight = Math.Max(e.NewSize.Height, OutcomeTextsRow.MinHeight);
+
     private void HideLargestFiles()
     {
         LargestFilesPanel.Visibility = Visibility.Collapsed;
+        LargestFilesList.Visibility = Visibility.Collapsed; // its own row, below the heading's
         LargestFilesList.ItemsSource = null;
         LargestFilesCaption.Text = "";
         LargestFilesMs = null;

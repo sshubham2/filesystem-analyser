@@ -2,6 +2,7 @@ using System.IO;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -31,14 +32,16 @@ namespace FsAnalyser.App;
 ///   { "schema": 1,
 ///     "root": the root argument as the app took it,
 ///     "window": { "OutcomeTitle": Text, "OutcomeDetail": [Text split into lines], "CountersText": Text,
-///                 "OutcomePanel": { "visible": bool, "actualHeight": number }, "TopLevelHeader": Text,
+///                 "OutcomePanel": { "visible": bool, "actualHeight": number },
+///                 "OutcomeTexts": { "actualHeight": number, "extentHeight": number, "inView": bool },
+///                 "TopLevelHeader": Text,
 ///                 "LargestFilesPanel": { "visible": bool, "actualHeight": number },
 ///                 "LargestFilesCaption": Text,
-///                 "LargestFilesList": { "actualHeight": number, "inView": bool, "realizedRows": number },
+///                 "LargestFilesList": { "actualHeight": number, "inView": bool, "realizedRows": number, "fullRows": number },
 ///                 "UnreadableExpander": { "visible": bool, "actualHeight": number, "inView": bool, "expanded": bool },
-///                 "UnreadableList": { "actualHeight": number, "inView": bool },
+///                 "UnreadableList": { "actualHeight": number, "inView": bool, "fullRows": number },
 ///                 "TopLevelPanel": { "visible": bool, "actualHeight": number },
-///                 "TopLevelList": { "actualHeight": number, "inView": bool, "realizedRows": number } },
+///                 "TopLevelList": { "actualHeight": number, "inView": bool, "realizedRows": number, "fullRows": number } },
 ///     "largestFilesShown": rows bound to LargestFilesList, "largestFileOnDisk": the first row's on-disk
 ///         bytes or null, "largestFilesMs": how long ranking them took or null (SL-040),
 ///     "core": { "status", "rootError", "files", "folders", "links", "bytes", "bytesOnDisk", "elapsedMs" } or null,
@@ -54,7 +57,10 @@ namespace FsAnalyser.App;
 /// control is on screen with some height, and that neither it nor anything around it up to the window
 /// was laid out larger than the room it was given, so nothing squeezed it out of sight or clipped it (a
 /// control squeezed out of a DockPanel reads visible with actualHeight 0). "realizedRows" is how many
-/// rows the list has built, which stays near what fits on screen while it virtualizes. Later
+/// rows the list has built, which stays near what fits on screen while it virtualizes; "fullRows" is how many
+/// of them lie wholly inside the list's viewport, readable without scrolling. OutcomeTexts is the scrolling
+/// region of the outcome's texts: "extentHeight" is their whole height, and more than "actualHeight" means
+/// the rest is a scroll away. Later
 /// screens ADD keys; they never rename one or change what it holds. "window" is the evidence a check
 /// compares with the tree it built. The largestFiles* keys are read from the list's own rows and from the
 /// window's timing of the one call that ranked them; they never hold a name or a path. "core" is the
@@ -89,6 +95,12 @@ internal static class WindowReport
                 OutcomeDetail = Regex.Split(window.OutcomeDetail.Text, @"\r?\n"),
                 CountersText = window.CountersText.Text,
                 OutcomePanel = new { visible = window.OutcomePanel.IsVisible, actualHeight = window.OutcomePanel.ActualHeight },
+                OutcomeTexts = new
+                {
+                    actualHeight = window.OutcomeTexts.ActualHeight,
+                    extentHeight = window.OutcomeTexts.ExtentHeight,
+                    inView = InView(window.OutcomeTexts),
+                },
                 TopLevelHeader = window.TopLevelHeader.Text,
                 LargestFilesPanel = new { visible = window.LargestFilesPanel.IsVisible, actualHeight = window.LargestFilesPanel.ActualHeight },
                 LargestFilesCaption = window.LargestFilesCaption.Text,
@@ -97,6 +109,7 @@ internal static class WindowReport
                     actualHeight = window.LargestFilesList.ActualHeight,
                     inView = InView(window.LargestFilesList),
                     realizedRows = Enumerable.Range(0, largest.Count).Count(i => window.LargestFilesList.ItemContainerGenerator.ContainerFromIndex(i) is not null),
+                    fullRows = FullRows(window.LargestFilesList),
                 },
                 UnreadableExpander = new
                 {
@@ -105,13 +118,19 @@ internal static class WindowReport
                     inView = InView(window.UnreadableExpander),
                     expanded = window.UnreadableExpander.IsExpanded,
                 },
-                UnreadableList = new { actualHeight = window.UnreadableList.ActualHeight, inView = InView(window.UnreadableList) },
+                UnreadableList = new
+                {
+                    actualHeight = window.UnreadableList.ActualHeight,
+                    inView = InView(window.UnreadableList),
+                    fullRows = FullRows(window.UnreadableList),
+                },
                 TopLevelPanel = new { visible = window.TopLevelPanel.IsVisible, actualHeight = window.TopLevelPanel.ActualHeight },
                 TopLevelList = new
                 {
                     actualHeight = window.TopLevelList.ActualHeight,
                     inView = InView(window.TopLevelList),
                     realizedRows = Enumerable.Range(0, window.TopLevelList.Items.Count).Count(i => window.TopLevelList.ItemContainerGenerator.ContainerFromIndex(i) is not null),
+                    fullRows = FullRows(window.TopLevelList),
                 },
             },
             ["largestFilesShown"] = largest.Count,
@@ -182,6 +201,35 @@ internal static class WindowReport
                 return false;
         }
         return true;
+    }
+
+    // How many of the list's rows lie wholly inside its viewport, the part of it that shows rows: the rows a person
+    // can read there without scrolling. A list with none shows only slivers, however tall it is.
+    private static int FullRows(ListBox list)
+    {
+        if (!list.IsVisible || FindViewport(list) is not { } viewport)
+            return 0;
+        int full = 0;
+        for (int i = 0; i < list.Items.Count; i++)
+        {
+            if (list.ItemContainerGenerator.ContainerFromIndex(i) is not FrameworkElement row || !row.IsVisible || row.ActualHeight <= 0)
+                continue;
+            Rect box = row.TransformToAncestor(viewport).TransformBounds(new Rect(row.RenderSize));
+            if (box.Top >= -0.5 && box.Bottom <= viewport.ActualHeight + 0.5)
+                full++;
+        }
+        return full;
+    }
+
+    private static ScrollContentPresenter? FindViewport(DependencyObject node)
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(node, i);
+            if ((child as ScrollContentPresenter ?? FindViewport(child)) is { } found)
+                return found;
+        }
+        return null;
     }
 
     /// <summary>Deletes the report and its temporary file, if they are there; never throws.</summary>
