@@ -515,8 +515,10 @@ def judge(row: dict, seen: dict) -> tuple:
         offsets = tuple(sorted({o for rule, o in seen[engine] if rule == primary[engine] and o is not None}))
         return ("fire" if fired else "quiet", offsets if engine in lines else ())
 
-    split = expect["xunit"] != expect["fitness"] or (
-        "xunit" in lines and "fitness" in lines and lines["xunit"] != lines["fitness"])
+    # Only a divergence row can close. A plant into a settled rule also expects the engines to differ
+    # (it has no xUnit twin), and Fitness going quiet there is a miss, not a divergence closing.
+    split = row["scenario"] == "divergences" and (expect["xunit"] != expect["fitness"] or (
+        "xunit" in lines and "fitness" in lines and lines["xunit"] != lines["fitness"]))
     if split and outcome("xunit") == outcome("fitness"):
         return ["DIVERGENCE-CLOSED"], [
             f"both engines now give {outcome('xunit')}: delete row {row['id']} from divergences.json and its "

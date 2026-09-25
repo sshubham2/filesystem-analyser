@@ -186,12 +186,59 @@ so it becomes `\` again.
       (the line first shows 1.9 to 3 s after Cancel, counts up, the UI thread never goes a second
       unheard, the line is gone when the scan returns), N-002 (closing ends the app, with and without a
       Cancel first) and N-003 and N-004 (rig isolation). They change the machine's SMB mappings, so they
-      are opt-in.
+      are opt-in. `tests/window/HookCases.ps1` covers the hook's armed mode on a local tree, with no
+      share: an armed close decides on ScanningPanel, not CancelButton (H-001), and a marker that never
+      appears, an armed stop with no Cancel delay and an armed throw are refused with the reason (H-002).
+      Two endings have no test at all: a scan that faults while the line shows, and a scan that finishes
+      on its own after Cancel. Both go through the same single `finally` that clears the line, the
+      shipped exe has no seam that could produce them, and the rule "the shipped app carries no test seam"
+      forbids adding one. They are deferred, not tested. The cancelled ending with the line on screen is
+      proved only by N-001.
+    - *The person-run network check.* A person runs `WindowCases.ps1 -Case All -IncludeNetwork` under
+      pwsh, then the Core.Tests project filtered to `Network=SMB-LOOPBACK` (StalledShareTests). The record
+      carries the HEAD it ran at, pass or fail for N-001 to N-004 and StalledShareTests, and N-001's
+      measured Cancel-to-return. No stage runs it. A stage that finds no record, or a stale one, reports
+      it as owed to a person once and does not retry.
+    - *When that pass goes stale.* Any change, between the HEAD the pass ran at and the HEAD being
+      judged, to any of these paths makes it stale, whatever the change is. Nobody has to judge whether
+      a change is "only a comment": `git diff --name-only <pass HEAD> <HEAD> -- <paths>` decides.
+      - `src/FsAnalyser.App/MainWindow.xaml`, `src/FsAnalyser.App/MainWindow.xaml.cs`,
+        `src/FsAnalyser.App/StoppingWait.cs`, `src/FsAnalyser.App/App.xaml.cs`
+      - `src/FsAnalyser.Core/Scanning/**`
+      - `tests/window/FsaWindowHook/**`, `tests/window/StallRig/**`, `tests/window/WindowCases.ps1` (the
+        whole file)
+      - `tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs`, `tests/FsAnalyser.Core.Tests/StalledShareTests.cs`,
+        `tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj`
+      - `eng/read-window.ps1`
+
+      There is one named exemption. SL-038 build 2 reworded two comments in SmbRig.cs, from "on this
+      machine" to "per sign-in session", with no code change and `RigLock.MachineName` left as it was. That
+      takes SmbRig.cs from blob `d2e3435d138f91b3aeb0101356137d7277af367c` (at eafb1c3, where the person's
+      N-001 to N-004 pass was run) to blob `8fdf6e87345668eafc91b09015bdf83997820801`. SmbRig.cs does not
+      make the pass stale while `git rev-parse <HEAD>:tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs` is
+      exactly that second blob. The exemption names the file's content, not the commit, because the
+      builder does not commit. StalledShareTests has never passed on the extracted rig, so the record is
+      incomplete until a person runs it.
     - *The rig* (`tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs`, also built as `tests/window/StallRig`)
       serialises runs with one mutex per sign-in session, because the SMB client allows one port per
       server name: a second run waits for the first, or fails saying so. Under the mutex it removes rig
-      mappings a killed run left behind (`\\127.0.0.1\fsa` and 8 hex digits, never anything else) before
-      making its own.
+      mappings a killed run left behind before making its own. That sweep is the only code in this slice
+      that deletes anything on the person's machine. It deletes a mapping only when the one predicate
+      `LoopbackShare.IsRigMapping` matches it: exactly `\\127.0.0.1\` followed by `fsa` in lower case and 8
+      hex digits in either case. The default-run `SmbRigTests.OnlyTheRigsOwnMappingsAreSwept` calls that
+      same predicate and must keep every other shape: another server (the person's own
+      `\\100.109.48.75\collab`), 127.0.0.2 and 127.0.0.10, `localhost`, the IPv6 literal
+      `--1.ipv6-literal.net`, 7 or 9 digits, a non-hex digit, a sub-path, `FSA` in capitals, another
+      share name, a drive letter and the empty string.
+    - *StallRig's launch.* `StallRig.exe --marker <file> [--wait-sec <n>]`. `--wait-sec` is how long a
+      run waits for another run's lock. It defaults to 150 s (`LoopbackShare.WaitForOtherRun`, about two
+      stalled-share runs), so a wait is always bounded. After that the rig exits 1 without mapping
+      anything, and stderr carries the TimeoutException that names the lock (`Local\FsAnalyser-SmbRig`)
+      and why two runs cannot share 127.0.0.1. Bad arguments exit 2 with a usage line. A failed mapping
+      exits 1 with the error. When stdin closes, it unmaps its own share and exits 0. N-003 asserts the
+      fail-at-once branch (`--wait-sec 2` exits 1 within 30 s) and the waiting branch (a run started
+      while the first lives prints no share until the first ends) separately, rather than the 150 s
+      default, which would add two and a half minutes to the person's run.
   - **The loopback SMB test is opt-in too.** `CancellingAScanOfAShareThatStoppedAnsweringNeverHangsInTheClose`
     carries `Trait("Network", "SMB-LOOPBACK")`. It needs the Windows 11 24H2 SMB client (`-TcpPort`)
     and takes about 70 s. It uses SMBLibrary and SMBLibrary.Win32 (LGPL-3.0-or-later) in the test

@@ -18,7 +18,7 @@ namespace FsAnalyser.Core.Tests;
 
 /// <summary>An SMBLibrary server on 127.0.0.1, on a spare port, reached through a non-persistent mapping.</summary>
 /// <remarks>
-/// Runs are serialised on this machine by <see cref="RigLock"/>, held from before the mapping is made
+/// Runs are serialised per sign-in session by <see cref="RigLock"/>, held from before the mapping is made
 /// until after it is removed. The SMB client allows one port per server name, so two live rigs on
 /// 127.0.0.1 would collide: a second run waits for the first, or fails with a TimeoutException that says
 /// so. Under the lock no live rig owns a mapping to 127.0.0.1, so any rig mapping still listed is one a
@@ -165,7 +165,7 @@ internal sealed class LoopbackShare : IDisposable
 }
 
 /// <summary>
-/// One rig run at a time on this machine: a named Mutex, because Windows never lets a dead holder keep
+/// One rig run at a time per sign-in session: a named Mutex, because Windows never lets a dead holder keep
 /// one. A run killed while it holds the lock either takes the mutex with it (it had the last handle) or
 /// leaves it abandoned to the run already waiting, which then owns it. Either way the next run proceeds,
 /// and since it cannot tell whether a killed run left a mapping, it always sweeps (LoopbackShare).

@@ -28,28 +28,61 @@ public class StoppingWaitTests
         Assert.Equal(expected, StoppingWait.For(TimeSpan.FromMilliseconds(milliseconds)));
     }
 
-    [Fact]
-    public void TheGateIsExactlyTwoSeconds()
+    /// <summary>
+    /// Under the 2 s gate, negative spans included, there is nothing to show, so there is never a negative
+    /// count (case C-013). In ticks: TimeSpan.MinValue, -5 s, -1 ms, 0, 1.999 s and one tick short of 2 s.
+    /// </summary>
+    [Theory]
+    [InlineData(long.MinValue)]
+    [InlineData(-50_000_000)]
+    [InlineData(-10_000)]
+    [InlineData(0)]
+    [InlineData(19_990_000)]
+    [InlineData(19_999_999)]
+    public void UnderTheGateNothingIsShown(long ticks)
     {
-        Assert.Null(StoppingWait.For(TimeSpan.FromSeconds(2) - TimeSpan.FromTicks(1)));
-        Assert.NotNull(StoppingWait.For(TimeSpan.FromSeconds(2)));
-        Assert.Equal(string.Format(MinuteOrMore, 89), StoppingWait.For(TimeSpan.FromSeconds(90) - TimeSpan.FromTicks(1)));
-        Assert.Equal(string.Format(NoEstimate, 90), StoppingWait.For(TimeSpan.FromSeconds(90)));
+        Assert.Null(StoppingWait.For(TimeSpan.FromTicks(ticks)));
     }
 
+    /// <summary>
+    /// The gate is inclusive at 2 s. From there to just under 90 s the line counts whole seconds, floored,
+    /// never goes down, and always names closing the window (case C-014).
+    /// </summary>
     [Fact]
-    public void ANegativeSpanShowsNothing()
+    public void FromTwoSecondsTheLineCountsUpInWholeSeconds()
     {
-        Assert.Null(StoppingWait.For(TimeSpan.MinValue));
-        Assert.Null(StoppingWait.For(TimeSpan.FromDays(-1)));
-    }
-
-    [Fact]
-    public void TheSecondsAreFloored()
-    {
+        Assert.Equal(string.Format(MinuteOrMore, 2), StoppingWait.For(TimeSpan.FromSeconds(2)));
         Assert.Equal(string.Format(MinuteOrMore, 2), StoppingWait.For(TimeSpan.FromMilliseconds(2_999)));
         Assert.Equal(string.Format(MinuteOrMore, 59), StoppingWait.For(TimeSpan.FromMilliseconds(59_999)));
+
+        long previous = 0;
+        for (long ms = 2_000; ms < 90_000; ms += 7)
+        {
+            string? text = StoppingWait.For(TimeSpan.FromMilliseconds(ms));
+            long seconds = ms / 1000;
+            Assert.Equal(string.Format(MinuteOrMore, seconds), text);
+            Assert.True(seconds >= previous, $"the count went down at {ms} ms: {seconds} s after {previous} s");
+            Assert.Contains("Closing the window quits at once.", text);
+            previous = seconds;
+        }
+    }
+
+    /// <summary>
+    /// At 90 s the line switches to the wording with no estimate and keeps it, at an hour and beyond, with
+    /// no overflow (case C-015).
+    /// </summary>
+    [Fact]
+    public void FromNinetySecondsThereIsNoEstimate()
+    {
+        Assert.Equal(string.Format(MinuteOrMore, 89), StoppingWait.For(TimeSpan.FromMilliseconds(89_999)));
+        Assert.Equal(string.Format(MinuteOrMore, 89), StoppingWait.For(TimeSpan.FromSeconds(90) - TimeSpan.FromTicks(1)));
+        Assert.Equal(string.Format(NoEstimate, 90), StoppingWait.For(TimeSpan.FromSeconds(90)));
         Assert.Equal(string.Format(NoEstimate, 90), StoppingWait.For(TimeSpan.FromMilliseconds(90_999)));
+        Assert.Equal(string.Format(NoEstimate, 3600), StoppingWait.For(TimeSpan.FromHours(1)));
+        Assert.Equal(string.Format(NoEstimate, TimeSpan.MaxValue.Ticks / TimeSpan.TicksPerSecond), StoppingWait.For(TimeSpan.MaxValue));
+
+        for (long ms = 90_000; ms <= 3_600_000; ms += 997)
+            Assert.Equal(string.Format(NoEstimate, ms / 1000), StoppingWait.For(TimeSpan.FromMilliseconds(ms)));
     }
 
     /// <summary>

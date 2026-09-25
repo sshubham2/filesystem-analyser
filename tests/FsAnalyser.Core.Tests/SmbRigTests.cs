@@ -107,10 +107,15 @@ public class SmbRigTests
         return thread;
     }
 
-    /// <summary>What a new run sweeps under the lock: the rig's own address and share prefix, and nothing a person mapped.</summary>
+    /// <summary>
+    /// What a new run sweeps under the lock, through the same predicate the sweep calls: the rig's own
+    /// address and share prefix, and nothing a person mapped (case C-022). The prefix 'fsa' is
+    /// case-sensitive; the 8 hex digits after it may be either case.
+    /// </summary>
     [Theory]
     [InlineData(@"\\127.0.0.1\fsa0123abcd", true)]
     [InlineData(@"\\127.0.0.1\fsaABCDEF01", true)]
+    [InlineData(@"\\127.0.0.1\FSA0123abcd", false)]
     [InlineData(@"\\100.109.48.75\collab", false)]
     [InlineData(@"\\127.0.0.1\collab", false)]
     [InlineData(@"\\127.0.0.1\fsa0123abc", false)]

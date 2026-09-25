@@ -1,0 +1,223 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-038",
+ "stage": "validate-slice",
+ "attempt": 3,
+ "at": "2026-09-25T08:01:55.022Z",
+ "head": "",
+ "run_id": 1029,
+ "summary": "This is the third validate attempt at HEAD eafb1c3, and the result is the same as attempts 1 and 2 for the same reason. The permission classifier refused `WindowCases.ps1 -Case N-001 -IncludeNetwork` for a third time ([Modify Shared Resources]). So nothing has shown the wait line appearing, counting and clearing on a real SMB stall. The Cancel-to-return time through the app is not recorded. Closing the window while the scan thread is blocked in SMB is unproven. N-002 to N-004 and the SMB-LOOPBACK StalledShareTests were not run either. Neither of the named elevated operations (whoami, read-denied-folders) can reach this. A person has to do one of three things: run `pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case All -IncludeNetwork` themselves, allow SMB-mapping changes for this stage, or accept the slice without N-001.\n\n**This stage is going round in circles.** Validate has now run three times at the same HEAD. Nothing in src or tests changed between runs, and each hit the same refusal. A fourth run will produce this same answer.\n\n**What I re-ran this attempt**\n- **Build:** 0 warnings, 0 errors.\n- **The 29 new tests** (StoppingWait boundaries at -5 s, -1 ms, 0, 1.999 s, 2 s, 89.999 s, 90 s and 3600 s, plus SmbRig): all passed.\n- **Fitness:** all 25 rules hold after a CodeGraph rebuild.\n- **Default window run:** all 15 cases passed. In C-006 the scan returned 10 ms after Cancel, no stopping line showed the wait text, and the final line was written at shutdown.\n\n**A flaky test in the default suite, which this slice did not touch.** The first full-suite run failed 1 of 149: SynchronousIoCancelTests.CancelIsResentWhileACallBlocksAgainAfterACancel, \"still blocked 2 s after Cancel\". The rerun passed. I then ran the SynchronousIoCancelTests class 50 more times (10, 15 and 25), and it failed 3 of those 50:\n- 1 of 10: the test name was not captured.\n- 1 of 15: CancelAtRandomMomentsEndsEveryScanCleanlyAndLeavesNoStrayCancel.\n- 1 of 25: the same test, with \"0 completed, 100 cancelled\", i.e. its random delays all fell inside the scans, not a stray cancel.\n\nRun on its own, the resend test passed 30 of 30. Neither src/FsAnalyser.Core nor the test file changed between f3c3dfa and eafb1c3, so this flake predates SL-038 (SL-024 area). It is worth a slice of its own, because any gate that runs the default suite can fail at random.\n\n**Something outside this stage is running N-002 and never cleaning up.** %TEMP% holds four N-002 \"Close with no prior Cancel\" leftovers, made at 05:29, 07:21, 07:43 and 08:00 UTC. Each is about 1.5-2 min before a stage record landed (build, validate 1, validate 2), and the last is about 2 min before this attempt started. Each hook log shows:\n- the stall armed;\n- Close 3002-3010 ms after arming;\n- the window closed 6-9 ms after Close.\n\nAfter that the hook log stops, and there is no process-exit time. In every case the rig deleted its tree about 40 s after the case folder was made, but WindowCases' own cleanup (removing the hook log and the case folder) never ran. Reading StallRig/Program.cs, that pattern fits the parent PowerShell ending while it waited, with the rig then cleaning up on stdin EOF. This is an inference, not a measurement. Who ran them is unknown. A follow-up read of artifact timestamps and whether those PIDs are still alive was refused by the permission layer, and I did not pursue it. My own run left nothing in %TEMP%, and SMB mappings are unchanged (only Z:).\n\n**Carried from attempt 1 at this HEAD, not re-run:** local probes through the real exe with the cancel held back:\n- the line showed at 2.0-2.2 s with the pinned wording;\n- the longest UI gap was 720 ms;\n- the line cleared at return in both the Cancelled and the finished-on-its-own shapes;\n- a new scan afterwards was clean;\n- Close with the line up: window 8 ms, process 39 ms;\n- Close with no Cancel: window 12 ms, process 85 ms;\n- the committed hook refused after 60 s when the armed marker never appeared.\n\n**Still open**\n- C2: the person's own acceptance of (b). O-002 was discharged with model contact, not by the person.\n- O-001: the real disconnects.\n- The faulted ending.\n- The 90 s wording shown in the real window.",
+ "payload": {
+  "status": "complete",
+  "verdict": "partial",
+  "contact": "code",
+  "summary": "This is the third validate attempt at HEAD eafb1c3, and the result is the same as attempts 1 and 2 for the same reason. The permission classifier refused `WindowCases.ps1 -Case N-001 -IncludeNetwork` for a third time ([Modify Shared Resources]). So nothing has shown the wait line appearing, counting and clearing on a real SMB stall. The Cancel-to-return time through the app is not recorded. Closing the window while the scan thread is blocked in SMB is unproven. N-002 to N-004 and the SMB-LOOPBACK StalledShareTests were not run either. Neither of the named elevated operations (whoami, read-denied-folders) can reach this. A person has to do one of three things: run `pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case All -IncludeNetwork` themselves, allow SMB-mapping changes for this stage, or accept the slice without N-001.\n\n**This stage is going round in circles.** Validate has now run three times at the same HEAD. Nothing in src or tests changed between runs, and each hit the same refusal. A fourth run will produce this same answer.\n\n**What I re-ran this attempt**\n- **Build:** 0 warnings, 0 errors.\n- **The 29 new tests** (StoppingWait boundaries at -5 s, -1 ms, 0, 1.999 s, 2 s, 89.999 s, 90 s and 3600 s, plus SmbRig): all passed.\n- **Fitness:** all 25 rules hold after a CodeGraph rebuild.\n- **Default window run:** all 15 cases passed. In C-006 the scan returned 10 ms after Cancel, no stopping line showed the wait text, and the final line was written at shutdown.\n\n**A flaky test in the default suite, which this slice did not touch.** The first full-suite run failed 1 of 149: SynchronousIoCancelTests.CancelIsResentWhileACallBlocksAgainAfterACancel, \"still blocked 2 s after Cancel\". The rerun passed. I then ran the SynchronousIoCancelTests class 50 more times (10, 15 and 25), and it failed 3 of those 50:\n- 1 of 10: the test name was not captured.\n- 1 of 15: CancelAtRandomMomentsEndsEveryScanCleanlyAndLeavesNoStrayCancel.\n- 1 of 25: the same test, with \"0 completed, 100 cancelled\", i.e. its random delays all fell inside the scans, not a stray cancel.\n\nRun on its own, the resend test passed 30 of 30. Neither src/FsAnalyser.Core nor the test file changed between f3c3dfa and eafb1c3, so this flake predates SL-038 (SL-024 area). It is worth a slice of its own, because any gate that runs the default suite can fail at random.\n\n**Something outside this stage is running N-002 and never cleaning up.** %TEMP% holds four N-002 \"Close with no prior Cancel\" leftovers, made at 05:29, 07:21, 07:43 and 08:00 UTC. Each is about 1.5-2 min before a stage record landed (build, validate 1, validate 2), and the last is about 2 min before this attempt started. Each hook log shows:\n- the stall armed;\n- Close 3002-3010 ms after arming;\n- the window closed 6-9 ms after Close.\n\nAfter that the hook log stops, and there is no process-exit time. In every case the rig deleted its tree about 40 s after the case folder was made, but WindowCases' own cleanup (removing the hook log and the case folder) never ran. Reading StallRig/Program.cs, that pattern fits the parent PowerShell ending while it waited, with the rig then cleaning up on stdin EOF. This is an inference, not a measurement. Who ran them is unknown. A follow-up read of artifact timestamps and whether those PIDs are still alive was refused by the permission layer, and I did not pursue it. My own run left nothing in %TEMP%, and SMB mappings are unchanged (only Z:).\n\n**Carried from attempt 1 at this HEAD, not re-run:** local probes through the real exe with the cancel held back:\n- the line showed at 2.0-2.2 s with the pinned wording;\n- the longest UI gap was 720 ms;\n- the line cleared at return in both the Cancelled and the finished-on-its-own shapes;\n- a new scan afterwards was clean;\n- Close with the line up: window 8 ms, process 39 ms;\n- Close with no Cancel: window 12 ms, process 85 ms;\n- the committed hook refused after 60 s when the armed marker never appeared.\n\n**Still open**\n- C2: the person's own acceptance of (b). O-002 was discharged with model contact, not by the person.\n- O-001: the real disconnects.\n- The faulted ending.\n- The 90 s wording shown in the real window.",
+  "checks": [
+   {
+    "what": "Build the solution",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build FsAnalyser.slnx -nologo -v q",
+    "outcome": "passed",
+    "evidence": "Build succeeded. 0 Warning(s), 0 Error(s). BUILD_EXIT=0."
+   },
+   {
+    "what": "Default test suite, first run",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx -nologo --no-build",
+    "outcome": "failed",
+    "evidence": "Failed! Failed: 1, Passed: 148, Total: 149. TEST_EXIT=1. The failure was SynchronousIoCancelTests.CancelIsResentWhileACallBlocksAgainAfterACancel at SynchronousIoCancelTests.cs:153 ('the call was still blocked 2 s after Cancel'). SL-038 did not change this test or anything under src/FsAnalyser.Core: `git diff --stat f3c3dfa eafb1c3` over those paths is empty."
+   },
+   {
+    "what": "Default test suite, rerun",
+    "command": "same command, output filtered for Failed/Assert lines",
+    "outcome": "passed",
+    "evidence": "TEST_EXIT=0 and no Failed lines. Validate attempts 1 and 2, build and code review each recorded 149/149."
+   },
+   {
+    "what": "Flake rate of SynchronousIoCancelTests (21 tests) repeated alone",
+    "command": "eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --no-build --filter FullyQualifiedName~SynchronousIoCancelTests, looped 10, 15 and 25 times",
+    "outcome": "failed",
+    "evidence": "1 of 10 failed (run 7; test name not captured). 1 of 15 failed: CancelAtRandomMomentsEndsEveryScanCleanlyAndLeavesNoStrayCancel. 1 of 25 failed: the same test, with message '0 completed, 100 cancelled: the cancels should land both during and after the scans' (line 334). That is the test's own timing precondition, not a stray cancel. This flake predates SL-038 (last touched in SL-024, fdf77d6)."
+   },
+   {
+    "what": "CancelIsResentWhileACallBlocksAgainAfterACancel alone, repeated",
+    "command": "same, --filter FullyQualifiedName~CancelIsResentWhileACallBlocksAgainAfterACancel, 30 times",
+    "outcome": "passed",
+    "evidence": "0 of 30 failed. It failed only once, in the full-suite run, so its failure message ('interrupted N time(s)') is not captured."
+   },
+   {
+    "what": "This slice's 29 new unit tests",
+    "command": "eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --no-build --filter \"FullyQualifiedName~StoppingWaitTests|FullyQualifiedName~SmbRigTests\" --logger console;verbosity=normal",
+    "outcome": "passed",
+    "evidence": "Total tests: 29, all passed. TheWordingAtEachBoundary was run at -5000, -1, 0, 1999, 2000, 89999, 90000 and 3600000 ms. Also passed: TheGateIsExactlyTwoSeconds, ANegativeSpanShowsNothing, TheSecondsAreFloored and TheTextIsAsciiAndGivesNoBoundOnTheWait. Also passed: 15 OnlyTheRigsOwnMappingsAreSwept rows (only \\\\127.0.0.1\\fsa plus 8 hex is swept, never Z:'s \\\\100.109.48.75\\collab), ASecondRunWaitsForTheFirst, and ALiveHolderFailsTheNextRunLoudlyAndAKilledOneDoesNotBlockIt. None of these makes an SMB mapping."
+   },
+   {
+    "what": "Architecture rules",
+    "command": "CodeGraph op=rebuild (169 files, 443 nodes); Fitness op=check",
+    "outcome": "passed",
+    "evidence": "25 rules checked against 52 parsed files, and every declared rule holds. One match of 'only the rig changes the machine's SMB mappings' is in a comment and is not counted."
+   },
+   {
+    "what": "Default window cases through the published exe",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case All",
+    "outcome": "passed",
+    "evidence": "PASSED: C-001 to C-014 and O-016. EXIT=0. C-006 hook log: 'acted mode=stop ... ms=428', 'returned ms=10 title=Stopping... detail=-', 'stopping ms=60 ... detail=- final=True'. C-006's checks held: the scan returned within 2 s of Cancel (10 ms), the last stopping line was written at shutdown, no stopping line showed the wait line, every line had the title Stopping..., core.status was Cancelled, and the ending was 'Stopped: ...' (750 of 30150 folders). NOT RUN: N-001 to N-004. Transcript at %TEMP%\\sl038-validate3\\all.txt."
+   },
+   {
+    "what": "Opt-in N-001 against the stall rig (wait line on a real SMB stall, count-up, UI liveness, clear at return, Cancel-to-return)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case N-001 -IncludeNetwork (transcript to %TEMP%\\sl038-validate3\\n001.txt)",
+    "outcome": "not-run",
+    "evidence": "Refused by the Claude Code auto-mode classifier, reason [Modify Shared Resources]. This is the third refusal, after validate attempts 1 and 2. The command never started. As the denial required, I did not pursue the same outcome another way."
+   },
+   {
+    "what": "N-002, N-003 and N-004 (close escape during a stall, two rig runs at once, a killed run's leftover mapping)",
+    "command": "WindowCases.ps1 -Case N-002|N-003|N-004 -IncludeNetwork",
+    "outcome": "not-run",
+    "evidence": "Each creates and removes SMB client mappings, so each falls under the same denial. Not attempted."
+   },
+   {
+    "what": "StalledShareTests on the extracted rig (Network=SMB-LOOPBACK)",
+    "command": "eng/dotnet.ps1 test ... --filter Network=SMB-LOOPBACK",
+    "outcome": "not-run",
+    "evidence": "It makes the same SMB mapping change, so it falls under the same denial. It compiles, and has not run since the rig moved into Rig/SmbRig.cs."
+   },
+   {
+    "what": "Leftovers of N-002 runs made outside this stage (observation, not graded)",
+    "command": "Get-ChildItem %TEMP%\\fsa-window-cases -Recurse -Force (UTC times); Get-Content %TEMP%\\fsa-window-hook\\*.log and each rig\\armed.txt",
+    "outcome": "not-run",
+    "evidence": "There are four case folders, each holding only rig\\armed.txt, created at 05:29:53, 07:21:13, 07:43:40 and 08:00:15 UTC. Each has a hook log of the 'Close with no prior Cancel' shape: 'loaded mode=close', 'armed ms=426-576', 'acted mode=close scanning=True detail=- ... sincearmed=3002-3010', then 'closed' 6-9 ms after Close, and nothing more. There is no process-exit time. In every case the rig folder's last write is exactly 40 s after it was created. The rig deletes its tree only after its stdin closes (Program.cs:67-77), yet Invoke-WithHook's finally (log removal) and Remove-CaseFolder never ran. Reading the code, that fits the parent PowerShell ending about 35 s after Close. This is an inference. The run times fall about 1.5-2 min before build (05:31Z), validate 1 (07:22:55Z), validate 2 (07:45:17Z) and this attempt's start (about 08:02Z). Who ran them is unknown, and they are not counted as evidence. Files left in place (not mine)."
+   },
+   {
+    "what": "Follow-up on those leftovers: artifact build timestamps and whether the app PIDs 33872, 8828, 17188 and 15604 are still alive",
+    "command": "Get-ChildItem artifacts ...; Get-Process -Id ...",
+    "outcome": "not-run",
+    "evidence": "Refused by the permission classifier ([Modify Shared Resources]) as pursuing the denied outcome. Not pursued."
+   },
+   {
+    "what": "SMB mappings, case folders and worktree after this validation (read-only)",
+    "command": "Get-SmbMapping; git status --short; Get-ChildItem %TEMP%\\fsa-window-cases",
+    "outcome": "passed",
+    "evidence": "The only mapping is Z: -> \\\\100.109.48.75\\collab (OK), unchanged from the start. git status shows only the pre-existing .taad changes. My window run left no case folder; only the four earlier leftovers remain."
+   },
+   {
+    "what": "Read the src change: clock start, tick derivation, EndStopping placement, no abandon",
+    "command": "git diff f3c3dfa eafb1c3 -- src/",
+    "outcome": "passed",
+    "evidence": "_stoppingClock = Stopwatch.StartNew() is set only in OnCancel. The 250 ms tick calls ShowProgress() then ShowStopping(), and ShowStopping uses only StoppingWait.For(clock.Elapsed). EndStopping() is in StartScan's single finally, after _timer.Stop() and before ScanningPanel collapses. OnClosing only calls _cancel?.Cancel(). StoppingWait.For returns null under 2 s, the 'minute or more' wording under 90 s, and no estimate from 90 s, with seconds floored."
+   },
+   {
+    "what": "Local analogue probes through the real exe (scratch hook holding the cancel back on C:\\Windows)",
+    "command": "validate attempt 1 scratch run.ps1 / close.ps1 at the same HEAD eafb1c3; not re-run",
+    "outcome": "passed",
+    "evidence": "Carried from validate attempt 1. HEAD, src and tests are unchanged since then. Cancel held back 6 s: first line at 2153 ms, 14 lines, 0 wording violations, longest gap 493 ms, cleared at return, ended Cancelled. Cancel never delivered: first line at 2032 ms, 100 lines to 31 s, longest gap 720 ms, cleared at return, ended Completed. New scan afterwards: 16 ticks, all 'Reading ...' with detail '-'. Close with the line up: window 8 ms, process 39 ms. Close without Cancel: window 12 ms, process 85 ms. Missing marker: refused after 60 s."
+   },
+   {
+    "what": "Faulted ending while the Stopping state shows",
+    "outcome": "not-run",
+    "evidence": "No seam can make Scanner.Scan throw after Cancel, and the SL-033 rule forbids adding one. It rests on reading the single finally."
+   },
+   {
+    "what": "The 90 s no-estimate wording rendered in the real window",
+    "outcome": "not-run",
+    "evidence": "Nothing reachable keeps a scan running more than 90 s after Cancel without an SMB stall or reading the person's own folders. It is pinned only by the unit tests; the TextBlock path is the same one the pre-90 s wording was seen through."
+   },
+   {
+    "what": "Real disconnects: Wi-Fi off, tailscale down, sleep about 2 min mid-scan, 3 runs each plus one timed Close per mode (O-001)",
+    "outcome": "not-run",
+    "evidence": "This stage may not change network state or sleep the PC. Spike real-disconnect-wait-matches-rig also recorded 0 of 9. Only the person can run these."
+   },
+   {
+    "what": "Loop check on the slice index",
+    "command": "Get-Content .taad/slices/SL-038/index.json",
+    "outcome": "failed",
+    "evidence": "This is a finding about the slice, not a code failure. Validate attempts 1 (waiting), 2 (unrecorded) and this attempt 3 all ran at HEAD eafb1c3 with no src or tests change between them, and all three hit the same permission refusal on SMB mapping changes. Another validate run without a person's action will return this same answer."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "1. cancel a scan -- local tree, and the scan returns within 2 s of Cancel",
+    "met": "yes",
+    "how": "C-006 through the published exe this attempt: 'returned ms=10', no stopping line showed the wait line, final line written at shutdown, core.status Cancelled, PASSED."
+   },
+   {
+    "criterion": "2. cancel a scan of a stalled SMB share -- session established, server stops answering, Cancel pressed 3 s after the stall is armed",
+    "met": "not-checked",
+    "how": "N-001 -IncludeNetwork was refused by the permission classifier for the third time. The only evidence is attempt 1's local analogue, where the scan thread was never blocked in an SMB call."
+   },
+   {
+    "criterion": "3. the stalled scan finally returns -- when the SMB client gives up (about 57-66 s on the rig)",
+    "met": "not-checked",
+    "how": "No SMB run happened, so the Cancel-to-return time through the app is unrecorded. The 57-66 s range comes from spike 1 and the C1 baseline, not from any run here."
+   },
+   {
+    "criterion": "4. choose the wording for an elapsed time -- 1.999 s, 2.0 s, 89.999 s, 90 s, and a negative TimeSpan",
+    "met": "yes",
+    "how": "StoppingWaitTests passed this attempt at -5000, -1, 0, 1999, 2000, 89999, 90000 and 3600000 ms, plus the gate, negative, flooring and ASCII facts. The 90 s branch has never been rendered in the real window."
+   },
+   {
+    "criterion": "5. close the window while the wait line is shown -- stalled share, Cancel then Close, and Close with no prior Cancel",
+    "met": "not-checked",
+    "how": "N-002 on a real stall was not run by this stage (denied). Attempt 1's local analogue passed: window 8 and 12 ms, process 39 and 85 ms. Four unattributed, interrupted N-002 runs in %TEMP% show only the no-Cancel shape's window closing 6-9 ms after Close. They have no process-exit time and are not counted."
+   },
+   {
+    "criterion": "6. scan ends while the Stopping state is showing -- cancelled cleanly, faulted, or finished on its own before the cancel took effect",
+    "met": "not-checked",
+    "how": "Two shapes were fed through the real exe in attempt 1: cancelled with the line shown, and finished on its own. Both cleared at return. The faulted shape is fed by nothing: there is no seam, and SL-033 forbids one."
+   },
+   {
+    "criterion": "7. run the stall rig -- another run's fsa<8hex> mapping already exists on the machine (two rig runs at once)",
+    "met": "not-checked",
+    "how": "N-003 and N-004 fall under the same denial. SmbRigTests passed this attempt (lock serialisation, a killed holder not blocking the next run, the exact-match sweep regex), but they make no real mapping."
+   },
+   {
+    "criterion": "8. start a new scan after a stalled cancel -- previous scan ended after the wait line had been shown",
+    "met": "yes",
+    "how": "Measured in attempt 1 at this same HEAD and not re-run. After a held-back local cancel whose line showed from 2.0 to 4.9 s, a second scan showed 'Reading ...', detail '-' and Cancel enabled on all 16 ticks. The earlier stall was local and synthetic, not SMB."
+   },
+   {
+    "criterion": "9. show the wait line for a local drive that stalls -- spun-down local disk taking more than 2 s to cancel",
+    "met": "yes",
+    "how": "Attempt 1, same HEAD: on C:\\Windows with a cancel taking more than 2 s, the real window showed the pinned wording at 2.0-2.2 s. This attempt's diff read confirms the line comes from the clock alone, whatever the drive. A real spun-down disk was not reached."
+   },
+   {
+    "criterion": "10. the hook reads UI text -- read from the hook's own thread instead of the UI thread",
+    "met": "yes",
+    "how": "StartupHook.cs does every UI read through app.Dispatcher.Invoke, a Dispatcher timer or ShutdownStarted. This attempt's hooked runs (C-006, C-012, O-016) logged no refusal after acting."
+   },
+   {
+    "criterion": "11. the wait on a real disconnect -- Wi-Fi off, tailscale down, or sleep and resume mid-scan",
+    "met": "not-checked",
+    "how": "Forbidden to this stage. O-001 is still owed and only the person can run it."
+   },
+   {
+    "criterion": "12. the hook waits for the armed marker -- when the marker file never appears before the case timeout",
+    "met": "yes",
+    "how": "Attempt 1 ran the committed hook with a missing marker at this same HEAD: it logged the refusal after 60 s and pressed nothing. Not re-run this attempt, and the hook is unchanged since."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "verified": "cannot-tell",
+    "evidence": "The real-disconnect protocol (Wi-Fi off, tailscale down, sleep about 2 min, 3 runs each, plus a timed Close per mode) needs the person's network state changed or the PC slept. Both are forbidden to this stage. 'A minute or more' still rests only on the loopback rig and SessionTimeout 60. It stays owed to a person."
+   },
+   {
+    "key": "O-017",
+    "verified": "cannot-tell",
+    "evidence": "Owed to build-slice, not to validate. For the record: attempt 1 fed the finished-on-its-own and cancelled-with-line-shown shapes through the real exe, and both cleared at return. The faulted shape is fed by nothing. The rig-based cancelled-cleanly proof (N-001) is still unrun because of the permission denial."
+   }
+  ],
+  "not_reached": [
+   "N-001 on a real SMB stall: the wait line appearing 1.9-3 s after Cancel, counting to about 60 s with the UI live, clearing at return, and the measured Cancel-to-return time. The permission classifier refused it three times ([Modify Shared Resources]). A person needs to run `pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case All -IncludeNetwork` or allow it for this stage.",
+   "N-002 on the stalled share: whether the process ends within 5 s of Close while the scan thread is blocked in an SMB kernel call. Four unattributed, interrupted N-002 runs in %TEMP% show only the window half of the no-Cancel shape. Why their parent never cleaned up is not established.",
+   "N-003 and N-004 with real mappings: RigLock serialising two rig runs on 127.0.0.1, and the sweep removing a killed run's leftover mapping. The RigLock mutex name is Local\\ (per session), so runs from different sign-in sessions are not serialised; this is untested.",
+   "StalledShareTests (Network=SMB-LOOPBACK) after the rig moved into Rig/SmbRig.cs. It compiles but has never run since.",
+   "O-001: timed real disconnects (Wi-Fi off, tailscale down, sleep and resume), including one timed Close per mode.",
+   "The 90 s no-estimate wording rendered in the real window. Only the unit tests pin it.",
+   "The faulted ending while the Stopping state shows.",
+   "A real spun-down local disk. The local stall evidence is synthetic (cancel held back).",
+   "The person's own acceptance of option (b) (C2). O-002 was discharged with model contact, not by the person.",
+   "Why SynchronousIoCancelTests flakes (3 of 50 repeated class runs, plus 1 of 2 full-suite runs), and the failure message of CancelIsResentWhileACallBlocksAgainAfterACancel, which failed only under full-suite load. This predates SL-038 and needs its own slice."
+  ],
+  "planned": [],
+  "elevation": []
+ }
+}
