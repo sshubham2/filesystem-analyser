@@ -1,0 +1,90 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-040",
+ "stage": "build-slice",
+ "attempt": 2,
+ "at": "2026-09-25T13:47:53.740Z",
+ "head": "7610c6b22bcb8a46ea0ec2a9bd668b5fd02c6976",
+ "run_id": 1089,
+ "summary": "O-011 (C-009) is now a machine check, and nothing outside the test driver changed. I added a `rescan` mode to tests/window/FsaWindowHook. It waits until the first scan's list is on screen with its rows laid out, then starts a second scan through the window's own Loaded handler. It makes the report read the window at that second point, not at the first ending, and it never touches app code or the schema. New window case L-006, read through eng/read-window.ps1, covers both shapes and passes: in each, the largest-files section is hidden and the report has largestFilesShown 0. Two temporary app mutants (no hide at scan start; and no hide at scan start or in ShowProblem) each make L-006 fail. All 21 default window cases, the hook's own H-001/H-002, the Fitness plus xUnit clean baseline and the Core suite (166/166) pass on the final tree.",
+ "payload": {
+  "status": "complete",
+  "summary": "O-011 (C-009) is now a machine check, and nothing outside the test driver changed. I added a `rescan` mode to tests/window/FsaWindowHook. It waits until the first scan's list is on screen with its rows laid out, then starts a second scan through the window's own Loaded handler. It makes the report read the window at that second point, not at the first ending, and it never touches app code or the schema. New window case L-006, read through eng/read-window.ps1, covers both shapes and passes: in each, the largest-files section is hidden and the report has largestFilesShown 0. Two temporary app mutants (no hide at scan start; and no hide at scan start or in ShowProblem) each make L-006 fail. All 21 default window cases, the hook's own H-001/H-002, the Fitness plus xUnit clean baseline and the Core suite (166/166) pass on the final tree.",
+  "files": [
+   {
+    "path": "tests/window/FsaWindowHook/StartupHook.cs",
+    "change": "modified",
+    "why": "New FSA_HOOK_MODE=rescan, with optional FSA_HOOK_MISSING. A Window Loaded class handler, registered before the window loads, watches LargestFilesPanel. Once the first list is set Visible and its rows are laid out, and Choose folder is pressable, the hook raises the window's Loaded event from a Normal-priority operation, and OnLoaded starts StartScan on the launch root. With FSA_HOOK_MISSING, the hook first moves the root aside (only under %TEMP%). It then keeps a Render-priority item queued until the failure ending is on screen, so the report (Loaded priority) reads the second ending. Log lines: watching, listed, moved, acted, started, ended. The mode is not armed, the hook ends nothing, and it uses no app types."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "change": "modified",
+    "why": "New case L-006 (hooked, in -Case All) with two shapes. First: the root is moved aside, so the second scan fails before any entry, and the report is of that failure (core.status RootUnreadable, 'Could not read <root>'). Second: a large tree whose second scan has begun and not finished (core null, no ending on screen). Both assert, through the hook log and the eng/read-window.ps1 report, that the first list was shown (rows bound and laid out), that the scan start collapsed LargestFilesPanel and unbound its rows, and that the report has LargestFilesPanel.visible false, largestFilesShown 0 and null largestFileOnDisk/largestFilesMs. FSA_HOOK_MISSING is added to $HookVariables so it is always removed."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-011",
+    "done": true,
+    "how": "WindowCases L-006 feeds in the shape: a second scan after a list of 20 (small tree) or 100 (large tree) rows was shown. Shape 1: the root is moved aside, so the second scan fails before any entry, and the report (via eng/read-window.ps1) is held until that failure ending. It shows core.status RootUnreadable, OutcomeTitle 'Could not read <root>', LargestFilesPanel.visible false, largestFilesShown 0, and null largestFileOnDisk/largestFilesMs. Shape 2: the second scan has begun and not finished when the report reads (core null, no ending on screen), with the same largest-files assertions. The hook log also shows LargestFilesPanel collapsed with 0 rows at the moment the second scan started. The case passes. Mutant A (StartScan does not hide) fails it on the 'started' state and on largestFilesShown 100. Mutant B (neither StartScan nor ShowProblem hides) also fails it with a stale 20-row list visible under the 'Could not read' ending. The app source was restored and hash-verified after both mutants."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-009",
+    "test_name": "tests/window/WindowCases.ps1 Test-L006",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case L-006"
+   }
+  ],
+  "deviations": [
+   "The second scan is started by raising the window's Loaded event, not by pressing a control. OnLoaded is the app's own XAML-wired handler and calls the same StartScan that a drive button or Choose folder reaches. No person can raise Loaded, but the other two ways in either scan a real drive (and cannot give a missing root) or open the folder dialog, which only UI Automation could fill in, and the order forbids that. The hook still reaches the app only through Application.Current, FindName and routed events. Before it acts, it checks that no scan is running and that Choose folder is pressable.",
+   "To make the report read the second point, the hook orders work on the app's dispatcher; the app is unchanged. The report reads the window at Loaded priority after the first ending. The hook starts the second scan ahead of that read, and for the missing-root shape it keeps one Render-priority item queued until the failure ending is on screen. My first try held at Normal and deadlocked (refused after 20 s), because WPF passes the running operation's priority on to what its handlers await, so the continuations came back at Render. The second scan is now started from a Normal-priority operation, as a click's handler runs, and the hold uses Render. No src file and no report key changed."
+  ],
+  "follow_ups": [
+   "If a later slice adds a way to name a folder to scan without the dialog (a path box, say), the rescan mode should press that instead of raising Loaded.",
+   "Mutants A and B for L-006 (no hide at scan start; and no hide in either place) were run by hand. They could be added to tests/window/WindowMutants.ps1 so a later change that re-shows a stale list is caught by the mutant suite too."
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case L-006",
+    "outcome": "failed",
+    "note": "First try. The begun shape passed. The missing-root shape logged 'refused ... the second scan did not end within 20 s' because the Normal-priority hold starved continuations that came back at Render. Fixed by starting the scan from a Normal operation and holding at Render."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case L-006",
+    "outcome": "passed",
+    "note": "Both shapes. Missing root: listed rows=20, built=13; started largest=False rows=0; ended largest=False rows=0 after 18 ms; report RootUnreadable, shown 0. Begun: listed rows=100, built=10; started largest=False rows=0; report core null, shown 0."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case L-006 (mutant A: StartScan's HideLargestFiles removed, temporarily)",
+    "outcome": "failed",
+    "note": "Intended. It fails on the 'started' state in both shapes, and in the begun shape on largestFilesShown, largestFileOnDisk and largestFilesMs."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case L-006 (mutant B: HideLargestFiles also removed from ShowProblem, temporarily)",
+    "outcome": "failed",
+    "note": "Intended. In the missing-root shape the report shows LargestFilesPanel visible with 20 rows under 'Could not read'. MainWindow.xaml.cs was restored to hash 022262BB... afterwards."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case All",
+    "outcome": "passed",
+    "note": "21 passed after a republish of the restored source: C-001 to C-014, O-016 and L-001 to L-006. N-001 to N-004 not run (they need -IncludeNetwork)."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/HookCases.ps1 -Case All",
+    "outcome": "passed",
+    "note": "H-001 and H-002: the armed modes and refusals are unchanged."
+   },
+   {
+    "command": "%APPDATA%\\taad3\\venv\\Scripts\\python.exe eng/rules-harness/harness.py --engine-root C:\\Users\\sshub\\projets\\taad_v3\\backend --scenario clean",
+    "outcome": "passed",
+    "note": "CLEAN: xUnit 8 Facts, Fitness pass with 26 rules, 0 hits. This includes the settled hook rules over tests/window/FsaWindowHook/**."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --nologo",
+    "outcome": "passed",
+    "note": "166/166."
+   }
+  ]
+ }
+}

@@ -16,7 +16,7 @@ using System.Windows.Threading;
 /// </summary>
 /// <remarks>
 /// <code>
-///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|rescan  FSA_HOOK_LOG=&lt;file&gt;
+///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|rescan|expand  FSA_HOOK_LOG=&lt;file&gt;
 ///   [FSA_HOOK_ARMED=&lt;marker file&gt;  FSA_HOOK_CANCEL_DELAY_MS=&lt;n&gt;  FSA_HOOK_CLOSE_DELAY_MS=&lt;n&gt;]
 ///   [FSA_HOOK_MISSING=&lt;the root folder, under %TEMP%&gt;]  (rescan only)
 /// </code>
@@ -51,6 +51,11 @@ using System.Windows.Threading;
 /// queued until that scan's ending is on screen: the report, at Loaded, cannot run meanwhile, so it reads
 /// the failure's ending. It changes nothing the app shows, and rescan is not armed.
 ///
+/// expand (SL-040, O-024) watches the same way and, once the first ending shows the list of largest files
+/// beside a closed, pressable list of unreadable folders, opens that list as a click on its header would
+/// (IsExpanded, which the header's toggle sets). The layout that follows runs ahead of the report, so the
+/// report reads the window with the list open. It is not armed and takes no FSA_HOOK_MISSING.
+///
 /// FSA_HOOK_LOG gets one ASCII line per event: "loaded mode=m pid=n", "waiting found=b enabled=b visible=b"
 /// when that changes, "armed ms=n" when the marker appeared, "acted mode=m enabled=True visible=True ms=n"
 /// (ms since load; armed runs add "sincearmed=n", and an armed close logs "scanning=True detail=text" and
@@ -69,6 +74,8 @@ using System.Windows.Threading;
 /// mode=rescan rows=n ms=n" as it raises Loaded, "started STATE" straight after it, and "ended STATE ms=n"
 /// once a missing root's scan has ended. STATE is "scanning=b outcome=b largest=b rows=n": whether
 /// ScanningPanel, OutcomePanel and LargestFilesPanel are set Visible, and the rows LargestFilesList holds.
+/// expand logs "watching" and "listed" the same way, then "acted mode=expand rows=n unreadable=n ms=n" and
+/// "expanded=b STATE" straight after it opened the list.
 /// </remarks>
 internal class StartupHook
 {
@@ -87,7 +94,7 @@ internal class StartupHook
     private static DispatcherTimer? _stoppingTimer;
     private static bool _returned;
 
-    // rescan's state: written and read on the UI thread only.
+    // rescan's and expand's state: written and read on the UI thread only.
     private static bool _watching;
     private static bool _listed;
 
@@ -121,18 +128,21 @@ internal class StartupHook
         try
         {
             Log($"loaded mode={mode} pid={Environment.ProcessId}");
-            if (mode is not ("stop" or "throw" or "close" or "rescan"))
+            if (mode is not ("stop" or "throw" or "close" or "rescan" or "expand"))
             {
                 Log($"refused mode={mode} reason=unknown mode");
                 return;
             }
             string? marker = Environment.GetEnvironmentVariable("FSA_HOOK_ARMED");
-            if (mode == "rescan")
+            if (mode is "rescan" or "expand")
             {
+                string? missing = Environment.GetEnvironmentVariable("FSA_HOOK_MISSING") is { Length: > 0 } folder ? folder : null;
                 if (!string.IsNullOrEmpty(marker))
-                    Log("refused mode=rescan reason=rescan mode is not armed");
+                    Log($"refused mode={mode} reason={mode} mode is not armed");
+                else if (mode == "expand" && missing is not null)
+                    Log("refused mode=expand reason=FSA_HOOK_MISSING is for rescan only");
                 else
-                    DriveRescan(Environment.GetEnvironmentVariable("FSA_HOOK_MISSING") is { Length: > 0 } missing ? missing : null);
+                    DriveAfterList(mode, missing);
                 return;
             }
             if (string.IsNullOrEmpty(marker))
@@ -267,25 +277,25 @@ internal class StartupHook
     // rescan: a class handler, registered before the window loads, because the window's Loaded handler starts
     // the first scan and a small tree's list is on screen a few milliseconds later.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void DriveRescan(string? missing)
+    private static void DriveAfterList(string mode, string? missing)
     {
-        if (WaitForApplication("rescan") is not { } app)
+        if (WaitForApplication(mode) is not { } app)
             return;
         EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent,
-            new RoutedEventHandler((sender, _) => Watch(app, (Window)sender, missing)));
+            new RoutedEventHandler((sender, _) => Watch(app, (Window)sender, mode, missing)));
         if (app.Dispatcher.Invoke(() => !_watching && app.MainWindow is { IsLoaded: true }))
-            Log("refused mode=rescan reason=the window loaded before the hook could watch its first scan");
+            Log($"refused mode={mode} reason=the window loaded before the hook could watch its first scan");
     }
 
     // On the window's first Loaded. The Loaded that rescan raises itself lands here again and is ignored.
-    private static void Watch(Application app, Window window, string? missing)
+    private static void Watch(Application app, Window window, string mode, string? missing)
     {
         if (_watching || !ReferenceEquals(window, app.MainWindow))
             return;
         _watching = true;
         if (window.FindName("LargestFilesPanel") is not UIElement panel)
         {
-            Log("refused mode=rescan reason=the window has no LargestFilesPanel");
+            Log($"refused mode={mode} reason=the window has no LargestFilesPanel");
             return;
         }
         Log($"watching ms={Clock.ElapsedMilliseconds}");
@@ -297,11 +307,11 @@ internal class StartupHook
                 _listed = true;
                 // Render: after the layout that builds the list's rows, and still ahead of the report, which
                 // reads the window at Loaded priority once the ending is on screen.
-                app.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() => Rescan(app, window, missing, 0)));
+                app.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() => AfterList(app, window, mode, missing, 0)));
             });
     }
 
-    private static void Rescan(Application app, Window window, string? missing, int waited)
+    private static void AfterList(Application app, Window window, string mode, string? missing, int waited)
     {
         try
         {
@@ -311,10 +321,15 @@ internal class StartupHook
                 : 0;
             if (rows > 0 && built == 0 && waited < 20)
             {
-                app.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() => Rescan(app, window, missing, waited + 1)));
+                app.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() => AfterList(app, window, mode, missing, waited + 1)));
                 return;
             }
             Log($"listed rows={rows} built={built} {State(window)} ms={Clock.ElapsedMilliseconds}");
+            if (mode == "expand")
+            {
+                Expand(app, window, rows);
+                return;
+            }
             var chooser = window.FindName("ChooseFolderButton") as FrameworkElement;
             if (rows == 0 || Shown(window, "ScanningPanel") || chooser is null || !Pressable(chooser))
             {
@@ -330,6 +345,22 @@ internal class StartupHook
             // Never onto the dispatcher: the app would take it for its own fault and exit 70.
             Log($"refused mode=rescan reason={e.GetType().Name}: {e.Message}");
         }
+    }
+
+    // expand (SL-040, O-024): opens the unreadable-folders list as a click on its header would, once the ending
+    // shows both lists. Its layout runs at Render, still ahead of the report, so the report reads it opened.
+    private static void Expand(Application app, Window window, int rows)
+    {
+        var expander = window.FindName("UnreadableExpander") as Expander;
+        int unreadable = window.FindName("UnreadableList") is ItemsControl folders ? folders.Items.Count : 0;
+        if (rows == 0 || unreadable == 0 || expander is null || !Pressable(expander) || expander.IsExpanded)
+        {
+            Log($"refused mode=expand reason=no list of largest files beside a closed, pressable list of unreadable folders (rows={rows} unreadable={unreadable} pressable={expander is not null && Pressable(expander)} expanded={expander?.IsExpanded})");
+            return;
+        }
+        Log($"acted mode=expand rows={rows} unreadable={unreadable} ms={Clock.ElapsedMilliseconds}");
+        Pressing(app, "expand", () => expander.IsExpanded = true); // what its header's toggle sets when clicked
+        Log($"expanded={expander.IsExpanded} {State(window)}");
     }
 
     private static void StartSecondScan(Application app, Window window, string? missing, int rows)

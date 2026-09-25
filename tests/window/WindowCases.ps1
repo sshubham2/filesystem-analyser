@@ -29,7 +29,8 @@
 # L-001 to L-005 (SL-040) are the largest-files list: the report's largestFiles* scalars and the list's
 # section against a planted tree, the caption for an unreadable folder, for a tree with nothing to rank and
 # for a stopped scan (L-005, under the hook), and the list at 100 rows beside a filled unreadable-folders
-# list, its first row a name with an unpaired surrogate. Planted names carry "plantedname", which the report
+# list, its first row a name with an unpaired surrogate, with that list closed and then opened (L-003, the
+# second run under the hook's expand mode). Planted names carry "plantedname", which the report
 # must never hold. An unreadable folder is made with an icacls deny of list-folder for this user, and the
 # deny is removed before the tree is. L-006 is a second scan after the first has shown its list (the hook's
 # rescan mode), read through eng/read-window.ps1 at that second point.
@@ -52,7 +53,7 @@ $HookDll = Join-Path $Repo 'artifacts\window-hook\FsaWindowHook.dll'
 $RigProject = Join-Path $Repo 'tests\window\StallRig\StallRig.csproj'
 $RigExe = Join-Path $Repo 'artifacts\stall-rig\StallRig.exe'
 $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS', 'FSA_HOOK_MISSING'
-$HookedCases = 'C-006', 'C-012', 'O-016', 'L-005', 'L-006', 'N-001', 'N-002'
+$HookedCases = 'C-006', 'C-012', 'O-016', 'L-003', 'L-005', 'L-006', 'N-001', 'N-002'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004'
 $RigOnlyCases = 'N-003', 'N-004'
 $KiB64 = 64KB
@@ -1233,13 +1234,15 @@ function Test-L002 {
     }
 }
 
-# L-003: the list full at 100 rows with the unreadable-folders list also filled, the first row a name with an
-# unpaired UTF-16 surrogate. A throw while WPF lays out or draws that row ends the app with 70 and no report.
-# The list must stay virtualized (far fewer rows built than bound) and neither list may be pushed out of
-# the panel at the window's default size.
+# L-003: the list full at 100 rows with the unreadable-folders list also filled (12 folders), the first row a
+# name with an unpaired UTF-16 surrogate. A throw while WPF lays out or draws that row ends the app with 70
+# and no report. The list must stay virtualized (far fewer rows built than bound), and neither list may be
+# pushed out of the panel at the window's default size: first with the unreadable folders closed, as the
+# ending shows them, then opened as a person would open them (the hook's expand mode, O-024), when the two
+# lists must share the panel and each keep room for at least two rows.
 function Test-L003 {
     $case = New-CaseFolder
-    $denied = $null
+    $denied = @()
     $lone = $null
     try {
         $root = Join-Path $case 'tree'
@@ -1250,23 +1253,52 @@ function Test-L003 {
         }
         $lone = "\\?\$root\a$([char]0xD800)b-$Planted.bin"
         [System.IO.File]::WriteAllBytes($lone, [byte[]]::new(16 * $KiB64))
-        $denied = Join-Path $root 'denied'
-        New-File (Join-Path $denied "$Planted-hidden.bin") (32 * $KiB64)
-        Deny-Listing $denied
+        for ($k = 1; $k -le 12; $k++) {
+            $folder = Join-Path $root "denied$k"
+            New-File (Join-Path $folder "$Planted-hidden.bin") (32 * $KiB64)
+            Deny-Listing $folder
+            $denied += $folder
+        }
+        $caption = 'Top 100 of 105 files scanned. Files in 12 unreadable folders are not included.'
 
+        Write-Output '  the unreadable folders closed, as the ending shows them'
         $read = Read-Window $root
         CheckEqual 'EXIT 0' $read.Exit 'exit code (70 would be a throw drawing the unpaired surrogate)'
         Check ($null -ne $read.Report) 'a report was written'
+        if ($null -ne $read.Report) {
+            CheckEqual "Finished: $root" $read.Report.window.OutcomeTitle 'OutcomeTitle'
+            CheckLargestFiles $read 100 (16 * $KiB64) $caption
+            $built = $read.Report.window.LargestFilesList.realizedRows
+            Check ($built -gt 0 -and $built -lt 100) "LargestFilesList virtualizes: $built of 100 rows built"
+            CheckEqual $false $read.Report.window.UnreadableExpander.expanded 'UnreadableExpander is closed'
+            CheckEqual $true $read.Report.window.UnreadableExpander.visible 'UnreadableExpander is on screen'
+            CheckEqual $true $read.Report.window.UnreadableExpander.inView 'UnreadableExpander is inside the panel, not pushed out by the list'
+        }
+
+        Write-Output '  the unreadable folders opened'
+        $run = Invoke-WithHook 'expand' $HookDll { Read-Window $root }
+        $before = $script:Failures.Count
+        CheckActed $run 'expand'
+        if ($script:Failures.Count -gt $before) { return }
+        $opened = @($run.Log | Where-Object { $_.StartsWith('expanded=') })
+        Check ($opened.Count -eq 1 -and $opened[0].StartsWith('expanded=True ')) "the hook opened the list of unreadable folders ($(Show ($opened -join ' | ')))"
+        $read = $run.Result
+        CheckEqual 'EXIT 0' $read.Exit 'exit code'
+        Check ($null -ne $read.Report) 'a report was written'
         if ($null -eq $read.Report) { return }
-        CheckEqual "Finished: $root" $read.Report.window.OutcomeTitle 'OutcomeTitle'
-        CheckLargestFiles $read 100 (16 * $KiB64) 'Top 100 of 105 files scanned. Files in 1 unreadable folder are not included.'
-        $built = $read.Report.window.LargestFilesList.realizedRows
-        Check ($built -gt 0 -and $built -lt 100) "LargestFilesList virtualizes: $built of 100 rows built"
-        CheckEqual $true $read.Report.window.UnreadableExpander.visible 'UnreadableExpander is on screen'
-        CheckEqual $true $read.Report.window.UnreadableExpander.inView 'UnreadableExpander is inside the panel, not pushed out by the list'
+        $window = $read.Report.window
+        CheckEqual "Finished: $root" $window.OutcomeTitle 'OutcomeTitle'
+        CheckLargestFiles $read 100 (16 * $KiB64) $caption
+        CheckEqual $true $window.UnreadableExpander.expanded 'the report: UnreadableExpander is open'
+        CheckEqual $true $window.UnreadableExpander.inView 'the report: UnreadableExpander is inside the panel'
+        CheckEqual $true $window.UnreadableList.inView 'the report: UnreadableList is inside the panel'
+        $built = $window.LargestFilesList.realizedRows
+        Check ($built -gt 0 -and $built -lt 100) "LargestFilesList still virtualizes: $built of 100 rows built"
+        Check ($window.LargestFilesList.actualHeight -ge 40) "LargestFilesList keeps room for two rows or more ($($window.LargestFilesList.actualHeight) px)"
+        Check ($window.UnreadableList.actualHeight -ge 40) "UnreadableList has room for two rows or more ($($window.UnreadableList.actualHeight) px)"
     }
     finally {
-        Undo-DenyListing $denied
+        foreach ($folder in $denied) { Undo-DenyListing $folder }
         if ($lone -and [System.IO.File]::Exists($lone)) { [System.IO.File]::Delete($lone) }
         Remove-CaseFolder $case
     }

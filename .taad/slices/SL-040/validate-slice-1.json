@@ -1,0 +1,188 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-040",
+ "stage": "validate-slice",
+ "attempt": 1,
+ "at": "2026-09-25T14:22:35.181Z",
+ "head": "7610c6b22bcb8a46ea0ec2a9bd668b5fd02c6976",
+ "run_id": 1100,
+ "summary": "I tested the list on the real C:\\ drive. It works as designed on everything I could reach except one layout state, which I measured on C:\\ and which is still unfixed (O-024).\n\nI published a fresh single-file exe from HEAD 7610c6b (139,791,512 bytes) and scanned C:\\ through eng/read-window.ps1 as an ordinary user: 3,580,356 files, 827,367 folders, 664 unreadable folders.\n- The report says 100 rows are bound, the list is inView, 5 rows are realized, and the caption reads 'Top 100 of 35,80,356 files scanned. Files in 664 unreadable folders are not included.'\n- The first row is 55,430,873,088 bytes on disk. A separate in-memory .NET walk of C:\\ agrees: its largest file is C:\\Users\\sshub\\AppData\\Local\\Docker\\wsl\\disk\\docker_data.vhdx at exactly that size, followed by pagefile.sys (21,474,836,480) and hiberfil.sys (13,439,676,416).\n- largestFilesMs was 28.25 ms, and 26.90 ms on a second real scan. Both are under the 100 ms threshold that O-021 set for moving Top off the UI thread, so it stays where it is.\n\nOther checks passed:\n- The xUnit suite: 166/166.\n- Fitness: all 26 rules hold.\n- rules-parity: AGREE.\n- WindowCases -Case All: 21/21 passed, 0 failed checks, including L-001 to L-006.\n\nO-001 is verified by reading the code:\n- Scanner.Scan runs the whole walk on the calling thread and returns only after Run.Execute returns and the SynchronousIoCancel guard is disposed, which joins its canceller thread.\n- Every write to the store is a member of Run on that thread. The canceller only calls CancelSynchronousIo, and the pool thread only disposes handles.\n- The app awaits the scan task before ShowOutcome calls ShowLargestFiles.\n\nWhat fails is O-024, which is owed to build-slice. I opened the unreadable-folders expander on a real C:\\ scan using a throwaway startup hook in %TEMP%, since deleted. At the default 880x600 window, LargestFilesPanel drops to 0 px and LargestFilesList is out of view, so on the main use case one click on '664 folders could not be read' hides the whole list. For that reason I grade criterion 11 as not met.\n\nCriterion 14 (a probe-failed, open-and-growing or online-only file as a row) is not checked on a real list. The report carries no per-row flags or paths, so I could not tell whether any such file was in the list.\n\nThere is no loop: build attempt 1 failed and attempt 2 passed after changing tests only. The design's open questions are still undecided, and the real list shows them concretely: a Docker vhdx, pagefile.sys and hiberfil.sys lead C:\\.\n\nNo 'What this slice owes' block was given, so `planned` is empty and the 14 design cases are graded under `criteria`.",
+ "payload": {
+  "status": "complete",
+  "verdict": "partial",
+  "contact": "real",
+  "summary": "I tested the list on the real C:\\ drive. It works as designed on everything I could reach except one layout state, which I measured on C:\\ and which is still unfixed (O-024).\n\nI published a fresh single-file exe from HEAD 7610c6b (139,791,512 bytes) and scanned C:\\ through eng/read-window.ps1 as an ordinary user: 3,580,356 files, 827,367 folders, 664 unreadable folders.\n- The report says 100 rows are bound, the list is inView, 5 rows are realized, and the caption reads 'Top 100 of 35,80,356 files scanned. Files in 664 unreadable folders are not included.'\n- The first row is 55,430,873,088 bytes on disk. A separate in-memory .NET walk of C:\\ agrees: its largest file is C:\\Users\\sshub\\AppData\\Local\\Docker\\wsl\\disk\\docker_data.vhdx at exactly that size, followed by pagefile.sys (21,474,836,480) and hiberfil.sys (13,439,676,416).\n- largestFilesMs was 28.25 ms, and 26.90 ms on a second real scan. Both are under the 100 ms threshold that O-021 set for moving Top off the UI thread, so it stays where it is.\n\nOther checks passed:\n- The xUnit suite: 166/166.\n- Fitness: all 26 rules hold.\n- rules-parity: AGREE.\n- WindowCases -Case All: 21/21 passed, 0 failed checks, including L-001 to L-006.\n\nO-001 is verified by reading the code:\n- Scanner.Scan runs the whole walk on the calling thread and returns only after Run.Execute returns and the SynchronousIoCancel guard is disposed, which joins its canceller thread.\n- Every write to the store is a member of Run on that thread. The canceller only calls CancelSynchronousIo, and the pool thread only disposes handles.\n- The app awaits the scan task before ShowOutcome calls ShowLargestFiles.\n\nWhat fails is O-024, which is owed to build-slice. I opened the unreadable-folders expander on a real C:\\ scan using a throwaway startup hook in %TEMP%, since deleted. At the default 880x600 window, LargestFilesPanel drops to 0 px and LargestFilesList is out of view, so on the main use case one click on '664 folders could not be read' hides the whole list. For that reason I grade criterion 11 as not met.\n\nCriterion 14 (a probe-failed, open-and-growing or online-only file as a row) is not checked on a real list. The report carries no per-row flags or paths, so I could not tell whether any such file was in the list.\n\nThere is no loop: build attempt 1 failed and attempt 2 passed after changing tests only. The design's open questions are still undecided, and the real list shows them concretely: a Docker vhdx, pagefile.sys and hiberfil.sys lead C:\\.\n\nNo 'What this slice owes' block was given, so `planned` is empty and the 14 design cases are graded under `criteria`.",
+  "checks": [
+   {
+    "what": "Fresh single-file self-contained publish from HEAD (the stack's 'verified by one real publish at validate')",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o artifacts/publish",
+    "outcome": "passed",
+    "evidence": "PUBLISH EXIT 0; artifacts/publish/FsAnalyser.App.exe 139,791,512 bytes, rewritten 19:53:36 local; only .pdb files beside it"
+   },
+   {
+    "what": "Core xUnit suite, including LargestFilesTests (8 Facts) and LargestFilesScaleTests",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --nologo",
+    "outcome": "passed",
+    "evidence": "Passed! - Failed: 0, Passed: 166, Skipped: 0, Total: 166, Duration: 10 s"
+   },
+   {
+    "what": "Architecture rules, including TheAnalysisReadsOnlyChargedSizesAndOnlyFromTheStore over src/FsAnalyser.Core/Analysis/**",
+    "command": "mcp__taad3__Fitness op=check",
+    "outcome": "passed",
+    "evidence": "26 rule(s) checked against 59 file(s); every declared rule holds"
+   },
+   {
+    "what": "Rule twin parity",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/rules-parity.ps1",
+    "outcome": "passed",
+    "evidence": "rules-parity: AGREE 8 facts <- 11 twinned entries, 23 patterns; exit 0"
+   },
+   {
+    "what": "O-001: nothing writes the store while Top reads it (read Scanner.cs, SynchronousIoCancel.cs, MainWindow.xaml.cs)",
+    "command": "Read src/FsAnalyser.Core/Scanning/Scanner.cs:12-38,71-95; Grep _store writers; Read SynchronousIoCancel.cs:216-301; Read MainWindow.xaml.cs:159-193,274-322",
+    "outcome": "passed",
+    "evidence": "Scan builds Run with 'using var io'/'using var run' and returns run.Execute() on the calling thread. All store writes (AppendRoot, SetChildren, AddFlags, Append, TryAddFileId, CorrectSizes at Scanner.cs:125-270) happen inside Run on that thread. The only other threads in Core are the canceller (CancelSynchronousIo only, joined in Dispose) and a pool thread that only disposes an aborted handle. The app awaits the LongRunning scan task (MainWindow.xaml.cs:159) before ShowOutcome and ShowLargestFiles run (:193, :320)."
+   },
+   {
+    "what": "Real C:\\ scan through the published exe in report mode (the slice's main use case)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/read-window.ps1 -Root 'C:\\' -TimeoutSec 1200",
+    "outcome": "passed",
+    "evidence": "EXIT 0; core Completed, files 3,580,356, folders 827,367, links 20,459, 211.3 s; largestFilesShown 100, largestFileOnDisk 55,430,873,088, largestFilesMs 28.2549; LargestFilesPanel visible 172.58 px; LargestFilesList 116.7 px inView true, realizedRows 5; UnreadableExpander visible, collapsed, inView true; caption 'Top 100 of 35,80,356 files scanned. Files in 664 unreadable folders are not included.'"
+   },
+   {
+    "what": "Independent reference for the real list's first row: an in-memory .NET FileSystemEnumerable walk of C:\\ (reparse points skipped, inaccessible ignored, hidden and system files included), top 25 by logical size",
+    "command": "Add-Type TopWalk (in-memory C#); [TopWalk]::Run('C:\\',25,[ref]$files)",
+    "outcome": "passed",
+    "evidence": "The walk took 62 s. #1 is C:\\Users\\sshub\\AppData\\Local\\Docker\\wsl\\disk\\docker_data.vhdx at 55,430,873,088, equal to the app's largestFileOnDisk (cluster-aligned, so on-disk equals logical). #2 is C:\\pagefile.sys (21,474,836,480) and #3 C:\\hiberfil.sys (13,439,676,416). Caveat: this walk counted 2,544,046 files against the app's 3,580,356. I did not investigate the gap; it is the reference walk's undercount, and its maximum still agrees."
+   },
+   {
+    "what": "All default window cases on the fresh exe (L-001 to L-006 are SL-040's)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case All",
+    "outcome": "passed",
+    "evidence": "CASES EXIT 0 in 3:50. PASSED: C-001 to C-014, O-016, L-001 to L-006; 282 'ok' lines and 0 failures. L-003: 7 of 100 rows built, surrogate row drawn (exit 0), LargestFilesPanel 226.46 px. L-005: stopped with 3 rows and the matching caption. L-006: both shapes, 'started ... largest=False rows=0'."
+   },
+   {
+    "what": "O-024 on the real drive: the person opens the unreadable-folders expander on a C:\\ outcome at the default window size",
+    "command": "Throwaway DOTNET_STARTUP_HOOKS dll built in %TEMP%\\sl040-validate-hook (it subscribes to EndingShown and sets UnreadableExpander.IsExpanded=true), exe launched with 'C:\\\\ --report <file>' through ProcessStartInfo with the hook set for that one process only; the folder was deleted afterwards",
+    "outcome": "failed",
+    "evidence": "EXIT 0 after 2:40; hook log 'ending expander visibility=Visible expanded=True window=880x600'. Report: UnreadableExpander 205.58 px inView true; LargestFilesPanel visible with actualHeight 0; LargestFilesList inView false (realizedRows 3, 100 bound). The whole largest-files list is pushed out of view. Second real measurement: largestFilesMs 26.9034, largestFileOnDisk 55,430,873,088 again."
+   },
+   {
+    "what": "Network window cases N-001 to N-004",
+    "command": "tests/window/WindowCases.ps1 -IncludeNetwork",
+    "outcome": "not-run",
+    "evidence": "They change this machine's SMB client mappings. They are SL-038's cases, and nothing in this slice touches that path."
+   },
+   {
+    "what": "Rules harness plants F17 to F19 (each analysis-rule plant fires in both engines)",
+    "command": "eng/rules-harness/harness.py --scenario ...",
+    "outcome": "not-run",
+    "evidence": "Code review ran them and recorded that they fire. Fitness and rules-parity pass on this tree. I did not re-run the harness."
+   },
+   {
+    "what": "Row-by-row comparison of the real C:\\ list's 100 paths against a reference",
+    "outcome": "not-run",
+    "evidence": "The report deliberately carries no paths (Q-016). Only row 0's on-disk bytes and the row count are machine-readable from the shipped exe."
+   },
+   {
+    "what": "Elevated read of the 664 unreadable folders (read-denied-folders)",
+    "outcome": "not-run",
+    "evidence": "Not requested. The operation returns counts, never names or sizes, so it cannot tell whether a bigger file is hidden there. The caption already says those folders are excluded."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "1. rank the largest files under the scanned root: files at the top level and six folders down, where a folder's total is larger than any single file",
+    "met": "yes",
+    "how": "LargestFilesTests.RanksFilesAtAnyDepthAndNeverAFolder passed (deep 3 MiB file first, 5 MiB folder never listed). On real C:\\ the first row (55,430,873,088 bytes) is the independent walk's largest file, 7 folders down (AppData\\Local\\Docker\\wsl\\disk)."
+   },
+   {
+    "criterion": "2. cap the list at count: 105 files, count 100, ties at the cut",
+    "met": "yes",
+    "how": "KeepsExactlyTheCountLargestWhenSizesTieAtTheCut passed (exactly 100 rows, no duplicate paths, equal to a full sort's first 100). L-003 shows 'Top 100 of 105'. Real C:\\ shows 100."
+   },
+   {
+    "criterion": "3. list a tree that has nothing to rank",
+    "met": "yes",
+    "how": "ATreeWithNothingToRankGivesAnEmptyList passed. L-004 passed: caption 'No non-empty files found.', 0 rows, largestFileOnDisk null."
+   },
+   {
+    "criterion": "4. list a file that has more than one name (3 MiB, second hardlink elsewhere)",
+    "met": "yes",
+    "how": "AFileWithTwoNamesIsListedOnce passed: the second name is confirmed HardlinkDuplicate, and the list is [first name at 3 MiB, other]."
+   },
+   {
+    "criterion": "5. list files reached through links (file symlink, folder symlink, junction)",
+    "met": "yes",
+    "how": "NoRowComesFromALink passed: all three are recorded as Link, and the only row is the 2 MiB target. Links are really created (Developer Mode, Q-001), never skipped."
+   },
+   {
+    "criterion": "6. rank by space on disk with both sizes shown (64 MiB sparse vs 1 MiB dense)",
+    "met": "yes",
+    "how": "RanksBySpaceOnDiskAndKeepsBothSizes passed: dense ranks first, and the sparse row has 64 MiB logical and at most 4 KiB on disk. The XAML shows 'On disk' and 'Size' columns under 'Largest files, by space on disk'."
+   },
+   {
+    "criterion": "7. show where a file is (path >260 chars, trailing dot, trailing space, unpaired surrogate)",
+    "met": "yes",
+    "how": "EachPathIsTheFilesExactPath passed: exact strings, no U+FFFD, File.Exists through \\\\?\\. L-003 drew the surrogate row 0 and the exe exited 0 with a report. No human looked at how the text renders."
+   },
+   {
+    "criterion": "8. list from a scan that was stopped",
+    "met": "yes",
+    "how": "AStoppedScanListsOnlyWhatItRead passed. L-005 passed (Cancelled, 3 rows, caption '... in the part read before the scan stopped.'). The writer invariant was verified by reading Scanner.cs (O-001)."
+   },
+   {
+    "criterion": "9. start another scan after a list has been shown",
+    "met": "yes",
+    "how": "L-006 passed in both shapes. Missing root: the list collapses with 0 rows at scan start and stays hidden at the failure ending. Begun: 0 rows at start, report core null."
+   },
+   {
+    "criterion": "10. state what the list does not cover (biggest file in an unreadable folder)",
+    "met": "yes",
+    "how": "L-002 passed (caption '... Files in 1 unreadable folder are not included.', the hidden 2 MiB file absent). AFileInAFolderTheScanCouldNotReadIsNotListed passed. On real C:\\ the caption names 664 unreadable folders."
+   },
+   {
+    "criterion": "11. fit the list into the outcome panel: 100 rows, a surrogate row, with the unreadable-folders list also filled",
+    "met": "no",
+    "how": "Collapsed expander (the state ShowOutcome leaves): L-003 passed, and on real C:\\ LargestFilesList is 116.7 px and inView. Once the person opens the filled unreadable list at the default 880x600 window on real C:\\, LargestFilesPanel is 0 px and LargestFilesList inView is false. This is the defect O-024 records, still unfixed at HEAD 7610c6b."
+   },
+   {
+    "criterion": "12. report what the window shows after a finished scan of a planted tree",
+    "met": "yes",
+    "how": "L-001 passed (3 rows, largestFileOnDisk 327680, largestFilesMs measured, no planted name in the report). The real C:\\ report carries the same keys with sane values and no paths."
+   },
+   {
+    "criterion": "13. rank a very large scan (4-5 million entries)",
+    "met": "yes",
+    "how": "Real C:\\ store of about 4.43 million entries: largestFilesMs 28.25 ms and 26.90 ms on two scans, under the 100 ms Task.Run threshold O-021 set. LargestFilesScaleTests (4,417,469 synthetic entries, under 1 MiB allocated) passed."
+   },
+   {
+    "criterion": "14. rank a file whose size the scanner had to probe (open and growing, probe failed, online-only placeholder)",
+    "met": "not-checked",
+    "how": "The design marks this case material:false and relies on the sparse test, the spike open-growing-file-stale-directory-size and OnDiskSizeTests. The real C:\\ list was produced without error, but the report has no per-row flags or paths, so I could not tell whether any probe-failed, open-and-growing or online-only file was a row."
+   }
+  ],
+  "planned": [],
+  "obligations": [
+   {
+    "key": "O-001",
+    "verified": "yes",
+    "evidence": "Scanner.cs:12 walks depth-first on the caller's thread. Scanner.cs:30-38 returns run.Execute() inside 'using var io'/'using var run', and SynchronousIoCancel.Dispose (:216-229) joins the canceller before Scan returns. Every store writer is called only from Run (Scanner.cs:125-270). The canceller thread only calls CancelSynchronousIo, and the pool thread in Close (:159-179) only disposes a SafeFileHandle. MainWindow.xaml.cs:159 awaits the scan task before ShowOutcome and ShowLargestFiles (:193, :320). So the ranking key cannot change during the pass for Completed or Cancelled scans. AStoppedScanListsOnlyWhatItRead and L-005 also passed."
+   },
+   {
+    "key": "O-024",
+    "verified": "no",
+    "evidence": "Owed to build-slice and still open: HEAD is 7610c6b, the reviewed commit, and MainWindow.xaml is unchanged. Reproduced on the real C:\\ drive: with UnreadableExpander opened (throwaway startup hook) at 880x600, UnreadableExpander is 205.58 px and LargestFilesPanel 0 px, with LargestFilesList inView false. On C:\\ the list disappears entirely, which is worse than the reviewer's 26 px on a 12-folder temp tree."
+   }
+  ],
+  "not_reached": [
+   "Paths of the real C:\\ list's 100 rows: the report carries no paths by design (Q-016), so only row 0's size and the row count were compared with an independent reference. The other 99 rows and their shown locations were not read.",
+   "No person looked at the window. How wrapped 400-character paths, a lone-surrogate name, and the 'On disk'/'Size' columns look was judged only from report metrics (inView, heights, realized rows).",
+   "Criterion 14's probe shapes on a real list: whether an online-only OneDrive placeholder, a probe-failed system file or an open-and-growing file appears with correct values as a row. I did not open the person's OneDrive folder.",
+   "The contents of the 664 unreadable folders on C:\\: the list cannot include them, and read-denied-folders returns counts only, so it could not say whether a larger file is hidden there.",
+   "Windows 10, other DPI settings, and window sizes other than the default 880x600; only Windows 11 build 26200 was exercised.",
+   "Drives other than NTFS C:\\ (exFAT/FAT removable, mapped SMB share) with the list shown.",
+   "Why the independent .NET walk counted about 1.04M fewer files than the scanner (2,544,046 vs 3,580,356). It did not affect the row-0 comparison, and it is not this slice's code."
+  ]
+ }
+}

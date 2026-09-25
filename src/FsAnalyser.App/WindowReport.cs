@@ -34,7 +34,8 @@ namespace FsAnalyser.App;
 ///                 "LargestFilesPanel": { "visible": bool, "actualHeight": number },
 ///                 "LargestFilesCaption": Text,
 ///                 "LargestFilesList": { "actualHeight": number, "inView": bool, "realizedRows": number },
-///                 "UnreadableExpander": { "visible": bool, "actualHeight": number, "inView": bool } },
+///                 "UnreadableExpander": { "visible": bool, "actualHeight": number, "inView": bool, "expanded": bool },
+///                 "UnreadableList": { "actualHeight": number, "inView": bool } },
 ///     "largestFilesShown": rows bound to LargestFilesList, "largestFileOnDisk": the first row's on-disk
 ///         bytes or null, "largestFilesMs": how long ranking them took or null (SL-040),
 ///     "core": { "status", "rootError", "files", "folders", "links", "bytes", "bytesOnDisk", "elapsedMs" } or null }
@@ -87,7 +88,14 @@ internal static class WindowReport
                     inView = InView(window.LargestFilesList),
                     realizedRows = Enumerable.Range(0, rows.Count).Count(i => window.LargestFilesList.ItemContainerGenerator.ContainerFromIndex(i) is not null),
                 },
-                UnreadableExpander = new { visible = window.UnreadableExpander.IsVisible, actualHeight = window.UnreadableExpander.ActualHeight, inView = InView(window.UnreadableExpander) },
+                UnreadableExpander = new
+                {
+                    visible = window.UnreadableExpander.IsVisible,
+                    actualHeight = window.UnreadableExpander.ActualHeight,
+                    inView = InView(window.UnreadableExpander),
+                    expanded = window.UnreadableExpander.IsExpanded,
+                },
+                UnreadableList = new { actualHeight = window.UnreadableList.ActualHeight, inView = InView(window.UnreadableList) },
             },
             largestFilesShown = rows.Count,
             largestFileOnDisk = rows.Count > 0 ? rows[0].OnDisk : (long?)null,
