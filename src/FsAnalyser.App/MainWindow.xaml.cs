@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
+using FsAnalyser.Core.Analysis;
 using FsAnalyser.Core.Scanning;
 using Microsoft.Win32;
 
@@ -19,6 +20,9 @@ public partial class MainWindow : Window
     private static readonly (Brush Border, Brush Background) Finished = (Solid("#FF5E9E4A"), Solid("#FFF2F9EE"));
     private static readonly (Brush Border, Brush Background) Stopped = (Solid("#FFD69A2D"), Solid("#FFFFF8E6"));
     private static readonly (Brush Border, Brush Background) CouldNotRead = (Solid("#FFC84B4B"), Solid("#FFFDF0F0"));
+
+    // How many of the largest files the outcome lists (SL-040). Core takes the count as a parameter.
+    private const int LargestFilesShown = 100;
 
     private readonly string? _launchPath;
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(250) };
@@ -47,6 +51,9 @@ public partial class MainWindow : Window
 
     /// <summary>The result behind the ending on screen; null when the ending came before any result.</summary>
     internal ScanResult? LastResult { get; private set; }
+
+    /// <summary>How long ranking the largest files took for the list on screen; null when no list was made.</summary>
+    internal double? LargestFilesMs { get; private set; }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -129,6 +136,7 @@ public partial class MainWindow : Window
         _result = null; // let the previous scan's store be collected
         LastResult = null;
         UnreadableList.ItemsSource = null;
+        HideLargestFiles(); // the last scan's list is never shown as this one's
         OutcomePanel.Visibility = Visibility.Collapsed;
         SetPickersEnabled(false);
 
@@ -307,8 +315,45 @@ public partial class MainWindow : Window
         {
             UnreadableExpander.Visibility = Visibility.Collapsed;
         }
+
+        // Last, so that a failure here cannot take away what is already filled in above.
+        ShowLargestFiles(result);
         OutcomePanel.Visibility = Visibility.Visible;
         EndingShown?.Invoke(this, EventArgs.Empty);
+    }
+
+    // The largest single files anywhere under the root, from the store of a scan that has returned, so
+    // nothing writes it any more. The caption says when the list cannot be the whole tree: a stopped scan,
+    // and folders whose files the scan never saw.
+    private void ShowLargestFiles(ScanResult result)
+    {
+        var clock = Stopwatch.StartNew();
+        IReadOnlyList<LargestFile> top = LargestFiles.Top(result.Store, LargestFilesShown);
+        LargestFilesMs = clock.Elapsed.TotalMilliseconds;
+
+        string part = result.Status == ScanStatus.Completed ? "" : " in the part read before the scan stopped";
+        string caption = top.Count == 0
+            ? $"No non-empty files found{part}."
+            : $"Top {top.Count:N0} of {Count(result.Totals.Files, "file")} scanned{part}.";
+        if (result.Unreadable.Count > 0)
+            caption += $" Files in {Count(result.Unreadable.Count, "unreadable folder")} are not included.";
+        LargestFilesCaption.Text = caption;
+
+        LargestFilesList.ItemsSource = top
+            .Select(f => new LargestFileRow(f.ChargedOnDisk, FormatSize(f.ChargedOnDisk), FormatSize(f.ChargedSize), f.Path))
+            .ToList();
+        Visibility rows = top.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        LargestFilesHeadings.Visibility = rows;
+        LargestFilesList.Visibility = rows;
+        LargestFilesPanel.Visibility = Visibility.Visible;
+    }
+
+    private void HideLargestFiles()
+    {
+        LargestFilesPanel.Visibility = Visibility.Collapsed;
+        LargestFilesList.ItemsSource = null;
+        LargestFilesCaption.Text = "";
+        LargestFilesMs = null;
     }
 
     // What the scan saw against what the volume says is in use. The gap is not explained here yet:
@@ -332,6 +377,7 @@ public partial class MainWindow : Window
         OutcomeDetail.Text = why;
         OutcomeNotes.Visibility = Visibility.Collapsed;
         UnreadableExpander.Visibility = Visibility.Collapsed;
+        HideLargestFiles();
         OutcomePanel.Visibility = Visibility.Visible;
         EndingShown?.Invoke(this, EventArgs.Empty);
     }
@@ -367,4 +413,7 @@ public partial class MainWindow : Window
     }
 
     private sealed record DriveChoice(string Root, string Label);
+
+    /// <summary>One row of the largest-files list: the texts it shows, and the on-disk bytes it was ranked by.</summary>
+    internal sealed record LargestFileRow(long OnDisk, string OnDiskText, string SizeText, string Path);
 }

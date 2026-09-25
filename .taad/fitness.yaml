@@ -167,6 +167,14 @@ rules:
     including_comments: true
     because: 'Every Win32 filesystem call goes through SynchronousIoCancel (SL-024, M1), which brackets it so Cancel can interrupt it and discards its result once a cancel was issued. A call made anywhere else blocks with no way to cancel it, or passes a cancelled cloud listing (SUCCESS, nothing in it) off as an empty folder.'
 
+  - name: 'TheAnalysisReadsOnlyChargedSizesAndOnlyFromTheStore (*.cs)'
+    files: 'src/FsAnalyser.Core/Analysis/**/*.cs'
+    must_not_match:
+      - '(?m)\.(?:Size|OnDisk)\s*[\(\[]'
+      - '(?m)(?<![\w.])(?:File|Directory|FileInfo|DirectoryInfo|DriveInfo)\.\w+|System\.IO\.(?:File|Directory)\b|new\s+(?:FileInfo|DirectoryInfo|DriveInfo|FileStream)\b'
+    including_comments: true
+    because: 'The analysis code reads sizes only as the store charged them, and only from the store (SL-040, declared by its design and twinned by its build, m6). The store''s raw Size and OnDisk skip the counting rules: a hardlink''s later names, links, and a duplicate''s stale size all charge or read wrongly, so a ranking built on them lists one file twice or shows a wrong size while the tests for that one function still pass. Asking the disk again bypasses the store''s measured values and costs minutes on a multi-million-entry drive. Comments are matched too, so a comment under Analysis/ must not name these calls. Outside Core the compiler holds the first half, because the raw accessors are internal (SL-040, M2).'
+
   - name: 'TheScannerMakesNoBclFileSystemCalls (*.cs)'
     files: 'src/FsAnalyser.Core/Scanning/**/*.cs'
     must_not_match:

@@ -25,11 +25,18 @@
 # still exits 0 on the cases that ran, and a network case named on its own exits 2. The default run proves
 # only that the Stopping state's wait line does NOT appear on an ordinary cancel (C-006); that it appears,
 # counts up, keeps the UI live and goes when the scan returns is N-001's.
+#
+# L-001 to L-005 (SL-040) are the largest-files list: the report's largestFiles* scalars and the list's
+# section against a planted tree, the caption for an unreadable folder, for a tree with nothing to rank and
+# for a stopped scan (L-005, under the hook), and the list at 100 rows beside a filled unreadable-folders
+# list, its first row a name with an unpaired surrogate. Planted names carry "plantedname", which the report
+# must never hold. An unreadable folder is made with an icacls deny of list-folder for this user, and the
+# deny is removed before the tree is.
 
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
-        'N-001', 'N-002', 'N-003', 'N-004')]
+        'L-001', 'L-002', 'L-003', 'L-004', 'L-005', 'N-001', 'N-002', 'N-003', 'N-004')]
     [string] $Case,
     [switch] $IncludeNetwork
 )
@@ -44,7 +51,7 @@ $HookDll = Join-Path $Repo 'artifacts\window-hook\FsaWindowHook.dll'
 $RigProject = Join-Path $Repo 'tests\window\StallRig\StallRig.csproj'
 $RigExe = Join-Path $Repo 'artifacts\stall-rig\StallRig.exe'
 $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS'
-$HookedCases = 'C-006', 'C-012', 'O-016', 'N-001', 'N-002'
+$HookedCases = 'C-006', 'C-012', 'O-016', 'L-005', 'N-001', 'N-002'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004'
 $RigOnlyCases = 'N-003', 'N-004'
 $KiB64 = 64KB
@@ -1128,9 +1135,195 @@ function Test-N004 {
     }
 }
 
+# ---- The largest files (SL-040) ----
+
+$Planted = 'plantedname'
+
+# Denies this user list-folder (RD, FILE_LIST_DIRECTORY) on $folder alone, so the scan lists it as unreadable
+# with error 5, as Core.Tests' TempTree.Deny does. Undo-DenyListing takes the deny away again.
+function Deny-Listing([string] $folder) {
+    $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $out = & icacls.exe $folder /deny "*${sid}:(RD)" 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "icacls /deny on $folder exited ${LASTEXITCODE}: $out" }
+}
+
+function Undo-DenyListing([string] $folder) {
+    if (-not $folder -or -not [System.IO.Directory]::Exists($folder)) { return }
+    $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $out = & icacls.exe $folder /remove:d "*$sid" 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "icacls /remove:d on $folder exited ${LASTEXITCODE}: $out" }
+}
+
+# What the report says of the largest-files section after a scan that returned: how many rows are bound,
+# the first row's on-disk bytes, a measured ranking time, the section and its caption on screen, the list
+# laid out inside the panel when it has rows, and no planted name anywhere in the report (Q-016).
+function CheckLargestFiles($read, [int] $shown, $firstOnDisk, [string] $caption) {
+    $report = $read.Report
+    $window = $report.window
+    CheckEqual $shown $report.largestFilesShown 'largestFilesShown (rows bound to LargestFilesList)'
+    CheckEqual $firstOnDisk $report.largestFileOnDisk 'largestFileOnDisk (the first row, against the tree)'
+    Check ($null -ne $report.largestFilesMs -and $report.largestFilesMs -ge 0) "largestFilesMs was measured ($(Show $report.largestFilesMs))"
+    CheckEqual $true $window.LargestFilesPanel.visible 'LargestFilesPanel is on screen'
+    Check ($window.LargestFilesPanel.actualHeight -gt 0) "LargestFilesPanel has been laid out (actualHeight $($window.LargestFilesPanel.actualHeight))"
+    CheckEqual $caption $window.LargestFilesCaption 'LargestFilesCaption'
+    CheckEqual ($shown -gt 0) $window.LargestFilesList.inView 'LargestFilesList is on screen inside the panel exactly when it has rows'
+    Check (-not $read.Text.Contains($Planted)) "the report holds no planted file name ('$Planted')"
+}
+
+# L-001: the report's largest-files scalars for a finished scan of a planted tree, files at three depths and
+# one empty; then an ending with no scan behind it (a missing root), where they are 0, null and null and the
+# section is hidden.
+function Test-L001 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'tree'
+        New-File (Join-Path $root "$Planted-a.bin") (5 * $KiB64)
+        New-File (Join-Path $root "sub\$Planted-b.bin") (3 * $KiB64)
+        New-File (Join-Path $root "sub\deeper\$Planted-c.bin") $KiB64
+        New-File (Join-Path $root "$Planted-empty.txt") 0
+        $manifest = [pscustomobject]@{ Files = 4; Folders = 2; Links = 0; Bytes = 9 * $KiB64 }
+
+        $read = Read-Window $root
+        CheckFinished $read $root $root $manifest
+        if ($null -eq $read.Report) { return }
+        CheckLargestFiles $read 3 (5 * $KiB64) 'Top 3 of 4 files scanned.'
+        CheckEqual 3 $read.Report.window.LargestFilesList.realizedRows 'LargestFilesList built all three rows'
+        CheckEqual $false $read.Report.window.UnreadableExpander.visible 'UnreadableExpander is hidden'
+
+        $missing = Join-Path $case 'missing'
+        $read = Read-Window $missing
+        CheckEqual 'EXIT 0' $read.Exit 'missing root: exit code'
+        Check ($null -ne $read.Report) 'missing root: a report was written'
+        if ($null -eq $read.Report) { return }
+        CheckEqual "Could not read $missing" $read.Report.window.OutcomeTitle 'missing root: OutcomeTitle'
+        CheckEqual 0 $read.Report.largestFilesShown 'missing root: largestFilesShown'
+        CheckEqual $null $read.Report.largestFileOnDisk 'missing root: largestFileOnDisk'
+        CheckEqual $null $read.Report.largestFilesMs 'missing root: largestFilesMs'
+        CheckEqual $false $read.Report.window.LargestFilesPanel.visible 'missing root: LargestFilesPanel is hidden'
+    }
+    finally { Remove-CaseFolder $case }
+}
+
+# L-002: the biggest file sits in a folder the scan cannot read. It is not listed, and the caption says the
+# list leaves that folder out.
+function Test-L002 {
+    $case = New-CaseFolder
+    $denied = $null
+    try {
+        $root = Join-Path $case 'tree'
+        $denied = Join-Path $root 'denied'
+        New-File (Join-Path $denied "$Planted-biggest.bin") (32 * $KiB64)
+        New-File (Join-Path $root "$Planted-seen.bin") (2 * $KiB64)
+        New-File (Join-Path $root "other\$Planted-seen-too.bin") $KiB64
+        Deny-Listing $denied
+
+        $read = Read-Window $root
+        CheckEqual 'EXIT 0' $read.Exit 'exit code'
+        Check ($null -ne $read.Report) 'a report was written'
+        if ($null -eq $read.Report) { return }
+        CheckEqual "Finished: $root" $read.Report.window.OutcomeTitle 'OutcomeTitle'
+        CheckLargestFiles $read 2 (2 * $KiB64) 'Top 2 of 2 files scanned. Files in 1 unreadable folder are not included.'
+        CheckEqual $true $read.Report.window.UnreadableExpander.visible 'UnreadableExpander is on screen'
+        CheckEqual $true $read.Report.window.UnreadableExpander.inView 'UnreadableExpander is inside the panel'
+    }
+    finally {
+        Undo-DenyListing $denied
+        Remove-CaseFolder $case
+    }
+}
+
+# L-003: the list full at 100 rows with the unreadable-folders list also filled, the first row a name with an
+# unpaired UTF-16 surrogate. A throw while WPF lays out or draws that row ends the app with 70 and no report.
+# The list must stay virtualized (far fewer rows built than bound) and neither list may be pushed out of
+# the panel at the window's default size.
+function Test-L003 {
+    $case = New-CaseFolder
+    $denied = $null
+    $lone = $null
+    try {
+        $root = Join-Path $case 'tree'
+        for ($d = 1; $d -le 4; $d++) {
+            for ($f = 1; $f -le 26; $f++) {
+                New-File (Join-Path $root "folder$d\$Planted-$f.bin") $KiB64
+            }
+        }
+        $lone = "\\?\$root\a$([char]0xD800)b-$Planted.bin"
+        [System.IO.File]::WriteAllBytes($lone, [byte[]]::new(16 * $KiB64))
+        $denied = Join-Path $root 'denied'
+        New-File (Join-Path $denied "$Planted-hidden.bin") (32 * $KiB64)
+        Deny-Listing $denied
+
+        $read = Read-Window $root
+        CheckEqual 'EXIT 0' $read.Exit 'exit code (70 would be a throw drawing the unpaired surrogate)'
+        Check ($null -ne $read.Report) 'a report was written'
+        if ($null -eq $read.Report) { return }
+        CheckEqual "Finished: $root" $read.Report.window.OutcomeTitle 'OutcomeTitle'
+        CheckLargestFiles $read 100 (16 * $KiB64) 'Top 100 of 105 files scanned. Files in 1 unreadable folder are not included.'
+        $built = $read.Report.window.LargestFilesList.realizedRows
+        Check ($built -gt 0 -and $built -lt 100) "LargestFilesList virtualizes: $built of 100 rows built"
+        CheckEqual $true $read.Report.window.UnreadableExpander.visible 'UnreadableExpander is on screen'
+        CheckEqual $true $read.Report.window.UnreadableExpander.inView 'UnreadableExpander is inside the panel, not pushed out by the list'
+    }
+    finally {
+        Undo-DenyListing $denied
+        if ($lone -and [System.IO.File]::Exists($lone)) { [System.IO.File]::Delete($lone) }
+        Remove-CaseFolder $case
+    }
+}
+
+# L-004: a tree with nothing to rank (empty files and an empty folder). The section says so, with no rows,
+# and the report reads 0 rows and no first row.
+function Test-L004 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'tree'
+        for ($f = 1; $f -le 3; $f++) {
+            New-File (Join-Path $root "$Planted-$f.txt") 0
+        }
+        [void][System.IO.Directory]::CreateDirectory((Join-Path $root 'nothing'))
+        $manifest = [pscustomobject]@{ Files = 3; Folders = 1; Links = 0; Bytes = 0 }
+
+        $read = Read-Window $root
+        CheckFinished $read $root $root $manifest
+        if ($null -eq $read.Report) { return }
+        CheckLargestFiles $read 0 $null 'No non-empty files found.'
+    }
+    finally { Remove-CaseFolder $case }
+}
+
+# L-005: Stop pressed mid-scan (the hook, as C-006). The list comes from what was read, and its caption says
+# so. Every file New-LargeTree writes is 64 KiB or empty, so a first row, if any, is 64 KiB. The caption's
+# file count must be the one OutcomeDetail shows for the same stopped scan.
+function Test-L005 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'large'
+        [void](New-LargeTree $root)
+        $run = Invoke-HookedRun 'stop' $root (Join-Path $case 'report.json')
+        $before = $script:Failures.Count
+        CheckActed $run 'stop'
+        if ($script:Failures.Count -gt $before) { return }
+        CheckEqual '0' $run.Exit 'exit code'
+        Check ($null -ne $run.Report) 'a report was written'
+        if ($null -eq $run.Report) { return }
+        CheckEqual 'Cancelled' $run.Report.core.status 'core.status'
+        $title = $run.Report.window.OutcomeTitle
+        Check ("$title".StartsWith("Stopped: $root.")) "OutcomeTitle is the Stopped ending ($(Show $title))"
+
+        $shown = [int]$run.Report.largestFilesShown
+        $files = ("$($run.Report.window.OutcomeDetail[0])" -split ' and ')[0]
+        Write-Output "        stopped with $shown rows listed, OutcomeDetail says $files"
+        $caption = if ($shown -eq 0) { 'No non-empty files found in the part read before the scan stopped.' }
+            else { "Top $shown of $files scanned in the part read before the scan stopped." }
+        $read = [pscustomobject]@{ Report = $run.Report; Text = ($run.Report | ConvertTo-Json -Depth 8) }
+        CheckLargestFiles $read $shown $(if ($shown -gt 0) { $KiB64 } else { $null }) $caption
+    }
+    finally { Remove-CaseFolder $case }
+}
+
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016') + $NetworkCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'L-004', 'L-005') + $NetworkCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })

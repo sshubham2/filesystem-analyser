@@ -1,6 +1,9 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Windows;
+using System.Windows.Controls.Primitives;
+using System.Windows.Media;
 using System.Windows.Threading;
 using FsAnalyser.Core.Scanning;
 
@@ -27,15 +30,27 @@ namespace FsAnalyser.App;
 ///   { "schema": 1,
 ///     "root": the root argument as the app took it,
 ///     "window": { "OutcomeTitle": Text, "OutcomeDetail": [Text split into lines], "CountersText": Text,
-///                 "OutcomePanel": { "visible": bool, "actualHeight": number } },
+///                 "OutcomePanel": { "visible": bool, "actualHeight": number },
+///                 "LargestFilesPanel": { "visible": bool, "actualHeight": number },
+///                 "LargestFilesCaption": Text,
+///                 "LargestFilesList": { "actualHeight": number, "inView": bool, "realizedRows": number },
+///                 "UnreadableExpander": { "visible": bool, "actualHeight": number, "inView": bool } },
+///     "largestFilesShown": rows bound to LargestFilesList, "largestFileOnDisk": the first row's on-disk
+///         bytes or null, "largestFilesMs": how long ranking them took or null (SL-040),
 ///     "core": { "status", "rootError", "files", "folders", "links", "bytes", "bytesOnDisk", "elapsedMs" } or null }
 /// </code>
 /// Every key under "window" is the x:Name of the control it was read from, and every value is what that
-/// control shows: its Text as displayed, or for OutcomePanel whether it is on screen. Later screens ADD
-/// keys; they never rename one or change what it holds. "window" is the evidence a check compares with
-/// the tree it built. "core" is the ScanResult behind the ending, straight from the same process: it only
-/// says which side is wrong when the window and the tree disagree, and is null when the ending came
-/// before any result. The last line of OutcomeDetail is the elapsed time and differs on every run.
+/// control shows: its Text as displayed, or for a panel whether it is on screen. "inView" says the
+/// control is on screen with some height, and that neither it nor anything around it up to the window
+/// was laid out larger than the room it was given, so nothing squeezed it out of sight or clipped it (a
+/// control squeezed out of a DockPanel reads visible with actualHeight 0). "realizedRows" is how many
+/// rows the list has built, which stays near what fits on screen while it virtualizes. Later
+/// screens ADD keys; they never rename one or change what it holds. "window" is the evidence a check
+/// compares with the tree it built. The largestFiles* keys are read from the list's own rows and from the
+/// window's timing of the one call that ranked them; they never hold a name or a path. "core" is the
+/// ScanResult behind the ending, straight from the same process: it only says which side is wrong when the
+/// window and the tree disagree, and is null when the ending came before any result. The last line of
+/// OutcomeDetail is the elapsed time and differs on every run.
 ///
 /// Nothing here formats a number or builds text from the result: a wrong or blank control must show up
 /// in the report as wrong or blank (architecture rule in .taad/fitness.yaml).
@@ -53,6 +68,7 @@ internal static class WindowReport
         await Dispatcher.Yield(DispatcherPriority.Loaded); // below Render: layout and render have run
 
         ScanResult? result = window.LastResult;
+        var rows = window.LargestFilesList.ItemsSource as IReadOnlyList<MainWindow.LargestFileRow> ?? [];
         var report = new
         {
             schema = 1,
@@ -63,7 +79,19 @@ internal static class WindowReport
                 OutcomeDetail = Regex.Split(window.OutcomeDetail.Text, @"\r?\n"),
                 CountersText = window.CountersText.Text,
                 OutcomePanel = new { visible = window.OutcomePanel.IsVisible, actualHeight = window.OutcomePanel.ActualHeight },
+                LargestFilesPanel = new { visible = window.LargestFilesPanel.IsVisible, actualHeight = window.LargestFilesPanel.ActualHeight },
+                LargestFilesCaption = window.LargestFilesCaption.Text,
+                LargestFilesList = new
+                {
+                    actualHeight = window.LargestFilesList.ActualHeight,
+                    inView = InView(window.LargestFilesList),
+                    realizedRows = Enumerable.Range(0, rows.Count).Count(i => window.LargestFilesList.ItemContainerGenerator.ContainerFromIndex(i) is not null),
+                },
+                UnreadableExpander = new { visible = window.UnreadableExpander.IsVisible, actualHeight = window.UnreadableExpander.ActualHeight, inView = InView(window.UnreadableExpander) },
             },
+            largestFilesShown = rows.Count,
+            largestFileOnDisk = rows.Count > 0 ? rows[0].OnDisk : (long?)null,
+            largestFilesMs = window.LargestFilesMs,
             core = result is null ? null : new
             {
                 status = result.Status.ToString(),
@@ -91,6 +119,26 @@ internal static class WindowReport
             DeleteQuietly(temporary);
             throw;
         }
+    }
+
+    // Whether the control is on screen with some height, and neither it nor anything around it up to the
+    // window was laid out larger than its slot, which is how WPF clips what does not fit. A control squeezed
+    // out of its DockPanel still reads IsVisible, with ActualHeight 0 (measured on SL-040's layout mutant).
+    private static bool InView(FrameworkElement control)
+    {
+        if (!control.IsVisible)
+            return false;
+        for (DependencyObject? node = control; node is not null and not Window; node = VisualTreeHelper.GetParent(node))
+        {
+            if (node is not FrameworkElement element)
+                continue;
+            Rect slot = LayoutInformation.GetLayoutSlot(element);
+            Thickness margin = element.Margin;
+            double height = slot.Height - margin.Top - margin.Bottom, width = slot.Width - margin.Left - margin.Right;
+            if (element.ActualHeight <= 0 || element.ActualHeight > height + 0.5 || element.ActualWidth > width + 0.5)
+                return false;
+        }
+        return true;
     }
 
     /// <summary>Deletes the report and its temporary file, if they are there; never throws.</summary>
