@@ -74,35 +74,23 @@
   },
   {
    "stage": "build-slice",
-   "issue": "The tree slice's click and expand modes should keep the same shape: call the app's handler inside a try/catch in the dispatcher callback and re-raise with ExceptionDispatchInfo. Otherwise a handler fault there would again be recorded as the hook's own failure."
-  },
-  {
-   "stage": "build-slice",
-   "issue": "deviation: The FSA_HOOK_LOG contract gains one line kind: 'rethrown mode=<m> reason=<text>', meaning the app's own handler threw during the press and the exception was handed back to the app. I did not log it a…"
+   "issue": "The 'tree too small' version of O-002's shape has no deterministic committed feed. A small tree's scan opens a window of only a few milliseconds, against the hook's 25 ms poll, so the hook may or may not press Stop within it and a test built on that would be flaky. StopDisabled feeds 'the scan ended before the hook acted' by a different cause. The reporting it asserts does not depend on why the hook missed the scan."
   },
   {
    "stage": "code-review",
-   "issue": "drift: Correction to my own m1 from attempt 1. Its O-016 half was wrong: 'A throwing OnClosing would fail O-016 under the hook'. I measured OnClosing mutated to throw once. Window.Close() runs through WM_CL…"
-  },
-  {
-   "stage": "code-review",
-   "issue": "drift: O-016 cannot tell 'the window closed and the Exit rule turned exit 0 into 70' apart from 'the app faulted while closing and the crash handler exited 70'. Both give exit 70 and no report. Measured wit…"
-  },
-  {
-   "stage": "code-review",
-   "issue": "drift: Contract change carried by the accepted O-015 fix. The design's error_cases said 'Any exception in the hook: caught and logged, never fatal.' Now an exception raised inside Act is logged as 'rethrown…"
+   "issue": "drift: Nothing new departed: build attempt 3 changed no code. The three drift notes from attempt 2 still stand. First, the comment at StartupHook.cs:127-129 names OnClosing as reaching the rethrow catch; me…"
   },
   {
    "stage": "validate-slice",
-   "issue": "not reached: A real input-driven press (mouse or UIA) on a CancelButton whose handler throws. I measured that the hook's re-raise lands as an unhandled dispatcher exception. That a real click behaves the same is reasoning about WPF, not a measurement."
+   "issue": "not reached: A real input-driven press (mouse or UIA) on a CancelButton whose handler throws. I measured in attempt 2 that the hook's re-raise lands as an unhandled dispatcher exception. That a real click behaves the same is reasoning about WPF, not a measurement."
   },
   {
    "stage": "validate-slice",
-   "issue": "not reached: A close-path crash regression. O-016 cannot tell the Exit rule's 70 apart from the crash handler's 70; both give exit 70 and no report. On this tree NoExitRule shows the 70 comes from the Exit rule. But a future OnClosing fault would still pass O-016, and no mutant covers it."
+   "issue": "not reached: A close-path crash regression. O-016 cannot tell the Exit rule's 70 from the crash handler's 70. NoExitRule shows that on this tree the 70 comes from the Exit rule, but a future OnClosing fault would still pass O-016, and no mutant covers it."
   },
   {
    "stage": "validate-slice",
-   "issue": "not reached: A machine where Windows Error Reporting shows a crash dialog. With the crash handler removed there, C-012 would likely show TIMEOUT rather than 0xE0434352. Here the process ended at once."
+   "issue": "not reached: A machine where Windows Error Reporting shows a crash dialog. With the crash handler removed there, C-012 would likely show TIMEOUT rather than 0xE0434352."
   },
   {
    "stage": "validate-slice",
@@ -114,11 +102,67 @@
   },
   {
    "stage": "validate-slice",
-   "issue": "not reached: Much faster or slower disks and CPUs. On this machine the hook acted at 340-927 ms, with the scan stopped at 550-750 of 30,150 folders. The margin on a much faster machine is unmeasured, though O-002's handling means such a run fails as 'hook never acted', not silently."
+   "issue": "not reached: Much faster or slower disks and CPUs. Here the hook acted at 516-749 ms and stopped the scan at about 550 of 30,150 folders. On a much faster machine the scan could finish first. O-002's handling means that would fail as 'hook never acted', not pass silently."
   },
   {
    "stage": "validate-slice",
-   "issue": "not reached: Any real user data or drive. Every run used generated trees under %TEMP%, which is why contact is code, not real."
+   "issue": "not reached: Any real user data or drive. Every run used generated trees under %TEMP%, which is why contact is `code`, not `real`."
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The design's hook contract said 'any exception in the hook is caught and logged, never fatal' and ran Act under Dispatcher.Invoke on the hook thread. It never asked what happens when the handler the hook presses (OnCancel via Click, OnClosing via Close) throws. The fault was rethrown on the hook th…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The design decided 'no mutant build or mutant source is committed, proof lives in validate's record' while listing five scratch-mutant shapes (disabled, collapsed, handler removed, Exit rule removed, compile error or locked dll) as cases owed to build, which only a test the engine runs can discharg…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The design listed 'the scan finishes before the hook acts' as a material case with no deterministic feed. A small tree's scan window is a few ms against a 25 ms poll, so it can only be proven flakily. The obligation was discharged by a different cause (StopDisabled), and the small-tree proof stayed…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The design asserted 'exit 70, no report' for both C-012 (throw) and O-016 (close) without asking what else produces exit 70 with no report. The Exit rule and the crash handler give the same observable, so an OnClosing fault would still pass O-016. Only the NoExitRule mutant shows the 70 comes from …"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The design judged 'unknown FSA_HOOK_MODE' and 'relative or ;-containing dll path' immaterial with no test. Both came back as acceptance criteria 13 and 14, which validate could prove only with %TEMP% probe scripts. Nothing in the repo would catch a regression in either. (Critique did not run.)"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does Pressable transfer to virtualised tree items? Which element carries the enabled and visible gate for expand (the TreeViewItem, its expander ToggleButton, or a container that must first be realised through the ItemContainerGenerator), and does a…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does a real mouse or UIA press on a CancelButton whose handler throws exit 70 the way the hook's ExceptionDispatchInfo re-raise does? Validate measured the re-raise only, and called the real-click equivalence 'reasoning about WPF, not a measurement'."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Do cases launched under the hook environment stay safe with other managed hosts (dotnet.exe, MSBuild nodes)? Only pwsh 7 was checked. Update-Hook builds before the variables are set, but any future case that shells out to another .NET tool under the…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Critique and critique-review were skipped at low tier. Both rework causes (m1's swallowed handler fault and O-002's unfeedable case) plus the mutant-versus-obligation contradiction were design-level gaps, the layer critique reviews. Only code-review…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The risk-spike halted the slice on 3 no-gos, two of which were the spike's own wrong assumption that exit 70 leaves a report, contradicted by App.xaml.cs:84-98, which build-check had already cited. A halt and a second spike row went on showing the a…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: code-review #2 passed with m1 accepted-pending. validate #1 then ran a full check and halted 'partial' on O-015, and validate #2 failed it back to build. The fix was two small edits, but it cost an extra full validate before it was built."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: O-002 landed on build-slice after validate #3 had passed. build #3 changed no files and discharged it by re-running two existing tests. code-review #4 and validate #4 then re-ran everything (WindowCases All 161 s, WindowMutants All 283 s) on a diff …"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The design contradicted itself over mutants: it said no committed mutants while listing five mutant-shaped cases the engine can only discharge with a committed test. The builder resolved it by committing WindowMutants.ps1, departing from the design,…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The slice exists to end proof that lives only in validate's %TEMP%, yet it ends with criteria 13 and 14 and O-002's small-tree shape proven only by probe scripts in %TEMP%\\sl033-validate2. Validate also left the warm-cache 15-run repeat, Update-Hook…"
   }
  ],
  "stages": [
@@ -201,7 +245,7 @@
    "stage": "build-slice",
    "title": "Build",
    "order": 7,
-   "state": "sent back",
+   "state": "passed",
    "attempts": [
     {
      "n": 1,
@@ -241,6 +285,27 @@
       "measured_by_git": 7
      },
      "details": "build-slice-2.json"
+    },
+    {
+     "n": 3,
+     "state": "passed",
+     "at": "2026-09-25T02:06:20.281Z",
+     "head": "0ecee0a9b0713a495a904de5a22fa013bec32ad1",
+     "summary": "I was sent back because O-002 landed on build-slice after my attempt 2 had passed.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-002), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-002 (case): exercise stop the scan (C-006) against the scan finishes before the hook acts (tree too small, or a warm cache makes the scan fastest) C-002. The ending would be Completed and the case would fail for the test's reason, not the app's. The tree must stay large, and a missing 'acted' line must be reported as 'hook never acted', not as an ending mismatch. A test has to FEED THIS SHAPE IN, not merely co…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ]
+     },
+     "changed": {
+      "listed": 0,
+      "measured_by_git": 4
+     },
+     "details": "build-slice-3.json"
     }
    ]
   },
@@ -277,6 +342,24 @@
      },
      "changed": {},
      "details": "code-review-2.json"
+    },
+    {
+     "n": 3,
+     "state": "passed",
+     "at": "2026-09-25T02:10:16.208Z",
+     "head": "0ecee0a9b0713a495a904de5a22fa013bec32ad1",
+     "summary": "Build attempt 3 (0ecee0a) changes no code.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "code-review passed on 2026-09-25T01:22:26.099Z, and build-slice has judged since (2026-09-25T02:10:15.689Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-3.json"
     }
    ]
   },
@@ -305,6 +388,42 @@
      "caused_by": null,
      "changed": {},
      "details": "validate-slice-2.json"
+    },
+    {
+     "n": 3,
+     "state": "passed",
+     "at": "2026-09-25T02:27:21.417Z",
+     "head": "0ecee0a9b0713a495a904de5a22fa013bec32ad1",
+     "summary": "All 14 acceptance criteria hold at 0ecee0a.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "validate-slice passed on 2026-09-25T02:06:19.997Z, and build-slice has judged since (2026-09-25T02:10:15.689Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "validate-slice-3.json"
+    }
+   ]
+  },
+  {
+   "stage": "reflect",
+   "title": "Reflect",
+   "order": 10,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-25T02:38:06.789Z",
+     "head": "0ecee0a9b0713a495a904de5a22fa013bec32ad1",
+     "summary": "SL-033 committed the startup-hook driver (tests/window/FsaWindowHook, modes stop/throw/close, one IsEnabled && IsVisible gate) and WindowCases C-006, C-012 and O-016, so Stopped, exit 70 and closed-early no longer depend on a hook dll in validate's %TEMP%.",
+     "caused_by": null,
+     "changed": {},
+     "details": "reflect-1.json"
     }
    ]
   }
