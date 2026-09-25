@@ -31,12 +31,13 @@
 # for a stopped scan (L-005, under the hook), and the list at 100 rows beside a filled unreadable-folders
 # list, its first row a name with an unpaired surrogate. Planted names carry "plantedname", which the report
 # must never hold. An unreadable folder is made with an icacls deny of list-folder for this user, and the
-# deny is removed before the tree is.
+# deny is removed before the tree is. L-006 is a second scan after the first has shown its list (the hook's
+# rescan mode), read through eng/read-window.ps1 at that second point.
 
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
-        'L-001', 'L-002', 'L-003', 'L-004', 'L-005', 'N-001', 'N-002', 'N-003', 'N-004')]
+        'L-001', 'L-002', 'L-003', 'L-004', 'L-005', 'L-006', 'N-001', 'N-002', 'N-003', 'N-004')]
     [string] $Case,
     [switch] $IncludeNetwork
 )
@@ -50,8 +51,8 @@ $HookProject = Join-Path $Repo 'tests\window\FsaWindowHook\FsaWindowHook.csproj'
 $HookDll = Join-Path $Repo 'artifacts\window-hook\FsaWindowHook.dll'
 $RigProject = Join-Path $Repo 'tests\window\StallRig\StallRig.csproj'
 $RigExe = Join-Path $Repo 'artifacts\stall-rig\StallRig.exe'
-$HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS'
-$HookedCases = 'C-006', 'C-012', 'O-016', 'L-005', 'N-001', 'N-002'
+$HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS', 'FSA_HOOK_MISSING'
+$HookedCases = 'C-006', 'C-012', 'O-016', 'L-005', 'L-006', 'N-001', 'N-002'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004'
 $RigOnlyCases = 'N-003', 'N-004'
 $KiB64 = 64KB
@@ -1321,9 +1322,87 @@ function Test-L005 {
     finally { Remove-CaseFolder $case }
 }
 
+# L-006 (C-009): a second scan after the first has shown its list. The hook's rescan mode waits until the first
+# ending shows the list with its rows laid out, then starts a second scan of the same root through the
+# window's own Loaded handler, and the report, read through eng/read-window.ps1, is of the window at that
+# second point, not at the first ending. Two shapes: the root moved aside first, so the second scan fails
+# before any entry and the report reads its failure ending; and a large tree, whose second scan has begun and
+# not finished when the report reads it. In both the old list must be gone: LargestFilesPanel hidden and no
+# rows bound, from the moment the scan starts.
+function Test-L006 {
+    $shapes = @(
+        [pscustomobject]@{ Name = 'the second scan fails before any entry (its root is gone)'; Missing = $true; Rows = 20 }
+        [pscustomobject]@{ Name = 'the second scan has begun and not finished'; Missing = $false; Rows = 100 }
+    )
+    foreach ($shape in $shapes) {
+        Write-Output "  $($shape.Name)"
+        $case = New-CaseFolder
+        try {
+            if ($shape.Missing) {
+                $root = Join-Path $case 'small'
+                [void](New-SmallTree $root)
+                $armed = @{ FSA_HOOK_MISSING = $root }
+            }
+            else {
+                $root = Join-Path $case 'large'
+                [void](New-LargeTree $root)
+                $armed = @{}
+            }
+            $run = Invoke-WithHook 'rescan' $HookDll { Read-Window $root } $armed
+            $before = $script:Failures.Count
+            CheckActed $run 'rescan'
+            if ($script:Failures.Count -gt $before) { continue }
+
+            $listed = @($run.Log | Where-Object { $_.StartsWith('listed ') })[0]
+            CheckEqual "$($shape.Rows)" (Field $listed 'rows') 'the first scan''s list was bound before the second scan (hook: listed rows)'
+            Check ([int](Field $listed 'built') -gt 0) "and its rows were laid out, so the list had been shown ($(Show $listed))"
+            CheckEqual 'True' (Field $listed 'largest') 'and LargestFilesPanel was set Visible'
+            $started = @($run.Log | Where-Object { $_.StartsWith('started ') })
+            Check ($started.Count -eq 1) "the hook saw the second scan start ($($started.Count) 'started' lines)"
+            if ($started.Count -eq 1) {
+                CheckEqual 'True' (Field $started[0] 'scanning') 'the second scan started (ScanningPanel set Visible)'
+                CheckEqual 'False' (Field $started[0] 'largest') 'as it started, LargestFilesPanel was set Collapsed'
+                CheckEqual '0' (Field $started[0] 'rows') 'as it started, LargestFilesList held no rows'
+            }
+
+            $read = $run.Result
+            CheckEqual 'EXIT 0' $read.Exit 'exit code'
+            Check ($null -ne $read.Report) 'a report was written'
+            if ($null -eq $read.Report) { continue }
+            $report = $read.Report
+            CheckEqual 1 $report.schema 'schema'
+            CheckEqual $root $report.root 'root is the path passed'
+            CheckEqual $false $report.window.LargestFilesPanel.visible 'the report: LargestFilesPanel is not on screen'
+            CheckEqual 0 $report.largestFilesShown 'the report: largestFilesShown (no rows bound)'
+            CheckEqual $null $report.largestFileOnDisk 'the report: largestFileOnDisk'
+            CheckEqual $null $report.largestFilesMs 'the report: largestFilesMs'
+            CheckEqual $false $report.window.LargestFilesList.inView 'the report: LargestFilesList is not on screen'
+            if ($shape.Missing) {
+                Check (@($run.Log | Where-Object { $_.StartsWith('moved ') }).Count -eq 1) 'the hook moved the root aside before the second scan'
+                $ended = @($run.Log | Where-Object { $_.StartsWith('ended ') })
+                Check ($ended.Count -eq 1) "the hook held the report until the second scan's ending ($($ended.Count) 'ended' lines)"
+                if ($ended.Count -eq 1) {
+                    CheckEqual 'False' (Field $ended[0] 'largest') 'at the failure ending, LargestFilesPanel was set Collapsed'
+                    CheckEqual '0' (Field $ended[0] 'rows') 'at the failure ending, LargestFilesList held no rows'
+                }
+                # Read at the second point: the first scan completed; this is the second one's failure.
+                CheckEqual 'RootUnreadable' $report.core.status 'the report is of the second scan (core.status)'
+                CheckEqual "Could not read $root" $report.window.OutcomeTitle 'the report: OutcomeTitle'
+                CheckEqual $true $report.window.OutcomePanel.visible 'the report: the failure ending is on screen'
+            }
+            else {
+                # Read at the second point: the scan start cleared the result, and nothing has ended since.
+                Check ($read.Text -match '"core":\s*null') 'the report is of the running second scan (core is null)'
+                CheckEqual $false $report.window.OutcomePanel.visible 'the report: no ending on screen'
+            }
+        }
+        finally { Remove-CaseFolder $case }
+    }
+}
+
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'L-004', 'L-005') + $NetworkCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'L-004', 'L-005', 'L-006') + $NetworkCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })

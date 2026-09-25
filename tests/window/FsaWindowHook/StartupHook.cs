@@ -16,8 +16,9 @@ using System.Windows.Threading;
 /// </summary>
 /// <remarks>
 /// <code>
-///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close  FSA_HOOK_LOG=&lt;file&gt;
+///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|rescan  FSA_HOOK_LOG=&lt;file&gt;
 ///   [FSA_HOOK_ARMED=&lt;marker file&gt;  FSA_HOOK_CANCEL_DELAY_MS=&lt;n&gt;  FSA_HOOK_CLOSE_DELAY_MS=&lt;n&gt;]
+///   [FSA_HOOK_MISSING=&lt;the root folder, under %TEMP%&gt;]  (rescan only)
 /// </code>
 /// The runtime calls <see cref="Initialize"/> before the app's Main, in every .NET process that inherits the
 /// variable: pwsh 7, dotnet.exe and MSBuild nodes too. So it does nothing unless FSA_HOOK_MODE is set and the
@@ -37,6 +38,19 @@ using System.Windows.Threading;
 /// cancel delay, close a close delay, and throw is not armed. Cancel is pressed only if pressable; the window
 /// is closed only while its scan is still running (ScanningPanel on screen).
 ///
+/// rescan (SL-040) starts a second scan once the first has shown its list of largest files, and makes the
+/// report read the window at that second point instead of at the first ending. It watches LargestFilesPanel
+/// from the window's first Loaded; when the first ending shows it, it waits for the list's rows to be laid
+/// out and then, with no scan running and Choose folder pressable, raises the window's Loaded event again.
+/// The window's own handler (OnLoaded) starts a scan of the root the app was started on: StartScan, the
+/// entry a drive button or Choose folder reaches too. It is the one way in that names a root without the
+/// folder dialog, which only UI Automation could fill in. All of this runs on the UI thread ahead of the
+/// report, which reads the window at Loaded priority after the first ending, so the report reads the second
+/// scan as started. With FSA_HOOK_MISSING the root is first moved aside (to &lt;root&gt;.moved, and only if it
+/// is under %TEMP%), so the second scan fails before any entry, and the hook keeps one Render-priority item
+/// queued until that scan's ending is on screen: the report, at Loaded, cannot run meanwhile, so it reads
+/// the failure's ending. It changes nothing the app shows, and rescan is not armed.
+///
 /// FSA_HOOK_LOG gets one ASCII line per event: "loaded mode=m pid=n", "waiting found=b enabled=b visible=b"
 /// when that changes, "armed ms=n" when the marker appeared, "acted mode=m enabled=True visible=True ms=n"
 /// (ms since load; armed runs add "sincearmed=n", and an armed close logs "scanning=True detail=text" and
@@ -49,6 +63,12 @@ using System.Windows.Threading;
 /// "stopping ms=n title=text detail=text" every 250 ms from the UI thread (ms since the press; detail is "-"
 /// while StoppingDetail is collapsed or empty), "returned ms=n title=text detail=text" at the moment the scan
 /// returns, and one last "stopping ... final=True" line as the app shuts down.
+///
+/// rescan logs "watching ms=n" when it attached to the window, "listed rows=n built=n STATE ms=n" when the
+/// first list was on screen (built: rows laid out), "moved from=path to=path" for FSA_HOOK_MISSING, "acted
+/// mode=rescan rows=n ms=n" as it raises Loaded, "started STATE" straight after it, and "ended STATE ms=n"
+/// once a missing root's scan has ended. STATE is "scanning=b outcome=b largest=b rows=n": whether
+/// ScanningPanel, OutcomePanel and LargestFilesPanel are set Visible, and the rows LargestFilesList holds.
 /// </remarks>
 internal class StartupHook
 {
@@ -66,6 +86,10 @@ internal class StartupHook
     private static Stopwatch? _sinceCancel;
     private static DispatcherTimer? _stoppingTimer;
     private static bool _returned;
+
+    // rescan's state: written and read on the UI thread only.
+    private static bool _watching;
+    private static bool _listed;
 
     public static void Initialize()
     {
@@ -97,12 +121,20 @@ internal class StartupHook
         try
         {
             Log($"loaded mode={mode} pid={Environment.ProcessId}");
-            if (mode is not ("stop" or "throw" or "close"))
+            if (mode is not ("stop" or "throw" or "close" or "rescan"))
             {
                 Log($"refused mode={mode} reason=unknown mode");
                 return;
             }
             string? marker = Environment.GetEnvironmentVariable("FSA_HOOK_ARMED");
+            if (mode == "rescan")
+            {
+                if (!string.IsNullOrEmpty(marker))
+                    Log("refused mode=rescan reason=rescan mode is not armed");
+                else
+                    DriveRescan(Environment.GetEnvironmentVariable("FSA_HOOK_MISSING") is { Length: > 0 } missing ? missing : null);
+                return;
+            }
             if (string.IsNullOrEmpty(marker))
             {
                 Drive(mode);
@@ -231,6 +263,149 @@ internal class StartupHook
             });
         }
     }
+
+    // rescan: a class handler, registered before the window loads, because the window's Loaded handler starts
+    // the first scan and a small tree's list is on screen a few milliseconds later.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void DriveRescan(string? missing)
+    {
+        if (WaitForApplication("rescan") is not { } app)
+            return;
+        EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent,
+            new RoutedEventHandler((sender, _) => Watch(app, (Window)sender, missing)));
+        if (app.Dispatcher.Invoke(() => !_watching && app.MainWindow is { IsLoaded: true }))
+            Log("refused mode=rescan reason=the window loaded before the hook could watch its first scan");
+    }
+
+    // On the window's first Loaded. The Loaded that rescan raises itself lands here again and is ignored.
+    private static void Watch(Application app, Window window, string? missing)
+    {
+        if (_watching || !ReferenceEquals(window, app.MainWindow))
+            return;
+        _watching = true;
+        if (window.FindName("LargestFilesPanel") is not UIElement panel)
+        {
+            Log("refused mode=rescan reason=the window has no LargestFilesPanel");
+            return;
+        }
+        Log($"watching ms={Clock.ElapsedMilliseconds}");
+        DependencyPropertyDescriptor.FromProperty(UIElement.VisibilityProperty, panel.GetType())
+            .AddValueChanged(panel, (_, _) =>
+            {
+                if (_listed || panel.Visibility != Visibility.Visible)
+                    return;
+                _listed = true;
+                // Render: after the layout that builds the list's rows, and still ahead of the report, which
+                // reads the window at Loaded priority once the ending is on screen.
+                app.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() => Rescan(app, window, missing, 0)));
+            });
+    }
+
+    private static void Rescan(Application app, Window window, string? missing, int waited)
+    {
+        try
+        {
+            int rows = Rows(window);
+            int built = window.FindName("LargestFilesList") is ItemsControl list
+                ? Enumerable.Range(0, rows).Count(i => list.ItemContainerGenerator.ContainerFromIndex(i) is not null)
+                : 0;
+            if (rows > 0 && built == 0 && waited < 20)
+            {
+                app.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() => Rescan(app, window, missing, waited + 1)));
+                return;
+            }
+            Log($"listed rows={rows} built={built} {State(window)} ms={Clock.ElapsedMilliseconds}");
+            var chooser = window.FindName("ChooseFolderButton") as FrameworkElement;
+            if (rows == 0 || Shown(window, "ScanningPanel") || chooser is null || !Pressable(chooser))
+            {
+                Log($"refused mode=rescan reason=no list on screen with a new scan startable (rows={rows} chooser={chooser is not null && Pressable(chooser)})");
+                return;
+            }
+            // At Normal, as a click's handler runs: WPF hands the running operation's priority to what the
+            // handler awaits, so the second scan's continuations come back at Normal, as a person's would.
+            app.Dispatcher.BeginInvoke(DispatcherPriority.Normal, new Action(() => StartSecondScan(app, window, missing, rows)));
+        }
+        catch (Exception e)
+        {
+            // Never onto the dispatcher: the app would take it for its own fault and exit 70.
+            Log($"refused mode=rescan reason={e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    private static void StartSecondScan(Application app, Window window, string? missing, int rows)
+    {
+        try
+        {
+            if (missing is not null && !MoveAside(missing))
+                return;
+            Log($"acted mode=rescan rows={rows} ms={Clock.ElapsedMilliseconds}");
+            Pressing(app, "rescan", () => window.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent, window)));
+            Log($"started {State(window)}");
+            if (missing is not null)
+                HoldUntilEnded(app, window, Stopwatch.StartNew());
+        }
+        catch (Exception e)
+        {
+            Log($"refused mode=rescan reason={e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    // The missing-root shape: the root is moved aside, as if deleted after its first scan. Only a folder under
+    // %TEMP%, so a mistyped variable cannot move anything of the person's.
+    private static bool MoveAside(string folder)
+    {
+        string full = Path.GetFullPath(folder).TrimEnd('\\');
+        string temp = Path.GetFullPath(Path.GetTempPath()).TrimEnd('\\');
+        if (!full.StartsWith(temp + "\\", StringComparison.OrdinalIgnoreCase) || !Directory.Exists(full))
+        {
+            Log($"refused mode=rescan reason=FSA_HOOK_MISSING is not a folder under {temp}: {full}");
+            return false;
+        }
+        string aside = full + ".moved";
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                Directory.Move(full, aside);
+                break;
+            }
+            catch (IOException) when (attempt < 10)
+            {
+                Thread.Sleep(50); // a scanner's handle closing late, or an antivirus read
+            }
+        }
+        Log($"moved from={full} to={aside}");
+        return true;
+    }
+
+    // The report waits at Loaded priority. While an item of Render priority is queued nothing below it runs, so
+    // this re-queues itself at Render until the second scan's ending is on screen. The scan's continuations
+    // (Normal) and layout (Render) run ahead of it or in turn with it; only the report and lower wait. Holding
+    // at Normal would starve a continuation that came back at Render and never end (measured on the first try).
+    private static void HoldUntilEnded(Application app, Window window, Stopwatch since)
+    {
+        if (Shown(window, "OutcomePanel") && !Shown(window, "ScanningPanel"))
+        {
+            Log($"ended {State(window)} ms={Clock.ElapsedMilliseconds}");
+            return;
+        }
+        if (since.Elapsed > Deadline)
+        {
+            Log($"refused mode=rescan reason=the second scan did not end within {Deadline.TotalSeconds:N0} s; {State(window)}");
+            return;
+        }
+        Thread.Sleep(1);
+        app.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() => HoldUntilEnded(app, window, since)));
+    }
+
+    // The element's own Visibility, what the app set, as for Detail.
+    private static bool Shown(Window window, string name) =>
+        window.FindName(name) is UIElement { Visibility: Visibility.Visible };
+
+    private static int Rows(Window window) => window.FindName("LargestFilesList") is ItemsControl list ? list.Items.Count : 0;
+
+    private static string State(Window window) =>
+        $"scanning={Shown(window, "ScanningPanel")} outcome={Shown(window, "OutcomePanel")} largest={Shown(window, "LargestFilesPanel")} rows={Rows(window)}";
 
     private static Application? WaitForApplication(string mode)
     {
