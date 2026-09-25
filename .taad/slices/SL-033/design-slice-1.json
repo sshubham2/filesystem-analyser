@@ -1,0 +1,378 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-033",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-24T23:32:51.984Z",
+ "head": "57ea6f88461355aebc56a768387dad9a307ec2be",
+ "run_id": 973,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "Only the practice proposal was handed over, and I took it as the core with four changes of my own (listed in coherence_check). I checked it against the survey and the four spikes rather than against taste. (1) It matches how tests/window is already shaped. WindowCases.ps1 has Update-App, Start-App, Read-Window, New-LargeTree and a ValidateSet plus an All list, and the proposal adds a sibling Update-Hook and three cases in that same shape. eng/read-window.ps1 and the App are untouched. (2) Each spike verdict is answered by a specific piece. The 'go' on single-file loading justifies a plain DOTNET_STARTUP_HOOKS dll. The no-go on click-respects-disabled-and-hidden is answered by the IsEnabled && IsVisible gate in the same dispatcher callback. The throw no-go and the close no-go were the spikes' own wrong assumption that a report would exist after exit 70, not app defects. App.xaml.cs:84-98 (Discard plus Shutdown(70), and the Exit handler that turns exit 0 without a file into 70, committed in d59819e for O-016) defines exit 70 with no report. Measured: throw 10/10 exit 70, close 0/40 reports, handler removed 3/3 0xE0434352. So C-012 and O-016 assert exit 70 plus the absence of a planted stale report. (3) It is the simplest thing that works: one class library outside the slnx, one .cs file, three test functions, and no committed mutant publishes at 140 MB each. That fits the stack block, which says there is no App test project and window state is read through the published exe. (4) Reversibility is cheap throughout. Mode strings, log lines and file locations can all change without touching Core or the App. Nothing was rejected, because there was nothing to weigh it against.",
+  "components": [
+   {
+    "name": "Hook project",
+    "responsibility": "A net10.0-windows UseWPF class library with no package references and no reference to FsAnalyser.App or FsAnalyser.Core. It inherits the root Directory.Build.props. It is NOT added to FsAnalyser.slnx, so `dotnet test FsAnalyser.slnx` never builds WPF hook code.",
+    "lives_at": "tests/window/FsaWindowHook/FsaWindowHook.csproj",
+    "key_interactions": "Built only by Update-Hook, through eng/dotnet.ps1, so it uses the same SDK and runtime packs as the published exe it loads into. Spike 3 measured a hook built this way (7,680 bytes) loading in the single-file exe."
+   },
+   {
+    "name": "StartupHook (the driver)",
+    "responsibility": "internal class StartupHook in the global namespace with static void Initialize(). Initialize returns at once unless FSA_HOOK_MODE is set and Path.GetFileName(Environment.ProcessPath) is FsAnalyser.App.exe. That keeps it inert in pwsh 7, dotnet.exe and MSBuild nodes that inherit the variable. Otherwise it starts one IsBackground thread and returns. The thread body is try/catch and never rethrows. All WPF references sit behind a NoInlining method. That method waits for Application.Current, then every 25 ms runs a check on the UI dispatcher. The check reads MainWindow and FindName(\"CancelButton\") and acts only when IsEnabled && IsVisible, inside that same callback. The gate is one internal Pressable(FrameworkElement) method that the tree slice reuses for expand and click. Modes: stop = RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)) on the button; close = MainWindow.Close(); throw = SetErrorMode(SEM_NOGPFAULTERRORBOX|SEM_FAILCRITICALERRORS) then Dispatcher.BeginInvoke(Normal, callback that throws InvalidOperationException). If nothing is pressable within 20 s, or the mode is unknown, it logs 'refused' and does nothing. It never calls Shutdown or Environment.Exit and never sets an exit code.",
+    "lives_at": "tests/window/FsaWindowHook/StartupHook.cs",
+    "key_interactions": "stop reaches OnCancel (MainWindow.xaml.cs:223) through the Click wiring at MainWindow.xaml:26, with no reflection on privates. close goes through OnClosing (MainWindow.xaml.cs:52) then the Exit handler (App.xaml.cs:94-98). throw reaches DispatcherUnhandledException (App.xaml.cs:84-89). Appends log lines to FSA_HOOK_LOG."
+   },
+   {
+    "name": "Update-Hook",
+    "responsibility": "Runs once per suite run, and only when the selected cases include C-006, C-012 or O-016. It runs `eng/dotnet.ps1 build tests/window/FsaWindowHook/FsaWindowHook.csproj -c Release -o artifacts/window-hook` every time and leaves staleness to MSBuild's incremental build. It checks the build's exit code, prints the build output and exits 1 on failure, and never falls back to a dll from an earlier run. It returns the absolute dll path. It runs before any hook variable is set.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "Sits beside Update-App (:153-176). Either may trigger the one-time eng/dotnet.ps1 SDK 10.0.401 bootstrap into .dotnet/ that Q-003 authorised; this worktree has no SDK 10 yet. artifacts/window-hook and the hook's bin/obj must be gitignored, and git status must stay clean after a run."
+   },
+   {
+    "name": "Invoke-HookedRun",
+    "responsibility": "Takes -Mode, a tree root, a report path and the hook dll. Inside try it sets DOTNET_STARTUP_HOOKS (absolute path), FSA_HOOK_MODE and FSA_HOOK_LOG (fresh temp file), then launches the published exe through the existing launch path with -TimeoutSec 60. In finally it removes all three with Remove-Item Env:, never setting them to an empty string, and deletes the log file. It returns the exit code, the parsed report or $null, and the hook log lines.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "Wraps Start-App (:194), Read-Window (:179) and eng/read-window.ps1 without changing them. Spike 1 ran read-window.ps1 with inherited variables and got exit 70 with no report, so it returns an exit code when no report is written. The build node must confirm this in Start-App/Read-Window. If neither does, the wrapper adds the allowance, not eng/read-window.ps1."
+   },
+   {
+    "name": "Test-C006 (Stopped ending, criterion 6)",
+    "responsibility": "Builds a New-LargeTree, runs Invoke-HookedRun -Mode stop, and removes the tree in finally. Asserts in order: the hook log has a line starting 'acted mode=stop'; exit 0; the report exists and parses as schema 1; core.status is Cancelled; OutcomeTitle starts with 'Stopped:'. Its first step is the inert-host check: pwsh -NoProfile -Command exit 0 under the same hook environment with FSA_HOOK_MODE=close must exit 0 and leave the log file absent or empty.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "Reads the Stopped title produced at MainWindow.xaml.cs:255 through the schema-1 report."
+   },
+   {
+    "name": "Test-C012 (exit-70 path, criterion 12)",
+    "responsibility": "Builds the tree, plants a sentinel stale report at the --report path, and runs Invoke-HookedRun -Mode throw. Asserts: the log has 'acted mode=throw'; the exit code is exactly 70 (a regressed handler gives 0xE0434352, printed in hex in the failure message); the report path no longer exists.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "The 70 has to come from App.xaml.cs:84-89, and the hook cannot forge it (enforced by architecture rule 3)."
+   },
+   {
+    "name": "Test-O016 (closed before the first ending, report mode)",
+    "responsibility": "Builds the tree, plants the stale report, and runs Invoke-HookedRun -Mode close. Asserts: the log has 'acted mode=close', which proves the window closed while Stop was pressable, meaning mid-scan; exit 70; the report path no longer exists.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "Exercises the Exit handler that turns exit 0 without a file into 70 (App.xaml.cs:94-98, d59819e)."
+   },
+   {
+    "name": "Case registry",
+    "responsibility": "Adds C-006, C-012 and O-016 to the ValidateSet (WindowCases.ps1:17) and to the All list (:508), so `-Case C-006` stops exiting 1 on parameter validation and validate's `-Case All` runs them.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "The existing 12 cases stay untouched and run with no hook variable set."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "Hooked launch of FsAnalyser.App",
+    "kind": "cli",
+    "auth_model": "None. Ordinary user, no elevation, same as the app.",
+    "error_cases": "FSA_HOOK_MODE unset: the hook does nothing. Host is not FsAnalyser.App.exe: does nothing and writes nothing. Unknown mode: logs 'refused', the scan ends normally, the case fails. CancelButton missing, disabled or hidden for 20 s: logs 'refused' with the last state seen, does nothing, the case fails. Any exception in the hook: caught and logged, never fatal. The hook never chooses the exit code.",
+    "notes": "DOTNET_STARTUP_HOOKS=<absolute path to artifacts/window-hook/FsaWindowHook.dll>, FSA_HOOK_MODE=stop|throw|close, FSA_HOOK_LOG=<file>, with the --report launch unchanged. stop gives exit 0 and a schema-1 report ending Stopped. throw gives exit 70 and no file at the report path. close gives exit 70 and no file at the report path. The tree slice adds mode strings to this contract, not a second channel and not UIA."
+   },
+   {
+    "name": "FSA_HOOK_LOG lines",
+    "kind": "event",
+    "error_cases": "A log with 'loaded' and no 'acted' means the gate never became true, and every case fails on that before reading the report or the exit code. Nothing is written in a non-App host.",
+    "notes": "ASCII, one line per event, appended. 'loaded mode=<m> pid=<n>'. 'waiting found=<b> enabled=<b> visible=<b>' only when that tuple changes. 'acted mode=<m> enabled=True visible=True ms=<since load>'. 'refused mode=<m> reason=<text>'. Cases match lines that start 'acted mode=<m>'."
+   },
+   {
+    "name": "StartupHook.Initialize()",
+    "kind": "function",
+    "error_cases": "From recall, not checked here: an exception escaping Initialize kills the host process. So Initialize only reads two strings and starts a thread, and every WPF reference sits behind a NoInlining call inside try/catch.",
+    "notes": "Runtime contract from dotnet/runtime host-startup-hook.md (cited): a StartupHook type with a static Initialize(), run before the app's entry point. Dotnet/runtime#78153 (cited) shows the type may be internal. Empty DOTNET_STARTUP_HOOKS must never be set, because #82260 (cited) shows it writes Application-log errors. Variables are removed, not blanked."
+   },
+   {
+    "name": "WindowCases.ps1 -Case C-006 | C-012 | O-016 | All",
+    "kind": "cli",
+    "error_cases": "Hook build failure: exit 1 with the build output. Failed assertion: exit 1 with the case's message plus the hook log lines. Case throws: the three variables are still removed, so later cases run unhooked.",
+    "notes": "Keeps the existing case conventions. The three new cases need the published exe (Update-App) and the hook dll (Update-Hook), both built through eng/dotnet.ps1."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "The hook is its own class library at tests/window/FsaWindowHook. WindowCases.ps1 builds it into artifacts/window-hook on every run that selects a hooked case. It is not in FsAnalyser.slnx and is not referenced by any src project.",
+    "reversibility": "cheap",
+    "rationale": "Closes the criterion that the committed test builds the hook itself rather than leaving it in validate's %TEMP%. It has one consumer, so one owner. Keeping it out of the solution keeps WPF hook code out of every Core test build. Running the incremental build each time means a stale dll cannot stand in for current source."
+   },
+   {
+    "decision": "All three modes share one trigger and one gate: FindName(\"CancelButton\") with IsEnabled && IsVisible, read and acted on in the same dispatcher callback. After 20 s it logs 'refused' and does nothing. The gate is one reusable Pressable(FrameworkElement) method.",
+    "reversibility": "cheap",
+    "rationale": "Spike in-process-click-respects-disabled-and-hidden was a no-go: raw clicks stopped the scan through a disabled or collapsed button in 30/30 runs, and its 'needs first' names exactly this check. Reading and acting in one callback removes a check-then-act race. The tree slice's click and expand reuse the gate. Fallback if validate shows the button is pressable before the scan starts: conjoin the spike's private _scanning read."
+   },
+   {
+    "decision": "stop raises ButtonBase.ClickEvent on the button, not a reflection call to the private OnCancel.",
+    "reversibility": "cheap",
+    "rationale": "Spike 2 measured RaiseEvent reaching the handler. It needs no reflection on private members, and deleting the Click wiring at MainWindow.xaml:26 makes C-006 fail. The button has no Command. If one is added, switch to ButtonAutomationPeer's IInvokeProvider, which still needs the IsVisible check."
+   },
+   {
+    "decision": "throw uses Dispatcher.BeginInvoke and suppresses WER with SetErrorMode. The hook never calls Shutdown or Environment.Exit and never sets an exit code. A must_not_match rule enforces this.",
+    "reversibility": "cheap",
+    "rationale": "The spike-measured shape gave 10/10 exit 70, and 3/3 exited 0xE0434352 with the handler removed, so the 70 comes from App.xaml.cs:84-89 and C-012 can fail. Suppressing WER makes a regressed handler fail fast instead of hanging on a crash dialog until the 60 s timeout. (Recalled, not verified here: a throw inside InvokeAsync is captured in the operation's Task, so BeginInvoke is the safe choice.)"
+   },
+   {
+    "decision": "C-012 and O-016 both assert exit 70 and no file at a report path that held a planted stale report. Neither expects a fault report.",
+    "reversibility": "cheap",
+    "rationale": "Measured: throw 10/10 exit 70 with no report, close 0/40 reports. The App defines it as Discard plus Shutdown(70), and as the Exit handler turning exit 0 without a file into 70 (d59819e). The two spike no-gos refuted the spikes' own assumption, not the app. The planted file makes 'absent' prove the app removed it rather than that it never existed."
+   },
+   {
+    "decision": "The hook is inert outside FsAnalyser.App. It checks Environment.ProcessPath, never lets an exception escape, and keeps WPF references behind a NoInlining call. Test-C006 proves this with a pwsh 7 launch under the hook environment.",
+    "reversibility": "cheap",
+    "rationale": "DOTNET_STARTUP_HOOKS is read by every .NET host that inherits it, including pwsh 7, dotnet.exe and MSBuild nodes, and the suite itself launches these. A hook that throws or acts in one of them would break the suite's tooling. The process-path check replaces the proposal's GetEntryAssembly() because its timing inside a hook is unverified. Reversible in one line."
+   },
+   {
+    "decision": "The three variables are set only inside Invoke-HookedRun's try and removed in its finally, never blanked. The hook and the app are both built before any of them is set.",
+    "reversibility": "cheap",
+    "rationale": "Keeps the hook out of the 12 existing cases, out of the build tooling, and out of any case that fails after the variables are set. #82260 (cited) is the reason for remove-not-blank."
+   },
+   {
+    "decision": "Every hooked case asserts 'acted mode=<m>' in FSA_HOOK_LOG before it reads the report or the exit code.",
+    "reversibility": "cheap",
+    "rationale": "A hook that never loaded, never found a pressable Stop, or refused fails with a named reason instead of an ending mismatch. For O-016 it is also the only record that the window closed mid-scan."
+   },
+   {
+    "decision": "The closed-early case is registered as O-016 beside the C-xxx cases.",
+    "reversibility": "cheap",
+    "rationale": "It discharges an obligation, not a criterion. Naming it after the obligation lets the record and the suite be matched without a lookup table."
+   },
+   {
+    "decision": "Each case is proved able to fail at validate, on scratch copies with the exe republished, not by committing mutants. Mutants: CancelButton disabled in StartScan, then collapsed (C-006 must fail); DispatcherUnhandledException handler removed (C-012 must fail with 0xE0434352); Exit handler's 0-to-70 rule removed (O-016 must fail). No mutant build or mutant source is committed.",
+    "reversibility": "cheap",
+    "rationale": "The spikes ran these mutants against stand-in hooks, and the committed hook has to face them again. Committed mutants would mean three more 140 MB single-file publishes on every suite run. The cost is that the proof lives in validate's record rather than in the repo, and taste_disagreements names that."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal handed over. Its cross_domain_transfer block (LD_PRELOAD shims) arrived inside it, so no separate crossdomain proposal was assessed. No expert was channeled. The proposal text I received was clipped in its `risks` list, so anything after the first risk is unseen, including any over_engineering_flag."
+   }
+  ],
+  "coherence_check": "ONE PROPOSAL, NO COMPOSITION TO CHECK. Nothing here has survived a disagreement, and that is the first thing to argue with. What I did instead is check the proposal's own pieces against each other and against the measured record.\n\n(1) Gate vs the spike's trigger. The spikes measured stop and close with a private trigger (_scanning && Folders>=1). The committed hook uses 'Stop is pressable' instead, which no spike ran. It is the visible-state gate that spike 2's no-go required, but the equivalence is UNMEASURED. If MainWindow.xaml leaves CancelButton enabled before StartScan, the hook would press a Stop with no scan behind it and C-006 would fail for a reason that is not an app defect. I recorded that as a case, with the fallback of conjoining _scanning. Validate must repeat the 30-run stop and close check against the committed hook.\n\n(2) Exit contract. throw and close both assert 'exit 70, no report, stale report removed'. That agrees with the spike headlines (throw 10/10 exit 70 with no report; close 0/40 reports), with App.xaml.cs:84-98, and with Q-016's delete-first design. I found no place where the proposal expects a report after 70.\n\n(3) Environment scoping vs build ordering. Update-Hook and Update-App run before Invoke-HookedRun sets any variable, and the finally removes them. So the build tooling and the 12 existing cases never inherit the hook, and no piece assumes otherwise.\n\n(4) Rules against the design's own code. I read each must_not_match regex against every construct the design uses: Window.Close(), SetErrorMode, `throw new`, and the string 'FsAnalyser.App.exe'. The last is why rule 2 targets `<ProjectReference` and `using FsAnalyser` and not the bare name. Nothing correct matches. Rule 1 matches existing src files today. Rules 2 and 3 match no file until the build node creates the hook, so they are vacuous until then, and the build node must confirm they now match something. Q-010 applies: these rules are appended to the existing rules file on trunk, not created again.\n\n(5) I changed four things from the proposal. Environment.ProcessPath replaces GetEntryAssembly for the host check. I added the pwsh 7 inert-host assertion to Test-C006. I added the CancelButton-pressable-before-scan case and its fallback. I made Pressable a reusable method for the tree slice. None of these touches a boundary or contract.\n\n(6) Not contested by anyone, and only recalled: BeginInvoke vs InvokeAsync exception routing, that an escaping Initialize exception kills the host, and that ProcessPath, not GetEntryAssembly, is safe inside a hook. The 20 s deadline and 25 ms poll are unmeasured. Validate's mutants discharge the fail-ability, and the proof lives in validate's record, not the repo.\n\n(7) No answered question conflicts with a measurement. Q-003 authorises the one-time 300 MB SDK download that this worktree needs on its first build.\n\ndecidable_disagreements is empty. The one empirical uncertainty, whether the gate coincides with a running scan, would change the hook's internals and not any component boundary, contract or data model, so it is a case and not a re-synthesis trigger.",
+  "architecture_rules": [
+   {
+    "name": "the shipped app carries no test seam",
+    "files": "src/**",
+    "must_not_match": [
+     "FSA_HOOK_(MODE|LOG)",
+     "DOTNET_STARTUP_HOOKS",
+     "\\bStartupHook\\b",
+     "FsaWindowHook"
+    ],
+    "because": "If the app read a hook mode or hosted the driver, C-006, C-012 and O-016 would measure a seam that ships, not the app. The hook must enter from outside through DOTNET_STARTUP_HOOKS only."
+   },
+   {
+    "name": "the hook drives the app from outside and shares no code with it",
+    "files": "tests/window/FsaWindowHook/**",
+    "must_not_match": [
+     "<ProjectReference",
+     "using\\s+FsAnalyser\\b"
+    ],
+    "because": "A ProjectReference copies a second FsAnalyser.App.dll next to the hook, so the type it binds to is not the one bundled in the single-file exe. It would also couple the driver to app internals. The hook reaches the app only through Application.Current and FindName."
+   },
+   {
+    "name": "the hook never produces the outcome under test",
+    "files": "tests/window/FsaWindowHook/**/*.cs",
+    "must_not_match": [
+     "Environment\\.(Exit|FailFast)",
+     "\\.Shutdown\\s*\\(",
+     "ExitCode\\s*="
+    ],
+    "because": "C-012 and O-016 assert exit 70, which only the app's own handlers may produce. A hook that exits or shuts down the process makes those cases unable to fail. The throw spike relied on exactly this: with the handler removed the exit was 0xE0434352, not 70."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "stop the scan (C-006)",
+    "shape": "Stop is pressable and the scan is running on the 30,150-folder New-LargeTree",
+    "why": "The measured baseline (40/40): exit 0, schema-1 report, core.status Cancelled, OutcomeTitle 'Stopped:'. It asserts the Stopped ending comes from the app's own OnCancel."
+   },
+   {
+    "behaviour": "stop the scan (C-006)",
+    "shape": "the scan finishes before the hook acts (tree too small, or a warm cache makes the scan fastest)",
+    "why": "The ending would be Completed and the case would fail for the test's reason, not the app's. The tree must stay large, and a missing 'acted' line must be reported as 'hook never acted', not as an ending mismatch."
+   },
+   {
+    "behaviour": "stop the scan (C-006)",
+    "shape": "CancelButton is IsEnabled=false during the scan (scratch mutant)",
+    "why": "Spike no-go: raw click mechanisms stopped the scan through a disabled Stop 30/30. The gate must refuse and C-006 must fail. Validate discharges it on a scratch copy."
+   },
+   {
+    "behaviour": "stop the scan (C-006)",
+    "shape": "CancelButton is Visibility=Collapsed during the scan (scratch mutant)",
+    "why": "Same spike no-go for the hidden case. ButtonAutomationPeer-style clicks check enabled but not visibility, so IsVisible is checked explicitly."
+   },
+   {
+    "behaviour": "stop the scan (C-006)",
+    "shape": "CancelButton is pressable before StartScan begins (XAML default is enabled)",
+    "why": "The gate is the unmeasured substitute for the spike's _scanning trigger. If Stop is pressable before the scan, the hook clicks a no-op, the scan Completes and C-006 fails for a non-defect. Then add _scanning to the gate."
+   },
+   {
+    "behaviour": "exit-70 path (C-012)",
+    "shape": "an unhandled exception on the dispatcher thread mid-scan, handler present, stale report planted",
+    "why": "Expects exactly 70 and no file at the report path. This is the app's Discard plus Shutdown(70), measured 10/10."
+   },
+   {
+    "behaviour": "exit-70 path (C-012)",
+    "shape": "the DispatcherUnhandledException handler removed (scratch mutant)",
+    "why": "Measured 3/3 exit 0xE0434352. C-012 must fail and name the code in hex. This proves the hook cannot forge the 70, and it is the one thing that lets the case fail."
+   },
+   {
+    "behaviour": "closed before the first ending (O-016)",
+    "shape": "the window is closed while Stop is pressable, in report mode, with a stale report planted",
+    "why": "Expects exit 70 and no report (0/40 reports measured). The 'acted' line proves the scan was running. Without the planted file, 'absent' cannot tell 'app deleted it' from 'never there'."
+   },
+   {
+    "behaviour": "closed before the first ending (O-016)",
+    "shape": "the Exit handler's exit-0-without-a-file to 70 rule removed (scratch mutant)",
+    "why": "The process would exit 0 with no report. O-016 must fail. Without this the case only shows the current behaviour, not that the d59819e fix is what produces it."
+   },
+   {
+    "behaviour": "hooked run cleanup",
+    "shape": "a case throws or fails an assertion after DOTNET_STARTUP_HOOKS, FSA_HOOK_MODE and FSA_HOOK_LOG are set",
+    "why": "If the finally does not remove them, every later case in -Case All launches the app under the hook and fails for the wrong reason. Variables are removed, never blanked (dotnet/runtime#82260)."
+   },
+   {
+    "behaviour": "load the hook",
+    "shape": "a non-App .NET host inherits the variables (pwsh 7 launched with FSA_HOOK_MODE=close)",
+    "why": "Startup hooks run in every managed host that sees the variable. The hook must return at once, write nothing and let the host exit 0, or it breaks the suite's own tooling."
+   },
+   {
+    "behaviour": "build the hook",
+    "shape": "compile error in the hook source, or FsaWindowHook.dll locked by a leftover FsAnalyser.App.exe from a timed-out run",
+    "why": "Update-Hook must check the build exit code and stop with exit 1 and the build output. It must never run the suite against a stale dll from an earlier run. Validate can inject a compile error in a scratch copy."
+   },
+   {
+    "behaviour": "select a mode",
+    "shape": "FSA_HOOK_MODE is an unknown string",
+    "why": "One-line branch: the hook logs 'refused' and does nothing. Judged not worth its own case, because the disabled and collapsed mutants exercise the same refusal path and the log-line assertion already names a refusal.",
+    "material": false
+   },
+   {
+    "behaviour": "locate the hook dll",
+    "shape": "the dll path is relative, or contains ';'",
+    "why": "Update-Hook returns an absolute path from the repo root and the repo path has no semicolon, so the hook would load. A wrong path shows as 'loaded' missing in every case, which is already asserted. No separate test.",
+    "material": false
+   }
+  ],
+  "channeled_experts": [],
+  "cross_domain_transfer": {
+   "source_domain": "Unix LD_PRELOAD shims used for fault injection and test drivers (libfaketime and failmalloc-style interposers)",
+   "pattern": "An environment-variable-injected shim does nothing unless it is in the target process and its own mode variable is set. It is set only on the one launch that needs it. It acts through the same entry points real callers use, so it cannot manufacture the outcome under test. The variable leaks into every child process, so the shim must be inert in build tools and shells and must never crash the host.",
+   "transfer_found": true,
+   "rationale": "A startup hook has the same shape. DOTNET_STARTUP_HOOKS is read by every .NET host that inherits it, including pwsh 7, dotnet.exe and MSBuild, which this suite launches. The carried rules are: check the host, scope the variable to one launch, never crash the host, never forge the result. They became the ProcessPath check, the try/finally in Invoke-HookedRun, the never-throw thread body and architecture rule 3.",
+   "invariants": [
+    {
+     "precondition": "The shim is read by every managed process that inherits the variable, not only the target.",
+     "status": "holds",
+     "evidence": "host-startup-hook.md (cited) describes a host-level variable read by managed apps, and pwsh 7 and the dotnet CLI are managed. That is why the design has the host check, builds before setting the variable, and asserts a pwsh 7 launch stays inert."
+    },
+    {
+     "precondition": "The unmodified target binary (single-file, self-contained, untrimmed) honours the shim.",
+     "status": "holds",
+     "evidence": "Spike startup-hook-loads-in-single-file-publish, go: the hook loaded, MainWindow was reached in 0.4-0.9 s, and nothing loaded without the variable."
+    },
+    {
+     "precondition": "The shim cannot itself produce the outcome the test asserts.",
+     "status": "must-verify",
+     "evidence": "Held for a stand-in throw hook: with the handler removed, 3/3 exited 0xE0434352. Validate must re-run it against the committed hook, and for close mode with the Exit handler's 0-to-70 rule removed (expected exit 0)."
+    },
+    {
+     "precondition": "The shim's action meets the same gate a real user meets.",
+     "status": "must-verify",
+     "evidence": "Raw in-process mechanisms fail this (spike no-go, 30/30 stopped through a disabled or collapsed button). The design adds an explicit IsEnabled && IsVisible check. Validate must show C-006 fails against both mutants and that the gate coincides with a running scan."
+    }
+   ]
+  },
+  "prior_art": [
+   {
+    "pattern": "DOTNET_STARTUP_HOOKS names assemblies containing a StartupHook type whose static Initialize() runs before the app's entry point. The app itself is not modified.",
+    "where": "https://github.com/dotnet/runtime/blob/main/docs/design/features/host-startup-hook.md",
+    "authority": "official",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Setting DOTNET_STARTUP_HOOKS to an empty string, rather than removing it, wrote 'Failed to read environment variable' errors to the Windows Application log. Remove the variable instead.",
+    "where": "https://github.com/dotnet/runtime/issues/82260",
+    "authority": "official",
+    "basis": "cited",
+    "source_date": "2023-02-16"
+   },
+   {
+    "pattern": "An internal class StartupHook with public static void Initialize() is loaded as a startup hook, so the type does not have to be public.",
+    "where": "https://github.com/dotnet/runtime/issues/78153",
+    "authority": "official",
+    "basis": "cited",
+    "source_date": "2022-11-10"
+   },
+   {
+    "pattern": "An exception escaping a startup hook's Initialize terminates the host process, so hooks must catch everything.",
+    "where": "dotnet/runtime startup-hook design doc (the part after the fetched excerpt)",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Dispatcher.InvokeAsync captures callback exceptions in the operation's Task. Legacy BeginInvoke sends them to Dispatcher.UnhandledException and then Application.DispatcherUnhandledException.",
+    "where": "WPF System.Windows.Threading.Dispatcher / DispatcherOperation behaviour",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "In-process programmatic click through ButtonAutomationPeer with IInvokeProvider.Invoke(). It goes through OnClick, runs the Command and throws ElementNotEnabledException when disabled, but does not check visibility.",
+    "where": "WPF System.Windows.Automation.Peers.ButtonAutomationPeer",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "SetErrorMode(SEM_NOGPFAULTERRORBOX) in the process under test, so a crash exits at once instead of waiting on a Windows Error Reporting dialog.",
+    "where": "Win32 SetErrorMode (kernel32)",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Out-of-process UI Automation drivers for WPF: FlaUI, WinAppDriver/Appium. This is the more common route, and it is not used here.",
+    "where": "FlaUI, WinAppDriver",
+    "authority": "oss",
+    "basis": "recalled"
+   }
+  ],
+  "stack_chosen": [
+   {
+    "area": "testing",
+    "choice": "An in-process window-test driver: a C# net10.0-windows UseWPF class library at tests/window/FsaWindowHook, loaded by DOTNET_STARTUP_HOOKS and steered by FSA_HOOK_MODE (stop|throw|close) and FSA_HOOK_LOG, asserted by WindowCases.ps1 through the existing schema-1 report path. No UIA, no FlaUI, no WinAppDriver, and no xUnit App test project.",
+    "why": "The stack block says App window state is verified through the published exe's --report and that there is no App test project. It did not say how a test presses Stop, closes the window or faults the dispatcher. That was open, and I settled it here so the tree slice extends the mode vocabulary instead of picking a second driver mechanism."
+   },
+   {
+    "area": "build",
+    "choice": "The hook is built by WindowCases.ps1's Update-Hook through eng/dotnet.ps1 into gitignored artifacts/window-hook, and is not part of FsAnalyser.slnx.",
+    "why": "The stack block names the solution, global.json and eng/dotnet.ps1, but not a second, test-only WPF project. Keeping it outside the slnx keeps WPF hook code out of the Core test build. The SDK 10.0.401 bootstrap it triggers is the one Q-003 already authorised."
+   }
+  ],
+  "taste_disagreements": [
+   "Mutation proofs live in validate's record (scratch copies, nothing committed) rather than in a committed script that applies the disabled, collapsed, handler-removed and Exit-rule-removed mutants. That is cheaper now, but it leaves the fail-ability proof outside the repo, which is the shape this slice exists to fix.",
+   "One Pressable gate on CancelButton for all three modes, even though throw does not logically need Stop. Per-mode triggers would be more precise. One gate is simpler and puts every fault mid-scan.",
+   "The closed-early case is named O-016 (an obligation) beside C-xxx criteria, and the hook project is FsaWindowHook under tests/window, not tests/window/hook. Both are naming and placement.",
+   "The hook reports through a text log file (FSA_HOOK_LOG). Stdout and a named event are the alternatives; the exe is WinExe with no console, which is why a file was chosen.",
+   "The inert-host assertion lives as a first step inside Test-C006, not as its own case ID."
+  ],
+  "whats_new": [
+   "tests/window/FsaWindowHook/FsaWindowHook.csproj and StartupHook.cs: the committed driver with stop, throw and close modes and the shared Pressable gate",
+   "Update-Hook in WindowCases.ps1, which builds the hook through eng/dotnet.ps1 into artifacts/window-hook on every hooked run",
+   "Invoke-HookedRun in WindowCases.ps1, which scopes the three environment variables to one launch and removes them in finally",
+   "Test-C006, Test-C012 and Test-O016 in WindowCases.ps1, plus the pwsh 7 inert-host assertion inside Test-C006",
+   "C-006, C-012 and O-016 added to the ValidateSet (:17) and the All list (:508)",
+   "FSA_HOOK_MODE, FSA_HOOK_LOG and the log-line contract (loaded, waiting, acted, refused)",
+   "Three architecture rules: no test seam in src, no shared code between hook and app, and the hook never produces the exit code",
+   "Validate obligations owed: the mutant proofs, and a 30-run stop and close repeat with the committed hook"
+  ],
+  "whats_reused": [
+   "Update-App, Start-App, Read-Window and New-LargeTree in tests/window/WindowCases.ps1, unchanged",
+   "eng/read-window.ps1, unchanged. Spike 1 ran it with inherited hook variables and it returned exit 70 with no report.",
+   "eng/dotnet.ps1 and global.json, with the Q-003 repo-local SDK bootstrap",
+   "The App's own handlers as the code under test: the DispatcherUnhandledException handler (App.xaml.cs:84-89), the Exit handler (:94-98, d59819e), OnClosing (MainWindow.xaml.cs:52), OnCancel (:223) and the Stopped title (:255)",
+   "The schema-1 --report file and the delete-first behaviour (Q-016), which is why a planted stale report is a valid probe",
+   "The root Directory.Build.props, inherited by the hook csproj",
+   "The existing rules file on trunk: the three rules are appended, not created (Q-010)"
+  ],
+  "decidable_disagreements": [],
+  "open_questions": []
+ }
+}
