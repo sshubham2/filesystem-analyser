@@ -1,0 +1,223 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-033",
+ "stage": "validate-slice",
+ "attempt": 1,
+ "at": "2026-09-25T00:46:05.165Z",
+ "head": "105f1a4c870f7995acbe4b668bb2102d694b9d1d",
+ "run_id": 977,
+ "summary": "All 14 acceptance criteria hold on this tree (105f1a4), and O-013 and O-014 are discharged by my own runs. The verdict is partial, not passes, because O-015 is still open. It is the code-review fix owed to build-slice, and I reproduced the defect on this tree.\n\nWhat passed:\n- Core tests: 120/120.\n- Fitness: 20 rules hold, including the three SL-033 rules.\n- rules-parity: AGREE.\n- WindowCases -Case All: all 15 cases passed in 161 s. C-006 stopped at 550 of 30,150 folders. C-012 and O-016 each exited 70 and removed the planted stale report.\n- The design's 30-run repeat against the committed hook, on one warm tree:\n  - stop: 30/30 acted, exit 0, schema-1 report, Cancelled with a \"Stopped:\" title, scan stopped at 550–750 of 30,150 folders.\n  - close: 30/30 acted, exit 70, no report, stale report gone.\n  - throw: 30/30 acted, exit 70, no report, stale report gone.\n  - Every acted line showed enabled=True visible=True, and no hook variable was left set afterwards.\n- WindowMutants -Mutant All passed in 182 s. StopDisabled and StopCollapsed each failed C-006 only on \"the hook acted\". NoCrashHandler failed C-012 on 0xE0434352. NoExitRule failed O-016 on exit 0. HookCompileError and HookLocked each stopped the run in Update-Hook, and the old dll was left unchanged.\n\nMy own probes:\n- Criterion 13: an unknown mode (\"bogus\", and \"STOP\" in capitals) logs \"refused ... unknown mode\" and does nothing. The app still finishes (Completed), and CheckActed fails.\n- Criterion 14: a relative dll path, and a path containing ';', both make the host fail at startup with 0xE0434352 and write no log line, so CheckActed fails. The committed $HookDll is absolute, and the repo path has no ';'.\n- Real lock: a real FsAnalyser.App.exe with the scratch hook dll loaded made Update-Hook fail with MSB3027 \"locked by FsAnalyser.App (31620)\". The run exited 1 and the dll was unchanged.\n\nO-015 reproduced: I mutated OnCancel in a scratch copy to throw. Under stop mode the hook logged 'acted' and then 'refused ... InvalidOperationException'. The app scanned 30,150 of 30,150 folders, wrote a Finished report and exited 0, and C-006 still printed \"ok exit code\" and \"ok a report was written\". The exception never reached the app's DispatcherUnhandledException handler. StartupHook.cs:109-120 still calls Act inside Dispatcher.Invoke without re-raising, and CheckActed (WindowCases.ps1) still ignores a 'refused' line that comes after 'acted'. No committed case passes wrongly because of it, but the driver hides a fault in the app's own handler, and the tree slice will reuse this path.\n\nNo loop: one build attempt and one review.",
+ "payload": {
+  "status": "complete",
+  "verdict": "partial",
+  "contact": "code",
+  "summary": "All 14 acceptance criteria hold on this tree (105f1a4), and O-013 and O-014 are discharged by my own runs. The verdict is partial, not passes, because O-015 is still open. It is the code-review fix owed to build-slice, and I reproduced the defect on this tree.\n\nWhat passed:\n- Core tests: 120/120.\n- Fitness: 20 rules hold, including the three SL-033 rules.\n- rules-parity: AGREE.\n- WindowCases -Case All: all 15 cases passed in 161 s. C-006 stopped at 550 of 30,150 folders. C-012 and O-016 each exited 70 and removed the planted stale report.\n- The design's 30-run repeat against the committed hook, on one warm tree:\n  - stop: 30/30 acted, exit 0, schema-1 report, Cancelled with a \"Stopped:\" title, scan stopped at 550–750 of 30,150 folders.\n  - close: 30/30 acted, exit 70, no report, stale report gone.\n  - throw: 30/30 acted, exit 70, no report, stale report gone.\n  - Every acted line showed enabled=True visible=True, and no hook variable was left set afterwards.\n- WindowMutants -Mutant All passed in 182 s. StopDisabled and StopCollapsed each failed C-006 only on \"the hook acted\". NoCrashHandler failed C-012 on 0xE0434352. NoExitRule failed O-016 on exit 0. HookCompileError and HookLocked each stopped the run in Update-Hook, and the old dll was left unchanged.\n\nMy own probes:\n- Criterion 13: an unknown mode (\"bogus\", and \"STOP\" in capitals) logs \"refused ... unknown mode\" and does nothing. The app still finishes (Completed), and CheckActed fails.\n- Criterion 14: a relative dll path, and a path containing ';', both make the host fail at startup with 0xE0434352 and write no log line, so CheckActed fails. The committed $HookDll is absolute, and the repo path has no ';'.\n- Real lock: a real FsAnalyser.App.exe with the scratch hook dll loaded made Update-Hook fail with MSB3027 \"locked by FsAnalyser.App (31620)\". The run exited 1 and the dll was unchanged.\n\nO-015 reproduced: I mutated OnCancel in a scratch copy to throw. Under stop mode the hook logged 'acted' and then 'refused ... InvalidOperationException'. The app scanned 30,150 of 30,150 folders, wrote a Finished report and exited 0, and C-006 still printed \"ok exit code\" and \"ok a report was written\". The exception never reached the app's DispatcherUnhandledException handler. StartupHook.cs:109-120 still calls Act inside Dispatcher.Invoke without re-raising, and CheckActed (WindowCases.ps1) still ignores a 'refused' line that comes after 'acted'. No committed case passes wrongly because of it, but the driver hides a fault in the app's own handler, and the tree slice will reuse this path.\n\nNo loop: one build attempt and one review.",
+  "checks": [
+   {
+    "what": "Repo-local SDK present and selected",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 --version",
+    "outcome": "passed",
+    "evidence": "10.0.401 (the .dotnet/ the build stage installed under Q-003); artifacts/publish/FsAnalyser.App.exe 139,777,176 bytes is newer than every src file, so Update-App did not republish."
+   },
+   {
+    "what": "Core test suite",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx",
+    "outcome": "passed",
+    "evidence": "Passed! Failed 0, Passed 120, Skipped 0, Total 120, 9 s."
+   },
+   {
+    "what": "Architecture rules (engine Fitness)",
+    "command": "Fitness op=check",
+    "outcome": "passed",
+    "evidence": "20 rule(s) checked against 46 file(s); every declared rule holds, including the three SL-033 rules (no test seam in src, no shared code between hook and app, the hook never produces the exit code)."
+   },
+   {
+    "what": "Rule copies agree",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/rules-parity.ps1",
+    "outcome": "passed",
+    "evidence": "rules-parity: AGREE 7 facts <- 10 twinned entries, 21 patterns; exit 0."
+   },
+   {
+    "what": "Full window suite, including the three hooked cases",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case All",
+    "outcome": "passed",
+    "evidence": "exit 0 in 161 s. PASSED: C-001..C-014 and O-016 (15 cases). C-006: pwsh control exited 0xE0434352; the inert host exited 0 with an empty log; cleanup removed all 3 variables; the no-scan step logged 'waiting found=True enabled=True visible=False' and then refused after 20 s; the main run acted at ms=829 and stopped after 550 of 30150 folders with a 'Stopped:' title. C-012 acted at ms=573 and exited 70 (0x46) with the stale report gone and no .tmp. O-016 acted at ms=642 and exited 70 with the stale report gone and no .tmp."
+   },
+   {
+    "what": "Stop mode, 30 runs against the committed hook on one warm 30,150-folder tree (functions taken from WindowCases.ps1 by AST, so Invoke-HookedRun is the committed code)",
+    "command": "pwsh -File %TEMP%\\sl033-validate\\repeat.ps1 -Runs 30",
+    "outcome": "passed",
+    "evidence": "runs=30, acted once in 30, refused 0, exit 0 x30, reports 30, core.status Cancelled x30, OutcomeTitle 'Stopped: <root>' x30, scan stopped at 550-750 of 30150 folders, wall time 546-1401 ms, no variable left set."
+   },
+   {
+    "what": "Close mode, 30 runs, stale report planted each time",
+    "command": "pwsh -File %TEMP%\\sl033-validate\\repeat.ps1 -Runs 30",
+    "outcome": "passed",
+    "evidence": "runs=30, acted once in 30, refused 0, exit 70 x30, reports 0, stale report gone 30/30, .tmp absent 30/30, 455-1120 ms."
+   },
+   {
+    "what": "Throw mode, 30 runs, stale report planted each time",
+    "command": "pwsh -File %TEMP%\\sl033-validate\\repeat.ps1 -Runs 30",
+    "outcome": "passed",
+    "evidence": "runs=30, acted once in 30, refused 0, exit 70 x30, reports 0, stale report gone 30/30, .tmp absent 30/30. Across all 90 runs every acted line read enabled=True visible=True, acted at ms=336-917, and no run logged 'waiting'."
+   },
+   {
+    "what": "Mutation proofs: each hooked case fails against its mutant, once, for the planted reason",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowMutants.ps1 -Mutant All",
+    "outcome": "passed",
+    "evidence": "exit 0 in 182 s. StopDisabled: the hook saw 'enabled=False visible=True' and never acted; C-006's single FAIL was 'the hook acted'. StopCollapsed: never visible; the same single FAIL. NoCrashHandler: the hook acted and C-012 failed once with 'actual -532462766 (0xE0434352)'. NoExitRule: the hook acted and O-016 failed once with 'actual 0 (0x00000000)'. HookCompileError: CS1029 printed, Update-Hook stopped the run, C-006 never started, old dll unchanged. HookLocked: MSB3021/3027 printed and the result was the same. No scratch copies were left in %TEMP%\\fsa-window-mutants."
+   },
+   {
+    "what": "Criterion 13: unknown FSA_HOOK_MODE",
+    "command": "pwsh -File %TEMP%\\sl033-validate\\probe-13-14.ps1 (modes 'bogus' and 'STOP')",
+    "outcome": "passed",
+    "evidence": "bogus: log 'loaded mode=bogus | refused mode=bogus reason=unknown mode', exit 0, report Completed, CheckActed FAIL. STOP: the same (the match is case-sensitive), Completed, CheckActed FAIL. The hook did nothing and the app ran normally."
+   },
+   {
+    "what": "Criterion 14: relative dll path",
+    "command": "probe-13-14.ps1 with DOTNET_STARTUP_HOOKS=..\\..\\..\\projets\\...\\FsaWindowHook.dll",
+    "outcome": "passed",
+    "evidence": "exit -532462766 (0xE0434352), no report, empty log, CheckActed FAIL. The run cannot pass silently."
+   },
+   {
+    "what": "Criterion 14: dll path containing ';'",
+    "command": "probe-13-14.ps1 with the dll copied into a folder named 'with;semi'",
+    "outcome": "passed",
+    "evidence": "exit 0xE0434352, no report, empty log, CheckActed FAIL. The repo path contains no ';' (False), and $HookDll is fully qualified (True)."
+   },
+   {
+    "what": "Update-Hook against a real leftover FsAnalyser.App.exe holding the dll (not the FileStream stand-in)",
+    "command": "pwsh -File %TEMP%\\sl033-validate\\probe-reallock.ps1",
+    "outcome": "passed",
+    "evidence": "The app (pid 31620) was alive with FsaWindowHook.dll in its module list. The scratch WindowCases -Case C-006 exited 1 with 'error MSB3027 ... The file is locked by: \"FsAnalyser.App (31620)\"'; the dll hash was unchanged. I did not see the 'FAILED: the hook did not build' line in my filtered output (my Select -First cut it off). Exit 1, and the absence of a C-006 header, agree with the committed HookLocked assertions."
+   },
+   {
+    "what": "O-015 probe: first attempt",
+    "command": "pwsh -File %TEMP%\\sl033-validate\\probe-o015.ps1",
+    "outcome": "failed",
+    "evidence": "My own mutation was wrong: '_cancel?.Cancel();' matches twice in MainWindow.xaml.cs (OnClosing:52 and OnCancel:225), and Set-Mutation refused it. I narrowed it to OnCancel's two lines and re-ran. This says nothing about the slice."
+   },
+   {
+    "what": "O-015 probe: an exception thrown by OnCancel under hook stop mode (scratch copy, republished)",
+    "command": "pwsh -File %TEMP%\\sl033-validate\\probe-o015.ps1 (narrowed mutation)",
+    "outcome": "failed",
+    "evidence": "hook log: 'acted mode=stop enabled=True visible=True ms=528' then 'refused mode=stop reason=InvalidOperationException: validate mutant: OnCancel threw'. The case printed 'ok exit code' (0) and 'ok a report was written', then FAIL core.status and FAIL OutcomeTitle ('Finished: ...'), stopped after 30150 of 30150 folders. The exception never reached App.DispatcherUnhandledException, so the O-015 defect is present on this tree."
+   },
+   {
+    "what": "Static read of the O-015 fix site",
+    "command": "Read tests/window/FsaWindowHook/StartupHook.cs:109-120; WindowCases.ps1 CheckActed",
+    "outcome": "failed",
+    "evidence": "Act(mode, app, button) is still called inside app.Dispatcher.Invoke(..., DispatcherPriority.Normal) with no inner try/catch and no ExceptionDispatchInfo re-raise through BeginInvoke. CheckActed still counts only 'acted mode=' lines and ignores a later 'refused'. Neither part of O-015's fix is in the tree (build-slice's only attempt is at 105f1a4, which is before the review)."
+   },
+   {
+    "what": "Leftovers after all runs",
+    "command": "Test-Path %TEMP%\\fsa-window-{mutants,cases,hook}; Get-Process FsAnalyser.App; env; git status --short",
+    "outcome": "passed",
+    "evidence": "All three temp folders are empty; 0 FsAnalyser.App processes; 0 hook variables set; git status shows only the pre-existing .taad/slices/SL-033 changes."
+   },
+   {
+    "what": "A real mouse or UIA press on CancelButton, to show a throwing handler exits 70 through real input",
+    "outcome": "not-run",
+    "evidence": "The stack rules out UIA, FlaUI and WinAppDriver, and I may not drive another program's windows. That a real click reaches DispatcherUnhandledException is reasoning about WPF. The nearest measured path is throw mode's BeginInvoke exception, which exits 70 (30/30)."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "1. stop the scan (C-006) when Stop is pressable and the scan is running on the 30,150-folder New-LargeTree",
+    "met": "yes",
+    "how": "C-006 in -Case All passed, and my 30-run repeat gave 30/30 acted, exit 0, schema-1, Cancelled, 'Stopped:' title, scan stopped at 550-750 of 30,150 folders."
+   },
+   {
+    "criterion": "2. stop the scan (C-006) when the scan finishes before the hook acts",
+    "met": "yes",
+    "how": "The warm-cache repeat never let the scan win (worst case 750 of 30,150 folders). In the StopCollapsed mutant run, where the scan did finish without the hook acting, C-006's only FAIL was 'the hook acted', not an ending mismatch: CheckActed runs first and returns early."
+   },
+   {
+    "criterion": "3. stop the scan (C-006) when CancelButton is IsEnabled=false during the scan (scratch mutant)",
+    "met": "yes",
+    "how": "WindowMutants -Mutant All, StopDisabled: the hook logged 'waiting found=True enabled=False visible=True' and never acted. C-006 exited 1, failing once on 'the hook acted'."
+   },
+   {
+    "criterion": "4. stop the scan (C-006) when CancelButton is Visibility=Collapsed during the scan (scratch mutant)",
+    "met": "yes",
+    "how": "StopCollapsed: never visible, never acted. C-006 exited 1, failing once on 'the hook acted'."
+   },
+   {
+    "criterion": "5. stop the scan (C-006) when CancelButton is pressable before StartScan begins (XAML default is enabled)",
+    "met": "yes",
+    "how": "C-006's no-scan step (in -Case All): the window opened with no root, the hook logged 'waiting found=True enabled=True visible=False', did not act, and refused after 20 s. In the 90 repeat runs the hook's first look was already mid-scan (no 'waiting' lines)."
+   },
+   {
+    "criterion": "6. exit-70 path (C-012) on an unhandled dispatcher exception mid-scan, handler present, stale report planted",
+    "met": "yes",
+    "how": "C-012 in -Case All passed (acted ms=573, exit 70 (0x46), stale report gone, no .tmp). Throw repeat: exit 70 in 30/30, stale report gone 30/30."
+   },
+   {
+    "criterion": "7. exit-70 path (C-012) with the DispatcherUnhandledException handler removed (scratch mutant)",
+    "met": "yes",
+    "how": "NoCrashHandler: the hook acted and C-012 failed exactly once with 'actual -532462766 (0xE0434352)'."
+   },
+   {
+    "criterion": "8. closed before the first ending (O-016): window closed while Stop is pressable, report mode, stale report planted",
+    "met": "yes",
+    "how": "O-016 in -Case All passed (acted ms=642, exit 70, stale report gone, no .tmp). Close repeat: exit 70 in 30/30, 0 reports, stale report gone 30/30."
+   },
+   {
+    "criterion": "9. closed before the first ending (O-016) with the Exit handler's exit-0-without-a-file to 70 rule removed (scratch mutant)",
+    "met": "yes",
+    "how": "NoExitRule: the hook acted and O-016 failed exactly once with 'actual 0 (0x00000000)'."
+   },
+   {
+    "criterion": "10. hooked run cleanup when a case throws or fails after the three variables are set",
+    "met": "yes",
+    "how": "C-006's cleanup step passed (the throw reached the case; all 3 variables removed). After 90 hooked repeat runs and all probes, 0 hook variables were left set."
+   },
+   {
+    "criterion": "11. load the hook: a non-App .NET host inherits the variables (pwsh 7 with FSA_HOOK_MODE=close)",
+    "met": "yes",
+    "how": "In -Case All the control (missing dll) made pwsh exit 0xE0434352, which shows pwsh loads startup hooks. Under the real hook pwsh exited 0 and the log stayed empty."
+   },
+   {
+    "criterion": "12. build the hook: compile error, or dll locked by a leftover FsAnalyser.App.exe",
+    "met": "yes",
+    "how": "The HookCompileError and HookLocked mutants passed. I also used a real FsAnalyser.App.exe (pid 31620) with the dll loaded: Update-Hook's build failed with MSB3027 naming it, the scratch run exited 1, and the dll was unchanged."
+   },
+   {
+    "criterion": "13. select a mode: FSA_HOOK_MODE is an unknown string",
+    "met": "yes",
+    "how": "The design outcome was: log 'refused' and do nothing. Measured with 'bogus' and 'STOP': 'refused mode=... reason=unknown mode', the app ran to Completed with exit 0, and CheckActed would fail the case."
+   },
+   {
+    "criterion": "14. locate the hook dll: the path is relative, or contains ';'",
+    "met": "yes",
+    "how": "The design outcome was: the committed path is absolute and has no ';', and a wrong path shows as a failed 'acted' check. Measured: $HookDll is fully qualified and the repo path has no ';'. A relative path and a ';' path each made the host fail at startup (0xE0434352) with an empty log, and CheckActed failed."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-013",
+    "verified": "yes",
+    "evidence": "The shim cannot produce the outcome, measured against the committed hook: NoCrashHandler made throw mode exit 0xE0434352 (C-012 failed once), and NoExitRule made close mode exit 0 (O-016 failed once), so neither 70 comes from the hook. Fitness rule 'the hook never produces the outcome under test' holds (no Environment.Exit/FailFast, .Shutdown( or ExitCode= in the hook source). Unmutated: throw 30/30 and close 30/30 exited 70."
+   },
+   {
+    "key": "O-014",
+    "verified": "yes",
+    "evidence": "The shim meets the user's gate: the StopDisabled and StopCollapsed mutants each made C-006 fail on 'the hook acted' (no act through a disabled or hidden button). The no-scan step showed an enabled but hidden CancelButton was not pressed. The gate coincided with a running scan in every one of 30 stop runs: Cancelled at 550-750 of 30,150 folders. All 90 acted lines read enabled=True visible=True."
+   },
+   {
+    "key": "O-015",
+    "verified": "no",
+    "evidence": "Owed to build-slice, not fixed. StartupHook.cs:109-120 still runs Act inside Dispatcher.Invoke with no inner catch and no BeginInvoke re-raise, and CheckActed still ignores a 'refused' line after 'acted'. Reproduced in a scratch copy with OnCancel throwing: log 'acted mode=stop ...' then 'refused mode=stop reason=InvalidOperationException: validate mutant: OnCancel threw'; scan ran 30150/30150, Finished report, exit 0; C-006 printed 'ok exit code' and 'ok a report was written' before failing on core.status. The app's DispatcherUnhandledException never saw the exception. build-slice's only attempt (105f1a4) is before the review that raised this."
+   }
+  ],
+  "not_reached": [
+   "A real input-driven press (mouse or UIA) on a CancelButton whose handler throws. O-015's premise, that a real click would reach DispatcherUnhandledException and exit 70, is reasoning about WPF, not something I measured.",
+   "A machine where Windows Error Reporting shows a crash dialog: with SetErrorMode dropped, a regressed crash handler there would show C-012 as TIMEOUT rather than 0xE0434352. Here the process ended at once.",
+   "Windows 10. Everything ran on Windows 11 26200 only.",
+   "Other .NET hosts inheriting the hook variables (dotnet.exe, MSBuild nodes). Only pwsh 7.6.6 on .NET 10.0.12 was checked. Update-Hook builds before any variable is set.",
+   "Slower or faster disks and CPUs. The hook acted at 336-917 ms with the scan at 550-750 of 30,150 folders here. On a much faster machine the margin before the scan finishes is unmeasured.",
+   "Any real user data or drive. Every run used generated trees under %TEMP%, which is why contact is graded code, not real."
+  ],
+  "planned": []
+ }
+}

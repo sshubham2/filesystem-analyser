@@ -8,13 +8,18 @@
 # -Case All runs every case. Exit 0 when every check held, 1 when any failed. The app is published
 # first (eng/dotnet.ps1, into artifacts/publish) when the exe is missing or older than any source.
 #
+# C-006, C-012 and O-016 press what a person would press mid-scan: Stop, a fault on the UI thread, closing
+# the window. The driver is tests/window/FsaWindowHook, loaded into the unmodified exe by
+# DOTNET_STARTUP_HOOKS and steered by FSA_HOOK_MODE (see its StartupHook.cs). It is built on every run
+# that selects one of them, into artifacts/window-hook, and its variables are set for one launch only.
+#
 # The oracle is the tree each case builds, never the report's own "core" section. Every non-empty file
 # is a multiple of 64 KiB and every other file is empty, so the size on disk equals the size on any
 # NTFS volume with clusters of 64 KiB or less, without asking the volume.
 
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-013', 'C-014')]
+    [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016')]
     [string] $Case
 )
 
@@ -23,6 +28,10 @@ $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $Exe = Join-Path $Repo 'artifacts\publish\FsAnalyser.App.exe'
 $Reader = Join-Path $Repo 'eng\read-window.ps1'
+$HookProject = Join-Path $Repo 'tests\window\FsaWindowHook\FsaWindowHook.csproj'
+$HookDll = Join-Path $Repo 'artifacts\window-hook\FsaWindowHook.dll'
+$HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG'
+$HookedCases = 'C-006', 'C-012', 'O-016'
 $KiB64 = 64KB
 $script:Failures = [System.Collections.Generic.List[string]]::new()
 
@@ -175,6 +184,34 @@ function Update-App {
     }
 }
 
+# Builds the hook into artifacts/window-hook on every run that selects a hooked case, before any hook
+# variable is set, and leaves staleness to MSBuild's incremental build. A failed build (a compile error,
+# or the dll locked by an app a timed-out run left behind) ends the run with exit 1 and the build output:
+# a dll from an earlier run never stands in for the source.
+function Update-Hook {
+    $mutex = [System.Threading.Mutex]::new($false, 'Local\FsAnalyser-WindowCases-Hook')
+    [void]$mutex.WaitOne()
+    try {
+        Write-Output 'building the hook (eng/dotnet.ps1 build)'
+        $output = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'eng\dotnet.ps1') build $HookProject `
+                -c Release -o (Split-Path -Parent $HookDll) 2>&1)
+        $exit = $LASTEXITCODE
+    }
+    finally {
+        $mutex.ReleaseMutex()
+        $mutex.Dispose()
+    }
+    $output | ForEach-Object { "  $_" }
+    if ($exit -ne 0) {
+        Write-Output "FAILED: the hook did not build (exit $exit), so no case ran"
+        exit 1
+    }
+    if (-not (Test-Path -LiteralPath $HookDll -PathType Leaf)) {
+        Write-Output "FAILED: the hook built but $HookDll is not there, so no case ran"
+        exit 1
+    }
+}
+
 # Through eng/read-window.ps1, the way validate reads the window.
 function Read-Window([string] $root, [int] $timeoutSec = 120) {
     $lines = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $Reader -Root $root -Exe $Exe -TimeoutSec $timeoutSec)
@@ -209,6 +246,66 @@ function Wait-App($process, [int] $timeoutSec = 60) {
 
 function Invoke-App($arguments, [int] $timeoutSec = 60) {
     Wait-App (Start-App $arguments) $timeoutSec
+}
+
+# ---- Running the app under the hook ----
+
+# Runs $action with the hook's three variables set, in this process and whatever it launches, and
+# removes them however $action ends, so a case that throws leaves every later case unhooked. Removed,
+# never blanked: an empty DOTNET_STARTUP_HOOKS writes errors to the Application log (dotnet/runtime#82260).
+# Returns what $action output and the hook's log lines.
+function Invoke-WithHook([string] $mode, [string] $hookDll, [scriptblock] $action) {
+    $log = Join-Path ([System.IO.Path]::GetTempPath()) ("fsa-window-hook\{0}.log" -f [guid]::NewGuid().ToString('N'))
+    try {
+        [void][System.IO.Directory]::CreateDirectory((Split-Path -Parent $log))
+        $env:DOTNET_STARTUP_HOOKS = $hookDll
+        $env:FSA_HOOK_MODE = $mode
+        $env:FSA_HOOK_LOG = $log
+        $result = & $action
+        [pscustomobject]@{
+            Result = $result
+            Log    = @(if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log })
+        }
+    }
+    finally {
+        foreach ($name in $HookVariables) {
+            if (Test-Path -LiteralPath "Env:$name") { Remove-Item -LiteralPath "Env:$name" }
+        }
+        if (Test-Path -LiteralPath $log) { Remove-Item -LiteralPath $log -Force }
+    }
+}
+
+# One report-mode launch with the hook in $mode: the exit code (or TIMEOUT), the report at $report parsed
+# (null when there is none) and the hook's log. Straight through Start-App, like C-009, because these
+# cases plant a stale report at a path of their own and eng/read-window.ps1 picks its own.
+function Invoke-HookedRun([string] $mode, [string] $root, [string] $report) {
+    $run = Invoke-WithHook $mode $HookDll { Wait-App (Start-App "`"$root`" --report `"$report`"") 60 }
+    $text = if (Test-Path -LiteralPath $report -PathType Leaf) { Get-Content -LiteralPath $report -Raw } else { $null }
+    [pscustomobject]@{
+        Exit   = $run.Result
+        Report = if ($null -eq $text) { $null } else { $text | ConvertFrom-Json }
+        Log    = $run.Log
+    }
+}
+
+# Every hooked case asks this before it reads the exit code or the report: a hook that never loaded, never
+# found Stop pressable or refused fails by that name, not as a wrong ending. So does a hook that failed
+# after it acted ("refused" after "acted"): the exit code and the report would not be what a press gave. A
+# "rethrown" line is not the hook's failure: the app's own handler threw, and the app was given it.
+function CheckActed($run, [string] $mode) {
+    foreach ($line in $run.Log) { Write-Output "        hook: $line" }
+    $log = @($run.Log)
+    $acted = @($log | Where-Object { $_.StartsWith("acted mode=$mode ") })
+    Check ($acted.Count -eq 1) "the hook acted (one 'acted mode=$mode' line in FSA_HOOK_LOG); if not, the hook never acted and nothing after it is this case's ending"
+    if ($acted.Count -eq 0) { return }
+    $after = $log[([array]::IndexOf($log, $acted[0]) + 1)..($log.Count)] | Where-Object { $_ -and $_.StartsWith('refused ') }
+    Check (@($after).Count -eq 0) "the hook did not fail after it acted ($(Show (@($after) -join ' | ')))"
+}
+
+# An exit code with its hex beside it: 0xE0434352 is the runtime's unhandled exception, not the app's 70.
+function Show-Exit([string] $exit) {
+    $code = 0
+    if ([int]::TryParse($exit, [ref]$code)) { '{0} (0x{0:X8})' -f $code } else { $exit }
 }
 
 # ---- Cases ----
@@ -306,6 +403,76 @@ function Test-C005 {
     CheckEqual "Could not read $root" $read.Report.window.OutcomeTitle 'OutcomeTitle'
     Check ($read.Report.window.OutcomeDetail[0] -like '*is not an absolute path*') "OutcomeDetail says why ($(Show $read.Report.window.OutcomeDetail[0]))"
     Check ($read.Text -match '"core":\s*null') 'core is null'
+}
+
+# C-006: Stop pressed while the scan runs (criterion 6). The hook presses CancelButton as soon as a person
+# could (enabled and on screen, which is only during a scan) and the ending must be the app's own
+# Stopped. New-LargeTree's scan outlasts the hook's 25 ms poll many times over. First the hook's harness:
+# pwsh 7, a .NET host that runs startup hooks, must be left alone by it, a case that throws with the
+# variables set must leave none of them behind, and with no scan running the hook must press nothing.
+function Test-C006 {
+    # The control: pwsh ends when the hook it is told to load is missing, so it does load what is named.
+    $missing = Join-Path ([System.IO.Path]::GetTempPath()) ("fsa-no-such-hook-{0}.dll" -f [guid]::NewGuid().ToString('N'))
+    $control = Invoke-WithHook 'close' $missing { & pwsh -NoProfile -Command 'exit 0' 2>$null; $LASTEXITCODE }
+    Check ($control.Result -ne 0) "control: pwsh fails when DOTNET_STARTUP_HOOKS names a missing dll (exit $(Show-Exit $control.Result)), so it runs startup hooks"
+    $inert = Invoke-WithHook 'close' $HookDll { & pwsh -NoProfile -Command 'exit 0'; $LASTEXITCODE }
+    CheckEqual '0' $inert.Result 'inert host: pwsh 7 exits 0 under the hook in close mode'
+    Check ($inert.Log.Count -eq 0) "inert host: the hook wrote nothing ($(Show ($inert.Log -join ' | ')))"
+
+    $message = 'a case failing after the hook variables were set'
+    $threw = $null
+    try { Invoke-WithHook 'stop' $HookDll { throw $message } | Out-Null }
+    catch { $threw = $_.Exception.Message }
+    CheckEqual $message $threw 'cleanup: the throw reached the case'
+    foreach ($name in $HookVariables) {
+        Check (-not (Test-Path -LiteralPath "Env:$name")) "cleanup: $name is removed after the throw"
+    }
+
+    # Opened with no root, the window shows CancelButton enabled (its XAML default) but hidden, and no scan
+    # runs. The hook must not press it: it watches it for its 20 s and refuses. Report mode cannot show
+    # this, because its scan starts as the window loads.
+    $idle = Invoke-WithHook 'stop' $HookDll {
+        $process = Start-Process -FilePath $Exe -WorkingDirectory ([System.IO.Path]::GetTempPath()) -PassThru
+        try {
+            $clock = [System.Diagnostics.Stopwatch]::StartNew()
+            while (-not $process.HasExited -and $clock.Elapsed.TotalSeconds -lt 40) {
+                $text = ''
+                try { $text = [System.IO.File]::ReadAllText($env:FSA_HOOK_LOG) } catch { } # absent, or mid-append
+                if ($text -match '(?m)^(acted|refused) ') { break }
+                Start-Sleep -Milliseconds 250
+            }
+        }
+        finally {
+            if (-not $process.HasExited) {
+                $process.Kill()
+                $process.WaitForExit()
+            }
+        }
+    }
+    foreach ($line in $idle.Log) { Write-Output "        hook: $line" }
+    Check ($idle.Log -contains 'waiting found=True enabled=True visible=False') 'no scan: the hook saw CancelButton enabled but hidden'
+    Check (@($idle.Log -match '^acted ').Count -eq 0) 'no scan: the hook did not press it'
+    Check (@($idle.Log -match '^refused mode=stop ').Count -eq 1) 'no scan: the hook refused once its 20 s were up'
+
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'large'
+        $manifest = New-LargeTree $root
+        $run = Invoke-HookedRun 'stop' $root (Join-Path $case 'report.json')
+        $before = $script:Failures.Count
+        CheckActed $run 'stop'
+        if ($script:Failures.Count -gt $before) { return }
+        CheckEqual '0' $run.Exit 'exit code'
+        Check ($null -ne $run.Report) 'a report was written'
+        if ($null -eq $run.Report) { return }
+        CheckEqual 1 $run.Report.schema 'schema'
+        CheckEqual $root $run.Report.root 'root is the path passed'
+        CheckEqual 'Cancelled' $run.Report.core.status 'core.status'
+        $title = $run.Report.window.OutcomeTitle
+        Check ("$title".StartsWith("Stopped: $root.")) "OutcomeTitle is the Stopped ending ($(Show $title))"
+        Write-Output "        stopped after $($run.Report.core.folders) of $($manifest.Folders) folders"
+    }
+    finally { Remove-CaseFolder $case }
 }
 
 # C-007: a root with a space, passed the way Start-Process passes an array: unquoted, so it splits.
@@ -473,6 +640,27 @@ function Test-C011 {
     }
 }
 
+# C-012: an unhandled exception on the UI thread mid-scan (criterion 12). The app's own handler must end
+# the run: exit 70 and nothing at the report path. A stale report is planted there first, so an absent
+# file is the app's doing. Without the handler the runtime ends the process with 0xE0434352 instead.
+function Test-C012 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'large'
+        [void](New-LargeTree $root)
+        $report = Join-Path $case 'report.json'
+        Set-Content -LiteralPath $report -Value '{"schema":1,"stale":true}'
+        $run = Invoke-HookedRun 'throw' $root $report
+        $before = $script:Failures.Count
+        CheckActed $run 'throw'
+        if ($script:Failures.Count -gt $before) { return }
+        Check ($run.Exit -eq '70') "exit code is the app's 70 (actual $(Show-Exit $run.Exit))"
+        Check (-not (Test-Path -LiteralPath $report)) 'the stale report is gone'
+        Check (-not (Test-Path -LiteralPath "$report.tmp")) 'no .tmp left'
+    }
+    finally { Remove-CaseFolder $case }
+}
+
 # C-013: a root ending in a backslash, which would escape the closing quote if the reader did not
 # double it.
 function Test-C013 {
@@ -503,9 +691,33 @@ function Test-C014 {
     finally { Remove-CaseFolder $case }
 }
 
+# O-016: the window closed while its scan runs, in report mode. WPF exits 0 when the last window closes;
+# the app's Exit handler turns an exit 0 without a report into 70. The 'acted' line is what shows the
+# scan was still running when the window closed: Stop was pressable. A stale report is planted as in C-012.
+function Test-O016 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'large'
+        [void](New-LargeTree $root)
+        $report = Join-Path $case 'report.json'
+        Set-Content -LiteralPath $report -Value '{"schema":1,"stale":true}'
+        $run = Invoke-HookedRun 'close' $root $report
+        $before = $script:Failures.Count
+        CheckActed $run 'close'
+        if ($script:Failures.Count -gt $before) { return }
+        Check ($run.Exit -eq '70') "exit code is 70, not the 0 a closed window gets by default (actual $(Show-Exit $run.Exit))"
+        Check (-not (Test-Path -LiteralPath $report)) 'the stale report is gone'
+        Check (-not (Test-Path -LiteralPath "$report.tmp")) 'no .tmp left'
+    }
+    finally { Remove-CaseFolder $case }
+}
+
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-013', 'C-014' } else { @($Case) }
+$cases = if ($Case -eq 'All') { 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016' } else { @($Case) }
+if (@($cases | Where-Object { $_ -in $HookedCases }).Count -gt 0) {
+    Update-Hook
+}
 Update-App
 $failed = @()
 foreach ($key in $cases) {

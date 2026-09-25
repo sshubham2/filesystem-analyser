@@ -252,3 +252,33 @@ rules:
     because: A reimplemented matcher or a private YAML reader pins the copy. The harness would
       stay green while the engine's glob, skip-dir, size or encoding behaviour changed, which
       is exactly the divergence class this slice measures. Only taad3.fitness may read fitness.yaml.
+
+  # settled by SL-033
+  - name: the shipped app carries no test seam
+    files: src/**
+    must_not_match:
+    - FSA_HOOK_(MODE|LOG)
+    - DOTNET_STARTUP_HOOKS
+    - \bStartupHook\b
+    - FsaWindowHook
+    because: If the app read a hook mode or hosted the driver, C-006, C-012 and O-016 would
+      measure a seam that ships, not the app. The hook must enter from outside through DOTNET_STARTUP_HOOKS
+      only.
+  - name: the hook drives the app from outside and shares no code with it
+    files: tests/window/FsaWindowHook/**
+    must_not_match:
+    - <ProjectReference
+    - using\s+FsAnalyser\b
+    because: A ProjectReference copies a second FsAnalyser.App.dll next to the hook, so the
+      type it binds to is not the one bundled in the single-file exe. It would also couple the
+      driver to app internals. The hook reaches the app only through Application.Current and
+      FindName.
+  - name: the hook never produces the outcome under test
+    files: tests/window/FsaWindowHook/**/*.cs
+    must_not_match:
+    - Environment\.(Exit|FailFast)
+    - \.Shutdown\s*\(
+    - ExitCode\s*=
+    because: 'C-012 and O-016 assert exit 70, which only the app''s own handlers may produce.
+      A hook that exits or shuts down the process makes those cases unable to fail. The throw
+      spike relied on exactly this: with the handler removed the exit was 0xE0434352, not 70.'

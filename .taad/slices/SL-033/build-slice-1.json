@@ -1,0 +1,248 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-033",
+ "stage": "build-slice",
+ "attempt": 1,
+ "at": "2026-09-24T23:44:32.796Z",
+ "head": "105f1a4c870f7995acbe4b668bb2102d694b9d1d",
+ "run_id": 974,
+ "summary": "I built the startup-hook driver as a C# library at tests/window/FsaWindowHook. Its modes are stop, throw and close, and it only acts when CancelButton is enabled and visible, checking and acting in the same dispatcher callback. It stays inert in any process that is not FsAnalyser.App.exe. WindowCases.ps1 now has Update-Hook, which builds the hook through eng/dotnet.ps1 into artifacts/window-hook and stops the run with exit 1 if the build fails. It also has Invoke-WithHook and Invoke-HookedRun, which set the three variables for one launch and always remove them, plus the cases C-006, C-012 and O-016. I added one file the design did not have: tests/window/WindowMutants.ps1, an opt-in runner. It makes each mutant in a scratch copy under %TEMP% and checks that the committed case fails once, for the reason the mutant plants. Results: WindowCases -Case All passed (15 cases, 162 s), WindowMutants -Mutant All passed (6 mutants, 184 s), and the Core tests passed 120/120. The Core tests passed only after I removed the design's SetErrorMode P/Invoke, because an existing architecture rule forbids DllImport under tests/. The repo-local SDK 10.0.401 was installed into the gitignored .dotnet/ by eng/dotnet.ps1, which Q-003 allows.",
+ "payload": {
+  "status": "complete",
+  "summary": "I built the startup-hook driver as a C# library at tests/window/FsaWindowHook. Its modes are stop, throw and close, and it only acts when CancelButton is enabled and visible, checking and acting in the same dispatcher callback. It stays inert in any process that is not FsAnalyser.App.exe. WindowCases.ps1 now has Update-Hook, which builds the hook through eng/dotnet.ps1 into artifacts/window-hook and stops the run with exit 1 if the build fails. It also has Invoke-WithHook and Invoke-HookedRun, which set the three variables for one launch and always remove them, plus the cases C-006, C-012 and O-016. I added one file the design did not have: tests/window/WindowMutants.ps1, an opt-in runner. It makes each mutant in a scratch copy under %TEMP% and checks that the committed case fails once, for the reason the mutant plants. Results: WindowCases -Case All passed (15 cases, 162 s), WindowMutants -Mutant All passed (6 mutants, 184 s), and the Core tests passed 120/120. The Core tests passed only after I removed the design's SetErrorMode P/Invoke, because an existing architecture rule forbids DllImport under tests/. The repo-local SDK 10.0.401 was installed into the gitignored .dotnet/ by eng/dotnet.ps1, which Q-003 allows.",
+  "files": [
+   {
+    "path": "tests/window/FsaWindowHook/FsaWindowHook.csproj",
+    "change": "added",
+    "why": "The hook project: net10.0-windows (from Directory.Build.props), UseWPF, no PackageReference or ProjectReference. It is not in FsAnalyser.slnx."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/StartupHook.cs",
+    "change": "added",
+    "why": "The driver. internal class StartupHook with Initialize, which checks the process path and FSA_HOOK_MODE, then starts a background thread and never throws. WPF code sits behind a NoInlining Drive method. The Pressable gate is IsEnabled && IsVisible. stop raises ButtonBase.ClickEvent, close calls MainWindow.Close(), throw uses Dispatcher.BeginInvoke with an exception. There is a 20 s deadline with a 25 ms poll, and events go to the FSA_HOOK_LOG ASCII log."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "change": "modified",
+    "why": "Adds C-006, C-012 and O-016 to the ValidateSet and the All list. Adds Update-Hook, Invoke-WithHook (sets the variables inside try and removes them with Remove-Item Env: in finally), Invoke-HookedRun (Start-App plus a 60 s Wait-App, so a stale report can be planted), CheckActed and Show-Exit (hex exit codes), and the three case functions. The 12 existing cases are unchanged."
+   },
+   {
+    "path": "tests/window/WindowMutants.ps1",
+    "change": "added",
+    "why": "Opt-in fail-ability runner for O-003, O-004, O-007, O-009 and O-012. Mutants: StopDisabled, StopCollapsed, NoCrashHandler, NoExitRule, HookCompileError, HookLocked. Each is applied as a regex edit that must match exactly once in a %TEMP% scratch copy, and the scratch copy's own WindowCases.ps1 is run. Nothing mutated is committed, and the copy is deleted afterwards."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "done": true,
+    "how": "Test-C006's main step runs New-LargeTree with mode stop and asserts, in order: an 'acted mode=stop' line, exit 0, a schema-1 report, root equal to the path passed, core.status Cancelled, and an OutcomeTitle starting 'Stopped: <root>.'. Passed in 4 runs. The hook acted 519-629 ms after load, and the scan stopped at 550 of 30,150 folders each time."
+   },
+   {
+    "key": "O-002",
+    "done": true,
+    "how": "C-006 builds a fresh New-LargeTree, so the scan starts on a warm cache. In every run the hook acted within one poll of Stop becoming pressable and cancelled at 550 of 30,150 folders. CheckActed runs before anything else and returns early, so a hook that never acted fails under that name and not as an ending mismatch. The StopDisabled and StopCollapsed mutants show this: the scan finished before the hook could act, and C-006 failed exactly once, on 'the hook acted'."
+   },
+   {
+    "key": "O-003",
+    "done": true,
+    "how": "WindowMutants.ps1 -Mutant StopDisabled changes StartScan's `CancelButton.IsEnabled = true;` to false in a scratch copy and republishes. The hook logged 'waiting found=True enabled=False visible=True' and never acted. C-006 exited 1 with one FAIL, 'the hook acted'. Passed twice."
+   },
+   {
+    "key": "O-004",
+    "done": true,
+    "how": "WindowMutants.ps1 -Mutant StopCollapsed adds `CancelButton.Visibility = Visibility.Collapsed;` in StartScan. The hook never saw the button visible and refused. C-006 exited 1 with one FAIL, 'the hook acted'. Passed twice."
+   },
+   {
+    "key": "O-005",
+    "done": true,
+    "how": "In the measured runs the hook's first look was already mid-scan (no 'waiting' line before 'acted'), so the main run never showed this shape. I added a no-scan step to Test-C006: the app opens with no root, where CancelButton is enabled by its XAML default but hidden (ScanningPanel is collapsed). The step asserts the log line 'waiting found=True enabled=True visible=False', no 'acted' line, and one 'refused mode=stop' line after 20 s. It passes every run. IsVisible already gates the pre-scan state, so the _scanning fallback was not needed."
+   },
+   {
+    "key": "O-006",
+    "done": true,
+    "how": "Test-C012 plants a stale report, then runs mode throw, which posts an exception to the dispatcher mid-scan. It asserts an 'acted mode=throw' line, exit exactly 70 (shown in hex on failure), and neither the report nor a .tmp left. Passed in 3 runs."
+   },
+   {
+    "key": "O-007",
+    "done": true,
+    "how": "WindowMutants.ps1 -Mutant NoCrashHandler removes the DispatcherUnhandledException block from App.xaml.cs. C-012 then failed exactly once: 'exit code is the app's 70 (actual -532462766 (0xE0434352))'. Passed 3 times, including once after SetErrorMode was removed from the hook, with a prompt exit and no crash dialog."
+   },
+   {
+    "key": "O-008",
+    "done": true,
+    "how": "Test-O016 plants a stale report, then runs mode close, which calls MainWindow.Close() while Stop is pressable. It asserts an 'acted mode=close' line (proof the close was mid-scan), exit 70, and neither the report nor a .tmp left. Passed in 3 runs."
+   },
+   {
+    "key": "O-009",
+    "done": true,
+    "how": "WindowMutants.ps1 -Mutant NoExitRule removes the Exit handler, which is the rule that turns exit 0 without a file into 70. O-016 then failed exactly once: 'exit code is 70 ... (actual 0 (0x00000000))'. Passed twice."
+   },
+   {
+    "key": "O-010",
+    "done": true,
+    "how": "Test-C006 has a cleanup step. It calls Invoke-WithHook with an action that throws after all three variables are set, then asserts the throw reached the case and that DOTNET_STARTUP_HOOKS, FSA_HOOK_MODE and FSA_HOOK_LOG are all absent. They are removed with Remove-Item Env: and never blanked. Every hooked launch uses the same finally."
+   },
+   {
+    "key": "O-011",
+    "done": true,
+    "how": "Test-C006 runs `pwsh -NoProfile -Command exit 0` under DOTNET_STARTUP_HOOKS=<hook> and FSA_HOOK_MODE=close. pwsh here is 7.6.6 on .NET 10.0.12. It asserts exit 0 and an empty log. A control run first shows the same pwsh with a missing hook dll exits 0xE0434352, so pwsh really runs startup hooks and the inert result is not vacuous. Passed every run."
+   },
+   {
+    "key": "O-012",
+    "done": true,
+    "how": "Two mutants cover this. HookCompileError builds the hook once in a scratch copy, adds `#error`, and runs C-006. HookLocked builds once, changes the source, holds the dll open with a share-read FileStream, and runs C-006. Both assert exit 1, the line 'FAILED: the hook did not build (exit 1), so no case ran', the build error in the output (CS1029, or MSB3027/MSB3021), that no C-006 line appears, and that the earlier dll is still there with the same hash, so it was refused and not missing. Both passed twice."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "test_name": "tests/window/WindowCases.ps1::Test-C006",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case C-006"
+   },
+   {
+    "key": "C-002",
+    "test_name": "tests/window/WindowCases.ps1::Test-C006",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case C-006"
+   },
+   {
+    "key": "C-002",
+    "test_name": "tests/window/WindowMutants.ps1::StopDisabled (the scan ends before the hook can act; C-006 fails only on 'the hook acted')",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowMutants.ps1 -Mutant StopDisabled"
+   },
+   {
+    "key": "C-003",
+    "test_name": "tests/window/WindowMutants.ps1::StopDisabled",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowMutants.ps1 -Mutant StopDisabled"
+   },
+   {
+    "key": "C-004",
+    "test_name": "tests/window/WindowMutants.ps1::StopCollapsed",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowMutants.ps1 -Mutant StopCollapsed"
+   },
+   {
+    "key": "C-005",
+    "test_name": "tests/window/WindowCases.ps1::Test-C006 (no-scan step)",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case C-006"
+   },
+   {
+    "key": "C-006",
+    "test_name": "tests/window/WindowCases.ps1::Test-C012",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case C-012"
+   },
+   {
+    "key": "C-007",
+    "test_name": "tests/window/WindowMutants.ps1::NoCrashHandler",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowMutants.ps1 -Mutant NoCrashHandler"
+   },
+   {
+    "key": "C-008",
+    "test_name": "tests/window/WindowCases.ps1::Test-O016",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case O-016"
+   },
+   {
+    "key": "C-009",
+    "test_name": "tests/window/WindowMutants.ps1::NoExitRule",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowMutants.ps1 -Mutant NoExitRule"
+   },
+   {
+    "key": "C-010",
+    "test_name": "tests/window/WindowCases.ps1::Test-C006 (cleanup step)",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case C-006"
+   },
+   {
+    "key": "C-011",
+    "test_name": "tests/window/WindowCases.ps1::Test-C006 (inert-host step with control)",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case C-006"
+   },
+   {
+    "key": "C-012",
+    "test_name": "tests/window/WindowMutants.ps1::HookCompileError",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowMutants.ps1 -Mutant HookCompileError"
+   },
+   {
+    "key": "C-012",
+    "test_name": "tests/window/WindowMutants.ps1::HookLocked",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowMutants.ps1 -Mutant HookLocked"
+   }
+  ],
+  "deviations": [
+   "I committed an opt-in mutant runner, tests/window/WindowMutants.ps1. The design said to prove fail-ability only on validate's scratch copies and to commit no mutant builds or mutant source. But O-003, O-004, O-007, O-009 and O-012 were handed to build-slice, and each requires a named test with a runnable command. The design stage's own open item also called a fail-ability proof kept outside the repo 'the shape this slice exists to fix'. Mutant source and builds are still never committed: the script makes each mutant as a one-match regex edit in a %TEMP% copy and deletes the copy. It is not in WindowCases -Case All, so the design's concern (three 140 MB publishes on every suite run) does not apply.",
+   "I dropped SetErrorMode from throw mode. The design put it there to suppress WER, but it needs a DllImport, and an existing architecture rule forbids DllImport/LibraryImport in tests/**/*.cs outside TestNative.cs (InteropLivesOnlyInNative, in both ArchitectureRulesTests and fitness.yaml). The first `eng/dotnet.ps1 test FsAnalyser.slnx` failed on exactly that, 1 of 120. With the call removed, the NoCrashHandler mutant still exits -532462766 (0xE0434352) promptly, with no crash dialog and no lingering WerFault, and the Core tests pass 120/120. On a machine where WER shows UI, a regressed handler would appear as TIMEOUT after 60 s. C-012 still fails in that case, but without naming the hex code.",
+   "I added three steps to Test-C006 beyond the design's inert-host step. (1) A control: pwsh with a missing hook dll must exit non-zero, which shows pwsh runs startup hooks, so the inert check is not vacuous. (2) A cleanup-after-throw step for O-010. (3) A no-scan step for O-005, because the measured runs showed the hook's first look was always already mid-scan, so the main run never showed the pressable-before-scan shape. C-006 now takes about 25 s, most of it the hook's 20 s deadline in the no-scan step.",
+   "Some wiring is shaped differently from the design. Invoke-HookedRun launches through Start-App and Wait-App (60 s), not eng/read-window.ps1: read-window picks its own report path, so no stale report can be planted there. The design allowed this. The set/remove of the variables is factored into Invoke-WithHook so the inert-host and cleanup steps share it. Update-Hook runs before Update-App, so a broken hook fails without a 140 MB publish. The dll path is a script constant ($HookDll) rather than Update-Hook's return value, because Update-Hook prints output and a PowerShell function's printed output would mix with its return value."
+  ],
+  "not_built": [
+   "SetErrorMode(SEM_NOGPFAULTERRORBOX|SEM_FAILCRITICALERRORS) in throw mode. It is blocked by the existing InteropLivesOnlyInNative rule, and measured here as not needed; see deviations."
+  ],
+  "follow_ups": [
+   "A person should decide whether InteropLivesOnlyInNative should exempt tests/window/FsaWindowHook, so the hook can call SetErrorMode on machines where WER shows a crash dialog. Today a regressed crash handler on such a machine fails C-012 as TIMEOUT rather than 0xE0434352.",
+   "Validate's O-013 (the hook cannot produce the outcome) can be measured with `WindowMutants.ps1 -Mutant NoCrashHandler` and `-Mutant NoExitRule`. O-014 (the hook meets the user's gate) can be measured with `-Mutant StopDisabled`, `-Mutant StopCollapsed` and C-006's no-scan step. The design's 30-run repeat of stop and close against the committed hook has not been done: I ran each hooked case 3 to 4 times.",
+   "C-006 spends about 20 s waiting out the hook's fixed deadline in the no-scan step. If suite time matters, a shorter deadline for that one launch would need a contract addition, such as an FSA_HOOK_DEADLINE variable.",
+   "HookLocked stands in for 'dll locked by a leftover FsAnalyser.App.exe' with a FileStream that allows reading only. A real leftover app process with the dll mapped was not exercised.",
+   "HookLocked's output is noisy: MSBuild prints its 10 MSB3026 copy retries twice. The build output could be filtered to its error lines when Update-Hook fails."
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 --list-sdks",
+    "outcome": "passed",
+    "note": "Installed the repo-local SDK 10.0.401 into the gitignored .dotnet/ (a 300 MB download; Q-003 allows it)."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o artifacts/publish",
+    "outcome": "passed",
+    "note": "FsAnalyser.App.exe, 139,777,176 bytes."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build tests/window/FsaWindowHook/FsaWindowHook.csproj -c Release -o artifacts/window-hook",
+    "outcome": "passed",
+    "note": "0 warnings, 0 errors. FsaWindowHook.dll is 9,728 bytes (the build that still had the DllImport)."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case C-006",
+    "outcome": "passed",
+    "note": "4 runs, including the one inside -Case All. The last run was against the final hook."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case C-012",
+    "outcome": "passed",
+    "note": "3 runs. Exit 70, stale report gone. The last run was against the final hook, without SetErrorMode."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case O-016",
+    "outcome": "passed",
+    "note": "3 runs. Exit 70, stale report gone."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case All",
+    "outcome": "passed",
+    "note": "All 15 cases passed in 162 s. This ran before SetErrorMode was removed; the three hooked cases were re-run separately afterwards and passed. The 12 existing cases do not load the hook."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx",
+    "outcome": "failed",
+    "note": "First run: 119/120. ArchitectureRulesTests.InteropLivesOnlyInNative flagged the DllImport lines in tests/window/FsaWindowHook/StartupHook.cs, so I removed SetErrorMode."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx",
+    "outcome": "passed",
+    "note": "After removing the DllImport: 120/120. The solution does not build the hook."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowMutants.ps1 -Mutant All",
+    "outcome": "passed",
+    "note": "All 6 mutants failed their case as planted, in 184 s, against the final code. Each had also been run on its own earlier and passed. No scratch copies were left in %TEMP%\\fsa-window-mutants."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/rules-parity.ps1",
+    "outcome": "passed",
+    "note": "AGREE, 7 facts. fitness.yaml, including the three SL-033 rules the design stage appended, still agrees with ArchitectureRulesTests. A grep of the must_not_match patterns over src/ and tests/window/FsaWindowHook/ found no matches."
+   },
+   {
+    "command": "pwsh -NoProfile -Command exit 0 (with DOTNET_STARTUP_HOOKS set to a missing dll)",
+    "outcome": "passed",
+    "note": "This was a measurement, not a test: exit -532462766 with 'Startup hook assembly ... failed to load'. It shows pwsh 7.6.6 (.NET 10.0.12) runs startup hooks. C-006's control step is built on it."
+   }
+  ]
+ }
+}
