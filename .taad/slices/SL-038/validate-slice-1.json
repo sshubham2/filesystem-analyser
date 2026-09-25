@@ -1,0 +1,216 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-038",
+ "stage": "validate-slice",
+ "attempt": 1,
+ "at": "2026-09-25T07:22:55.170Z",
+ "head": "eafb1c3b154069c4c1ab1b1b620533c61776f712",
+ "run_id": 1023,
+ "summary": "Option (b) behaves as designed everywhere I could reach it, but I could not reach the one environment it was built for: a real stalled SMB share. The permission layer refused `WindowCases.ps1 -Case All -IncludeNetwork` as \"Modify Shared Resources\", so N-001 to N-004 and the SMB-LOOPBACK StalledShareTests are still unrun. The design assigned that run to validate, and it is the only positive proof on the stalled share. Nobody has yet seen the wait line appear, count to about 60 s and clear through a real SMB stall, and the Cancel-to-return figure is not recorded.\n\nWhat I ran:\n- **Build:** 0 warnings, 0 errors.\n- **Default suite:** 149 of 149 passed. The 29 new tests (StoppingWaitTests and SmbRigTests) passed 29 of 29 on their own.\n- **Fitness:** all 25 rules hold, after a CodeGraph rebuild.\n- **Default window run:** all 15 cases passed. C-006 returned 13 ms after Cancel, with no wait line and a final line at shutdown.\n\nIn place of the refused run, I built a scratch copy of the hook in %TEMP%. It swaps MainWindow._cancel by reflection, so the scan's cancel arrives late or never, and I ran it against the published exe on C:\\Windows. No SMB mapping was involved. Through the real window:\n- **Cancel held back 6 s:** the line first showed at 2153 ms. There were 14 lines, all worded and counted correctly. The longest UI-thread gap was 493 ms. The line was cleared at return and at shutdown, and the scan ended Cancelled with a Stopped title.\n- **Cancel never delivered (the \"finished on its own\" shape):** the line first showed at 2032 ms and there were 100 lines up to 31 s. The longest gap was 720 ms, the line was cleared at return, and the scan ended Completed.\n- **New scan after a cancel that had shown the line:** 16 ticks over 4.4 s all showed \"Reading ...\", no wait line and Cancel enabled.\n- **Close while the line was showing:** window gone in 8 ms, process in 39 ms, exit 0.\n- **Close with no Cancel first:** window gone in 12 ms, process in 85 ms.\n\nI also ran the committed hook with an armed marker that never appears. It refused after 60 s and said why.\n\nSMB mappings were the same before and after: only the person's own Z:. The scratch folder has been deleted and the worktree is unchanged.\n\nNot reached:\n- the faulted ending (nothing can trigger it without a code seam)\n- the 90 s wording shown in the real app\n- a real spun-down disk\n- O-001's real disconnects (Wi-Fi off, tailscale down, sleep), which are off-limits to me\n\nC2 is still open. The only decision on record for (b) is O-002's discharge, which was model contact and not the person's own acceptance.\n\nThe slice index shows one attempt per stage, so it is not looping.",
+ "payload": {
+  "status": "complete",
+  "verdict": "partial",
+  "contact": "code",
+  "summary": "Option (b) behaves as designed everywhere I could reach it, but I could not reach the one environment it was built for: a real stalled SMB share. The permission layer refused `WindowCases.ps1 -Case All -IncludeNetwork` as \"Modify Shared Resources\", so N-001 to N-004 and the SMB-LOOPBACK StalledShareTests are still unrun. The design assigned that run to validate, and it is the only positive proof on the stalled share. Nobody has yet seen the wait line appear, count to about 60 s and clear through a real SMB stall, and the Cancel-to-return figure is not recorded.\n\nWhat I ran:\n- **Build:** 0 warnings, 0 errors.\n- **Default suite:** 149 of 149 passed. The 29 new tests (StoppingWaitTests and SmbRigTests) passed 29 of 29 on their own.\n- **Fitness:** all 25 rules hold, after a CodeGraph rebuild.\n- **Default window run:** all 15 cases passed. C-006 returned 13 ms after Cancel, with no wait line and a final line at shutdown.\n\nIn place of the refused run, I built a scratch copy of the hook in %TEMP%. It swaps MainWindow._cancel by reflection, so the scan's cancel arrives late or never, and I ran it against the published exe on C:\\Windows. No SMB mapping was involved. Through the real window:\n- **Cancel held back 6 s:** the line first showed at 2153 ms. There were 14 lines, all worded and counted correctly. The longest UI-thread gap was 493 ms. The line was cleared at return and at shutdown, and the scan ended Cancelled with a Stopped title.\n- **Cancel never delivered (the \"finished on its own\" shape):** the line first showed at 2032 ms and there were 100 lines up to 31 s. The longest gap was 720 ms, the line was cleared at return, and the scan ended Completed.\n- **New scan after a cancel that had shown the line:** 16 ticks over 4.4 s all showed \"Reading ...\", no wait line and Cancel enabled.\n- **Close while the line was showing:** window gone in 8 ms, process in 39 ms, exit 0.\n- **Close with no Cancel first:** window gone in 12 ms, process in 85 ms.\n\nI also ran the committed hook with an armed marker that never appears. It refused after 60 s and said why.\n\nSMB mappings were the same before and after: only the person's own Z:. The scratch folder has been deleted and the worktree is unchanged.\n\nNot reached:\n- the faulted ending (nothing can trigger it without a code seam)\n- the 90 s wording shown in the real app\n- a real spun-down disk\n- O-001's real disconnects (Wi-Fi off, tailscale down, sleep), which are off-limits to me\n\nC2 is still open. The only decision on record for (b) is O-002's discharge, which was model contact and not the person's own acceptance.\n\nThe slice index shows one attempt per stage, so it is not looping.",
+  "checks": [
+   {
+    "what": "Build the solution",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build FsAnalyser.slnx -nologo -v q",
+    "outcome": "passed",
+    "evidence": "Build succeeded. 0 Warning(s), 0 Error(s). EXIT=0"
+   },
+   {
+    "what": "Default test suite (SMB-LOOPBACK and TEST-NET-1 traits excluded by the csproj filter)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx -nologo --no-build",
+    "outcome": "passed",
+    "evidence": "Passed! Failed: 0, Passed: 149, Skipped: 0, Total: 149. EXIT=0"
+   },
+   {
+    "what": "This slice's new unit tests on their own",
+    "command": "eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --no-build --filter \"FullyQualifiedName~StoppingWaitTests|FullyQualifiedName~SmbRigTests\"",
+    "outcome": "passed",
+    "evidence": "Passed: 29, Failed: 0. Includes the TheWordingAtEachBoundary theory at -5 s, -1 ms, 0, 1.999 s, 2 s, 89.999 s, 90 s and 3600 s, and the one-tick facts at 2 s and 90 s. SmbRigTests cover RigLock and the IsRigMapping regex only, and make no SMB mapping."
+   },
+   {
+    "what": "Architecture rules",
+    "command": "CodeGraph op=rebuild; Fitness op=check",
+    "outcome": "passed",
+    "evidence": "25 rules checked against 52 parsed files, and every declared rule holds. This includes the pure-function rule on the stopping wording, the no-abandon rule and the three mapping-only-in-SmbRig.cs rules. One match of the SMB-mapping rule is in a comment and is not counted."
+   },
+   {
+    "what": "Default window cases through the published exe",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case All",
+    "outcome": "passed",
+    "evidence": "PASSED: C-001 to C-014 and O-016, exit 0, 154 s. C-006: 'returned ms=13 title=Stopping... detail=-', final line detail '-', and no stopping line showed the wait line. NOT RUN: N-001, N-002, N-003, N-004."
+   },
+   {
+    "what": "Opt-in stalled-share window cases N-001 to N-004 (the design assigns this run to validate)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case All -IncludeNetwork",
+    "outcome": "not-run",
+    "evidence": "Refused by the harness permission classifier, reason [Modify Shared Resources]: the run creates and removes SMB client mappings. It did not start. Per the denial I did not pursue the same outcome another way."
+   },
+   {
+    "what": "StalledShareTests on the extracted rig (Network=SMB-LOOPBACK)",
+    "command": "eng/dotnet.ps1 test ... --filter Network=SMB-LOOPBACK",
+    "outcome": "not-run",
+    "evidence": "Makes the same SMB mapping change as the refused run above, so it is covered by the same denial and was not attempted."
+   },
+   {
+    "what": "SMB mappings before and after this validation (read-only)",
+    "command": "Get-SmbMapping",
+    "outcome": "passed",
+    "evidence": "Before and after, only Z: -> \\\\100.109.48.75\\collab (status OK). No \\\\127.0.0.1\\fsa* mapping existed, so the rig's sweep would have had nothing to remove. No StallRig, FsAnalyser or testhost processes were running. SMB client SessionTimeout 60. Windows 10.0.26200."
+   },
+   {
+    "what": "Wait line through the real exe on a local tree, with the scan's cancel held back 6 s (scratch hook in %TEMP% swaps MainWindow._cancel by reflection)",
+    "command": "scratch run.ps1 -Root C:\\Windows -DelayCancelMs 6000 (published artifacts/publish/FsAnalyser.App.exe, --report)",
+    "outcome": "passed",
+    "evidence": "exit 0. Last blank tick at 1755 ms, first line at 2153 ms, then 14 lines with 0 blank ticks after. 0 wording or count violations against the pinned text. Longest UI-thread gap from Cancel to return 493 ms. Real cancel at 6012 ms, 'returned ms=6017 detail=-', final line detail '-'. core.status Cancelled, OutcomeTitle 'Stopped: C:\\Windows...'."
+   },
+   {
+    "what": "'Finished on its own after Cancel' shape: cancel never delivered",
+    "command": "scratch run.ps1 -Root C:\\Windows -DelayCancelMs 0",
+    "outcome": "passed",
+    "evidence": "exit 0. First line at 2032 ms, 100 lines shown from 2 s to 31 s, 0 violations. Longest gap 720 ms. 'returned ms=32007 detail=-', final detail '-'. core.status Completed, 'Finished: C:\\Windows', 'Read in 32.0 s'."
+   },
+   {
+    "what": "New scan after a cancel that showed the wait line",
+    "command": "scratch run.ps1 -Root C:\\Windows -DelayCancelMs 5000 -NextRoot C:\\Windows\\WinSxS -Interactive",
+    "outcome": "passed",
+    "evidence": "The first scan showed the line from 2075 to 4864 ms and returned at 5012 ms with detail '-'. The second scan was started via reflection on StartScan 500 ms later. All 16 ticks over 4431 ms show 'title=Reading C:\\Windows\\WinSxS detail=- scanning=True cancelEnabled=True'. Closing mid-scan exited 0."
+   },
+   {
+    "what": "Close the window while the wait line is on screen (local, scan thread running, not blocked in SMB)",
+    "command": "scratch close.ps1 -Root C:\\Windows -CancelMs 1500 -CloseMs 5000 (armed close, marker pre-written, cancel held back)",
+    "outcome": "passed",
+    "evidence": "The close was logged with detail 'Still waiting for the drive to answer (3 s)...'. 'closed' came 8 ms after Close, the process exited 39 ms after Close, exit 0."
+   },
+   {
+    "what": "Close mid-scan with no prior Cancel (local)",
+    "command": "scratch close.ps1 -Root C:\\Windows -CancelMs 0 -CloseMs 3000",
+    "outcome": "passed",
+    "evidence": "Window gone 12 ms after Close, process gone 85 ms after, exit 0, no wait line ever shown."
+   },
+   {
+    "what": "Committed hook with an armed marker that never appears",
+    "command": "artifacts/window-hook/FsaWindowHook.dll, FSA_HOOK_MODE=stop, FSA_HOOK_ARMED=<missing file>, FSA_HOOK_CANCEL_DELAY_MS=3000, interactive app on a 1-file temp tree",
+    "outcome": "passed",
+    "evidence": "After 60 s: 'refused mode=stop reason=the rig's marker ...never.txt did not appear within 60 s, so the stall never armed'. The app was left running, and I killed that process myself."
+   },
+   {
+    "what": "Read the src change: EndStopping placement, OnCancel clock, no abandon",
+    "command": "git diff f3c3dfa eafb1c3 -- src/; Read MainWindow.xaml.cs",
+    "outcome": "passed",
+    "evidence": "_stoppingClock is started only in OnCancel (:238). ShowStopping runs on the 250 ms DispatcherTimer (:35-39) and derives its text only from the clock. EndStopping is in StartScan's single finally (:170), after the volume query, before ScanningPanel collapses. The scan is still awaited in full (:151). The only WaitAsync is on the post-scan volume query (:199)."
+   },
+   {
+    "what": "Faulted ending while the Stopping state shows",
+    "outcome": "not-run",
+    "evidence": "No seam can make Scanner.Scan throw after Cancel. The token is registered once per scan and only IsCancellationRequested is polled, so disposing the source does not fault it. The SL-033 rule forbids adding a seam. It rests on reading the single finally."
+   },
+   {
+    "what": "90 s no-estimate wording shown in the real window",
+    "outcome": "not-run",
+    "evidence": "No local root outside the person's own folders keeps a scan running for more than 90 s after Cancel (C:\\Windows finishes in 32 s). Scanning C:\\ would read the person's folders. The branch is pinned only by the unit tests."
+   },
+   {
+    "what": "Real disconnects: Wi-Fi off, tailscale down, sleep ~2 min mid-scan, 3 runs each plus a timed Close per mode (O-001)",
+    "outcome": "not-run",
+    "evidence": "Changing network state or sleeping the PC is off-limits to this stage. Spike real-disconnect-wait-matches-rig also recorded 0 of 9. Only the person can run these."
+   },
+   {
+    "what": "Loop check on the slice index",
+    "command": "Get-Content .taad/slices/SL-038/index.json",
+    "outcome": "passed",
+    "evidence": "Every stage has at most one attempt and caused_by is null throughout, so there is no loop."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "1. cancel a scan -- local tree, the scan returns within 2 s of Cancel",
+    "met": "yes",
+    "how": "WindowCases C-006 through the published exe: 'returned ms=13', no wait line on any stopping line, final line at shutdown, core.status Cancelled."
+   },
+   {
+    "criterion": "2. cancel a scan of a stalled SMB share -- session established, server stops answering, Cancel pressed 3 s after the stall is armed",
+    "met": "not-checked",
+    "how": "N-001 was refused by the permission layer (Modify Shared Resources). The local analogue passed: with the cancel held back, the line first showed at 2153 ms and counted correctly, the longest UI gap was 493 ms, and the line cleared at return with a Cancelled ending. But that is not an SMB stall, and the scan thread was never blocked in a kernel call."
+   },
+   {
+    "criterion": "3. the stalled scan finally returns -- when the SMB client gives up (about 57-66 s on the rig)",
+    "met": "not-checked",
+    "how": "No SMB run happened, so the Cancel-to-return figure through the app is still unrecorded. The 57-66 s range comes from spike 1 and the C1 baseline, not from this run."
+   },
+   {
+    "criterion": "4. choose the wording for an elapsed time -- 1.999 s, 2.0 s, 89.999 s, 90 s, negative TimeSpan",
+    "met": "yes",
+    "how": "StoppingWaitTests passed 29 of 29 with SmbRigTests, including the boundary Theory and the one-tick Facts at 2 s and 90 s. The pre-90 s wording also matched in the real window, with 0 violations across 114 shown lines. The 90 s wording was never rendered in the app."
+   },
+   {
+    "criterion": "5. close the window while the wait line is shown -- stalled share, Cancel then Close, and Close with no prior Cancel",
+    "met": "not-checked",
+    "how": "The stalled-share condition (N-002) was refused. The local analogue passed: with the line on screen, the window was gone in 8 ms and the process in 39 ms. With no Cancel, 12 ms and 85 ms. Both exited 0. Spike 4 measured 6 of 6 on the rig."
+   },
+   {
+    "criterion": "6. scan ends while the Stopping state is showing -- cancelled cleanly, faulted, or finished on its own before the cancel took effect",
+    "met": "not-checked",
+    "how": "Two of the three shapes were fed through the real exe by the scratch hook. Cancelled after the line showed: returned and final lines had detail '-', status Cancelled. Finished on its own: the line showed to 31 s and cleared at return, status Completed. The faulted shape was not fed, because no seam exists for it."
+   },
+   {
+    "criterion": "7. run the stall rig -- another run's fsa<8hex> mapping already exists (two rig runs at once)",
+    "met": "not-checked",
+    "how": "N-003 and N-004 were refused. SmbRigTests passed: lock serialisation, a killed holder not blocking the next run, and a sweep filter that exact-matches \\\\127.0.0.1\\fsa + 8 hex. None of them made a real mapping."
+   },
+   {
+    "criterion": "8. start a new scan after a stalled cancel -- previous scan ended after the wait line had been shown",
+    "met": "yes",
+    "how": "Scratch probe: after a cancel whose line showed from 2.0 to 4.9 s, a second scan was started via StartScan. Every tick over 4.4 s showed 'Reading C:\\Windows\\WinSxS', detail '-' and Cancel enabled. The earlier cancel was a held-back local one, not an SMB stall, and the second scan was started by reflection, not a button."
+   },
+   {
+    "criterion": "9. show the wait line for a local drive that stalls -- spun-down local disk taking more than 2 s to cancel",
+    "met": "yes",
+    "how": "On a local drive (C:\\Windows) whose cancel took more than 2 s, the real window showed the line at 2.0-2.2 s with the pinned wording. The delay was synthetic (cancel held back), not a spun-down disk. The app's clock-only path cannot tell the two apart."
+   },
+   {
+    "criterion": "10. the hook reads UI text -- read from the hook's own thread instead of the UI thread",
+    "met": "yes",
+    "how": "By reading StartupHook.cs: every FindName and text read runs inside Dispatcher.Invoke, a DispatcherTimer on app.Dispatcher, the Visibility value-changed handler or ShutdownStarted. By running: across 7 hooked launches (1 in C-006, 6 in my probes), no cross-thread refusal was logged."
+   },
+   {
+    "criterion": "11. the wait on a real disconnect -- Wi-Fi off, tailscale down, sleep and resume mid-scan",
+    "met": "not-checked",
+    "how": "Off-limits to this stage, which may not change network state or sleep the PC. O-001 is still owed and only the person can run it."
+   },
+   {
+    "criterion": "12. the hook waits for the armed marker -- marker never appears before the case timeout",
+    "met": "yes",
+    "how": "The committed hook with a missing marker logged 'refused mode=stop reason=the rig's marker ... did not appear within 60 s, so the stall never armed' and pressed nothing. The deadline is a fixed 60 s from hook load, as code review noted."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "verified": "cannot-tell",
+    "evidence": "The real-disconnect protocol (Wi-Fi off, tailscale down, sleep about 2 min, 3 runs each, plus one timed Close per mode) needs the person's network state changed and the PC slept. Both are forbidden to this stage, and spike real-disconnect-wait-matches-rig also got 0 of 9. 'A minute or more' still rests only on the loopback rig and SessionTimeout 60. It stays owed to a person."
+   },
+   {
+    "key": "O-017",
+    "verified": "cannot-tell",
+    "evidence": "Owed to build-slice, not to me. For the record: I fed the 'finished on its own' shape through the real exe (cancel never delivered: line to 31 s, cleared at return, Completed). I also fed a cancelled-cleanly shape with the line shown (held back 6 s: cleared at return, Cancelled). The faulted shape is still fed by nothing."
+   }
+  ],
+  "not_reached": [
+   "N-001 through a real SMB stall: the wait line appearing 1.9-3 s after Cancel, counting to about 60 s with the UI thread live, and clearing at return, plus the measured Cancel-to-return figure. The -IncludeNetwork run was refused by the permission layer and needs a person to run it or to allow SMB mapping changes.",
+   "N-002 on the stalled share: whether closing the window ends the process while the scan thread is blocked inside an SMB kernel call. My local close probes ran a scan thread that was not blocked.",
+   "N-003 and N-004 with real mappings: RigLock serialising two rig runs on 127.0.0.1, and the sweep removing a killed run's leftover mapping.",
+   "StalledShareTests (Network=SMB-LOOPBACK) after the rig was moved into Rig/SmbRig.cs. It compiles but has never run since the move.",
+   "O-001: timed real disconnects (Wi-Fi off, tailscale down, sleep and resume), including one timed Close per mode.",
+   "The 90 s no-estimate wording shown in the real window. It is pinned only by unit tests.",
+   "The faulted ending while the Stopping state shows.",
+   "A real spun-down local disk. The >2 s local cancel here was synthetic.",
+   "The person's own acceptance of option (b) (C2). O-002 was discharged with model contact, not a person's decision.",
+   "RigLock uses a Local\\ (per-session) mutex, so two rig runs from different sign-in sessions are not serialised. Untested."
+  ],
+  "planned": []
+ }
+}

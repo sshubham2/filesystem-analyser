@@ -16,11 +16,22 @@
 # The oracle is the tree each case builds, never the report's own "core" section. Every non-empty file
 # is a multiple of 64 KiB and every other file is empty, so the size on disk equals the size on any
 # NTFS volume with clusters of 64 KiB or less, without asking the volume.
+#
+# N-001 to N-004 (SL-038) run against a share whose server stops answering: tests/window/StallRig, an
+# SMBLibrary server on 127.0.0.1 reached through a non-persistent SMB mapping that the rig makes and
+# removes itself (tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs, the only file allowed to). They change this machine's SMB client mappings while
+# they run, and N-001 and N-002 take about 70 s each, so they run only with -IncludeNetwork, like the
+# Network=SMB-LOOPBACK trait in Core.Tests. Without it they are reported NOT RUN, never passed: -Case All
+# still exits 0 on the cases that ran, and a network case named on its own exits 2. The default run proves
+# only that the Stopping state's wait line does NOT appear on an ordinary cancel (C-006); that it appears,
+# counts up, keeps the UI live and goes when the scan returns is N-001's.
 
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016')]
-    [string] $Case
+    [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
+        'N-001', 'N-002', 'N-003', 'N-004')]
+    [string] $Case,
+    [switch] $IncludeNetwork
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,8 +41,12 @@ $Exe = Join-Path $Repo 'artifacts\publish\FsAnalyser.App.exe'
 $Reader = Join-Path $Repo 'eng\read-window.ps1'
 $HookProject = Join-Path $Repo 'tests\window\FsaWindowHook\FsaWindowHook.csproj'
 $HookDll = Join-Path $Repo 'artifacts\window-hook\FsaWindowHook.dll'
-$HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG'
-$HookedCases = 'C-006', 'C-012', 'O-016'
+$RigProject = Join-Path $Repo 'tests\window\StallRig\StallRig.csproj'
+$RigExe = Join-Path $Repo 'artifacts\stall-rig\StallRig.exe'
+$HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS'
+$HookedCases = 'C-006', 'C-012', 'O-016', 'N-001', 'N-002'
+$NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004'
+$RigOnlyCases = 'N-003', 'N-004'
 $KiB64 = 64KB
 $script:Failures = [System.Collections.Generic.List[string]]::new()
 
@@ -212,6 +227,29 @@ function Update-Hook {
     }
 }
 
+# Builds the stall rig into artifacts/stall-rig on every run that selects a network case, the way
+# Update-Hook builds the hook, and ends the run the same way when it does not build.
+function Update-StallRig {
+    $mutex = [System.Threading.Mutex]::new($false, 'Local\FsAnalyser-WindowCases-StallRig')
+    [void]$mutex.WaitOne()
+    try {
+        Write-Output 'building the stall rig (eng/dotnet.ps1 build)'
+        $output = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'eng\dotnet.ps1') build $RigProject `
+                -c Release -o (Split-Path -Parent $RigExe) 2>&1)
+        $exit = $LASTEXITCODE
+    }
+    finally {
+        $mutex.ReleaseMutex()
+        $mutex.Dispose()
+    }
+    $output | Select-Object -Last 3 | ForEach-Object { "  $_" }
+    if ($exit -ne 0 -or -not (Test-Path -LiteralPath $RigExe -PathType Leaf)) {
+        $output | ForEach-Object { "  $_" }
+        Write-Output "FAILED: the stall rig did not build (exit $exit), so no case ran"
+        exit 1
+    }
+}
+
 # Through eng/read-window.ps1, the way validate reads the window.
 function Read-Window([string] $root, [int] $timeoutSec = 120) {
     $lines = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $Reader -Root $root -Exe $Exe -TimeoutSec $timeoutSec)
@@ -253,14 +291,19 @@ function Invoke-App($arguments, [int] $timeoutSec = 60) {
 # Runs $action with the hook's three variables set, in this process and whatever it launches, and
 # removes them however $action ends, so a case that throws leaves every later case unhooked. Removed,
 # never blanked: an empty DOTNET_STARTUP_HOOKS writes errors to the Application log (dotnet/runtime#82260).
+# $armed holds the stall-rig timing variables (FSA_HOOK_ARMED and the delays), set and removed the same way.
 # Returns what $action output and the hook's log lines.
-function Invoke-WithHook([string] $mode, [string] $hookDll, [scriptblock] $action) {
+function Invoke-WithHook([string] $mode, [string] $hookDll, [scriptblock] $action, [hashtable] $armed = @{}) {
     $log = Join-Path ([System.IO.Path]::GetTempPath()) ("fsa-window-hook\{0}.log" -f [guid]::NewGuid().ToString('N'))
     try {
         [void][System.IO.Directory]::CreateDirectory((Split-Path -Parent $log))
         $env:DOTNET_STARTUP_HOOKS = $hookDll
         $env:FSA_HOOK_MODE = $mode
         $env:FSA_HOOK_LOG = $log
+        foreach ($name in $armed.Keys) {
+            if ($name -notin $HookVariables) { throw "Invoke-WithHook: $name is not a hook variable" }
+            Set-Item -LiteralPath "Env:$name" -Value $armed[$name]
+        }
         $result = & $action
         [pscustomobject]@{
             Result = $result
@@ -306,6 +349,205 @@ function CheckActed($run, [string] $mode) {
 function Show-Exit([string] $exit) {
     $code = 0
     if ([int]::TryParse($exit, [ref]$code)) { '{0} (0x{0:X8})' -f $code } else { $exit }
+}
+
+# ---- The Stopping state, as the hook logged it (SL-038) ----
+
+# The hook's "stopping" and "returned" lines after the Cancel it pressed: ms since the press, the title,
+# the wait line ('-' while StoppingDetail is collapsed or empty) and whether it is the last line, written
+# as the app shut down.
+function Read-Stopping($log) {
+    foreach ($line in $log) {
+        if ($line -cmatch '^(stopping|returned) ms=(\d+) title=(.*) detail=(.*?)( final=True)?$') {
+            [pscustomobject]@{
+                Kind   = $Matches[1]
+                Ms     = [long]$Matches[2]
+                Title  = $Matches[3]
+                Detail = $Matches[4]
+                Final  = [bool]$Matches[5]
+            }
+        }
+    }
+}
+
+# The wait line the window must show for N whole seconds (src/FsAnalyser.App/StoppingWait.cs, whose
+# boundaries Core.Tests pins): no estimate of any kind from 90 s.
+function Expected-Wait([long] $seconds) {
+    if ($seconds -lt 90) {
+        "Still waiting for the drive to answer ($seconds s). If a network connection dropped, this can take a minute or more. Closing the window quits at once."
+    }
+    else {
+        "Still waiting for the drive to answer ($seconds s). Closing the window quits at once."
+    }
+}
+
+# The value of key=value in one hook line, or null. Values with spaces (detail) yield their first word.
+function Field([string] $line, [string] $key) {
+    if ($line -cmatch "(?:^| )$key=(\S+)") { $Matches[1] } else { $null }
+}
+
+# N-001's checks on the hook's log of an armed stop, after CheckActed: Cancel 3 s after the stall, the
+# wait line from 1.9 to 3 s after Cancel until the return, in the pinned wording, counting up with the time
+# since Cancel; a line at least once a second (the hook's timer is on the UI thread, so a longer gap is a
+# UI thread that did not run); and no line once the scan has returned or as the app shuts down.
+function CheckWaitLine($log) {
+    $acted = @($log | Where-Object { $_.StartsWith('acted mode=stop ') })[0]
+    $sinceArmed = [long](Field $acted 'sincearmed')
+    Check ($sinceArmed -ge 3000 -and $sinceArmed -lt 4000) "Cancel was pressed 3 s after the stall armed ($sinceArmed ms)"
+
+    $stopping = @(Read-Stopping $log)
+    $returned = @($stopping | Where-Object Kind -eq 'returned')
+    Check ($returned.Count -eq 1) "the hook saw the scan return once after Cancel ($($returned.Count) 'returned' lines)"
+    if ($returned.Count -ne 1) { return }
+    $back = $returned[0].Ms
+    Write-Output ('        Cancel to scan return: {0:N1} s (measured, not asserted)' -f ($back / 1000))
+    Check ($back -ge 3000) "VOID unless the scan outlasted the wait line's gate: it returned $back ms after Cancel"
+
+    $ticks = @($stopping | Where-Object { $_.Kind -eq 'stopping' -and -not $_.Final -and $_.Ms -lt $back })
+    $shown = @($ticks | Where-Object Detail -cne '-')
+    Check ($shown.Count -gt 0) 'the wait line showed while the scan had not returned'
+    if ($shown.Count -gt 0) {
+        Check ($shown[0].Ms -ge 1900 -and $shown[0].Ms -le 3000) "it first showed $($shown[0].Ms) ms after Cancel (1900 to 3000)"
+    }
+    $early = @($ticks | Where-Object { $_.Ms -lt 1900 -and $_.Detail -cne '-' })
+    Check ($early.Count -eq 0) "nothing showed before 1.9 s ($(Show (($early | ForEach-Object { "$($_.Ms) ms" }) -join ', ')))"
+    $gaps = @($ticks | Where-Object { $_.Ms -ge 3000 -and $_.Detail -ceq '-' })
+    Check ($gaps.Count -eq 0) "the line stayed from 3 s until the return ($(Show (($gaps | ForEach-Object { "$($_.Ms) ms" }) -join ', ')))"
+
+    $previous = -1
+    $wrong = [System.Collections.Generic.List[string]]::new()
+    foreach ($tick in $shown) {
+        if ($tick.Detail -cnotmatch '^Still waiting for the drive to answer \((\d+) s\)\.') {
+            $wrong.Add("$($tick.Ms) ms: no count in $(Show $tick.Detail)")
+            continue
+        }
+        $n = [long]$Matches[1]
+        if ($tick.Detail -cne (Expected-Wait $n)) { $wrong.Add("$($tick.Ms) ms: $(Show $tick.Detail)") }
+        if ($n -lt $previous) { $wrong.Add("$($tick.Ms) ms: $n s after $previous s") }
+        # The app floors its own clock, started a moment after the hook's, and shows it at its next tick.
+        if ($n * 1000 -gt $tick.Ms + 100 -or $tick.Ms - $n * 1000 -gt 1750) { $wrong.Add("$($tick.Ms) ms: shows $n s") }
+        $previous = $n
+    }
+    Check ($wrong.Count -eq 0) "the wait line has the pinned wording and counts up with the time since Cancel ($(Show ($wrong -join ' | ')))"
+
+    $times = @(0) + @($ticks | ForEach-Object Ms) + @($back)
+    $worst = 0
+    for ($i = 1; $i -lt $times.Count; $i++) { $worst = [Math]::Max($worst, $times[$i] - $times[$i - 1]) }
+    Check ($worst -le 1000) "the UI thread logged at least once a second from Cancel to the return (longest gap $worst ms over $($ticks.Count) lines)"
+
+    CheckEqual '-' $returned[0].Detail 'the wait line is gone when the scan returns'
+    $final = @($stopping | Where-Object Final)
+    Check ($final.Count -eq 1 -and $final[0].Detail -ceq '-') "the wait line is gone at shutdown ($(Show (($final | ForEach-Object Detail) -join ' | ')))"
+}
+
+# N-002's checks on the hook's log of an armed close, after CheckActed: whether Cancel came first (and the
+# wait line was then on screen at the close), the window gone within 1 s of Close by the hook's own clock,
+# and the process gone within 5 s by its exit time against the close's UTC stamp.
+function CheckCloseEscape($log, [string] $exit, $exitUtc, [bool] $cancelledFirst) {
+    $pressed = @($log | Where-Object { $_.StartsWith('acted mode=stop ') })
+    $close = @($log | Where-Object { $_.StartsWith('acted mode=close ') })[0]
+    if ($cancelledFirst) {
+        Check ($pressed.Count -eq 1) 'Cancel was pressed before the close'
+        Check ((Field $close 'detail') -cne '-') "the wait line was on screen when the window closed ($(Show ($close -creplace '^.* detail=(.*) ms=\d+ sincearmed=.*$', '$1')))"
+    }
+    else {
+        Check ($pressed.Count -eq 0) "nothing pressed Cancel before the close ($($pressed.Count))"
+    }
+    $closed = @($log | Where-Object { $_.StartsWith('closed ') })
+    Check ($closed.Count -eq 1) 'the window closed'
+    if ($closed.Count -eq 1) {
+        $windowMs = [long](Field $closed[0] 'ms') - [long](Field $close 'ms')
+        Check ($windowMs -le 1000) "the window was gone $windowMs ms after Close (1000 at most)"
+    }
+    Check ($exit -ne 'TIMEOUT') 'the process ended'
+    if ($exit -ne 'TIMEOUT') {
+        $closeUtc = [DateTime]::Parse((Field $close 'utc'), [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind)
+        $processMs = [long]($exitUtc - $closeUtc).TotalMilliseconds
+        Check ($processMs -le 5000) "the process was gone $processMs ms after Close (5000 at most)"
+        CheckEqual '0' $exit 'exit code'
+    }
+}
+
+# ---- The stall rig (SL-038, -IncludeNetwork only) ----
+
+# Starts tests/window/StallRig with its marker and tree in $folder and returns at once: the process, a
+# task for the UNC root it prints once its mapping is made (after any other rig run has ended), and a task
+# for its stderr. Wait-RigRoot waits for the root.
+function Start-StallRig([string] $folder, [int] $waitSec = 150) {
+    [void][System.IO.Directory]::CreateDirectory($folder)
+    $marker = Join-Path $folder 'armed.txt'
+    $start = [System.Diagnostics.ProcessStartInfo]::new($RigExe)
+    foreach ($arg in '--marker', $marker, '--wait-sec', [string]$waitSec) { $start.ArgumentList.Add($arg) }
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardInput = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::Start($start)
+    [pscustomobject]@{
+        Process  = $process
+        Marker   = $marker
+        RootLine = $process.StandardOutput.ReadLineAsync()
+        Errors   = $process.StandardError.ReadToEndAsync()
+        Root     = $null
+        Exit     = $null
+        Killed   = $false
+    }
+}
+
+# Sets the rig's Root once it has printed it within $timeoutSec, or fails a check in the rig's own words
+# (another run held on, or the mapping failed). The caller reads $rig.Root.
+function Wait-RigRoot($rig, [int] $timeoutSec = 200) {
+    if ($rig.RootLine.Wait($timeoutSec * 1000) -and $rig.RootLine.Result) {
+        $rig.Root = $rig.RootLine.Result
+        Write-Output "        rig: serving $($rig.Root)"
+        return
+    }
+    $said = if ($rig.Process.WaitForExit(5000)) { $rig.Errors.Result.Trim() } else { 'still running' }
+    Check $false "the stall rig printed its share within $timeoutSec s ($(Show $said))"
+}
+
+# Closes the rig's stdin, so it answers again, removes its own mapping and exits. Sets $rig.Exit to its exit
+# code (TIMEOUT after killing it, KILLED when a case had killed it) and shows its stderr.
+function Stop-StallRig($rig, [int] $timeoutSec = 60) {
+    if ($null -eq $rig -or $null -ne $rig.Exit) { return }
+    $process = $rig.Process
+    if ($process.HasExited -and $rig.Killed) {
+        $rig.Exit = 'KILLED'
+    }
+    else {
+        try { $process.StandardInput.Close() } catch { }
+        if ($process.WaitForExit($timeoutSec * 1000)) {
+            $rig.Exit = [string]$process.ExitCode
+        }
+        else {
+            $process.Kill()
+            $process.WaitForExit()
+            $rig.Exit = 'TIMEOUT'
+        }
+    }
+    if ($rig.Errors.Wait(5000)) {
+        foreach ($line in ($rig.Errors.Result -split "`r?`n" | Where-Object { $_ })) { Write-Output "        rig: $line" }
+    }
+}
+
+# Kills the rig as TerminateProcess does, with no cleanup: its mapping and tree stay behind.
+function Kill-StallRig($rig) {
+    $rig.Killed = $true
+    $rig.Process.Kill()
+    $rig.Process.WaitForExit()
+}
+
+# The machine's SMB mappings, read only. The rig is the one thing that changes them.
+function Get-RigMappings {
+    @(& powershell.exe -NoProfile -NonInteractive -Command 'Get-SmbMapping | ForEach-Object { $_.RemotePath }' |
+            Where-Object { $_ -match '^\\\\127\.0\.0\.1\\fsa[0-9a-fA-F]{8}$' })
+}
+
+# Whether the rig's share answers: its root lists a, hung and z. Nothing here lists hung itself.
+function Test-RigServes([string] $root) {
+    $names = @(Get-ChildItem -LiteralPath $root -Name -ErrorAction SilentlyContinue | Sort-Object)
+    ($names -join ',') -eq 'a,hung,z'
 }
 
 # ---- Cases ----
@@ -471,6 +713,21 @@ function Test-C006 {
         $title = $run.Report.window.OutcomeTitle
         Check ("$title".StartsWith("Stopped: $root.")) "OutcomeTitle is the Stopped ending ($(Show $title))"
         Write-Output "        stopped after $($run.Report.core.folders) of $($manifest.Folders) folders"
+
+        # SL-038: a local cancel returns inside the 2 s gate, so the Stopping state's wait line never shows.
+        # This proves only that it does not appear; that it appears is N-001's (-IncludeNetwork). Checked
+        # after the ending, so an ending that is already wrong (WindowMutants' CancelThrows) fails only on it.
+        $stopping = @(Read-Stopping $run.Log)
+        $returned = @($stopping | Where-Object Kind -eq 'returned')
+        Check ($returned.Count -eq 1) "the hook saw the scan return once after Cancel ($($returned.Count) 'returned' lines)"
+        if ($returned.Count -eq 1) {
+            Check ($returned[0].Ms -lt 2000) "the scan returned within 2 s of Cancel ($($returned[0].Ms) ms)"
+        }
+        Check (@($stopping | Where-Object Final).Count -eq 1) 'the hook wrote its last stopping line as the app shut down'
+        $shown = @($stopping | Where-Object Detail -cne '-')
+        Check ($shown.Count -eq 0) "no stopping line shows the wait line ($(Show (($shown | ForEach-Object { "$($_.Ms) ms: $($_.Detail)" }) -join ' | ')))"
+        $titles = @($stopping | Where-Object Title -cne 'Stopping...')
+        Check ($titles.Count -eq 0) "every stopping line has the title Stopping... ($(Show (($titles | ForEach-Object Title) -join ' | ')))"
     }
     finally { Remove-CaseFolder $case }
 }
@@ -712,13 +969,182 @@ function Test-O016 {
     finally { Remove-CaseFolder $case }
 }
 
+# N-001 (-IncludeNetwork, SL-038): Cancel on a share whose server stopped answering. The rig's server stops
+# at the listing of hung; the hook presses Cancel 3 s after the rig's marker, and the scan returns only
+# when the SMB client gives up (57 to 66 s on this rig). The wait line must first show 1.9 to 3 s after
+# Cancel: the 2 s gate, plus up to one 250 ms progress tick (MainWindow's timer), one 250 ms hook sample
+# and UI jitter (237 ms measured in spike 3), about 2.74 s at worst. Its seconds match the time since
+# Cancel and never go down; the hook's own 250 ms UI-thread timer never goes a second without a line, so
+# the UI stayed live; the line is gone when the scan returns and at shutdown; and the app ends as a
+# cancel: exit 0, report written, Cancelled. Cancel-to-return is printed as measured and never asserted.
+function Test-N001 {
+    $case = New-CaseFolder
+    $rig = $null
+    try {
+        $rig = Start-StallRig (Join-Path $case 'rig')
+        Wait-RigRoot $rig
+        if (-not $rig.Root) { return }
+        $report = Join-Path $case 'report.json'
+        $run = Invoke-WithHook 'stop' $HookDll { Wait-App (Start-App "`"$($rig.Root)`" --report `"$report`"") 150 } @{
+            FSA_HOOK_ARMED           = $rig.Marker
+            FSA_HOOK_CANCEL_DELAY_MS = '3000'
+        }
+        $run = [pscustomobject]@{
+            Exit   = $run.Result
+            Report = if (Test-Path -LiteralPath $report -PathType Leaf) { Get-Content -LiteralPath $report -Raw | ConvertFrom-Json } else { $null }
+            Log    = $run.Log
+        }
+        $before = $script:Failures.Count
+        CheckActed $run 'stop'
+        if ($script:Failures.Count -gt $before) { return }
+        CheckWaitLine $run.Log
+        CheckEqual '0' $run.Exit 'exit code'
+        Check ($null -ne $run.Report) 'a report was written'
+        if ($null -ne $run.Report) {
+            CheckEqual 'Cancelled' $run.Report.core.status 'core.status'
+            $title = "$($run.Report.window.OutcomeTitle)"
+            Check ($title.StartsWith('Stopped: ')) "OutcomeTitle is the Stopped ending ($(Show $title))"
+        }
+    }
+    finally {
+        Stop-StallRig $rig
+        if ($null -ne $rig -and $null -ne $rig.Exit) { CheckEqual '0' $rig.Exit 'the rig ended cleanly and removed its mapping' }
+        Remove-CaseFolder $case
+    }
+}
+
+# N-002 (-IncludeNetwork, SL-038): the wait line says "Closing the window quits at once", so closing the
+# window during the stall must end the app: the window gone within 1 s and the process within 5 s. Two
+# shapes, each on a fresh rig and in interactive mode as a person runs it: Cancel 3 s after the stall then
+# Close 2.5 s later, with the wait line on screen; and Close 3 s after the stall with no Cancel first.
+function Test-N002 {
+    $shapes = @(
+        [pscustomobject]@{ Name = 'Cancel then Close'; Cancel = '3000'; Close = '5500' }
+        [pscustomobject]@{ Name = 'Close with no prior Cancel'; Cancel = $null; Close = '3000' }
+    )
+    foreach ($shape in $shapes) {
+        Write-Output "  $($shape.Name)"
+        $case = New-CaseFolder
+        $rig = $null
+        try {
+            $rig = Start-StallRig (Join-Path $case 'rig')
+            Wait-RigRoot $rig
+            if (-not $rig.Root) { continue }
+            $armed = @{ FSA_HOOK_ARMED = $rig.Marker; FSA_HOOK_CLOSE_DELAY_MS = $shape.Close }
+            if ($shape.Cancel) { $armed.FSA_HOOK_CANCEL_DELAY_MS = $shape.Cancel }
+            $run = Invoke-WithHook 'close' $HookDll {
+                $process = Start-App "`"$($rig.Root)`""
+                $exit = Wait-App $process 150
+                [pscustomobject]@{ Exit = $exit; ExitUtc = if ($exit -ne 'TIMEOUT') { $process.ExitTime.ToUniversalTime() } }
+            } $armed
+            $before = $script:Failures.Count
+            CheckActed $run 'close'
+            if ($script:Failures.Count -gt $before) { continue }
+            CheckCloseEscape $run.Log $run.Result.Exit $run.Result.ExitUtc ([bool]$shape.Cancel)
+        }
+        finally {
+            Stop-StallRig $rig
+            Remove-CaseFolder $case
+        }
+    }
+}
+
+# N-003 (-IncludeNetwork, SL-038, M1): two rig runs at once. The SMB client allows one port per server
+# name, so rig runs are serialised by one lock on this machine (RigLock): a second run either fails at once,
+# saying so (--wait-sec 2), or waits and starts when the first has ended. The first run's mapping survives
+# both, and neither run's mapping outlives it.
+function Test-N003 {
+    $case = New-CaseFolder
+    $first = $null
+    $impatient = $null
+    $patient = $null
+    try {
+        $first = Start-StallRig (Join-Path $case 'first')
+        Wait-RigRoot $first
+        if (-not $first.Root) { return }
+        Check (Test-RigServes $first.Root) "the first run serves $($first.Root)"
+
+        $impatient = Start-StallRig (Join-Path $case 'impatient') 2
+        $ended = $impatient.Process.WaitForExit(30000)
+        Check $ended 'a second run with --wait-sec 2 ended within 30 s'
+        if ($ended) {
+            CheckEqual '1' ([string]$impatient.Process.ExitCode) 'the second run exit code'
+            $said = $impatient.Errors.Result
+            Check ($said -match 'Another stall-rig run') "it said another run holds the rig ($(Show $said.Trim()))"
+            Check (-not $impatient.RootLine.Result) 'it printed no share'
+        }
+        Check ($first.Root -in (Get-RigMappings)) "the first run's mapping survived the second run"
+        Check (Test-RigServes $first.Root) 'the first run still serves its share'
+
+        $patient = Start-StallRig (Join-Path $case 'patient')
+        Check (-not $patient.RootLine.Wait(5000)) 'a third run waited while the first was alive (no share within 5 s)'
+        Check ($first.Root -in (Get-RigMappings)) "the first run's mapping survived the waiting run"
+        Stop-StallRig $first
+        CheckEqual '0' $first.Exit 'the first run ended cleanly when its stdin closed'
+        Wait-RigRoot $patient 60
+        if ($patient.Root) {
+            Check (Test-RigServes $patient.Root) "the waiting run serves $($patient.Root) once the first has ended"
+            Check ($first.Root -notin (Get-RigMappings)) 'the first run removed its own mapping'
+        }
+        Stop-StallRig $patient
+        CheckEqual '0' $patient.Exit 'the waiting run ended cleanly'
+        $left = @(Get-RigMappings | Where-Object { $_ -in @($first.Root, $patient.Root) })
+        Check ($left.Count -eq 0) "no mapping of these runs is left ($(Show ($left -join ', ')))"
+    }
+    finally {
+        foreach ($rig in $first, $impatient, $patient) { Stop-StallRig $rig }
+        Remove-CaseFolder $case
+    }
+}
+
+# N-004 (-IncludeNetwork, SL-038, M1): a rig run killed with no cleanup leaves its mapping to 127.0.0.1 on a
+# dead port, which the SMB client would hold against the next run's port. The next run must start anyway,
+# remove that leftover under the lock and serve its own share.
+function Test-N004 {
+    $case = New-CaseFolder
+    $killed = $null
+    $next = $null
+    try {
+        $killed = Start-StallRig (Join-Path $case 'killed')
+        Wait-RigRoot $killed
+        if (-not $killed.Root) { return }
+        Kill-StallRig $killed
+        $left = @(Get-RigMappings)
+        Check ($killed.Root -in $left) "VOID unless the killed run's mapping was left behind ($(Show ($left -join ', ')))"
+
+        $next = Start-StallRig (Join-Path $case 'next')
+        Wait-RigRoot $next 60
+        if (-not $next.Root) { return }
+        Check (Test-RigServes $next.Root) "the next run serves $($next.Root)"
+        Check ($killed.Root -notin (Get-RigMappings)) "the next run removed the killed run's leftover mapping"
+        Stop-StallRig $next
+        CheckEqual '0' $next.Exit 'the next run ended cleanly'
+        Check ($next.Errors.Result -match [regex]::Escape("left behind: $($killed.Root)")) 'the next run said which leftover it removed'
+        Check ($next.Root -notin (Get-RigMappings)) 'the next run removed its own mapping'
+    }
+    finally {
+        foreach ($rig in $killed, $next) { Stop-StallRig $rig }
+        Remove-CaseFolder $case
+    }
+}
+
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016' } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016') + $NetworkCases } else { @($Case) }
+$notRun = @()
+if (-not $IncludeNetwork) {
+    $notRun = @($cases | Where-Object { $_ -in $NetworkCases })
+    $cases = @($cases | Where-Object { $_ -notin $NetworkCases })
+}
 if (@($cases | Where-Object { $_ -in $HookedCases }).Count -gt 0) {
     Update-Hook
 }
-Update-App
+if (@($cases | Where-Object { $_ -in $NetworkCases }).Count -gt 0) {
+    Update-StallRig
+}
+if (@($cases | Where-Object { $_ -notin $RigOnlyCases }).Count -gt 0) {
+    Update-App
+}
 $failed = @()
 foreach ($key in $cases) {
     Write-Output $key
@@ -735,9 +1161,15 @@ foreach ($key in $cases) {
     }
 }
 
+if ($notRun.Count -gt 0) {
+    Write-Output "NOT RUN: $($notRun -join ', ') (they change this machine's SMB mappings; pass -IncludeNetwork to run them)"
+}
 if ($failed.Count -gt 0) {
     Write-Output "FAILED: $($failed -join ', ')"
     exit 1
+}
+if ($cases.Count -eq 0) {
+    exit 2 # a network case named without -IncludeNetwork: nothing ran, so nothing passed
 }
 Write-Output "PASSED: $($cases -join ', ')"
 exit 0

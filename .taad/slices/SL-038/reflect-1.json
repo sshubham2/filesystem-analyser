@@ -1,0 +1,152 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-038",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-09-25T09:14:03.882Z",
+ "head": "eafb1c3b154069c4c1ab1b1b620533c61776f712",
+ "run_id": 1032,
+ "summary": "SL-038 shipped option (b). The scan thread is never abandoned. Two seconds after Cancel a StoppingDetail line appears under \"Stopping...\", derived from a nullable Stopwatch on the existing 250 ms tick, with the wording in a pure StoppingWait.For linked into Core.Tests. The product change was about three small files. Most of the diff was test scaffolding: the extracted SmbRig with RigLock, StallRig.exe, the hook's armed mode, window cases N-001..N-004, 29 tests and three fitness rules. The slice was accepted at eafb1c3 only after a person ran `WindowCases.ps1 -IncludeNetwork` themselves at the fourth validate. Three earlier validate laps had hit the same permission refusal at an unchanged HEAD. The real-disconnect wait is still unmeasured (carried to SC-033).",
+ "payload": {
+  "status": "complete",
+  "reason": "Reflection on SL-038 written from the recorded stage accounts. Nothing here blocks it, so no obligation was raised. O-017 is a ledger-only minor and was left open.",
+  "summary": "SL-038 shipped option (b). The scan thread is never abandoned. Two seconds after Cancel a StoppingDetail line appears under \"Stopping...\", derived from a nullable Stopwatch on the existing 250 ms tick, with the wording in a pure StoppingWait.For linked into Core.Tests. The product change was about three small files. Most of the diff was test scaffolding: the extracted SmbRig with RigLock, StallRig.exe, the hook's armed mode, window cases N-001..N-004, 29 tests and three fitness rules. The slice was accepted at eafb1c3 only after a person ran `WindowCases.ps1 -IncludeNetwork` themselves at the fourth validate. Three earlier validate laps had hit the same permission refusal at an unchanged HEAD. The real-disconnect wait is still unmeasured (carried to SC-033).",
+  "estimate_error": "Medium size and medium risk were about right for the code: the scanner, SynchronousIoCancel and the store were untouched, and the default suite went from 120 to 149. Both were wrong in what drove the cost. (1) The slice text said \"needs a person's decision and a design pass before any build\", so build-check, risk-spike and design-slice opened as a decision slice. It turned into a full build of about ten files, mostly test infrastructure, and build-check's first pass halted on C2/C3/C4, which nothing could build. (2) The real risk was whether the engine could verify the result at all. Every positive proof needed a machine-changing SMB mapping run that the permission classifier refuses. That cost three wasted validate laps, one spike experiment that could never run, and a person at the end. The slice was undersized on verification reach, not on code. Next time, size a stalled-share slice by what only a person can run.",
+  "learned": [
+   {
+    "kind": "risk",
+    "lesson": "No engine stage can run a check that changes SMB mappings or network state (New-SmbMapping, `net use`, `WindowCases.ps1 -IncludeNetwork`, Wi-Fi off, tailscale down, sleep). The permission classifier refuses it as [Modify Shared Resources] in build-check, build and validate alike, and the risk-spike rules forbid it too. A design that assigns such a run 'to validate' produces validate halts, not a pass. At design time, name each machine-changing check as a person-run step or a person-approved named operation, and never as a stage's deliverable.",
+    "evidence": "Validate attempts 1-3 at eafb1c3 were each refused on `WindowCases.ps1 -Case N-001 -IncludeNetwork`. The design cites build-check's refusal and still assigns the run to validate. Spike real-disconnect-wait-matches-rig ran 0 of 9. A person's own run at validate #4 is what passed N-001..N-004."
+   },
+   {
+    "kind": "process",
+    "lesson": "Validate re-ran three times at an identical HEAD with the identical refusal, re-running about eight checks each time. The stage itself wrote 'a fourth run will produce this same answer'. Whatever stops a repeat without news did not stop this one, and only a person's run ended it. Check that validate is covered by that rule before the next slice with an opt-in network or machine-state case.",
+    "evidence": "validate-slice #1, #2 and #3 all halted on the same refusal, with no change in src or tests between them (the index and 'going round in circles' note). Validate #4 passed only because the person ran the command."
+   },
+   {
+    "kind": "estimate",
+    "lesson": "For stalled-share and cancel slices in this app, the product change is tiny (StoppingWait.cs, one TextBlock, a few lines of MainWindow.xaml.cs) and the verification scaffolding is the cost. Size and staff the slice by the rig, hook and window cases, and by who can run them. Do not size it by the UI change.",
+    "evidence": "build-slice diff f3c3dfab7..eafb1c3b1: 3 small src files against SmbRig.cs, SmbRigTests.cs, StallRig/Program.cs, hook changes, WindowCases.ps1 additions (N-001..N-004), StalledShareTests changes and three fitness rules."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "MainWindow facts a critique should read before filing a 'flag not cleared' or timing finding. The progress DispatcherTimer is fixed at 250 ms (MainWindow.xaml.cs:23). StartScan's single finally (:161-177) wraps both the scan await and UnlessCancelled, and EndStopping sits there. OnClosing calls `_cancel?.Cancel()` and does not go through OnCancel. The UI-thread tick must never touch DriveInfo or a share. Spike 3 measured a max UI gap of 237 ms through a 64-70 s stall.",
+    "evidence": "Critique M2 (major) and m5 were both overridden by reading MainWindow.xaml.cs:161-170 and :23. They were 2 of the critique's 9 findings and were argued from the design's prose, not the file."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "The stall rig now lives in one place: tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs plus tests/window/StallRig. The Windows SMB client allows one TCP port per server name, so every rig on 127.0.0.1 shares one slot. Isolation is per server: RigLock (named mutex Local\\FsAnalyser-SmbRig) plus a sweep of exactly `\\\\127.0.0.1\\fsa<8hex>`. Windows destroys a named mutex with its last handle, so a killed sole holder leaves no 'abandoned' signal. Link this rig into future spikes instead of re-copying it. Stale copies of the old fixture in other worktrees take no lock and can sweep live mappings.",
+    "evidence": "StalledShareTests.cs:155-156 comment; the kill test failed on its first run (28/29 passed); the design's rig-classes rationale says every spike rebuilt the rig in scratch and none survived; the SmbRig.cs warning about pre-SL-038 copies."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "This machine has no machine-wide .NET 10 runtime (SDK and runtimes 8 and 9 only), and eng/dotnet.ps1 installs 10.0.401 repo-local. Anything launched outside eng/dotnet.ps1, such as StallRig.exe or the app that hosts the hook, must be published self-contained win-x64. A framework-dependent net10 exe cannot start. Any design that says 'built like the hook' should be checked against that.",
+    "evidence": "Framework-dependent StallRig build failed with exit -2147450730 and was made self-contained. The build-check survey and spike 4 had both recorded machine SDKs 8.0 and 9.0 only."
+   },
+   {
+    "kind": "process",
+    "lesson": "A slice that declares architecture rules gets a red or UNRAN Fitness baseline on the pre-build tree. The rule is applied to code that does not exist yet, and the import rule reports UNRAN until `CodeGraph op=rebuild` has run for a fresh worktree. Expect the rebuild step in build and validate. Do not read the baseline as a regression.",
+    "evidence": "Baseline before build: 3 violations (New/Remove-SmbMapping in StalledShareTests.cs) and 1 unmatched glob (StoppingWait*.cs). Fitness passed 25 rules only after CodeGraph rebuild, in both build and validate."
+   },
+   {
+    "kind": "risk",
+    "lesson": "One green default-suite run is weak evidence for the cancel path here. SynchronousIoCancelTests flakes about 3 in 50 repeated class runs and 1 in 2 full-suite runs. Build and code-review each saw 149/149, and only validate's repetition found it. Any slice touching Scanner cancel or SynchronousIoCancel should loop that class. The failing assertion is 'still blocked 2 s after Cancel', the same 2 s bound this slice's wait-line gate leans on.",
+    "evidence": "validate-slice: CancelIsResentWhileACallBlocksAgainAfterACancel failed once under full-suite load. The class looped 10, 15 and 25 times failed 3 of 50, including CancelAtRandomMomentsEndsEveryScanCleanlyAndLeavesNoStrayCancel. The test alone passed 30 of 30."
+   },
+   {
+    "kind": "process",
+    "lesson": "When the slice text says 'needs a person's decision', check that the decision lands as a person's answer. Here C2 was decided by a model in the owner's absence at design-slice #2. All 9 critique findings and the 1 code-review finding were model-disposed. The record carries no distinct person acceptance of option (b), only the person's acceptance of the slice at validate #4.",
+    "evidence": "design-slice #2 'decided in the owner's absence'; O-002 discharged with model contact; validate 'not reached: the person's own acceptance of option (b) (C2)'; critique #2 '9 answered by a model, counted as untriaged in precision'."
+   },
+   {
+    "kind": "process",
+    "lesson": "Code-review put four drift items in LEFT OPEN instead of filing them as findings, so none was disposed. One is still unresolved: RigLock uses a per-session `Local\\` mutex while the builder's account and the SmbRig.cs comments say machine-wide. Validate re-listed it as untested. Drift that matters must be filed as a finding, or it is read as seen and nobody acts on it.",
+    "evidence": "code-review #1 LEFT OPEN drift list (SmbRig.cs:176 Local\\ name; StartupHook.cs:57,194 60 s deadline; :333 timer stop; Update-StallRig). Only one finding (O-008) was filed. Validate #3 'RigLock mutex name is Local\\ ... untested'."
+   }
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "dimension": "contract-gaps",
+    "severity": "major",
+    "what": "The critique passed the design's assignment of the -IncludeNetwork run (N-001..N-004, the only positive proof of the wait line) to validate. The design itself says build-check 'correctly refused' New-SmbMapping. Nobody asked whether validate is subject to the same permission classifier. The critique's own m6 disposition said the run happens 'only if the person consents' without saying who records consent or how validate would obtain it.",
+    "caught_by": "validate attempts 1-3 (refused as [Modify Shared Resources]), resolved only when a person ran it at attempt 4"
+   },
+   {
+    "gate": "critique",
+    "dimension": "unfounded-assumptions",
+    "severity": "minor",
+    "what": "The design says StallRig is 'a net10.0-windows console built like the hook' and the critique did not ask whether a framework-dependent net10 exe can start on this machine. The survey and spike 4 had both recorded that only .NET 8 and 9 are installed machine-wide.",
+    "caught_by": "build (StallRig.exe exit -2147450730; rebuilt self-contained win-x64)"
+   },
+   {
+    "gate": "critique",
+    "dimension": "contract-gaps",
+    "severity": "minor",
+    "what": "The hook contract says an armed close 'uses the same Pressable/RaiseEvent(Click)' as today. Pressable requires CancelButton, which OnCancel disables. That breaks the 'Cancel then Close' shape that N-002 needs. The critique examined this exact contract for m3 (the cancel-delay default) and still missed it.",
+    "caught_by": "build (deviation: armed close checks ScanningPanel visible instead of CancelButton pressable)"
+   },
+   {
+    "gate": "critique",
+    "dimension": "unfounded-assumptions",
+    "severity": "minor",
+    "what": "The critique judged the wording 'hedged ... enough' although the designed line asserts 'Windows usually gives up on its own after about a minute'. That rests on the loopback rig only, and the critique itself noted the MS-SMB2 request-expiry timer is optional. The imported precondition that the wait ends on its own was unproven and later waived. The shipped wording departs from the designed text.",
+    "caught_by": "O-002 discharge, then build (deviation: wording follows O-002, not the design)"
+   }
+  ],
+  "what_went_wrong": [
+   "Validate ran four times and the first three hit the same permission refusal at an identical HEAD (eafb1c3). The design had assigned the run to validate while citing that build-check had been refused the same operation. Each lap re-ran the build, the 29 new tests, Fitness and 15 window cases before halting. A person's manual run ended it.",
+   "Risk-spike planned an experiment (real Wi-Fi off, tailscale down, sleep, 3x3) that its own rules forbid. It ran 0 of 9, the stage halted with 1 of 4 experiments unfinished, and a second pass was needed. The design then carried the same unrunnable check as an open question. Two plan-time stages made the same mistake because neither knows what the engine cannot run.",
+   "Build-check halted on its first pass because the slice text (decide, design, then build) produced C2/C3/C4 as criteria for the stage to check, and nothing could build them. C4 was later retired by design fiat once (b) was chosen.",
+   "The decision the slice exists for was made by a model in the owner's absence, and all 10 review findings were model-disposed. Of 9 critique findings, 7 were accepted and 2 were overridden: the major M2 and m5, both wrong because they were argued from design prose and not from MainWindow.xaml.cs (the finally at :161-177, the 250 ms timer at :23).",
+   "The builder marked O-008 as done although the faulted and finished-on-its-own shapes were fed by no test. Code-review caught it (O-017), but the slice reached reflect with O-017 still open. It is a ledger-only change.",
+   "The framework-dependent StallRig could not start on this machine, and the first RigLock kill test asserted an abandoned-mutex signal Windows does not give. Both were caught by the builder's own runs, but the first was already in the survey.",
+   "Validate found a flaky default-suite test (SynchronousIoCancelTests, 3 of 50) that build and code-review each ran once and missed. It predates the slice, but it sits on the 2 s cancel bound the new wait line depends on. Nobody has yet established whether the flake is test timing or real local-cancel latency.",
+   "Four unattributed, interrupted N-002 runs were found in %TEMP%\\fsa-window-cases, with app PIDs 33872, 8828, 17188 and 15604. Nobody established who ran them or why their parent never cleaned up."
+  ],
+  "unknowns": [
+   "Does the wait from Cancel to scan return on a real Wi-Fi drop, tunnel drop or sleep-resume end in about a minute, fail fast, or never end? And does 'Closing the window quits at once' hold after those disconnects, or only on the loopback rig? (Carried as SC-033. The shipped wording makes no claim, and option (a) is reopened only if a real disconnect never returns.)",
+   "Is the SynchronousIoCancelTests flake a test-timing artefact under load, or does a local cancel really take more than 2 s sometimes? If the latter, the wait line would flash on an ordinary local cancel, and the 2 s gate premise (C-006 returns in 10-15 ms) is unsafe under load.",
+   "Does the rule that stops a repeat without news cover validate? It ran three times at an identical HEAD with the identical refusal.",
+   "Who ran the four interrupted N-002 runs left in %TEMP%\\fsa-window-cases, and do interrupted N-002 or N-001 runs leave orphaned app or StallRig processes? N-004 covers only a leftover mapping, not leftover processes.",
+   "Does StalledShareTests (Network=SMB-LOOPBACK) still pass on the extracted rig? Build and validate attempts 1-3 never ran it, and the record shows only N-001..N-004 passing at validate #4."
+  ],
+  "candidates": [
+   {
+    "title": "Make the -IncludeNetwork window run a named, person-approved operation that validate can request",
+    "urgency": "soon",
+    "why": "Three validate laps were refused on `WindowCases.ps1 -IncludeNetwork` ([Modify Shared Resources]), and the named operations (whoami, read-denied-folders) cannot reach it. A one-time approval per HEAD, with the argv on the record, would turn the loop into a person's click instead of a repeated halt."
+   },
+   {
+    "title": "Fix or quarantine the flaky SynchronousIoCancelTests",
+    "urgency": "soon",
+    "why": "It fails about 3 of 50 repeated class runs and 1 of 2 full-suite runs ('still blocked 2 s after Cancel'), predating SL-038, and makes every future validate noisy. It also needs the answer to whether local cancel can really exceed 2 s under load."
+   },
+   {
+    "title": "Give plan-time stages (risk-spike, design, critique) the list of operations no engine stage can run",
+    "urgency": "soon",
+    "why": "Both the spike's 0-of-9 real-disconnect experiment and the design's validate-owned -IncludeNetwork run were planned around operations the classifier or rules forbid. Naming them up front lets a plan mark them person-run or granted, instead of discovering the refusal three laps later."
+   },
+   {
+    "title": "Rebuild the CodeGraph before Fitness runs on a fresh worktree",
+    "urgency": "soon",
+    "why": "The import rule reports UNRAN until `CodeGraph op=rebuild` has run, and both build and validate had to do it by hand. Every slice that declares architecture rules will hit this."
+   },
+   {
+    "title": "Run StalledShareTests (Network=SMB-LOOPBACK) once on the extracted rig",
+    "urgency": "soon",
+    "why": "It was moved into Rig/SmbRig.cs and 'compiles but has never run since'. The validate #4 record shows only N-001..N-004 passing. This is a person-run check of about 70 s."
+   },
+   {
+    "title": "Reconcile RigLock's scope: switch `Local\\` to `Global\\` with a cross-session test, or correct the 'machine-wide' claims",
+    "urgency": "someday",
+    "why": "code-review and validate both listed it: the mutex name is per sign-in session, while the builder's account and the SmbRig.cs comments say machine-wide. Cross-session serialisation is untested."
+   },
+   {
+    "title": "Out-of-process harness for the faulted and finished-on-its-own Stopping paths",
+    "urgency": "someday",
+    "why": "O-008's two untested shapes rest on the single finally at MainWindow.xaml.cs:167-177. The shipped exe cannot carry a test seam (fitness rule at .taad/fitness.yaml:257), so only an external harness could feed them."
+   }
+  ]
+ }
+}
