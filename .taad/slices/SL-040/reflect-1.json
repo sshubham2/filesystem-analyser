@@ -1,0 +1,151 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-040",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-09-25T18:08:50.621Z",
+ "head": "658ed6a5808b8e2f3b82f419050354c73c4ebd4e",
+ "run_id": 1181,
+ "summary": "SL-040 added a top-100 largest-files list: LargestFiles.Top (a bounded heap over ChargedOnDisk) in a new Core/Analysis folder, a virtualized ListBox in the outcome panel, three report scalars, an analysis architecture rule, and window cases L-001 to L-006. It shipped and was validated on a real C:\\ (3.59M files, largestFilesMs 27-37 against the 100 ms threshold). The data path was never in doubt: all three spikes held and every Core check passed. All the rework was in the WPF layout and test harness: a second-scan case skipped for want of a hook mode (O-011), and an opened Expander pushing the list out of view (O-024). 34 of the 38 build attempts were provider session-limit refusals. It shipped with a known layout failure below the default 880x600 window.",
+ "payload": {
+  "status": "complete",
+  "summary": "SL-040 added a top-100 largest-files list: LargestFiles.Top (a bounded heap over ChargedOnDisk) in a new Core/Analysis folder, a virtualized ListBox in the outcome panel, three report scalars, an analysis architecture rule, and window cases L-001 to L-006. It shipped and was validated on a real C:\\ (3.59M files, largestFilesMs 27-37 against the 100 ms threshold). The data path was never in doubt: all three spikes held and every Core check passed. All the rework was in the WPF layout and test harness: a second-scan case skipped for want of a hook mode (O-011), and an opened Expander pushing the list out of view (O-024). 34 of the 38 build attempts were provider session-limit refusals. It shipped with a known layout failure below the default 880x600 window.",
+  "estimate_error": "Size and tier were right for the Core work: Top, its tests and the rule cost almost nothing to rework, and the medium tier's harder look at the counting rules found nothing wrong. They were wrong about where the risk was. The spikes were all data-path (pagefile, open growing file, odd names) and all came back 'go'. The two defects that cost laps were window layout and harness: the Expander's opened state (O-024) and the window-size envelope. The window harness (hook modes rescan and expand, WindowReport keys, 21 cases) was as large as the Core change and was not counted in the size. Real rework was 3 productive builds (#1, #3, #38), 3 code reviews and 3 validates. The 'build-slice ran 38 times' figure is 34 refusals plus those three, and should not be read as an estimate error.",
+  "learned": [
+   {
+    "kind": "estimate",
+    "lesson": "Read SL-040's 'build-slice ran 38 times' as 3 productive builds. Attempts #4-#37 changed nothing.",
+    "evidence": "Ledger build-slice #4-#37 all record 'provider turned this away ... session limit, resets 10:50pm'. Code-review #3 timed them at 14:41-17:18. The productive builds were #1 (halted on O-011), #3 (O-011 fixed) and #38 (O-024 fixed). Recent commits c998acc (two slices at once) and 00cf7df (back to one) point at the cause."
+   },
+   {
+    "kind": "process",
+    "lesson": "When a critique disposition moves a case's check to a manual validate drive, it must retarget or discharge that case's obligation in the same act. Otherwise the build halts on the obligation and the builder skips it for infrastructure reasons.",
+    "evidence": "The M3 disposition put 'second scan clears the previous list' on the validate drive list because the hook had only stop, throw and close modes. The design's case C-009 still raised O-011. Build #1 skipped it and halted, #2 ordered a rebuild, and #3 added a `rescan` mode to tests/window/FsaWindowHook. Extending the hook was always in scope for the build."
+   },
+   {
+    "kind": "design",
+    "lesson": "A window layout case has to name the window size and every state of each stateful control, not just 'the list is filled'. The outcome panel in MainWindow forces the unreadable Expander closed, so a test that only runs ShowOutcome never sees it open.",
+    "evidence": "The design case 'fit the list into the outcome panel ... with the unreadable-folders list also filled' passed at build as L-003 in the collapsed state only, because ShowOutcome sets IsExpanded=false. Opened at 880x600, LargestFilesPanel was 26.46 px and not inView (O-024). Validate #3 measured 880x560 and 560x400 failing as well."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "In the window report, actualHeight cannot show a clipped list; only `inView` can. A clipped ListBox still reports its MinHeight. Window cases assert inView, and the hook sets state directly (`expand` sets IsExpanded), because UIA is forbidden.",
+    "evidence": "Build #38 noted that the >=40 px ActualHeight checks in L-003 do not catch the old layout. The mutant run against the HEAD 7610c6b layout failed L-003 only on inView. The hook now has stop, throw, close, rescan and expand modes, and the report counts only the first ending (App.xaml.cs:104-105)."
+   },
+   {
+    "kind": "design",
+    "lesson": "MainWindow's outcome panel is full. At the default 880x600 with the largest-files list and the opened unreadable list, it has about 30 px to spare. The next analysis slice (largest folders, by extension) that adds a section will break the fit unless the panel scrolls or tabs first.",
+    "evidence": "Validate #3 on real C:\\: LargestFilesList 63.47 px and UnreadableList 53.23 px, both inView. Build #38 got there by lowering MinHeights (60 to 40, 80 to 40) and removing MaxHeight=200. The Grid is now 3* / Auto-to-2*. At 560x400 the pre-existing outcome texts alone overflow, with the list closed."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "The scanner is single-threaded and depth-first on the caller's thread. Once Scanner.Scan returns, the store is frozen, and store indices are the same on every scan of the same tree. Do not write 'multithreaded scan' into a design. ScanStore.Size and OnDisk are now internal, so App code cannot read raw sizes. Analysis code goes under Core/Analysis, which the rule covers.",
+    "evidence": "Overrides of M1 and m3: Scanner.cs:12, Scanner.cs:30-38 and :275, SynchronousIoCancel.cs:216-229 (the canceller is joined before Scan returns). O-016 made the accessors internal, and Core.Tests reaches them through InternalsVisibleTo (FsAnalyser.Core.csproj:10)."
+   },
+   {
+    "kind": "process",
+    "lesson": "No survey or spike node here can build the project. There is no machine-wide .NET 10 SDK, and each node improvised differently. The survey also treated the eng/dotnet.ps1 download as 'needs a person's decision' although Q-003 had already answered yes. Tell those nodes to use it, or give them a shared SDK, before opening the next slice.",
+    "evidence": "dotnet --version exit 145. The spikes used a net9 copy of Core, a scratch SDK install, and the sibling worktree's SL-039\\.dotnet (10.0.401). The build stage ran eng/dotnet.ps1 fine (166/166 tests)."
+   },
+   {
+    "kind": "risk",
+    "lesson": "For a slice that adds a section to MainWindow, open with a layout spike (default, one step smaller, minimum window; opened and closed controls) and not only data-path spikes. Real-drive data risk was cleared cheaply, and layout was the risk that materialised.",
+    "evidence": "All 3 SL-040 spikes were 'go' and none touched layout. Both defects that cost laps (O-024 and the sub-default window sizes) were layout, and were found only by measuring the published exe."
+   },
+   {
+    "kind": "design",
+    "lesson": "The list ranks by ChargedOnDisk, and the ranking basis and pagefile labelling shipped as unanswered defaults. Any later size-ranking slice (largest folders) inherits that basis, or a person will see two lists that disagree.",
+    "evidence": "Validate criterion 14 census: 195,356 online-only files in the store, 36 of them logically larger than the cut, none listed. pagefile.sys and hiberfil.sys lead the C:\\ list as ProbeFailed rows whose on-disk values were not read independently."
+   }
+  ],
+  "what_went_wrong": [
+   "34 of the 38 build attempts (#4-#37) were refusals from a provider session limit that resets at 22:50 IST, over 2h37m, with nothing changed. The loop kept restarting the stage against a limit it had been told about. Two slices ran at once (c998acc) when it began, and 07d3627 (ask the provider before restarting) came after. It inflated the rework count and cost hours, and this slice did not show whether 07d3627 stops it.",
+   "O-024 was a layout defect from the first build: an opened unreadable Expander docked at the bottom pushed the whole largest-files list out of view, and a false XAML comment ('opened it leaves room for theirs') claimed otherwise. Only code-review #1, by measuring the exe, found it, and validate #1 confirmed it on real C:\\. The fix took a validate fail, a return to build, and a second code review and validate.",
+   "The code review filed O-024 as minor, but it made the slice's own acceptance item ('the list is shown to the person') false in a state a person reaches by clicking. Code-review #2 passed with 'no blocker outstanding' and validate #2 had to fail it. Severity here was set by the size of the code change, not by the acceptance criterion it broke.",
+   "The design and critique carried a false fact, 'the scan is multithreaded'. M1 (major, with a would-force-resynthesis flag) and m3 were built on it and both were overridden. Nobody in survey or design read Scanner.cs:12 until the disposition did.",
+   "Build #1 skipped the second-scan case O-011 because the hook lacked a mode. The M3 disposition had sent that check to a manual drive and nothing reconciled it with the case obligation. It cost build attempts #1-#3, and critique-review was sized out, so the review of the dispositions never ran.",
+   "Validate #3 passed with three [failed] rows and its own line 'What does not hold: the fit only holds at the default size'. At 880x560 with the list open, both lists clip at MinHeight 40. At 560x400 nothing below the outcome texts is on screen. No obligation was raised and the supported window size is undecided, so a known layout failure shipped. No person looked at the window either; row rendering was judged from report metrics.",
+   "The survey declined to build because it read eng/dotnet.ps1's download as needing a person's decision, although Q-003 already said yes. Three nodes each improvised a way around the missing SDK 10 and none ran the project's own build."
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "dimension": "missing-edge-cases",
+    "severity": "major",
+    "what": "The critique never asked what state the unreadable-folders Expander is in. The design case 'fit the list into the outcome panel ... with the unreadable list also filled' left the opened state out, and ShowOutcome forces IsExpanded=false, so L-003 could only ever pass on the collapsed layout. Opened at 880x600, the largest-files list was 26 px and not in view.",
+    "caught_by": "code-review #1 (measured on the published exe with a throwaway hook), then validate #1 on real C:\\ (O-024)"
+   },
+   {
+    "gate": "critique",
+    "dimension": "missing-edge-cases",
+    "severity": "major",
+    "what": "No layout case named a window size, though the window allows 560x400. Only the default 880x600 was ever tested. At 880x560 with the unreadable list open, both lists clip at MinHeight 40. At 560x400 nothing below the outcome texts is visible, open or closed.",
+    "caught_by": "validate #3, by resizing the published exe with a startup hook. It shipped unfixed."
+   },
+   {
+    "gate": "code-review",
+    "dimension": "test-coverage",
+    "severity": "minor",
+    "what": "Code-review #3 accepted the O-024 fix with 'every departure is declared' and never asked how far below 880x600 it held. The fix lowered MinHeights (60 to 40, 80 to 40) and dropped MaxHeight=200, which leaves about 30 px to spare at the default size. L-003 opened checks only 880x600, so it cannot fail at a smaller window.",
+    "caught_by": "validate #3, which measured 880x560 and 560x400"
+   },
+   {
+    "gate": "critique",
+    "dimension": "unfounded-assumptions",
+    "severity": "minor",
+    "what": "The critique took the design's 'multithreaded scan' and 'a test settles the invariant' as fact and filed M1 (major) and m3 on it, without asking whether the scanner has parallel writers. Scanner.cs:12 says it runs depth-first on the caller's thread. Both findings were overridden.",
+    "caught_by": "the disposition step, which read Scanner.cs and SynchronousIoCancel.cs"
+   },
+   {
+    "gate": "critique-review",
+    "dimension": "contract-gaps",
+    "severity": "minor",
+    "what": "The M3 disposition moved 'a second scan clears the previous list' to a manual validate drive, while the design's case C-009 still demanded a machine check (O-011). Nothing reconciled the two, and the hook's missing mode was never checked. This gate did not run on this slice (sized out for a medium slice with 1 designer), so it measures nothing here.",
+    "caught_by": "build-slice #1, which halted on undischarged O-011, then #2 and #3"
+   }
+  ],
+  "unknowns": [
+   "What window size must the outcome panel support: the default 880x600 only, or the window's own MinWidth/MinHeight of 560x400? The answer decides whether the fix is a scrolling or tabbed panel or a higher minimum size.",
+   "Does the largest-files list still fit at 880x600 with about 30 px spare on a drive with more outcome notes (a wrapped volume-coverage line, the probe-failure note) or at 125-150% DPI and larger text? Neither was measured, and this decides whether the shipped fix is fragile at the default size.",
+   "Are the on-disk values shown for pagefile.sys and hiberfil.sys (ProbeFailed, cluster-aligned) correct? They could not be read independently without elevation, and both sit at the top of the C:\\ list. Only their logical sizes and the spike's CIM match are confirmed.",
+   "Is the list complete under OneDrive cloud-reparse folders? Validate's independent walk skipped them and refused a walk under the OneDrive path, so completeness was checked on about 2.6M of about 3.59M files."
+  ],
+  "candidates": [
+   {
+    "title": "Make MainWindow's outcome panel scroll or tab, and decide its minimum window size, before the next analysis panel is added",
+    "urgency": "soon",
+    "why": "Validate #3 measured the list clipped at 880x560 with the unreadable list open, and nothing below the outcome texts on screen at 560x400, even with the list closed. About 30 px is spare at 880x600. Largest folders and by-extension slices will add sections to this same Grid."
+   },
+   {
+    "title": "Give the survey and spike nodes a working .NET 10 SDK (a shared .dotnet outside the worktrees, or tell them Q-003 permits eng/dotnet.ps1)",
+    "urgency": "soon",
+    "why": "No machine-wide SDK 10 exists. The survey refused to build, and three spikes each improvised (net9 copy, scratch install, borrowed sibling .dotnet) although Q-003 was already answered."
+   },
+   {
+    "title": "Prove that build-slice waits out a provider session-limit refusal instead of retrying (34 refusals in 2h37m on SL-040)",
+    "urgency": "soon",
+    "why": "Build attempts #4-#37 were refused and changed nothing. 07d3627 ('ask it before restarting a stage') landed afterwards, but this slice never exercised it."
+   },
+   {
+    "title": "Add a UI state-space prompt to the critique: list each stateful control's states and the window sizes the criterion must hold at",
+    "urgency": "soon",
+    "why": "The critique found no problem with the Expander's opened state or the window size, and both hid a defect until code review or validate measured the exe. It did catch the WPF wrapping trap (m1) and the internal-accessor fix (M2), so the gap is in the layout state space."
+   },
+   {
+    "title": "When a disposition relocates a case's check to validate, retarget the case obligation with it",
+    "urgency": "soon",
+    "why": "M3's disposition sent the second-scan case to a manual drive while O-011 stayed open. Build #1 halted on it and #2 and #3 were spent adding the `rescan` hook mode."
+   },
+   {
+    "title": "Capture a window screenshot from eng/read-window.ps1 so validate can see wrapped rows, the lone-surrogate row and alignment",
+    "urgency": "someday",
+    "why": "Validate #3 says no person looked at the window. Row rendering was judged from report metrics only, for a criterion that is 'the list is shown to the person'."
+   },
+   {
+    "title": "Run the largest-files list on a non-NTFS or mapped drive, on Windows 10, and at 125-150% DPI with larger text",
+    "urgency": "someday",
+    "why": "Validate #3 listed these as not reached. Only NTFS C:\\ at 100% DPI on Windows 11 was exercised."
+   }
+  ]
+ }
+}
