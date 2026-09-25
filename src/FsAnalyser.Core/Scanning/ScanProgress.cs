@@ -15,6 +15,7 @@ public sealed class ScanProgress
     private long _bytesOnDisk;
     private long _unreadable;
     private string? _currentFolder;
+    private TopLevelSnapshot? _topLevel;
 
     public long Files => Volatile.Read(ref _files);
     public long Folders => Volatile.Read(ref _folders);
@@ -32,6 +33,16 @@ public sealed class ScanProgress
             return path is null ? null : LongPath.ToDisplay(path);
         }
     }
+
+    /// <summary>
+    /// The scan root's direct children as last published (SL-039): null until the root has been listed,
+    /// and for the whole scan when it never is. Each read is an immutable snapshot, published by the scanner
+    /// at most every 250 ms and once more at the end (the same object as <see cref="ScanResult.TopLevel"/>).
+    /// Each scan has its own ScanProgress, so a snapshot never outlives its scan here.
+    /// </summary>
+    public TopLevelSnapshot? TopLevel => Volatile.Read(ref _topLevel);
+
+    internal void PublishTopLevel(TopLevelSnapshot snapshot) => Volatile.Write(ref _topLevel, snapshot);
 
     internal void Publish(in ScanTotals totals, long unreadable, string currentFolder)
     {

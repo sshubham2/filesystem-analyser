@@ -25,11 +25,18 @@
 # still exits 0 on the cases that ran, and a network case named on its own exits 2. The default run proves
 # only that the Stopping state's wait line does NOT appear on an ordinary cancel (C-006); that it appears,
 # counts up, keeps the UI live and goes when the scan returns is N-001's.
+#
+# L-001 to L-003 (SL-039) are the results list, TopLevelList: the root's direct children filling in while
+# the scan runs. L-001 and L-002 read it mid-scan through the hook's watch mode, which presses Cancel once
+# rows show; L-002 also slows every refresh of it (FSA_HOOK_SLOW_REFRESH_MS) so that ticks are skipped and
+# the final snapshot arrives while a skip is armed. M-001 is a measurement, not a case: the list at 100,000
+# rows, timed by the hook's measure mode against the limits spike live-refresh-expanded-100k-folder passed
+# under. It builds 100,000 folders and runs only when named, never in All.
 
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
-        'N-001', 'N-002', 'N-003', 'N-004')]
+        'L-001', 'L-002', 'L-003', 'M-001', 'N-001', 'N-002', 'N-003', 'N-004')]
     [string] $Case,
     [switch] $IncludeNetwork
 )
@@ -43,8 +50,9 @@ $HookProject = Join-Path $Repo 'tests\window\FsaWindowHook\FsaWindowHook.csproj'
 $HookDll = Join-Path $Repo 'artifacts\window-hook\FsaWindowHook.dll'
 $RigProject = Join-Path $Repo 'tests\window\StallRig\StallRig.csproj'
 $RigExe = Join-Path $Repo 'artifacts\stall-rig\StallRig.exe'
-$HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS'
-$HookedCases = 'C-006', 'C-012', 'O-016', 'N-001', 'N-002'
+$HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS',
+    'FSA_HOOK_SLOW_REFRESH_MS'
+$HookedCases = 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'N-001', 'N-002'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004'
 $RigOnlyCases = 'N-003', 'N-004'
 $KiB64 = 64KB
@@ -162,6 +170,41 @@ function New-LargeTree([string] $root) {
         $files += 30
     }
     [pscustomobject]@{ Files = $files; Folders = $tops + $tops * 200; Links = 0; Bytes = $bytes }
+}
+
+# SL-039: 20 top-level folders with names no report may carry (Q-016), each holding a file of its own size
+# and 1,500 empty folders. About as long a scan as New-LargeTree's, in few enough rows that most are still
+# not read after the first second.
+function New-NamedTree([string] $root) {
+    $names = @(for ($i = 0; $i -lt 20; $i++) { 'Recognizable-Top-{0:D2}' -f $i })
+    $bytes = 0
+    for ($i = 0; $i -lt $names.Count; $i++) {
+        $top = Join-Path $root $names[$i]
+        for ($j = 0; $j -lt 1500; $j++) {
+            [void][System.IO.Directory]::CreateDirectory((Join-Path $top "m$j"))
+        }
+        New-File (Join-Path $top 'data.bin') (($i + 1) * $KiB64)
+        $bytes += ($i + 1) * $KiB64
+    }
+    [pscustomobject]@{ Files = $names.Count; Folders = $names.Count * 1501; Links = 0; Bytes = $bytes; Names = $names }
+}
+
+# SL-039: $tops top-level folders of $subs empty folders each, and a 64 KiB file in every hundredth: thousands
+# of rows in the results list.
+function New-WideTree([string] $root, [int] $tops, [int] $subs) {
+    $files = 0
+    for ($i = 0; $i -lt $tops; $i++) {
+        $top = Join-Path $root ('w{0:D6}' -f $i)
+        [void][System.IO.Directory]::CreateDirectory($top)
+        for ($j = 0; $j -lt $subs; $j++) {
+            [void][System.IO.Directory]::CreateDirectory((Join-Path $top "s$j"))
+        }
+        if ($i % 100 -eq 0) {
+            New-File (Join-Path $top 'data.bin') $KiB64
+            $files++
+        }
+    }
+    [pscustomobject]@{ Files = $files; Folders = $tops * (1 + $subs); Links = 0; Bytes = $files * $KiB64 }
 }
 
 function Remove-CaseFolder([string] $folder) {
@@ -319,14 +362,16 @@ function Invoke-WithHook([string] $mode, [string] $hookDll, [scriptblock] $actio
 }
 
 # One report-mode launch with the hook in $mode: the exit code (or TIMEOUT), the report at $report parsed
-# (null when there is none) and the hook's log. Straight through Start-App, like C-009, because these
-# cases plant a stale report at a path of their own and eng/read-window.ps1 picks its own.
-function Invoke-HookedRun([string] $mode, [string] $root, [string] $report) {
-    $run = Invoke-WithHook $mode $HookDll { Wait-App (Start-App "`"$root`" --report `"$report`"") 60 }
+# (null when there is none) and as text, and the hook's log. Straight through Start-App, like C-009, because
+# these cases plant a stale report at a path of their own and eng/read-window.ps1 picks its own. $variables
+# holds any other hook variables, set and removed as Invoke-WithHook does.
+function Invoke-HookedRun([string] $mode, [string] $root, [string] $report, [hashtable] $variables = @{}, [int] $timeoutSec = 60) {
+    $run = Invoke-WithHook $mode $HookDll { Wait-App (Start-App "`"$root`" --report `"$report`"") $timeoutSec } $variables
     $text = if (Test-Path -LiteralPath $report -PathType Leaf) { Get-Content -LiteralPath $report -Raw } else { $null }
     [pscustomobject]@{
         Exit   = $run.Result
         Report = if ($null -eq $text) { $null } else { $text | ConvertFrom-Json }
+        Text   = $text
         Log    = $run.Log
     }
 }
@@ -578,8 +623,39 @@ function Test-C002 {
             Check ($elapsed -ge 750) "the scan ran for at least three 250 ms ticks ($elapsed ms)"
             Write-Output "        CountersText after the last tick: $(Show $read.Report.window.CountersText)"
         }
+        # SL-039: the results list at the ending holds every top-level folder, each read to the end, and
+        # they add up to the tree.
+        if ($null -ne $read.Report) {
+            CheckTopLevel $read.Report.topLevel @{
+                rows = 150; reading = 0; notRead = 0; stoppedPartway = 0; unreadable = 0
+                bytes = $manifest.Bytes; onDisk = $manifest.Bytes; files = $manifest.Files; final = $true
+            } 'against the tree'
+            CheckEqual "Largest at the top of $root" $read.Report.window.TopLevelHeader 'TopLevelHeader'
+        }
     }
     finally { Remove-CaseFolder $case }
+}
+
+# SL-039: the report's topLevel counts against what the case expects, key by key.
+function CheckTopLevel($topLevel, [hashtable] $expected, [string] $against) {
+    Check ($null -ne $topLevel) 'the report has topLevel (the results list shows a snapshot)'
+    if ($null -eq $topLevel) { return }
+    foreach ($key in 'rows', 'reading', 'notRead', 'stoppedPartway', 'unreadable', 'bytes', 'onDisk', 'files', 'final') {
+        if ($expected.ContainsKey($key)) {
+            CheckEqual $expected[$key] $topLevel.$key "topLevel.$key $against"
+        }
+    }
+}
+
+# SL-039: the hook's watch line, as fields, or null when it never watched.
+function Read-WatchLine($log) {
+    $line = @($log | Where-Object { $_.StartsWith('watch rows=') })
+    if ($line.Count -ne 1) { return $null }
+    $fields = @{}
+    foreach ($key in 'rows', 'folderBytes', 'notRead', 'containers', 'skipped', 'armed', 'running') {
+        $fields[$key] = Field $line[0] $key
+    }
+    [pscustomobject]$fields
 }
 
 # C-003: a junction and a hardlinked pair. The junction's target holds 1 MiB that must not be counted,
@@ -969,6 +1045,150 @@ function Test-O016 {
     finally { Remove-CaseFolder $case }
 }
 
+# L-001 (SL-039): results fill in while the scan runs. The hook's watch mode waits until the list holds a
+# folder row with bytes while another is still not read and Cancel is still pressable, logs what it saw and
+# presses Cancel. After the stop the list must hold the final snapshot, whose rows add up to what was read
+# (core: the only exact figure for a partial scan), with some rows short, and the report must carry no
+# top-level name: counts only (Q-016).
+function Test-L001 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'named'
+        $manifest = New-NamedTree $root
+        $run = Invoke-HookedRun 'watch' $root (Join-Path $case 'report.json')
+        $before = $script:Failures.Count
+        CheckActed $run 'watch'
+        if ($script:Failures.Count -gt $before) { return }
+        $watch = Read-WatchLine $run.Log
+        Check ($null -ne $watch) "the hook logged one 'watch rows=' line"
+        if ($null -eq $watch) { return }
+        CheckEqual 'True' $watch.running 'the scan was still running when the rows were read (Cancel pressable)'
+        CheckEqual '20' $watch.rows 'the list held a row per top-level folder mid-scan'
+        Check ([long]$watch.folderBytes -gt 0) "a folder row already showed bytes mid-scan ($($watch.folderBytes))"
+        Check ([int]$watch.notRead -ge 1) "another was not read yet ($($watch.notRead))"
+
+        CheckEqual '0' $run.Exit 'exit code'
+        Check ($null -ne $run.Report) 'a report was written'
+        if ($null -eq $run.Report) { return }
+        CheckEqual 'Cancelled' $run.Report.core.status 'core.status'
+        $core = $run.Report.core
+        CheckTopLevel $run.Report.topLevel @{ rows = 20; reading = 0; bytes = $core.bytes; onDisk = $core.bytesOnDisk; files = $core.files; final = $true } 'against core'
+        if ($null -ne $run.Report.topLevel) {
+            $short = [int]$run.Report.topLevel.notRead + [int]$run.Report.topLevel.stoppedPartway
+            Check ($short -ge 1) "some rows are short after the stop (notRead + stoppedPartway = $short)"
+        }
+        CheckEqual 'What was read before the stop. Rows marked not read yet or stopped partway are short.' $run.Report.window.TopLevelHeader 'TopLevelHeader'
+        $named = @($manifest.Names | Where-Object { $run.Text.Contains($_) })
+        Check ($named.Count -eq 0 -and -not $run.Text.Contains('Recognizable-Top')) "no top-level name is in the report ($(Show ($named -join ', ')))"
+    }
+    finally { Remove-CaseFolder $case }
+}
+
+# L-002 (SL-039): thousands of rows, refreshed while the scan runs, on a UI thread slowed to 150 ms a refresh
+# by the hook, so every refresh runs over the window's 100 ms and the tick after it skips. The hook presses
+# Cancel only once a tick has skipped and the next skip is armed again, so the final snapshot arrives right
+# after a skipped tick with the skip still armed: the ending must show it anyway. Mid-scan the list must
+# realize only a screenful of its rows (virtualization on).
+function Test-L002 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'wide'
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        $manifest = New-WideTree $root 3000 20
+        Write-Output ("        built {0:N0} folders in {1:N1} s" -f $manifest.Folders, $clock.Elapsed.TotalSeconds)
+        $run = Invoke-HookedRun 'watch' $root (Join-Path $case 'report.json') @{ FSA_HOOK_SLOW_REFRESH_MS = '150' }
+        $before = $script:Failures.Count
+        CheckActed $run 'watch'
+        if ($script:Failures.Count -gt $before) { return }
+        $watch = Read-WatchLine $run.Log
+        Check ($null -ne $watch) "the hook logged one 'watch rows=' line"
+        if ($null -eq $watch) { return }
+        CheckEqual 'True' $watch.running 'the scan was still running'
+        CheckEqual '3000' $watch.rows 'the list held all 3,000 rows mid-scan'
+        Check ([int]$watch.containers -gt 0 -and [int]$watch.containers -le 200) "only a screenful of rows was realized (at most $($watch.containers) containers for 3,000 rows)"
+        Check ([int]$watch.skipped -ge 1) "a tick skipped its refresh after a slow one ($($watch.skipped) skipped)"
+        CheckEqual 'True' $watch.armed 'the next skip was armed when Cancel was pressed'
+
+        CheckEqual '0' $run.Exit 'exit code'
+        Check ($null -ne $run.Report) 'a report was written'
+        if ($null -eq $run.Report) { return }
+        CheckEqual 'Cancelled' $run.Report.core.status 'core.status'
+        $core = $run.Report.core
+        CheckTopLevel $run.Report.topLevel @{ rows = 3000; reading = 0; bytes = $core.bytes; files = $core.files; final = $true } 'against core (the ending showed the final snapshot)'
+    }
+    finally { Remove-CaseFolder $case }
+}
+
+# L-003 (SL-039): endings with nothing to show. An empty root shows an empty list under its header; a root
+# that is not there, and one refused before any scan, show no list at all, so no row from anything is left
+# on screen. (A scan that faults after rows were shown ends the app in report mode, C-012: no report can
+# show its list.)
+function Test-L003 {
+    $case = New-CaseFolder
+    try {
+        $empty = Join-Path $case 'empty'
+        [void][System.IO.Directory]::CreateDirectory($empty)
+        $read = Read-Window $empty
+        CheckEqual 'EXIT 0' $read.Exit 'empty root: exit code'
+        if ($null -ne $read.Report) {
+            CheckEqual "Finished: $empty" $read.Report.window.OutcomeTitle 'empty root: OutcomeTitle'
+            CheckTopLevel $read.Report.topLevel @{ rows = 0; reading = 0; notRead = 0; bytes = 0; files = 0; final = $true } 'for an empty root'
+            CheckEqual "$empty is empty." $read.Report.window.TopLevelHeader 'empty root: TopLevelHeader'
+        }
+
+        foreach ($shape in @(
+                [pscustomobject]@{ Name = 'missing root'; Root = (Join-Path $case 'missing') }
+                [pscustomobject]@{ Name = 'relative root'; Root = 'fsa-not-an-absolute-path' })) {
+            $read = Read-Window $shape.Root
+            CheckEqual 'EXIT 0' $read.Exit "$($shape.Name): exit code"
+            Check ($null -ne $read.Report) "$($shape.Name): a report was written"
+            if ($null -eq $read.Report) { continue }
+            Check ($read.Report.window.OutcomeTitle -like 'Could not read *') "$($shape.Name): the ending is Could not read ($(Show $read.Report.window.OutcomeTitle))"
+            Check ($read.Text -notmatch '"topLevel"') "$($shape.Name): no topLevel in the report (the list shows nothing)"
+            CheckEqual '' $read.Report.window.TopLevelHeader "$($shape.Name): TopLevelHeader"
+        }
+    }
+    finally { Remove-CaseFolder $case }
+}
+
+# M-001 (SL-039, named only): the results list at 100,000 rows. The hook's measure mode times every refresh
+# (the window's own time, handler and layout) and an Input-priority probe every 50 ms while the scan runs.
+# Checked against the limits spike live-refresh-expanded-100k-folder held under with a TreeView stand-in:
+# refresh p95 under 100 ms, Input p95 under 200 ms, no refresh of 1 s or more. Timing on a shared machine:
+# a failure here is a measurement to record, not proof of a defect by itself.
+function Test-M001 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'flat'
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        for ($i = 0; $i -lt 100000; $i++) {
+            [void][System.IO.Directory]::CreateDirectory((Join-Path $root ('f{0:D6}' -f $i)))
+        }
+        Write-Output ("        built 100,000 folders in {0:N1} s" -f $clock.Elapsed.TotalSeconds)
+        $run = Invoke-HookedRun 'measure' $root (Join-Path $case 'report.json') @{} 300
+        foreach ($line in $run.Log) { Write-Output "        hook: $line" }
+        $measured = @($run.Log | Where-Object { $_.StartsWith('measured ') })
+        Check ($measured.Count -eq 1) "the hook logged one 'measured' line"
+        if ($measured.Count -ne 1) { return }
+        $m = $measured[0]
+        $refreshP95 = [double](Field $m 'refreshP95')
+        $refreshMax = [double](Field $m 'refreshMax')
+        $inputP95 = [double](Field $m 'inputP95')
+        Check ([int](Field $m 'refreshes') -ge 3) "the list refreshed at least three times at scale ($(Field $m 'refreshes'))"
+        CheckEqual '100000' (Field $m 'rows') 'the list held 100,000 rows when the scan returned'
+        $containers = [int](Field $m 'containers')
+        Check ($containers -gt 0 -and $containers -le 200) "only a screenful was realized (at most $containers containers after any refresh)"
+        Check ($refreshP95 -lt 100) "refresh p95 $refreshP95 ms is under 100 ms"
+        Check ($refreshMax -lt 1000) "no refresh took 1 s or more (max $refreshMax ms)"
+        Check ($inputP95 -lt 200) "Input probe p95 $inputP95 ms is under 200 ms"
+        CheckEqual '0' $run.Exit 'exit code'
+        if ($null -ne $run.Report) {
+            CheckTopLevel $run.Report.topLevel @{ rows = 100000; reading = 0; notRead = 0; final = $true } 'after completion'
+        }
+    }
+    finally { Remove-CaseFolder $case }
+}
+
 # N-001 (-IncludeNetwork, SL-038): Cancel on a share whose server stopped answering. The rig's server stops
 # at the listing of hung; the hook presses Cancel 3 s after the rig's marker, and the scan returns only
 # when the SMB client gives up (57 to 66 s on this rig). The wait line must first show 1.9 to 3 s after
@@ -1130,7 +1350,7 @@ function Test-N004 {
 
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016') + $NetworkCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003') + $NetworkCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })

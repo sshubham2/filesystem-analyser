@@ -10,4 +10,10 @@ internal sealed class ScanOptions
 
     /// <summary>Called after each folder is listed, with the number of folders listed so far (the root is 1).</summary>
     public Action<int>? AfterFolder { get; init; }
+
+    /// <summary>
+    /// The least time between two top-level snapshots with something changed in them; the first and the
+    /// last are always published. Tests set it to zero to see every change.
+    /// </summary>
+    public TimeSpan TopLevelInterval { get; init; } = TimeSpan.FromMilliseconds(250);
 }
