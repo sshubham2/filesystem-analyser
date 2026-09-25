@@ -71,8 +71,9 @@ build measured. Where it and the slice's design disagree, this file is right.
   last child, a Grid: each row is star-sized only while its panel is shown, so while a scan runs this
   panel gets all the height left, and after an ending the two share it 2 to 1, with the outcome never
   below 316 px (328 px while its unreadable folders are open). The list always has a bounded height, which
-  is what lets it virtualize. At the default 880x600 that floor leaves it its header and part of a row
-  after an ending (SL-040's B-007 measures it).
+  is what lets it virtualize. That floor fits only from about 580 px of window height up, so the window's
+  MinHeight is 600, its default (SL-040, O-027); at 880x600 it leaves this list its header and part of a
+  row after an ending. SL-040's B-007 measures it at the default size and at the window's MinHeight.
 - Two TextBlocks a row, formatted by a converter (`TopLevelRowText`) so only the rows on screen are ever put
   into words: the name with its state ("reading...", "not read yet", "stopped partway", "could not be
   opened", "link, not followed"), and the size, on-disk size, files and folders inside, and "N folders

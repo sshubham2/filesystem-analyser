@@ -61,7 +61,7 @@ $HookDll = Join-Path $Repo 'artifacts\window-hook\FsaWindowHook.dll'
 $RigProject = Join-Path $Repo 'tests\window\StallRig\StallRig.csproj'
 $RigExe = Join-Path $Repo 'artifacts\stall-rig\StallRig.exe'
 $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS',
-    'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND'
+    'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND', 'FSA_HOOK_MINHEIGHT'
 $HookedCases = 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'N-001', 'N-002'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004'
 $RigOnlyCases = 'N-003', 'N-004'
@@ -1668,10 +1668,17 @@ function CheckBothLists($window, [bool] $opened) {
     }
 }
 
-# B-007 (O-025, O-026): the largest-files list full and the results list both on screen after an ending, at
-# the window's default size. The tree, in listing order: 4 top-level folders of 26 non-empty files (104), 12
-# folders the scan cannot read, and 20 folders of 1,500 empty folders each, which take the scan past a
-# second. Four endings: Completed, with the unreadable folders closed and then opened (the hook's expand
+# O-027: the hook set the window's Height to its own MinHeight when it loaded, before the scan started.
+function CheckSized($log) {
+    $sized = @($log | Where-Object { $_.StartsWith('sized ') })
+    Check ($sized.Count -eq 1 -and (Field $sized[0] 'height') -eq (Field $sized[0] 'minHeight')) "the hook set the window to its MinHeight ($(Show ($sized -join ' | ')))"
+}
+
+# B-007 (O-025, O-026, O-027): the largest-files list full and the results list both on screen after an
+# ending, at the window's default size and again at the shortest height the window allows (its MinHeight,
+# set by the hook). The tree, in listing order: 4 top-level folders of 26 non-empty files (104), 12 folders
+# the scan cannot read, and 20 folders of 1,500 empty folders each, which take the scan past a second. Four
+# endings at each height: Completed, with the unreadable folders closed and then opened (the hook's expand
 # mode); and Cancelled, pressed by the hook's watch mode once the files are read and the slow folders are
 # not, closed and then opened (FSA_HOOK_EXPAND). Mid-scan, with no outcome on screen, the results list has
 # more height than it keeps beside the outcome after the ending (watch's listHeight).
@@ -1699,49 +1706,59 @@ function Test-B007 {
         }
         $unread = ' Files in 12 unreadable folders are not included.'
 
-        foreach ($opened in $false, $true) {
-            Write-Output "  Completed, the unreadable folders $(if ($opened) { 'opened' } else { 'closed' })"
-            if ($opened) {
-                $run = Invoke-WithHook 'expand' $HookDll { Read-Window $root }
-                $before = $script:Failures.Count
-                CheckActed $run 'expand'
-                if ($script:Failures.Count -gt $before) { continue }
-                $read = $run.Result
-            }
-            else {
-                $read = Read-Window $root
-            }
-            CheckEqual 'EXIT 0' $read.Exit 'exit code'
-            Check ($null -ne $read.Report) 'a report was written'
-            if ($null -eq $read.Report) { continue }
-            CheckEqual "Finished: $root" $read.Report.window.OutcomeTitle 'OutcomeTitle'
-            CheckLargestFiles $read 100 $KiB64 "Top 100 of 104 files scanned.$unread"
-            CheckTopLevel $read.Report.topLevel @{ rows = 36; unreadable = 12; final = $true } 'against the tree'
-            CheckBothLists $read.Report.window $opened
-        }
+        foreach ($short in $false, $true) {
+            $at = if ($short) { "at the window's MinHeight" } else { 'at the default 880x600' }
+            # FSA_HOOK_MINHEIGHT sizes the window to its MinHeight ahead of watch and expand; size mode does only that.
+            $sizing = if ($short) { @{ FSA_HOOK_MINHEIGHT = '1' } } else { @{} }
 
-        foreach ($opened in $false, $true) {
-            Write-Output "  Cancelled, the unreadable folders $(if ($opened) { 'opened' } else { 'closed' })"
-            $variables = if ($opened) { @{ FSA_HOOK_EXPAND = '1' } } else { @{} }
-            $run = Invoke-HookedRun 'watch' $root (Join-Path $case 'report.json') $variables
-            $before = $script:Failures.Count
-            CheckActed $run 'watch'
-            if ($opened) { CheckActed $run 'expand' }
-            if ($script:Failures.Count -gt $before) { continue }
-            $watch = Read-WatchLine $run.Log
-            Check ($null -ne $watch) "the hook logged one 'watch rows=' line"
-            CheckEqual '0' $run.Exit 'exit code'
-            Check ($null -ne $run.Report) 'a report was written'
-            if ($null -eq $watch -or $null -eq $run.Report) { continue }
-            CheckEqual 'Cancelled' $run.Report.core.status 'core.status'
-            $files = ("$($run.Report.window.OutcomeDetail[0])" -split ' and ')[0]
-            $read = [pscustomobject]@{ Report = $run.Report; Text = ($run.Report | ConvertTo-Json -Depth 8) }
-            CheckLargestFiles $read 100 $KiB64 "Top 100 of $files scanned in the part read before the scan stopped.$unread"
-            CheckTopLevel $run.Report.topLevel @{ rows = 36; unreadable = 12; final = $true } 'against the tree'
-            Check ([int]$run.Report.topLevel.notRead -ge 1) "some slow folders were not read before the stop ($($run.Report.topLevel.notRead))"
-            CheckBothLists $run.Report.window $opened
-            $after = $run.Report.window.TopLevelList.actualHeight
-            Check ([double]$watch.listHeight -gt $after) "mid-scan, with no outcome on screen, TopLevelList had more height ($($watch.listHeight) px) than beside the outcome after the stop ($after px)"
+            foreach ($opened in $false, $true) {
+                Write-Output "  Completed, the unreadable folders $(if ($opened) { 'opened' } else { 'closed' }), $at"
+                if ($opened -or $short) {
+                    $mode = if ($opened) { 'expand' } else { 'size' }
+                    $run = Invoke-WithHook $mode $HookDll { Read-Window $root } $(if ($opened) { $sizing } else { @{} })
+                    $before = $script:Failures.Count
+                    CheckActed $run $mode
+                    if ($short) { CheckSized $run.Log }
+                    if ($script:Failures.Count -gt $before) { continue }
+                    $read = $run.Result
+                }
+                else {
+                    $read = Read-Window $root
+                }
+                CheckEqual 'EXIT 0' $read.Exit 'exit code'
+                Check ($null -ne $read.Report) 'a report was written'
+                if ($null -eq $read.Report) { continue }
+                CheckEqual "Finished: $root" $read.Report.window.OutcomeTitle 'OutcomeTitle'
+                CheckLargestFiles $read 100 $KiB64 "Top 100 of 104 files scanned.$unread"
+                CheckTopLevel $read.Report.topLevel @{ rows = 36; unreadable = 12; final = $true } 'against the tree'
+                CheckBothLists $read.Report.window $opened
+            }
+
+            foreach ($opened in $false, $true) {
+                Write-Output "  Cancelled, the unreadable folders $(if ($opened) { 'opened' } else { 'closed' }), $at"
+                $variables = @{} + $sizing
+                if ($opened) { $variables.FSA_HOOK_EXPAND = '1' }
+                $run = Invoke-HookedRun 'watch' $root (Join-Path $case 'report.json') $variables
+                $before = $script:Failures.Count
+                CheckActed $run 'watch'
+                if ($opened) { CheckActed $run 'expand' }
+                if ($short) { CheckSized $run.Log }
+                if ($script:Failures.Count -gt $before) { continue }
+                $watch = Read-WatchLine $run.Log
+                Check ($null -ne $watch) "the hook logged one 'watch rows=' line"
+                CheckEqual '0' $run.Exit 'exit code'
+                Check ($null -ne $run.Report) 'a report was written'
+                if ($null -eq $watch -or $null -eq $run.Report) { continue }
+                CheckEqual 'Cancelled' $run.Report.core.status 'core.status'
+                $files = ("$($run.Report.window.OutcomeDetail[0])" -split ' and ')[0]
+                $read = [pscustomobject]@{ Report = $run.Report; Text = ($run.Report | ConvertTo-Json -Depth 8) }
+                CheckLargestFiles $read 100 $KiB64 "Top 100 of $files scanned in the part read before the scan stopped.$unread"
+                CheckTopLevel $run.Report.topLevel @{ rows = 36; unreadable = 12; final = $true } 'against the tree'
+                Check ([int]$run.Report.topLevel.notRead -ge 1) "some slow folders were not read before the stop ($($run.Report.topLevel.notRead))"
+                CheckBothLists $run.Report.window $opened
+                $after = $run.Report.window.TopLevelList.actualHeight
+                Check ([double]$watch.listHeight -gt $after) "mid-scan, with no outcome on screen, TopLevelList had more height ($($watch.listHeight) px) than beside the outcome after the stop ($after px)"
+            }
         }
     }
     finally {

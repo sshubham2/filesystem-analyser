@@ -18,11 +18,11 @@ using System.Windows.Threading;
 /// </summary>
 /// <remarks>
 /// <code>
-///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|watch|measure|rescan|expand
+///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|watch|measure|rescan|expand|size
 ///   FSA_HOOK_LOG=&lt;file&gt;  [FSA_HOOK_ARMED=&lt;marker file&gt;  FSA_HOOK_CANCEL_DELAY_MS=&lt;n&gt;  FSA_HOOK_CLOSE_DELAY_MS=&lt;n&gt;]
 ///   [FSA_HOOK_SLOW_REFRESH_MS=&lt;n&gt;]  (watch and measure only)
 ///   [FSA_HOOK_MISSING=&lt;the root folder, under %TEMP%&gt;]  (rescan only)
-///   [FSA_HOOK_EXPAND=1]  (watch only)
+///   [FSA_HOOK_EXPAND=1]  (watch only)  [FSA_HOOK_MINHEIGHT=1]  (watch and expand only)
 /// </code>
 /// The runtime calls <see cref="Initialize"/> before the app's Main, in every .NET process that inherits the
 /// variable: pwsh 7, dotnet.exe and MSBuild nodes too. So it does nothing unless FSA_HOOK_MODE is set and the
@@ -59,6 +59,12 @@ using System.Windows.Threading;
 /// beside a closed, pressable list of unreadable folders, opens that list as a click on its header would
 /// (IsExpanded, which the header's toggle sets). The layout that follows runs ahead of the report, so the
 /// report reads the window with the list open. It is not armed and takes no FSA_HOOK_MISSING.
+///
+/// size (SL-040, O-027) sets the window's Height to its own MinHeight in a Loaded class handler, which runs
+/// before the window's own Loaded handler starts the scan, and does nothing else: every ending is then laid out
+/// at the shortest height a person can drag the window to. It logs "sized height=n minHeight=n ms=n" and
+/// "acted mode=size height=n ms=n", and is not armed. FSA_HOOK_MINHEIGHT=1 does the same sizing, logging only
+/// the "sized" line, ahead of watch or expand.
 ///
 /// FSA_HOOK_LOG gets one ASCII line per event: "loaded mode=m pid=n", "waiting found=b enabled=b visible=b"
 /// when that changes, "armed ms=n" when the marker appeared, "acted mode=m enabled=True visible=True ms=n"
@@ -122,9 +128,10 @@ internal class StartupHook
     private static DispatcherTimer? _stoppingTimer;
     private static bool _returned;
 
-    // rescan's and expand's state: written and read on the UI thread only.
+    // rescan's and expand's state, and size's: written and read on the UI thread only.
     private static bool _watching;
     private static bool _listed;
+    private static bool _sized;
 
     public static void Initialize()
     {
@@ -156,9 +163,16 @@ internal class StartupHook
         try
         {
             Log($"loaded mode={mode} pid={Environment.ProcessId}");
-            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand"))
+            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "size"))
             {
                 Log($"refused mode={mode} reason=unknown mode");
+                return;
+            }
+            string? minHeight = Environment.GetEnvironmentVariable("FSA_HOOK_MINHEIGHT");
+            bool sizeFirst = !string.IsNullOrEmpty(minHeight);
+            if (sizeFirst && (minHeight != "1" || mode is not ("watch" or "expand")))
+            {
+                Log($"refused mode={mode} reason=FSA_HOOK_MINHEIGHT is 1, and for watch and expand only (size mode sizes by itself)");
                 return;
             }
             if (!Delay("FSA_HOOK_SLOW_REFRESH_MS", out int? pad))
@@ -180,6 +194,8 @@ internal class StartupHook
                     Log($"refused mode={mode} reason={mode} mode is not armed");
                     return;
                 }
+                if (sizeFirst && !SizeToMinHeight(mode))
+                    return;
                 // Before the window loads, as expand mode does: the Cancel's ending then opens the list.
                 if (!string.IsNullOrEmpty(expandAfter))
                     DriveAfterList("expand", null);
@@ -191,6 +207,14 @@ internal class StartupHook
                 Log($"refused mode={mode} reason=FSA_HOOK_SLOW_REFRESH_MS is for watch and measure only");
                 return;
             }
+            if (mode == "size")
+            {
+                if (!string.IsNullOrEmpty(marker))
+                    Log("refused mode=size reason=size mode is not armed");
+                else
+                    SizeToMinHeight(mode);
+                return;
+            }
             if (mode is "rescan" or "expand")
             {
                 string? missing = Environment.GetEnvironmentVariable("FSA_HOOK_MISSING") is { Length: > 0 } folder ? folder : null;
@@ -198,7 +222,7 @@ internal class StartupHook
                     Log($"refused mode={mode} reason={mode} mode is not armed");
                 else if (mode == "expand" && missing is not null)
                     Log("refused mode=expand reason=FSA_HOOK_MISSING is for rescan only");
-                else
+                else if (!sizeFirst || SizeToMinHeight(mode))
                     DriveAfterList(mode, missing);
                 return;
             }
@@ -329,6 +353,37 @@ internal class StartupHook
                 return null;
             });
         }
+    }
+
+    // size, and FSA_HOOK_MINHEIGHT (SL-040, O-027): the window at its own MinHeight, the shortest a person can
+    // make it. A class handler, registered before the window loads, runs ahead of the window's own Loaded
+    // handler, which starts the scan, so every ending is laid out at that height. Only size mode waits on the
+    // UI thread to see whether it registered in time: that wait lasts until the window has loaded, so ahead of
+    // watch or expand it would make their own handlers late. There a missing "sized" line is the sign.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool SizeToMinHeight(string mode)
+    {
+        if (WaitForApplication(mode) is not { } app)
+            return false;
+        EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent, new RoutedEventHandler((sender, _) =>
+        {
+            var window = (Window)sender;
+            if (_sized || !ReferenceEquals(window, app.MainWindow))
+                return;
+            _sized = true;
+            window.Height = window.MinHeight;
+            string height = window.Height.ToString("F0", CultureInfo.InvariantCulture);
+            string least = window.MinHeight.ToString("F0", CultureInfo.InvariantCulture);
+            Log($"sized height={height} minHeight={least} ms={Clock.ElapsedMilliseconds}");
+            if (mode == "size")
+                Log($"acted mode=size height={height} ms={Clock.ElapsedMilliseconds}");
+        }));
+        if (mode == "size" && app.Dispatcher.Invoke(() => !_sized && app.MainWindow is { IsLoaded: true }))
+        {
+            Log($"refused mode={mode} reason=the window loaded before the hook could size it");
+            return false;
+        }
+        return true;
     }
 
     // rescan: a class handler, registered before the window loads, because the window's Loaded handler starts
