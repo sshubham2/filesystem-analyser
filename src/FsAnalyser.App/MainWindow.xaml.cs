@@ -106,7 +106,7 @@ public partial class MainWindow : Window
             {
                 Content = drive.Label,
                 Padding = new Thickness(12, 6, 12, 6),
-                Margin = new Thickness(0, 0, 8, 8),
+                Margin = new Thickness(0, 0, 8, 0), // one line of them, above DriveScroller's scroll bar
                 HorizontalContentAlignment = HorizontalAlignment.Left,
                 IsEnabled = !_scanning,
             };

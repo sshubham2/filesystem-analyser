@@ -71,7 +71,9 @@ build measured. Where it and the slice's design disagree, this file is right.
   one are the two rows of the window's last child, a Grid: each row is star-sized only while its panel is
   shown, so while a scan runs this panel gets all the height left, and after an ending the two share it 3
   to 1, neither below its own minimum: this panel's is its header and one full row (84 px), and it gets at
-  least that at every size the window allows (560 by 600 and up), whatever the texts above it hold. The list
+  least that at every size the window allows (560 by 620 and up, at 100% scaling), whatever the texts above it
+  hold and however many drives are ready: the pickers' drive buttons are one line that scrolls sideways, so
+  the pickers take the same height with any number of them (SL-040, O-028). The list
   always has a bounded height, which is what lets it virtualize. To keep that minimum for any name, the
   header is one line, trimmed, with the whole text as its tooltip, and the list does not scroll sideways, so
   its rows' TextTrimming takes effect and a row is always two lines. SL-040's B-007 and B-008 check it.

@@ -43,7 +43,8 @@
 # rescan mode), read through eng/read-window.ps1 at that second point. B-007 is the largest-files list full
 # beside the results list after Completed and Cancelled endings, the unreadable folders closed and opened,
 # at the default size and at the window's minimum size; B-008 is a stopped scan of a long path at the
-# minimum size. Every list must keep at least one full row in view (the report's fullRows).
+# minimum size. Every list must keep at least one full row in view (the report's fullRows), with 26 drive
+# buttons added by the hook (FSA_HOOK_DRIVES), so these cases never depend on what is plugged into the machine.
 
 param(
     [Parameter(Mandatory = $true)]
@@ -63,7 +64,7 @@ $HookDll = Join-Path $Repo 'artifacts\window-hook\FsaWindowHook.dll'
 $RigProject = Join-Path $Repo 'tests\window\StallRig\StallRig.csproj'
 $RigExe = Join-Path $Repo 'artifacts\stall-rig\StallRig.exe'
 $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS',
-    'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND', 'FSA_HOOK_MINSIZE'
+    'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND', 'FSA_HOOK_MINSIZE', 'FSA_HOOK_DRIVES'
 $HookedCases = 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004'
 $RigOnlyCases = 'N-003', 'N-004'
@@ -1680,15 +1681,24 @@ function CheckBothLists($window, [bool] $opened) {
     CheckEqual $true $texts.inView "the outcome's texts are inside the window ($($texts.actualHeight) of $($texts.extentHeight) px shown, the rest a scroll away)"
 }
 
-# The hook set the window to its own MinWidth by MinHeight when it loaded, before the scan started, and held
-# the report until the drive buttons were in, which at the narrowest width make the pickers taller.
+# The hook set the window to its own MinWidth by MinHeight when it loaded, before the scan started.
 function CheckSized($log) {
     $sized = @($log | Where-Object { $_.StartsWith('sized ') })
     $line = if ($sized.Count -eq 1) { $sized[0] } else { '' }
     Check ($sized.Count -eq 1 -and (Field $line 'width') -eq (Field $line 'minWidth') -and (Field $line 'height') -eq (Field $line 'minHeight')) "the hook set the window to its minimum size ($(Show ($sized -join ' | ')))"
-    $drives = @($log | Where-Object { $_.StartsWith('drives in ') })
-    Check ($drives.Count -eq 1) "the report waited for the drive buttons ($(Show ($drives -join ' | ')))"
 }
+
+# The hook held the report until the app's own drive buttons were in, then added $extra more like them
+# (FSA_HOOK_DRIVES, O-028).
+function CheckDrives($log, [int] $extra) {
+    $drives = @($log | Where-Object { $_.StartsWith('drives in ') })
+    $line = if ($drives.Count -eq 1) { $drives[0] } else { '' }
+    Check ($drives.Count -eq 1 -and (Field $line 'added') -eq "$extra" -and [int](Field $line 'buttons') -ge $extra) "the report waited for the drive buttons and $extra more were added ($(Show ($drives -join ' | ')))"
+}
+
+# More drive buttons than Windows has drive letters, fed in beside the ready ones (O-028): the pickers must
+# take the same height with them as without.
+$ExtraDrives = 26
 
 # B-007's and B-008's tree under $root, in listing order: 4 top-level folders of 26 non-empty files (104), 12
 # folders the scan cannot read, and 20 folders of 1,500 empty folders each, which take the scan past a second.
@@ -1716,18 +1726,21 @@ function New-TopsTree([string] $root) {
 }
 
 # One Cancelled ending of New-TopsTree's tree, pressed by the hook's watch mode once the files are read and the
-# slow folders are not, with the unreadable folders closed or opened (FSA_HOOK_EXPAND), and at the window's
-# minimum size (FSA_HOOK_MINSIZE) or not. Its checks print as they go; the report it read is left in
-# $script:StoppedReport, null when a check before it failed.
-function Invoke-StoppedEnding([string] $case, [string] $root, [bool] $opened, [bool] $smallest) {
+# slow folders are not, with the unreadable folders closed or opened (FSA_HOOK_EXPAND), at the window's minimum
+# size (FSA_HOOK_MINSIZE) or not, and with $extra drive buttons added (FSA_HOOK_DRIVES) or none. Its checks
+# print as they go; the report it read is left in $script:StoppedReport, null when a check before it failed.
+function Invoke-StoppedEnding([string] $case, [string] $root, [bool] $opened, [bool] $smallest, [int] $extra) {
     $script:StoppedReport = $null
-    $variables = if ($smallest) { @{ FSA_HOOK_MINSIZE = '1' } } else { @{} }
+    $variables = @{}
+    if ($smallest) { $variables.FSA_HOOK_MINSIZE = '1' }
+    if ($extra -gt 0) { $variables.FSA_HOOK_DRIVES = "$extra" }
     if ($opened) { $variables.FSA_HOOK_EXPAND = '1' }
     $run = Invoke-HookedRun 'watch' $root (Join-Path $case 'report.json') $variables
     $before = $script:Failures.Count
     CheckActed $run 'watch'
     if ($opened) { CheckActed $run 'expand' }
     if ($smallest) { CheckSized $run.Log }
+    if ($smallest -or $extra -gt 0) { CheckDrives $run.Log $extra }
     if ($script:Failures.Count -gt $before) { return }
     $watch = Read-WatchLine $run.Log
     Check ($null -ne $watch) "the hook logged one 'watch rows=' line"
@@ -1746,33 +1759,50 @@ function Invoke-StoppedEnding([string] $case, [string] $root, [bool] $opened, [b
     $script:StoppedReport = $run.Report
 }
 
-# B-007 (O-025, O-026, O-027): the largest-files list full and the results list both on screen after an
-# ending, at the window's default size and again at the smallest size the window allows (its MinWidth by
-# MinHeight, set by the hook), each list with a full row in view. New-TopsTree's tree, four endings at each
-# size: Completed, with the unreadable folders closed and then opened (the hook's expand mode); and
-# Cancelled, closed and then opened. Mid-scan, with no outcome on screen, the results list has more height
-# than it keeps beside the outcome after the ending (watch's listHeight).
+# O-028: the pickers took the same height in every run, whatever the window's size and however many drive
+# buttons they held.
+function CheckPickers($pickers) {
+    $heights = @($pickers | ForEach-Object { $_.Height } | Sort-Object -Unique)
+    Write-Output "        pickers: $(($pickers | ForEach-Object { "$($_.Run) $($_.Height) px with $($_.Buttons) drive buttons" }) -join '; ')"
+    Check ($pickers.Count -ge 2 -and $heights.Count -eq 1) "PickerPanel took the same height in all $($pickers.Count) runs ($($heights -join ', ') px)"
+    $counts = @($pickers | ForEach-Object { $_.Buttons } | Sort-Object -Unique)
+    Check ($counts.Count -ge 2) "and the runs held different numbers of drive buttons ($($counts -join ', '))"
+}
+
+# B-007 (O-025 to O-028): the largest-files list full and the results list both on screen after an ending, at
+# the window's default size and again at the smallest size the window allows (its MinWidth by MinHeight, set
+# by the hook), each list with a full row in view. New-TopsTree's tree, four endings at each size: Completed,
+# with the unreadable folders closed and then opened (the hook's expand mode); and Cancelled, closed and then
+# opened. Every hooked run adds 26 drive buttons beside the ready ones (FSA_HOOK_DRIVES); the default-size
+# Completed run with the list closed has only the ready ones, and the pickers must take the same height in all
+# eight. Mid-scan, with no outcome on screen, the results list has more height than it keeps beside the outcome
+# after the ending (watch's listHeight).
 function Test-B007 {
     $case = New-CaseFolder
     $denied = @()
+    $pickers = @()
     try {
         $root = Join-Path $case 'tree'
         $denied = New-TopsTree $root
         $unread = ' Files in 12 unreadable folders are not included.'
 
         foreach ($smallest in $false, $true) {
-            $at = if ($smallest) { "at the window's minimum size" } else { 'at the default 880x600' }
+            $at = if ($smallest) { "at the window's minimum size" } else { 'at the default 880x620' }
             # FSA_HOOK_MINSIZE sizes the window to its minimum ahead of watch and expand; size mode does only that.
             $sizing = if ($smallest) { @{ FSA_HOOK_MINSIZE = '1' } } else { @{} }
 
             foreach ($opened in $false, $true) {
-                Write-Output "  Completed, the unreadable folders $(if ($opened) { 'opened' } else { 'closed' }), $at"
+                $label = "Completed, the unreadable folders $(if ($opened) { 'opened' } else { 'closed' }), $at"
+                Write-Output "  $label"
                 if ($opened -or $smallest) {
                     $mode = if ($opened) { 'expand' } else { 'size' }
-                    $run = Invoke-WithHook $mode $HookDll { Read-Window $root } $(if ($opened) { $sizing } else { @{} })
+                    $variables = @{ FSA_HOOK_DRIVES = "$ExtraDrives" }
+                    if ($opened) { $variables += $sizing }
+                    $run = Invoke-WithHook $mode $HookDll { Read-Window $root } $variables
                     $before = $script:Failures.Count
                     CheckActed $run $mode
                     if ($smallest) { CheckSized $run.Log }
+                    CheckDrives $run.Log $ExtraDrives
                     if ($script:Failures.Count -gt $before) { continue }
                     $read = $run.Result
                 }
@@ -1786,13 +1816,20 @@ function Test-B007 {
                 CheckLargestFiles $read 100 $KiB64 "Top 100 of 104 files scanned.$unread"
                 CheckTopLevel $read.Report.topLevel @{ rows = 36; unreadable = 12; final = $true } 'against the tree'
                 CheckBothLists $read.Report.window $opened
+                $pickers += [pscustomobject]@{ Run = $label; Height = $read.Report.window.PickerPanel.actualHeight; Buttons = $read.Report.window.DrivePanel.buttons }
             }
 
             foreach ($opened in $false, $true) {
-                Write-Output "  Cancelled, the unreadable folders $(if ($opened) { 'opened' } else { 'closed' }), $at"
-                Invoke-StoppedEnding $case $root $opened $smallest
+                $label = "Cancelled, the unreadable folders $(if ($opened) { 'opened' } else { 'closed' }), $at"
+                Write-Output "  $label"
+                Invoke-StoppedEnding $case $root $opened $smallest $ExtraDrives
+                if ($null -ne $script:StoppedReport) {
+                    $window = $script:StoppedReport.window
+                    $pickers += [pscustomobject]@{ Run = $label; Height = $window.PickerPanel.actualHeight; Buttons = $window.DrivePanel.buttons }
+                }
             }
         }
+        CheckPickers $pickers
     }
     finally {
         foreach ($folder in $denied) { Undo-DenyListing $folder }
@@ -1800,12 +1837,13 @@ function Test-B007 {
     }
 }
 
-# B-008 (the window-size rework): a stopped scan of a long path at the smallest size the window allows, with
-# the unreadable folders closed and then opened. New-TopsTree's tree under a 140-character folder name, so the
-# stopped title wraps over several lines and the outcome's texts run longer than a system drive's: title and
-# detail over 400 characters, where a stopped C:\ scan's came to 190 on this machine and a finished one's to
-# about 320 with the volume line. Every list must keep a full row in view whatever the texts' length, and the texts
-# must be in view, the rest a scroll away.
+# B-008 (the window-size rework, O-028): a stopped scan of a long path at the smallest size the window allows,
+# with the unreadable folders closed and then opened, and 26 drive buttons added beside the ready ones.
+# New-TopsTree's tree under a 140-character folder name, so the stopped title wraps over several lines and the
+# outcome's texts run longer than a system drive's: title and detail over 400 characters, where a stopped C:\
+# scan's came to 190 on this machine and a finished one's to about 320 with the volume line. Every list must
+# keep a full row in view whatever the texts' length and however many drives are ready, and the texts must be
+# in view, the rest a scroll away.
 function Test-B008 {
     $case = New-CaseFolder
     $denied = @()
@@ -1813,8 +1851,8 @@ function Test-B008 {
         $root = Join-Path $case ('long-path-' * 14)
         $denied = New-TopsTree $root
         foreach ($opened in $false, $true) {
-            Write-Output "  Cancelled, the unreadable folders $(if ($opened) { 'opened' } else { 'closed' }), at the window's minimum size, a root of $($root.Length) characters"
-            Invoke-StoppedEnding $case $root $opened $true
+            Write-Output "  Cancelled, the unreadable folders $(if ($opened) { 'opened' } else { 'closed' }), at the window's minimum size, a root of $($root.Length) characters, $ExtraDrives drive buttons added"
+            Invoke-StoppedEnding $case $root $opened $true $ExtraDrives
             $report = $script:StoppedReport
             if ($null -eq $report) { continue }
             $title = "$($report.window.OutcomeTitle)"

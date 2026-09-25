@@ -32,6 +32,7 @@ namespace FsAnalyser.App;
 ///   { "schema": 1,
 ///     "root": the root argument as the app took it,
 ///     "window": { "OutcomeTitle": Text, "OutcomeDetail": [Text split into lines], "CountersText": Text,
+///                 "PickerPanel": { "actualHeight": number }, "DrivePanel": { "buttons": number },
 ///                 "OutcomePanel": { "visible": bool, "actualHeight": number },
 ///                 "OutcomeTexts": { "actualHeight": number, "extentHeight": number, "inView": bool },
 ///                 "TopLevelHeader": Text,
@@ -60,7 +61,8 @@ namespace FsAnalyser.App;
 /// rows the list has built, which stays near what fits on screen while it virtualizes; "fullRows" is how many
 /// of them lie wholly inside the list's viewport, readable without scrolling. OutcomeTexts is the scrolling
 /// region of the outcome's texts: "extentHeight" is their whole height, and more than "actualHeight" means
-/// the rest is a scroll away. Later
+/// the rest is a scroll away. PickerPanel's height is what the pickers take above everything else, and
+/// DrivePanel's "buttons" how many drive buttons they hold; the height must not depend on that count. Later
 /// screens ADD keys; they never rename one or change what it holds. "window" is the evidence a check
 /// compares with the tree it built. The largestFiles* keys are read from the list's own rows and from the
 /// window's timing of the one call that ranked them; they never hold a name or a path. "core" is the
@@ -94,6 +96,8 @@ internal static class WindowReport
                 OutcomeTitle = window.OutcomeTitle.Text,
                 OutcomeDetail = Regex.Split(window.OutcomeDetail.Text, @"\r?\n"),
                 CountersText = window.CountersText.Text,
+                PickerPanel = new { actualHeight = window.PickerPanel.ActualHeight },
+                DrivePanel = new { buttons = window.DrivePanel.Children.Count },
                 OutcomePanel = new { visible = window.OutcomePanel.IsVisible, actualHeight = window.OutcomePanel.ActualHeight },
                 OutcomeTexts = new
                 {

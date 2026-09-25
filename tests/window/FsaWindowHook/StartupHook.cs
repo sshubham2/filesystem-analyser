@@ -23,6 +23,7 @@ using System.Windows.Threading;
 ///   [FSA_HOOK_SLOW_REFRESH_MS=&lt;n&gt;]  (watch and measure only)
 ///   [FSA_HOOK_MISSING=&lt;the root folder, under %TEMP%&gt;]  (rescan only)
 ///   [FSA_HOOK_EXPAND=1]  (watch only)  [FSA_HOOK_MINSIZE=1]  (watch and expand only)
+///   [FSA_HOOK_DRIVES=&lt;n&gt;]  (watch, expand and size only)
 /// </code>
 /// The runtime calls <see cref="Initialize"/> before the app's Main, in every .NET process that inherits the
 /// variable: pwsh 7, dotnet.exe and MSBuild nodes too. So it does nothing unless FSA_HOOK_MODE is set and the
@@ -65,8 +66,10 @@ using System.Windows.Threading;
 /// does nothing else: every ending is then laid out at the smallest size a person can drag the window to. It
 /// logs "sized width=n minWidth=n height=n minHeight=n ms=n" and "acted mode=size width=n ... ms=n", and is not
 /// armed. FSA_HOOK_MINSIZE=1 does the same sizing, logging only the "sized" line, ahead of watch or expand.
-/// Both then hold the report, once the ending is on screen, until the drive buttons are in, which at a narrow
-/// width makes the pickers taller, and log "drives in ms=n held=n".
+/// Both then hold the report, once the ending is on screen, until the drive buttons are in. FSA_HOOK_DRIVES=n
+/// (SL-040, O-028) does the same hold, at any size, and then adds n drive buttons shaped like the app's own
+/// beside the real ones, so a case can show the pickers take the same room however many drives are ready.
+/// The hold logs "drives in ms=n held=n added=n buttons=n".
 ///
 /// FSA_HOOK_LOG gets one ASCII line per event: "loaded mode=m pid=n", "waiting found=b enabled=b visible=b"
 /// when that changes, "armed ms=n" when the marker appeared, "acted mode=m enabled=True visible=True ms=n"
@@ -177,6 +180,13 @@ internal class StartupHook
                 Log($"refused mode={mode} reason=FSA_HOOK_MINSIZE is 1, and for watch and expand only (size mode sizes by itself)");
                 return;
             }
+            if (!Delay("FSA_HOOK_DRIVES", out int? extraDrives) || (extraDrives is not null && mode is not ("watch" or "expand" or "size")))
+            {
+                Log($"refused mode={mode} reason=FSA_HOOK_DRIVES is a whole number, and for watch, expand and size only");
+                return;
+            }
+            // Size to the minimum, add drive buttons, or both, before the window loads.
+            bool prepare = sizeFirst || extraDrives is not null;
             if (!Delay("FSA_HOOK_SLOW_REFRESH_MS", out int? pad))
             {
                 Log($"refused mode={mode} reason=FSA_HOOK_SLOW_REFRESH_MS is not a whole number of milliseconds");
@@ -196,7 +206,7 @@ internal class StartupHook
                     Log($"refused mode={mode} reason={mode} mode is not armed");
                     return;
                 }
-                if (sizeFirst && !SizeToMinimum(mode))
+                if (prepare && !PrepareWindow(mode, sizeFirst, extraDrives ?? 0))
                     return;
                 // Before the window loads, as expand mode does: the Cancel's ending then opens the list.
                 if (!string.IsNullOrEmpty(expandAfter))
@@ -214,7 +224,7 @@ internal class StartupHook
                 if (!string.IsNullOrEmpty(marker))
                     Log("refused mode=size reason=size mode is not armed");
                 else
-                    SizeToMinimum(mode);
+                    PrepareWindow(mode, true, extraDrives ?? 0);
                 return;
             }
             if (mode is "rescan" or "expand")
@@ -224,7 +234,7 @@ internal class StartupHook
                     Log($"refused mode={mode} reason={mode} mode is not armed");
                 else if (mode == "expand" && missing is not null)
                     Log("refused mode=expand reason=FSA_HOOK_MISSING is for rescan only");
-                else if (!sizeFirst || SizeToMinimum(mode))
+                else if (!prepare || PrepareWindow(mode, sizeFirst, extraDrives ?? 0))
                     DriveAfterList(mode, missing);
                 return;
             }
@@ -357,14 +367,14 @@ internal class StartupHook
         }
     }
 
-    // size, and FSA_HOOK_MINSIZE (SL-040, O-027 and the window-size rework): the window at its own MinWidth by
-    // MinHeight, the smallest a person can make it. A class handler, registered before the window loads, runs
-    // ahead of the window's own Loaded handler, which starts the scan, so every ending is laid out at that size.
-    // Only size mode waits on the UI thread to see whether it registered in time: that wait lasts until the
-    // window has loaded, so ahead of watch or expand it would make their own handlers late. There a missing
-    // "sized" line is the sign.
+    // size, FSA_HOOK_MINSIZE and FSA_HOOK_DRIVES (SL-040, O-027, the window-size rework and O-028): the window at
+    // its own MinWidth by MinHeight, the smallest a person can make it, and extra drive buttons. A class handler,
+    // registered before the window loads, runs ahead of the window's own Loaded handler, which starts the scan,
+    // so every ending is laid out at that size. Only size mode waits on the UI thread to see whether it
+    // registered in time: that wait lasts until the window has loaded, so ahead of watch or expand it would make
+    // their own handlers late. There a missing "sized" or "drives in" line is the sign.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static bool SizeToMinimum(string mode)
+    private static bool PrepareWindow(string mode, bool minimum, int extraDrives)
     {
         if (WaitForApplication(mode) is not { } app)
             return false;
@@ -374,19 +384,23 @@ internal class StartupHook
             if (_sized || !ReferenceEquals(window, app.MainWindow))
                 return;
             _sized = true;
-            window.Width = window.MinWidth;
-            window.Height = window.MinHeight;
-            string size = string.Create(CultureInfo.InvariantCulture,
-                $"width={window.Width:F0} minWidth={window.MinWidth:F0} height={window.Height:F0} minHeight={window.MinHeight:F0}");
-            Log($"sized {size} ms={Clock.ElapsedMilliseconds}");
-            if (mode == "size")
-                Log($"acted mode=size {size} ms={Clock.ElapsedMilliseconds}");
-            // The drive buttons come in after the window loads, and at a narrow width they make the pickers
-            // taller. So once the ending is on screen the report is held until they are in (DriveStatus has
-            // changed from what it shows at load), and it reads the tighter of the two layouts.
-            if (window.FindName("OutcomePanel") is not UIElement outcome || window.FindName("DriveStatus") is not TextBlock status)
+            if (minimum)
             {
-                Log($"refused mode={mode} reason=the window has no OutcomePanel or DriveStatus");
+                window.Width = window.MinWidth;
+                window.Height = window.MinHeight;
+                string size = string.Create(CultureInfo.InvariantCulture,
+                    $"width={window.Width:F0} minWidth={window.MinWidth:F0} height={window.Height:F0} minHeight={window.MinHeight:F0}");
+                Log($"sized {size} ms={Clock.ElapsedMilliseconds}");
+                if (mode == "size")
+                    Log($"acted mode=size {size} ms={Clock.ElapsedMilliseconds}");
+            }
+            // The drive buttons come in after the window loads. So once the ending is on screen the report is held
+            // until they are in (DriveStatus has changed from what it shows at load), and the extra ones are added
+            // beside them then: the report reads the pickers with every drive in.
+            if (window.FindName("OutcomePanel") is not UIElement outcome || window.FindName("DriveStatus") is not TextBlock status
+                || window.FindName("DrivePanel") is not Panel drives)
+            {
+                Log($"refused mode={mode} reason=the window has no OutcomePanel, DriveStatus or DrivePanel");
                 return;
             }
             string loading = status.Text;
@@ -396,7 +410,8 @@ internal class StartupHook
                 if (held || outcome.Visibility != Visibility.Visible)
                     return;
                 held = true;
-                app.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() => HoldForDrives(app, mode, status, loading, Stopwatch.StartNew())));
+                app.Dispatcher.BeginInvoke(DispatcherPriority.Render,
+                    new Action(() => HoldForDrives(app, mode, status, loading, drives, extraDrives, Stopwatch.StartNew())));
             });
         }));
         if (mode == "size" && app.Dispatcher.Invoke(() => !_sized && app.MainWindow is { IsLoaded: true }))
@@ -409,11 +424,12 @@ internal class StartupHook
 
     // As HoldUntilEnded: an item of Render priority kept queued holds the report, at Loaded, while the drives'
     // continuation, at Normal, and the layout, at Render, still run.
-    private static void HoldForDrives(Application app, string mode, TextBlock status, string loading, Stopwatch since)
+    private static void HoldForDrives(Application app, string mode, TextBlock status, string loading, Panel drives, int extra, Stopwatch since)
     {
         if (status.Text != loading)
         {
-            Log($"drives in ms={Clock.ElapsedMilliseconds} held={since.ElapsedMilliseconds}");
+            AddDrives(drives, extra);
+            Log($"drives in ms={Clock.ElapsedMilliseconds} held={since.ElapsedMilliseconds} added={extra} buttons={drives.Children.Count}");
             return;
         }
         if (since.Elapsed > Deadline)
@@ -422,7 +438,25 @@ internal class StartupHook
             return;
         }
         Thread.Sleep(1);
-        app.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() => HoldForDrives(app, mode, status, loading, since)));
+        app.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() => HoldForDrives(app, mode, status, loading, drives, extra, since)));
+    }
+
+    // Drive buttons shaped like the app's own (LoadDrives): the first real one's padding, margin and alignment,
+    // and the same two lines of text. They are never clicked; they only take the room a ready drive would.
+    private static void AddDrives(Panel drives, int extra)
+    {
+        Button? model = drives.Children.OfType<Button>().FirstOrDefault();
+        for (int i = 0; i < extra; i++)
+        {
+            drives.Children.Add(new Button
+            {
+                Content = $"X{i}:  Extra drive (NTFS)\n1.0 GB free of 2.0 GB",
+                Padding = model?.Padding ?? new Thickness(12, 6, 12, 6),
+                Margin = model?.Margin ?? new Thickness(0, 0, 8, 0),
+                HorizontalContentAlignment = model?.HorizontalContentAlignment ?? HorizontalAlignment.Left,
+                IsEnabled = model?.IsEnabled ?? true,
+            });
+        }
     }
 
     // rescan: a class handler, registered before the window loads, because the window's Loaded handler starts
