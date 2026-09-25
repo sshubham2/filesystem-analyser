@@ -1,0 +1,218 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-038",
+ "stage": "code-review",
+ "attempt": 2,
+ "at": "2026-09-25T10:48:50.924Z",
+ "head": "91c955ddf20b6699240581289fd68eea7e64334f",
+ "run_id": 1049,
+ "summary": "Build attempt 2 (91c955d, against eafb1c3) changes no app, hook or StallRig code. It does what it says.\n\nThe staleness exemption holds. `git diff --name-only eafb1c3 HEAD` over the full staleness path list lists only tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs. That file's diff is two `///` comment lines ('on this machine' becomes 'per sign-in session'). RigLock.MachineName is not renamed. `git rev-parse HEAD:…/SmbRig.cs`, `git hash-object` and the working tree all give 8fdf6e87345668eafc91b09015bdf83997820801, the blob SL-020-scanner.md names.\n\nChecks run here, all passing:\n- Build: 0 warnings, 0 errors.\n- Default suite: 155/155.\n- Fitness (after rebuild): 25 rules, all hold.\n- eng/rules-harness, `--scenario all` under the engine venv: 40 rows, 40 AS-RECORDED, exit 0. That includes S01-S08 (the abandon-rule plants fire, `running.WaitAsync` stays quiet, and the System.IO, DriveInfo, File and Stopwatch plants in StoppingWait.cs fire).\n- `tests/window/HookCases.ps1 -Case All`: H-001 closed 310 ms after the marker with scanning=True, window gone 56 ms and process gone 82 ms after Close, exit 0. After a 10 ms local cancel it refused with 'the scan was no longer running'. H-002 refused all three shapes with the stated reasons; the missing marker was refused after 60.1 s.\n\nI read fitness.py's content matcher: it runs `finditer` over the whole file. So the new `Task\\.(Run|Factory\\.StartNew)\\([^;]*\\)\\s*\\.WaitAsync\\(` also catches the most natural abandoning edit, appending `.WaitAsync(token)` to the multi-line StartNew at MainWindow.xaml.cs:151-152.\n\nThe harness judge() change only affects rows from divergences.json. RuleCases.ps1's C-014 builds its D13 row from a divergences file, so that case is unaffected.\n\nThe design's staleness contract says a stage that finds no record reports the check as owed to a person once. So, once:\n- **StalledShareTests has never run on the extracted rig.** Its obligation O-030 is still recorded as discharged. That is the one finding, m1.\n- **The person's N-001..N-004 pass at eafb1c3** is recorded only second-hand. reflect-1.json cites a 'validate #4' that index.json does not list. The repo has no record of it either: no HEAD, and no measured Cancel-to-return. So O-024, O-026 and O-029 are cannot-tell here, although the staleness check they depend on holds.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "Build attempt 2 (91c955d, against eafb1c3) changes no app, hook or StallRig code. It does what it says.\n\nThe staleness exemption holds. `git diff --name-only eafb1c3 HEAD` over the full staleness path list lists only tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs. That file's diff is two `///` comment lines ('on this machine' becomes 'per sign-in session'). RigLock.MachineName is not renamed. `git rev-parse HEAD:…/SmbRig.cs`, `git hash-object` and the working tree all give 8fdf6e87345668eafc91b09015bdf83997820801, the blob SL-020-scanner.md names.\n\nChecks run here, all passing:\n- Build: 0 warnings, 0 errors.\n- Default suite: 155/155.\n- Fitness (after rebuild): 25 rules, all hold.\n- eng/rules-harness, `--scenario all` under the engine venv: 40 rows, 40 AS-RECORDED, exit 0. That includes S01-S08 (the abandon-rule plants fire, `running.WaitAsync` stays quiet, and the System.IO, DriveInfo, File and Stopwatch plants in StoppingWait.cs fire).\n- `tests/window/HookCases.ps1 -Case All`: H-001 closed 310 ms after the marker with scanning=True, window gone 56 ms and process gone 82 ms after Close, exit 0. After a 10 ms local cancel it refused with 'the scan was no longer running'. H-002 refused all three shapes with the stated reasons; the missing marker was refused after 60.1 s.\n\nI read fitness.py's content matcher: it runs `finditer` over the whole file. So the new `Task\\.(Run|Factory\\.StartNew)\\([^;]*\\)\\s*\\.WaitAsync\\(` also catches the most natural abandoning edit, appending `.WaitAsync(token)` to the multi-line StartNew at MainWindow.xaml.cs:151-152.\n\nThe harness judge() change only affects rows from divergences.json. RuleCases.ps1's C-014 builds its D13 row from a divergences file, so that case is unaffected.\n\nThe design's staleness contract says a stage that finds no record reports the check as owed to a person once. So, once:\n- **StalledShareTests has never run on the extracted rig.** Its obligation O-030 is still recorded as discharged. That is the one finding, m1.\n- **The person's N-001..N-004 pass at eafb1c3** is recorded only second-hand. reflect-1.json cites a 'validate #4' that index.json does not list. The repo has no record of it either: no HEAD, and no measured Cancel-to-return. So O-024, O-026 and O-029 are cannot-tell here, although the staleness check they depend on holds.",
+  "matches_design": true,
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "O-030 is recorded as DISCHARGED, but no test has ever fed its shape. The shape is 'exercise run the stalled-share baseline on the extracted rig: StalledShareTests (Network=SMB-LOOPBACK) after the rig moved into Rig/SmbRig.cs'. The builder's own discharge text says it 'has NEVER run on the extracted rig, by me or anyone'. SL-020-scanner.md:212-213 says 'the record is incomplete until a person runs it'. StalledShareTests.cs is the C1 baseline, which this slice cut as already measured. The extraction rewrote its fixture (+2 -311). The only runs of the moved rig code are N-001..N-004, reached through StallRig. StalledShareTests calls Scanner.Scan directly under LoopbackShare's new RigLock and the new split sweep, and nobody has run it. As long as the ledger says 'discharged', nothing downstream will route this to the person's sitting. It is the same shape as last round's O-008 finding, which was accepted.",
+    "evidence": "tests/FsAnalyser.Core.Tests/StalledShareTests.cs:30-42 is the only SMB-LOOPBACK Fact and now builds `new LoopbackShare(tree.Root)` from Rig/SmbRig.cs. It is excluded by VSTestTestCaseFilter, so the 155/155 default run here did not run it. docs/design/SL-020-scanner.md, 'The person-run network check', names StalledShareTests as part of the person's sitting and 'When that pass goes stale' says it 'has never passed on the extracted rig'. reflect-1.json lists 'Run StalledShareTests ... once on the extracted rig' as a candidate.",
+    "fix": "Change the ledger only; no code changes. Record O-030 as owed to the person-run network sitting (validate or the person), not as discharged. The command is `eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter Network=SMB-LOOPBACK`, about 70 s, and its result goes in the same record as N-001..N-004."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "docs/design/SL-020-scanner.md (How it is tested) says the faulted and finished-on-its-own endings are 'deferred, not tested'. It gives the single finally, the absent seam and the 'shipped app carries no test seam' rule as reasons, and says the cancelled ending with the line on screen is proved only by N-001. MainWindow.xaml.cs:167-177 is unchanged since eafb1c3."
+   },
+   {
+    "key": "O-018",
+    "discharged": "no",
+    "evidence": "Owed to validate-slice. Nothing in this attempt measures closing after a real disconnect. SL-020-scanner.md records it as unmeasured."
+   },
+   {
+    "key": "O-019",
+    "discharged": "no",
+    "evidence": "Owed to validate-slice. No real-disconnect wait has been measured (spike 2 ran 0 of 9). The wording in StoppingWait.cs gives no bound, so it stays true either way."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "The design fork was settled as 'stays open'. SL-020-scanner.md, 'What is not measured', says 'Closing the window quits at once' rests on the rig only, and adds a timed Close per mode to the person's protocol."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "tests/FsAnalyser.Core.Tests/StoppingWaitTests.cs:35-45, UnderTheGateNothingIsShown, is a Theory over long.MinValue ticks, -5 s, -1 ms, 0, 1.999 s and 2 s minus one tick. Each row asserts null. It ran in the 155/155 default run here."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "StoppingWaitTests.cs:51-68, FromTwoSecondsTheLineCountsUpInWholeSeconds, pins the exact wording at 2 s, 2.999 s and 59.999 s, then every 7 ms up to 90 s. It asserts Equal against the floored count, which is what pins 'never decreases'; the separate `seconds >= previous` assert checks only the test's own ms/1000. It passed here."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "StoppingWaitTests.cs:74-86, FromNinetySecondsThereIsNoEstimate, covers 89.999 s, 90 s minus one tick, 90 s, 90.999 s, one hour, TimeSpan.MaxValue (no overflow: Ticks/TicksPerSecond) and every 997 ms up to an hour. It passed here."
+   },
+   {
+    "key": "O-024",
+    "discharged": "cannot-tell",
+    "evidence": "N-001 (tests/window/WindowCases.ps1 Test-N001/CheckWaitLine) feeds the shape and is person-run. Its pass at eafb1c3 is attested only in reflect-1.json ('validate #4'); index.json lists no validate #4, and the repo holds no record. I verified the staleness side: only SmbRig.cs changed on the listed paths, at the exempt blob 8fdf6e87…"
+   },
+   {
+    "key": "O-025",
+    "discharged": "yes",
+    "evidence": "C-006 (WindowCases.ps1 Test-C006) passed when I ran it at eafb1c3 (returned 15 ms after Cancel, detail '-', final line written). Nothing on its path has changed since: WindowCases.ps1, the hook, MainWindow and StoppingWait are identical per git diff eafb1c3..HEAD."
+   },
+   {
+    "key": "O-026",
+    "discharged": "cannot-tell",
+    "evidence": "N-002 shape one (Cancel at +3000, Close at +5500) feeds the shape and is person-run. Its pass is attested only second-hand, as for O-024. The staleness check holds."
+   },
+   {
+    "key": "O-027",
+    "discharged": "yes",
+    "evidence": "tests/window/HookCases.ps1 Test-H001, run here and passed. No Cancel: closed with scanning=True, window gone 56 ms and process gone 82 ms after Close, exit 0. After a local Cancel that returned in 10 ms: 'refused mode=close reason=the scan was no longer running', window left open."
+   },
+   {
+    "key": "O-028",
+    "discharged": "yes",
+    "evidence": "tests/FsAnalyser.Core.Tests/SmbRigTests.cs:110-135, OnlyTheRigsOwnMappingsAreSwept, calls LoopbackShare.IsRigMapping, the predicate the sweep uses at SmbRig.cs:85. It covers 16 shapes, including \\\\127.0.0.1\\FSA0123abcd (kept) and \\\\100.109.48.75\\collab (kept). It passed in the 155/155 run."
+   },
+   {
+    "key": "O-029",
+    "discharged": "cannot-tell",
+    "evidence": "At lock level it is yes: SmbRigTests.ASecondRunWaitsForTheFirst and ALiveHolderFailsTheNextRunLoudlyAndAKilledOneDoesNotBlockIt passed here. At mapping level, N-003 and N-004 are person-run and their pass is attested only second-hand (see O-024)."
+   },
+   {
+    "key": "O-030",
+    "discharged": "no",
+    "evidence": "StalledShareTests has never run on the extracted rig; the builder says so and SL-020-scanner.md says the record is incomplete without it. See finding m1."
+   },
+   {
+    "key": "O-031",
+    "discharged": "yes",
+    "evidence": "eng/rules-harness/plants.json S01-S04. I ran `harness.py --engine-root taad_v3/backend --scenario all` here: S01-S03 fitness fire, S04 quiet, all AS-RECORDED, exit 0."
+   },
+   {
+    "key": "O-032",
+    "discharged": "yes",
+    "evidence": "HookCases.ps1 Test-H002, run here and passed. Missing marker refused after 60.1 s with 'did not appear within 60 s, so the stall never armed'. Stop with no delay refused with 'armed stop needs FSA_HOOK_CANCEL_DELAY_MS'. Armed throw refused with 'throw mode is not armed'. In all three nothing was pressed and the app was still running."
+   },
+   {
+    "key": "O-033",
+    "discharged": "yes",
+    "evidence": "SL-020-scanner.md, 'When that pass goes stale', lists MainWindow.xaml/.cs, StoppingWait.cs, App.xaml.cs, Core/Scanning/**, the hook, StallRig, all of WindowCases.ps1, SmbRig.cs, StalledShareTests.cs, the Core.Tests csproj and eng/read-window.ps1. It has one exemption, by blob. The exemption uses a blob rather than a SHA, which is a declared departure. I verified the blob and the name-only diff."
+   },
+   {
+    "key": "O-034",
+    "discharged": "yes",
+    "evidence": ".taad/fitness.yaml keeps 'only the shared rig changes SMB client mappings (PowerShell, eng)' over eng/**/*.ps1 with the same four patterns as the tests entry. A grep of eng/ and tests/ finds these cmdlets only in SmbRig.cs, plus one comment in StalledShareTests.cs:15."
+   },
+   {
+    "key": "O-035",
+    "discharged": "yes",
+    "evidence": ".taad/fitness.yaml rule 1 over src/FsAnalyser.App/StoppingWait.cs bans \\b(?:System\\.Windows|System\\.IO|Microsoft\\.Win32)\\b, \\bDriveInfo\\b and \\b(?:Directory|File)\\.\\w+\\(, plus the clock and DispatcherTimer patterns. The spike 3 reason is in its 'because'. Harness plants S05-S08 fire (run here). The content-pattern form is a declared departure."
+   },
+   {
+    "key": "O-036",
+    "discharged": "yes",
+    "evidence": "SL-020-scanner.md, 'StallRig's launch', states `--wait-sec` with a 150 s default (LoopbackShare.WaitForOtherRun, SmbRig.cs:34), exit 1 on timeout with the lock name (the RigLock.Take message at SmbRig.cs:190 includes Local\\FsAnalyser-SmbRig), exit 2 on bad arguments and exit 0 when stdin closes. That matches tests/window/StallRig/Program.cs."
+   },
+   {
+    "key": "O-037",
+    "discharged": "yes",
+    "evidence": "SL-020-scanner.md, 'The rig', states the one-predicate criterion (IsRigMapping: \\\\127.0.0.1\\ plus lower-case 'fsa' plus 8 hex digits in either case) and lists the kept shapes. It matches the regex at SmbRig.cs:38 and the test Theory."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "StoppingWaitTests.UnderTheGateNothingIsShown feeds TimeSpan.MinValue, -5 s, -1 ms, 0, 1.999 s and 2 s minus one tick, and asserts null for each. Ran here."
+   },
+   {
+    "key": "C-014",
+    "exercised": "yes",
+    "evidence": "StoppingWaitTests.FromTwoSecondsTheLineCountsUpInWholeSeconds feeds exactly 2 s and every 7 ms up to 90 s, asserting the pinned wording with the floored count. Ran here."
+   },
+   {
+    "key": "C-015",
+    "exercised": "yes",
+    "evidence": "StoppingWaitTests.FromNinetySecondsThereIsNoEstimate feeds 90 s minus one tick, 90 s, one hour, TimeSpan.MaxValue and every 997 ms up to an hour. Ran here."
+   },
+   {
+    "key": "C-016",
+    "exercised": "yes",
+    "evidence": "Test-N001 feeds a stalled rig with Cancel 3 s after the marker, and asserts returned detail '-' and final detail '-'. It is person-run. Its pass at eafb1c3 is attested only in reflect-1.json, and none of its listed paths has changed since."
+   },
+   {
+    "key": "C-017",
+    "exercised": "yes",
+    "evidence": "Test-C006 feeds a large local tree cancelled by the hook. It returns in 10-15 ms and asserts one returned line under 2000 ms, detail '-' and a final line. It ran at eafb1c3 and nothing on its path has changed."
+   },
+   {
+    "key": "C-018",
+    "exercised": "no",
+    "evidence": "The case is non-material and deferred, and the reason still holds. Both endings go through the single finally at MainWindow.xaml.cs:167-177 (unchanged). .taad/fitness.yaml 'the shipped app carries no test seam' forbids a seam. SL-020-scanner.md now records them as deferred."
+   },
+   {
+    "key": "C-019",
+    "exercised": "yes",
+    "evidence": "Test-N002 shape one (Cancel at +3000, Close at +5500, asserting the wait line was on screen at the close) feeds the shape. It is person-run and attested second-hand. It is also the only shape that tells the ScanningPanel check apart from a CancelButton check."
+   },
+   {
+    "key": "C-020",
+    "exercised": "yes",
+    "evidence": "HookCases.ps1 Test-H001 feeds both listed shapes and ran here: no Cancel with the scan running closed it (scanning=True), and the scan already ended locally was refused with 'the scan was no longer running'. Both shapes give the same act/refuse result under a CancelButton-Pressable check. Only the refusal text pins the ScanningPanel branch here (see drift)."
+   },
+   {
+    "key": "C-021",
+    "exercised": "no",
+    "evidence": "The case is non-material and deferred to the person (O-018). The reason still holds: it needs a real Wi-Fi, tunnel or sleep disconnect, which no stage may cause."
+   },
+   {
+    "key": "C-022",
+    "exercised": "yes",
+    "evidence": "SmbRigTests.OnlyTheRigsOwnMappingsAreSwept feeds the person's \\\\100.109.48.75\\collab, 7 and 9 digits, the upper-case FSA prefix, other share names, 127.0.0.2, 127.0.0.10, localhost, the IPv6 literal, a sub-path, a drive letter and the empty string, through the sweep's own predicate. 16/16 passed."
+   },
+   {
+    "key": "C-023",
+    "exercised": "yes",
+    "evidence": "Test-N003 and Test-N004 feed a live holder and a killed run's leftover mapping; they are person-run and attested second-hand. At lock level, the default-run SmbRigTests feed a cross-thread waiter and a cross-process holder killed with Process.Kill. Both passed here."
+   },
+   {
+    "key": "C-024",
+    "exercised": "no",
+    "evidence": "StalledShareTests (Network=SMB-LOOPBACK) has never run since the rig moved into Rig/SmbRig.cs. The default filter excludes it, and nobody has run it. See finding m1."
+   },
+   {
+    "key": "C-025",
+    "exercised": "yes",
+    "evidence": "eng/rules-harness/plants.json S01-S04 plant `_scanTask.WaitAsync`, `Task.WhenAny`, a Task.Run(...).WaitAsync chain and `running.WaitAsync` into MainWindow.xaml.cs, run through the real taad3.fitness. The harness ran here: 40/40 AS-RECORDED."
+   },
+   {
+    "key": "C-026",
+    "exercised": "yes",
+    "evidence": "HookCases.ps1 Test-H002 feeds a marker that never appears, armed stop with no Cancel delay, and armed throw. Each was refused with its reason, and nothing was pressed. Ran here."
+   }
+  ],
+  "drift": [
+   "RigLock's scope is still described as 'on this machine' in three files on the staleness list: tests/window/StallRig/Program.cs:13, tests/FsAnalyser.Core.Tests/StalledShareTests.cs:17 and tests/window/WindowCases.ps1:1053. Design 2's key decision corrected only SmbRig.cs. The build did not mention these three. Correcting them now would stale the person's pass, so they are left for the next change to those files. SL-020-scanner.md says 'one mutex per sign-in session' but does not state outright, as design 2 asked, that runs in different sign-in sessions are not serialised.",
+   "SL-020-scanner.md and the HookCases.ps1 header say H-001 shows 'an armed close decides on ScanningPanel, not CancelButton'. H-001's two shapes (no Cancel with the scan running, and the scan already returned) give the same act or refuse result under either check. Only the asserted refusal text tells them apart. The distinguishing shape, Cancel pressed with the scan still running, is fed only by the person-run N-002 shape one.",
+   "HookCases.ps1 is described as 'default-run' but nothing invokes it by default. `WindowCases.ps1 -Case All`, the command validate and the design use, does not run H-001 or H-002, so they run only when someone calls HookCases.ps1 by name. The builder's follow-up is to fold them in when WindowCases.ps1 next changes.",
+   "The person's N-001..N-004 pass at eafb1c3, which the staleness rule preserves, is recorded neither in the repo nor in this slice's index.json. Only reflect-1.json attests it, as 'validate #4'. The repo also holds no N-001 measured Cancel-to-return, which the SL-020-scanner.md contract says the record carries."
+  ],
+  "unreviewed": [
+   ".taad/slices/SL-038/build-slice-1.json and build-slice-2.json: the builder's own accounts. I left them unread on instruction and checked the claims against the tree instead.",
+   ".taad/slices/SL-038/critique-2.json and critique-review-2.json: other stages' accounts, not code.",
+   ".taad/slices/SL-038/validate-slice-1.json, validate-slice-2.json and validate-slice-3.json: other stages' accounts, not code.",
+   ".taad/slices/SL-038/design-slice-2.json and reflect-1.json: read only in part (architecture_rules, cases, the person-run decisions and the validate #4 statement) for facts not in the index.",
+   ".taad/slices/SL-038/code-review-1.json: my own earlier record. Not re-read, because its content is in this conversation."
+  ]
+ }
+}
