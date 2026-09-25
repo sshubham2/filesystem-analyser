@@ -74,63 +74,35 @@
   },
   {
    "stage": "build-slice",
-   "issue": "SetErrorMode(SEM_NOGPFAULTERRORBOX|SEM_FAILCRITICALERRORS) in throw mode. It is blocked by the existing InteropLivesOnlyInNative rule, and measured here as not needed; see deviations."
+   "issue": "The tree slice's click and expand modes should keep the same shape: call the app's handler inside a try/catch in the dispatcher callback and re-raise with ExceptionDispatchInfo. Otherwise a handler fault there would again be recorded as the hook's own failure."
   },
   {
    "stage": "build-slice",
-   "issue": "A person should decide whether InteropLivesOnlyInNative should exempt tests/window/FsaWindowHook, so the hook can call SetErrorMode on machines where WER shows a crash dialog. Today a regressed crash handler on such a machine fails C-012 as TIMEOUT rather than 0xE0434352."
-  },
-  {
-   "stage": "build-slice",
-   "issue": "Validate's O-013 (the hook cannot produce the outcome) can be measured with `WindowMutants.ps1 -Mutant NoCrashHandler` and `-Mutant NoExitRule`. O-014 (the hook meets the user's gate) can be measured with `-Mutant StopDisabled`, `-Mutant StopCollapsed` and C-006's no-scan step. The design's 30-run repeat of stop and close against the committed hook has not been done: I ran each hooked case 3 to 4 times."
-  },
-  {
-   "stage": "build-slice",
-   "issue": "C-006 spends about 20 s waiting out the hook's fixed deadline in the no-scan step. If suite time matters, a shorter deadline for that one launch would need a contract addition, such as an FSA_HOOK_DEADLINE variable."
-  },
-  {
-   "stage": "build-slice",
-   "issue": "HookLocked stands in for 'dll locked by a leftover FsAnalyser.App.exe' with a FileStream that allows reading only. A real leftover app process with the dll mapped was not exercised."
-  },
-  {
-   "stage": "build-slice",
-   "issue": "HookLocked's output is noisy: MSBuild prints its 10 MSB3026 copy retries twice. The build output could be filtered to its error lines when Update-Hook fails."
-  },
-  {
-   "stage": "build-slice",
-   "issue": "deviation: I committed an opt-in mutant runner, tests/window/WindowMutants.ps1. The design said to prove fail-ability only on validate's scratch copies and to commit no mutant builds or mutant source. But O-003…"
-  },
-  {
-   "stage": "build-slice",
-   "issue": "deviation: I dropped SetErrorMode from throw mode. The design put it there to suppress WER, but it needs a DllImport, and an existing architecture rule forbids DllImport/LibraryImport in tests/**/*.cs outside T…"
-  },
-  {
-   "stage": "build-slice",
-   "issue": "deviation: I added three steps to Test-C006 beyond the design's inert-host step. (1) A control: pwsh with a missing hook dll must exit non-zero, which shows pwsh runs startup hooks, so the inert check is not va…"
-  },
-  {
-   "stage": "build-slice",
-   "issue": "deviation: Some wiring is shaped differently from the design. Invoke-HookedRun launches through Start-App and Wait-App (60 s), not eng/read-window.ps1: read-window picks its own report path, so no stale report …"
+   "issue": "deviation: The FSA_HOOK_LOG contract gains one line kind: 'rethrown mode=<m> reason=<text>', meaning the app's own handler threw during the press and the exception was handed back to the app. I did not log it a…"
   },
   {
    "stage": "code-review",
-   "issue": "drift: No new departures: the four the builder listed (the committed WindowMutants.ps1 runner, SetErrorMode dropped, three extra Test-C006 steps, Start-App/Wait-App wiring with $HookDll as a script constant…"
+   "issue": "drift: Correction to my own m1 from attempt 1. Its O-016 half was wrong: 'A throwing OnClosing would fail O-016 under the hook'. I measured OnClosing mutated to throw once. Window.Close() runs through WM_CL…"
   },
   {
    "stage": "code-review",
-   "issue": "drift: The design's coherence_check asked the build to confirm that fitness rules 2 and 3 (scoped to tests/window/FsaWindowHook/**) now match real files. The builder grepped that the patterns match nothing;…"
+   "issue": "drift: O-016 cannot tell 'the window closed and the Exit rule turned exit 0 into 70' apart from 'the app faulted while closing and the crash handler exited 70'. Both give exit 70 and no report. Measured wit…"
   },
   {
    "stage": "code-review",
-   "issue": "drift: The three SL-033 rules sit below the '# settled by SL-' marker in .taad/fitness.yaml, so they have no ArchitectureRulesTests twin. They are enforced only by the engine's Fitness check, never by `dotn…"
+   "issue": "drift: Contract change carried by the accepted O-015 fix. The design's error_cases said 'Any exception in the hook: caught and logged, never fatal.' Now an exception raised inside Act is logged as 'rethrown…"
   },
   {
    "stage": "validate-slice",
-   "issue": "not reached: A real input-driven press (mouse or UIA) on a CancelButton whose handler throws. O-015's premise, that a real click would reach DispatcherUnhandledException and exit 70, is reasoning about WPF, not something I measured."
+   "issue": "not reached: A real input-driven press (mouse or UIA) on a CancelButton whose handler throws. I measured that the hook's re-raise lands as an unhandled dispatcher exception. That a real click behaves the same is reasoning about WPF, not a measurement."
   },
   {
    "stage": "validate-slice",
-   "issue": "not reached: A machine where Windows Error Reporting shows a crash dialog: with SetErrorMode dropped, a regressed crash handler there would show C-012 as TIMEOUT rather than 0xE0434352. Here the process ended at once."
+   "issue": "not reached: A close-path crash regression. O-016 cannot tell the Exit rule's 70 apart from the crash handler's 70; both give exit 70 and no report. On this tree NoExitRule shows the 70 comes from the Exit rule. But a future OnClosing fault would still pass O-016, and no mutant covers it."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A machine where Windows Error Reporting shows a crash dialog. With the crash handler removed there, C-012 would likely show TIMEOUT rather than 0xE0434352. Here the process ended at once."
   },
   {
    "stage": "validate-slice",
@@ -138,15 +110,15 @@
   },
   {
    "stage": "validate-slice",
-   "issue": "not reached: Other .NET hosts inheriting the hook variables (dotnet.exe, MSBuild nodes). Only pwsh 7.6.6 on .NET 10.0.12 was checked. Update-Hook builds before any variable is set."
+   "issue": "not reached: Other .NET hosts inheriting the hook variables (dotnet.exe, MSBuild nodes). Only pwsh 7 was checked."
   },
   {
    "stage": "validate-slice",
-   "issue": "not reached: Slower or faster disks and CPUs. The hook acted at 336-917 ms with the scan at 550-750 of 30,150 folders here. On a much faster machine the margin before the scan finishes is unmeasured."
+   "issue": "not reached: Much faster or slower disks and CPUs. On this machine the hook acted at 340-927 ms, with the scan stopped at 550-750 of 30,150 folders. The margin on a much faster machine is unmeasured, though O-002's handling means such a run fails as 'hook never acted', not silently."
   },
   {
    "stage": "validate-slice",
-   "issue": "not reached: Any real user data or drive. Every run used generated trees under %TEMP%, which is why contact is graded code, not real."
+   "issue": "not reached: Any real user data or drive. Every run used generated trees under %TEMP%, which is why contact is code, not real."
   }
  ],
  "stages": [
@@ -244,6 +216,31 @@
       "measured_by_git": 9
      },
      "details": "build-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-25T01:00:58.942Z",
+     "head": "bd556e58ce91797a3b0b1abf11dfd9f93cae07ec",
+     "summary": "I fixed O-015 (review finding m1) in two places.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "validation partial this build: Contact stays `code`. I checked the tree at 105f1a4 myself and did not just take the report's word for it. The validator is right: O-015 (code-review-1 finding m1, needs-fixes) was never fixed. build-slice has one attempt, at 105f1a4, and the review ran against that same head afterwards, so nothing was rebuilt after it. WHAT I CHECKED IN THE CODE - tests/window/FsaWindowHook/StartupHook.cs:109-120. `Act(mode, app, button)` runs inside `app.Dispatcher.Invoke(() => {...}, DispatcherPriority.Normal)`. There is no try/catch inside the callback and no re-raise. An ex…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-015"
+      ]
+     },
+     "changed": {
+      "tests": 3,
+      "listed": 3,
+      "measured_by_git": 7
+     },
+     "details": "build-slice-2.json"
     }
    ]
   },
@@ -262,6 +259,24 @@
      "caused_by": null,
      "changed": {},
      "details": "code-review-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-25T01:13:16.934Z",
+     "head": "bd556e58ce91797a3b0b1abf11dfd9f93cae07ec",
+     "summary": "Attempt 2 applies the fix accepted for m1 (O-015), and it works.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "code-review passed on 2026-09-25T00:38:17.941Z, and build-slice has judged since (2026-09-25T01:13:16.634Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-2.json"
     }
    ]
   },
@@ -269,7 +284,7 @@
    "stage": "validate-slice",
    "title": "Validate",
    "order": 9,
-   "state": "failed",
+   "state": "passed",
    "attempts": [
     {
      "n": 1,
@@ -280,6 +295,16 @@
      "caused_by": null,
      "changed": {},
      "details": "validate-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-25T01:30:19.441Z",
+     "head": "bd556e58ce91797a3b0b1abf11dfd9f93cae07ec",
+     "summary": "All 14 acceptance criteria hold at bd556e5.",
+     "caused_by": null,
+     "changed": {},
+     "details": "validate-slice-2.json"
     }
    ]
   }
