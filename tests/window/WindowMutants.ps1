@@ -12,6 +12,10 @@
 #   StopCollapsed     CancelButton collapsed during the scan. The same.
 #   NoCrashHandler    The DispatcherUnhandledException handler removed. C-012 fails on 0xE0434352.
 #   NoExitRule        The Exit handler's rule (exit 0 without a report becomes 70) removed. O-016 fails on 0.
+#   CancelThrows      OnCancel throws. The hook must hand that to the app, as a real click does, so C-006
+#                     fails on the app's exit 70 and missing report, and not on the hook's own checks.
+#   HookFailsAfterActing  The hook throws once Stop is pressed. C-006 must fail on the hook, even though
+#                     the app still ends Stopped.
 #   HookCompileError  A compile error in the hook, with the dll of an earlier build in place. The run stops
 #                     with exit 1 and the compiler's error, and no case runs on the old dll.
 #   HookLocked        The hook's source changed while its dll is held open, as an app left behind by a
@@ -19,7 +23,7 @@
 
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('All', 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'HookCompileError', 'HookLocked')]
+    [ValidateSet('All', 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'CancelThrows', 'HookFailsAfterActing', 'HookCompileError', 'HookLocked')]
     [string] $Mutant
 )
 
@@ -34,8 +38,9 @@ $HookOut = 'artifacts\window-hook'
 $script:Failures = [System.Collections.Generic.List[string]]::new()
 
 # Each change is a regex that must match exactly once, so a mutant the source has moved away from fails
-# here instead of quietly running the real app. Fail is the one FAIL line the case must print.
-$AppMutants = @{
+# here instead of quietly running the real app. Fail is every FAIL line the case must print, in order, and
+# Expect any other line the run must show.
+$CaseMutants = @{
     StopDisabled   = @{
         File = $MainWindow; Find = [regex]::Escape('CancelButton.IsEnabled = true;'); Replace = 'CancelButton.IsEnabled = false;'
         Case = 'C-006'; Fail = '^  FAIL  the hook acted '
@@ -52,6 +57,17 @@ $AppMutants = @{
     NoExitRule     = @{
         File = $App; Find = '(?s)Exit \+= \(_, e\) =>\s*\{.*?\};'; Replace = ''
         Case = 'O-016'; Fail = '^  FAIL  exit code is 70, .* \(actual 0 \(0x00000000\)\)$'
+    }
+    CancelThrows   = @{
+        File = $MainWindow; Find = '(private void OnCancel\(object sender, RoutedEventArgs e\)\s*\{)'
+        Replace = '$1 throw new InvalidOperationException("mutant: OnCancel threw");'
+        Case = 'C-006'; Fail = '^  FAIL  exit code$', '^  FAIL  a report was written$'
+        Expect = '^        hook: rethrown mode=stop reason=InvalidOperationException: mutant: OnCancel threw$', '^          actual   ''70''$'
+    }
+    HookFailsAfterActing = @{
+        File = $HookSource; Find = [regex]::Escape('acted = true;')
+        Replace = 'acted = true; throw new InvalidOperationException("hook mutant: failed after acting");'
+        Case = 'C-006'; Fail = '^  FAIL  the hook did not fail after it acted '
     }
 }
 
@@ -152,8 +168,8 @@ function Build-ScratchHook([string] $root) {
 
 # ---- Mutants ----
 
-function Test-AppMutant([string] $name) {
-    $mutant = $AppMutants[$name]
+function Test-CaseMutant([string] $name) {
+    $mutant = $CaseMutants[$name]
     $root = New-Scratch
     try {
         Set-Mutation $root $mutant.File $mutant.Find $mutant.Replace
@@ -161,8 +177,14 @@ function Test-AppMutant([string] $name) {
         Show-Run $run
         CheckEqualExit 1 $run.Exit $mutant.Case
         Check ($run.Lines -contains "FAILED: $($mutant.Case)") "$($mutant.Case) is reported FAILED"
+        $expected = @($mutant.Fail)
         $failures = @($run.Lines | Where-Object { $_ -match '^  FAIL  ' })
-        Check ($failures.Count -eq 1 -and $failures[0] -match $mutant.Fail) "$($mutant.Case) failed once, on /$($mutant.Fail)/ (got $($failures.Count): $($failures -join ' | '))"
+        $matched = $failures.Count -eq $expected.Count
+        for ($i = 0; $matched -and $i -lt $expected.Count; $i++) { $matched = $failures[$i] -match $expected[$i] }
+        Check $matched "$($mutant.Case) failed on /$($expected -join '/, /')/ and nothing else (got $($failures.Count): $($failures -join ' | '))"
+        foreach ($line in @($mutant.Expect)) {
+            if ($line) { Check (@($run.Lines -match $line).Count -gt 0) "the run shows /$line/" }
+        }
     }
     finally { Remove-Scratch $root }
 }
@@ -212,14 +234,14 @@ function Test-HookLocked {
 
 # ---- Run ----
 
-$names = if ($Mutant -eq 'All') { 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'HookCompileError', 'HookLocked' } else { @($Mutant) }
+$names = if ($Mutant -eq 'All') { 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'CancelThrows', 'HookFailsAfterActing', 'HookCompileError', 'HookLocked' } else { @($Mutant) }
 Use-RepoSdk
 $failed = @()
 foreach ($name in $names) {
     Write-Output $name
     $before = $script:Failures.Count
     try {
-        if ($AppMutants.Contains($name)) { Test-AppMutant $name } else { & "Test-$name" }
+        if ($CaseMutants.Contains($name)) { Test-CaseMutant $name } else { & "Test-$name" }
     }
     catch {
         Write-Output "  FAIL  $($_.Exception.Message)"

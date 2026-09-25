@@ -289,11 +289,17 @@ function Invoke-HookedRun([string] $mode, [string] $root, [string] $report) {
 }
 
 # Every hooked case asks this before it reads the exit code or the report: a hook that never loaded, never
-# found Stop pressable or refused fails by that name, not as a wrong ending.
+# found Stop pressable or refused fails by that name, not as a wrong ending. So does a hook that failed
+# after it acted ("refused" after "acted"): the exit code and the report would not be what a press gave. A
+# "rethrown" line is not the hook's failure: the app's own handler threw, and the app was given it.
 function CheckActed($run, [string] $mode) {
     foreach ($line in $run.Log) { Write-Output "        hook: $line" }
-    $acted = @($run.Log | Where-Object { $_.StartsWith("acted mode=$mode ") }).Count -eq 1
-    Check $acted "the hook acted (one 'acted mode=$mode' line in FSA_HOOK_LOG); if not, the hook never acted and nothing after it is this case's ending"
+    $log = @($run.Log)
+    $acted = @($log | Where-Object { $_.StartsWith("acted mode=$mode ") })
+    Check ($acted.Count -eq 1) "the hook acted (one 'acted mode=$mode' line in FSA_HOOK_LOG); if not, the hook never acted and nothing after it is this case's ending"
+    if ($acted.Count -eq 0) { return }
+    $after = $log[([array]::IndexOf($log, $acted[0]) + 1)..($log.Count)] | Where-Object { $_ -and $_.StartsWith('refused ') }
+    Check (@($after).Count -eq 0) "the hook did not fail after it acted ($(Show (@($after) -join ' | ')))"
 }
 
 # An exit code with its hex beside it: 0xE0434352 is the runtime's unhandled exception, not the app's 70.

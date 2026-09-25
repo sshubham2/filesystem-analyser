@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls.Primitives;
@@ -26,8 +27,10 @@ using System.Windows.Threading;
 /// case reads is the app's own.
 ///
 /// FSA_HOOK_LOG gets one ASCII line per event: "loaded mode=m pid=n", "waiting found=b enabled=b visible=b"
-/// when that changes, "acted mode=m enabled=True visible=True ms=n" (ms since load), and
-/// "refused mode=m reason=text".
+/// when that changes, "acted mode=m enabled=True visible=True ms=n" (ms since load),
+/// "rethrown mode=m reason=text" when the app's own handler threw during the press (the exception is raised
+/// again on the dispatcher for the app to handle, as a real press's would be), and
+/// "refused mode=m reason=text" when the hook itself did not or could not act.
 /// </remarks>
 internal class StartupHook
 {
@@ -115,7 +118,19 @@ internal class StartupHook
                     if (button is null || !Pressable(button))
                         return;
                     Log($"acted mode={mode} enabled={button.IsEnabled} visible={button.IsVisible} ms={Clock.ElapsedMilliseconds}");
-                    Act(mode, app, button);
+                    try
+                    {
+                        Act(mode, app, button);
+                    }
+                    catch (Exception e)
+                    {
+                        // The app's own handler threw (OnCancel for stop, OnClosing for close). A real
+                        // press raises that on the dispatcher, where App.DispatcherUnhandledException sees
+                        // it; so it goes there, and not back to this thread to be logged as the hook's.
+                        Log($"rethrown mode={mode} reason={e.GetType().Name}: {e.Message}");
+                        var fault = ExceptionDispatchInfo.Capture(e);
+                        app.Dispatcher.BeginInvoke(DispatcherPriority.Send, new Action(fault.Throw));
+                    }
                     acted = true;
                 }, DispatcherPriority.Normal);
             }
