@@ -1,0 +1,342 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-039",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-25T12:14:38.831Z",
+ "head": "11f7ad94de7fe9a47a10a57f0bb3058b8ff88cdc",
+ "run_id": 1065,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "Only C4 is left to design; C1-C3 are measured present and cut. The one proposal is taken whole, with four amendments made at the build seam (see coherence_check). It matches the record on all three points. (1) Both no-go spikes are about a second thread reading the live ScanStore while the scanner writes: +12-18% scan time and child>parent in 20/20 runs. The scanner thread publishing immutable snapshots on the existing ScanProgress channel avoids both and does none of their 'needs first' work (no ScanStore ordering change, no rollup read path). (2) The conditional UI spike is applied exactly: virtualization on, a droppable refresh, and a two-TextBlock row. (3) It stays inside the recorded stack: WPF code-behind, the existing 250 ms DispatcherTimer, xUnit in Core.Tests only, and window state verified through the hook and --report path. It is also the smallest view that is a result rather than a counter: the scan root's direct children, largest first, with an honest per-row state. A tree, treemap or share bars are not built. Both tree prerequisites stay open and belong to a later slice. Nothing in it needs a new project-level tool or library.",
+  "components": [
+   {
+    "name": "TopLevelTracker (scanner-thread only)",
+    "lives_at": "src/FsAnalyser.Core/TopLevelTracker.cs",
+    "responsibility": "New internal class. When the root listing returns, it seeds one row per direct child of the root (file, folder or link) from that child's charged size and on-disk size in the scanner thread's own store. It holds mutable accumulators (Bytes, OnDisk, Files, Folders, UnreadableBelow) and a pending-folder counter per folder row. For each deeper folder listing F: walk Parent from F up to the root to find the top row, credit the change in the scanner's running totals across that listing to that row, and adjust pending by (subfolders actually pushed for F) - 1. A folder that could not be opened decrements pending and adds 1 to UnreadableBelow, or sets the row to Unreadable when it is the top folder itself. A row is Done when pending reaches 0. Marks changed rows dirty. Publishes a new snapshot when something is dirty and TopLevelInterval (default 250 ms) has passed. Reuses unchanged row objects. Finish(completed) turns Reading rows into StoppedPartway unless the scan completed, sets Final, and always publishes.",
+    "key_interactions": "Called only from the Scanner run loop on the scanner's own thread (Scanner.cs:12 says the scan runs on the caller's thread; spike 3 saw 1 thread in 20 runs), so it has no locks. Reads the running totals the scanner already keeps for ScanProgress and Parent/FirstChild/ChildCount from its own thread's ScanStore. Nothing outside the scanner thread ever touches its accumulators."
+   },
+   {
+    "name": "TopLevelSnapshot / TopLevelRow (public, immutable)",
+    "lives_at": "src/FsAnalyser.Core/TopLevelSnapshot.cs",
+    "responsibility": "New file. A snapshot holds Root, Sequence, Final, Completed, Rows (IReadOnlyList in root-listing order, unsorted) and its own sums Bytes, OnDisk, Files, Folders. A row holds Name, Kind (File/Folder/Link), State (Done/Reading/NotRead/StoppedPartway/Unreadable/NotFollowed), Bytes, OnDisk (charged, so a hardlink counts once), Files, Folders, UnreadableBelow. Constructor-set, no setters, no public mutable collections.",
+    "key_interactions": "Built by the tracker; carried by ScanProgress.TopLevel and ScanResult.TopLevel; read by MainWindow and the report writer."
+   },
+   {
+    "name": "Scanner hook-up and channel additions",
+    "lives_at": "src/FsAnalyser.Core/Scanner.cs",
+    "responsibility": "Creates the tracker after the root listing returns. Records the running totals before each folder listing and calls tracker.Listed(folder, subfoldersPushed) beside the per-listing progress publish (Scanner.cs:163). The credit is made on every exit from a listing, including an interrupted one, so partial adds from a cancelled listing still land in a row. Calls tracker.Unreadable(folder) wherever a folder is recorded as unreadable. Where the add path corrects an EARLIER record in place (CorrectSizes on a hardlink's first name), it calls tracker.Moved(record, dBytes, dOnDisk) so the change moves from the current listing's row to that record's row. Calls tracker.Finish(completed) on every path that returns a ScanResult. Adds ScanProgress.TopLevel (Volatile.Write/Read of an immutable reference), ScanResult.TopLevel, and an internal ScanOptions.TopLevelInterval that tests set to zero.",
+    "key_interactions": "This touches the scanner, so the SL-020 counting-rule tests on real temp trees must pass unchanged (155 today). Cancel checks at :139 and :165 and SynchronousIoCancel are not changed. First build step: read Scanner.cs and ScanStore.CorrectSizes to confirm these hook points before writing the tracker."
+   },
+   {
+    "name": "Results list in the window (view and refresh rule)",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml",
+    "responsibility": "A header TextBlock and a ListBox named TopLevelList under CountersText/CurrentFolderText. It uses VirtualizingPanel.IsVirtualizing=True, VirtualizationMode=Recycling and CanContentScroll=True, like UnreadableList. The row template has exactly two TextBlocks: name plus state suffix, and the figures (size, on disk, files, and 'N folders inside could not be opened' when any). Figures use the existing FormatSize. No percentages. MainWindow.xaml.cs adds ShowTopLevel: on a timer tick it does nothing if Sequence is unchanged and skips a tick if the last refresh (handler plus a Loaded-priority end marker) took over 100 ms; otherwise it copies Rows, sorts by Bytes descending then name (ordinal, ignore case) on the UI thread, sets ItemsSource, and restores VerticalOffset at Loaded priority. The ending handler always shows the final snapshot; the skip rule applies to timer ticks only. Header is 'so far' while scanning, 'what was read before the stop' after Cancel, plain after Completed. Scan start clears the list; an ending with no final snapshot clears it.",
+    "key_interactions": "The existing timer tick calls ShowTopLevel(progress.TopLevel) after ShowProgress; the ending handler calls ShowTopLevel(result.TopLevel). Applies all three constraints the conditional live-refresh spike held under."
+   },
+   {
+    "name": "Report summary (counts only)",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "responsibility": "Adds a 'topLevel' object to the schema-1 --report JSON when a final snapshot exists: rows, reading, notRead, stoppedPartway, unreadable, bytes, onDisk, files, final. No names, no paths, so it stays inside Q-016 (totals and root, never a listing). The key is omitted when there is no final snapshot.",
+    "key_interactions": "Read by WindowCases.ps1 through eng/read-window.ps1. Schema stays 1 because fields are only added; must-verify that the reader ignores unknown keys, and update it in the same change if it does not."
+   },
+   {
+    "name": "Window hook 'watch' mode",
+    "lives_at": "tests/window/FsaWindowHook",
+    "responsibility": "FSA_HOOK_MODE=watch waits up to 30 s for TopLevelList to hold a Folder row with Bytes > 0 while CancelButton is still enabled. It logs 'watch rows=<n> folderBytes=<b> containers=<c> running=true' to FSA_HOOK_LOG and presses Cancel as 'stop' does. On timeout it logs 'watch timeout' and presses Cancel, so the case fails.",
+    "key_interactions": "Finds controls with window.FindName like the existing hook. Reads row values by reflection or a Core reference, whichever the hook's build already allows. Built by Update-Hook, outside FsAnalyser.slnx."
+   },
+   {
+    "name": "Window cases",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "responsibility": "One new case with the watch mode. The log must show rows>0, folderBytes>0 and running=true. The report must show ending Cancelled, topLevel.final=true, topLevel.bytes equal to totals bytes, notRead+stoppedPartway >= 1, and no top-level folder name anywhere in the report text. A second case builds a root with thousands of top-level entries and checks realized containers are far below the row count. C-002 (completed) is extended: topLevel bytes and files equal the totals, and reading, notRead and stoppedPartway are 0.",
+    "key_interactions": "Reuses the tree builder behind C-006. If it has fewer than about 10 top-level folders, builds 20 top-level folders with 1,500 subfolders each."
+   },
+   {
+    "name": "Core row tests on real temp trees",
+    "lives_at": "src/FsAnalyser.Core.Tests",
+    "responsibility": "New test class beside CancellationTests, reusing SL-020 fixture helpers. Row-level counting rules on real NTFS trees (hardlink across two top folders charged once; the stale-size variant; top-level junction, folder symlink and file symlink NotFollowed with 0 bytes, created with SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE and never skipped per Q-001; unreadable top folder; unreadable deeper folder). With TopLevelInterval=0 and snapshots read through ScanOptions.AfterFolder, every snapshot's rows add up to its own sums and states only move NotRead to Reading to Done. A snapshot held early is unchanged at the end. At Completed no Reading or NotRead folder row remains and the rows add up to ScanResult.Totals. Cancel between listings and Cancel during a listing both leave Final set with rows adding up to Totals.",
+    "key_interactions": "Runs in the default filter. No timing assertions, because timing flaked on this shared PC in spike 2's diagnostic runs."
+   },
+   {
+    "name": "Design note",
+    "lives_at": "docs/design/SL-039-live-results.md",
+    "responsibility": "Follows the SL-020-scanner.md convention. Records what this slice settled that the stack left open: scanner-thread snapshots rather than a live-store reader, one level, row attribution, no shares, and the refresh rule. Records the scan-time measurement taken at build (this branch's Core vs trunk, median of 5 interleaved ABBA runs on a nested tree of about 200k entries, plus one run on a flat root of 100k folders; limit 15%). States that the spikes' two 'needs first' items are not done and belong to the tree slice.",
+    "key_interactions": "The later folder-tree slice inherits these decisions from here."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "The window never reads the live ScanStore during a scan. The scanner thread builds and publishes an immutable snapshot on ScanProgress.TopLevel (write-once reference, Volatile.Write/Read).",
+    "reversibility": "cheap",
+    "rationale": "Both no-go spikes are about a second thread reading the store while the scanner writes: +12-18% scan time at 200k and 28% at 5M against a 15% limit, and child>parent in 20 of 20 runs. One writer publishing snapshots avoids both without the ScanStore memory-ordering work or a rollup read path. There is one consumer and nothing is persisted, so adding a live-store reader later replaces this rather than unwinding it."
+   },
+   {
+    "decision": "Scope the results to one level: the scan root's direct children (files, folders, links), largest first. No tree, treemap, shares or percentages.",
+    "reversibility": "cheap",
+    "rationale": "It is the smallest view that is a result rather than a counter. Mid-scan and after Cancel a percentage would be a share of an incomplete whole. The SL-020 docs defer the tree and both tree prerequisites are still open, so the list becomes at worst the tree's first level."
+   },
+   {
+    "decision": "Every change to the scanner's totals lands in exactly one row. Rows are SEEDED at the root listing from each child's charged size in the scanner's own store. Deeper listings credit the running-total delta to the top row found by walking Parent, credited on every exit from the listing including an interrupted one. In-place corrections of an earlier record go to that record's row through tracker.Moved.",
+    "reversibility": "cheap",
+    "rationale": "The rows then add up to the totals by construction, mid-scan and at the end, with the root the only folder in no row, and the row-sum test checks it. The proposal's pure-delta scheme had no row to credit for the root listing's own delta, and no credit for a cancelled listing's partial adds; seeding and the on-every-exit credit close both. The cost is one Parent walk per folder and no per-file work. Hardlinks keep the first-name-charges rule, so each byte is still counted once."
+   },
+   {
+    "decision": "A folder row's Done state comes from a pending-folder counter: +1 per subfolder actually pushed, -1 per folder listed or recorded unreadable. It does not depend on stack order and does not use the Folders counter delta.",
+    "reversibility": "cheap",
+    "rationale": "The survey did not describe stack order. Link folders are never pushed, so counting at the push site cannot leave a row stuck at 'reading'. The completed-scan invariant (no Reading or NotRead folder row) catches any leak."
+   },
+   {
+    "decision": "Publish only when a row changed and at least 250 ms have passed, and always at the ending. Unchanged row objects are reused. The tracker publishes unsorted; the view sorts.",
+    "reversibility": "cheap",
+    "rationale": "It matches the UI timer, so publishing faster would be wasted. A root with 100,000 children costs one array of references plus the few dirty rows per publish, not 100,000 new objects. Sorting on the UI thread is the shape spike 2 measured (tick p95 17.6 ms at 100k)."
+   },
+   {
+    "decision": "The results view is a virtualized ListBox (Recycling) with a two-TextBlock row. ItemsSource is replaced only when Sequence is new, a tick is skipped when the last refresh ran over 100 ms, and the ending's final snapshot is never skipped.",
+    "reversibility": "cheap",
+    "rationale": "These are the three conditions spike 2 passed under (virtualization on, droppable refresh, light row), and two diagnostic runs on a busy PC failed without them. The spike used a TreeView stand-in; a ListBox is the lighter of the two and the app's existing control, and the build re-measures it. Skipping the final snapshot would leave a stale 'reading' row on screen after the scan has ended."
+   },
+   {
+    "decision": "The --report gains a counts-only 'topLevel' object; schema stays 1.",
+    "reversibility": "cheap",
+    "rationale": "The recorded testing constraint says window state is verified through the report. Q-016 limits the report to totals and root, never a listing, so it carries counts and no names, and the window case asserts that no folder name appears. If the person reads Q-016 as totals only, the fallback is for the hook to log the final counts instead; only the verification path changes."
+   },
+   {
+    "decision": "Verification is a watch-mode window case (rows fill in while Cancel is still enabled) plus Core tests over every snapshot read through AfterFolder. The scan-time cost is measured once at build against trunk and recorded in the design note; it is not a standing timing test.",
+    "reversibility": "cheap",
+    "rationale": "No test reads the window mid-scan today, and timing assertions flaked on this shared PC in spike 2. The tracker runs inline on the scanner thread, so the spike's 15% limit still applies to it. It is expected to be under 2%. A measured miss means a coarser publish cadence inside the tracker, not a new boundary."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal handed over. Taken whole: snapshot channel, one level, the ListBox refresh rule, the report summary, the watch hook and the row tests. Amended at the tracker and window seams: seeding at the root listing, crediting an interrupted listing, never skipping the final snapshot, and shape rows for the cancel-in-flight, held-snapshot and report-names cases. The tail of the proposal text was clipped after whats_reused and was not seen."
+   }
+  ],
+  "coherence_check": "One proposal, no composition to check, and nobody has disagreed with it: it is the first thing to argue with. What I did instead is check the proposal against itself and against the record. (1) Its invariant 'rows add up to the totals' conflicted with 'each row's figures are the delta across a folder listing'. The root listing's own delta has no single row to go to, and a cancelled listing's partial adds were never credited. Redesigned at the seam: rows are seeded per child at the root listing, and the credit is made on every exit from a listing. A link's Folders/Links accounting is pinned by the completed-scan row-sum test rather than assumed; the survey lists Links separately from Folders, the proposal hedged on it. (2) 'Skip one tick when the last refresh ran long' could swallow the ending's final snapshot. Redesigned: the skip rule applies to timer ticks only. (3) Volatile publication of an immutable snapshot, single-writer accumulators and a UI-thread sort are consistent: the UI never sees a mutable object and the scanner never waits on the UI. (4) The spike verdicts are respected, not re-opened: the two no-go 'needs first' items (publish the store before Finish; a consistent rollup read path) are not done and are not claimed. This design does not need them because nothing reads the store mid-scan. The conditional's three constraints are all applied. (5) Q-010: the architecture rules below are appended to the existing rules file on trunk, never created here. I did not restate any Core-purity rule the SL-022 file may already carry, since I cannot see it. NOT contested by anyone and NOT verified here: that Scanner.cs and ScanStore.CorrectSizes give the tracker a place to credit in-place corrections and interrupted listings (the proposal was written without opening a file and the survey cites only Scanner.cs:60, :139, :163, :165); that a one-level list is what 'results fill in' means; that the inline tracker stays under the 15% scan-time limit; that eng/read-window.ps1 ignores unknown keys; and that a ListBox refresh behaves at 100k rows as the spike's TreeView stand-in did. Cancel on a stalled SMB share stays unmeasured; the opt-in N-001..N-004 run is a person's, per SL-038. stack_chosen is empty on purpose: everything used is in the recorded stack.",
+  "architecture_rules": [
+   {
+    "name": "the window never touches the scan store",
+    "files": "src/FsAnalyser.App/**/*.cs",
+    "must_not_match": [
+     "\\bScanStore\\b",
+     "\\.Store\\b"
+    ],
+    "because": "Reading the live store from the UI thread was measured no-go twice: +12-18% scan time at 200k (28% at 5M) against a 15% limit, and a child larger than its parent in 20 of 20 runs. Results reach the window only as immutable snapshots on ScanProgress.TopLevel and ScanResult.TopLevel. The tree slice that builds the ScanStore ordering fix and the rollup read path is the one that deletes this rule on purpose."
+   },
+   {
+    "name": "published snapshot types cannot be changed after they are built",
+    "files": "src/FsAnalyser.Core/TopLevelSnapshot.cs",
+    "must_not_match": [
+     "\\bset\\s*;",
+     "\\bpublic\\s+(?:List|Dictionary|HashSet|ObservableCollection)<",
+     "\\bpublic\\s+\\w+\\[\\]\\s+\\w+"
+    ],
+    "because": "The snapshot is handed to the UI thread with a plain reference publish and no lock. A setter or a public mutable collection lets the scanner or the UI change an object the other is reading, which shows as a torn row or a list that no longer adds up."
+   },
+   {
+    "name": "the tracker is owned by the scanner thread and takes no lock",
+    "files": "src/FsAnalyser.Core/TopLevelTracker.cs",
+    "must_not_match": [
+     "\\block\\s*\\(",
+     "\\bMonitor\\.(?:Enter|TryEnter)",
+     "\\b(?:Semaphore\\w*|Mutex|ReaderWriterLock\\w*)\\b",
+     "\\bnew\\s+Thread\\s*\\(|\\bTask\\.(?:Run|Factory)|\\bThreadPool\\.",
+     "\\bConcurrent\\w+<"
+    ],
+    "because": "Its accumulators are plain fields written only by the scanner's thread. Letting another thread reach them is a torn read; guarding them with a lock makes the scanner wait on that lock, the exact cost that pushed spike 1 over its 15% limit."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "watch the results fill in during a scan",
+    "shape": "the scan is still running (Cancel enabled) and at least one top-level folder row already shows Bytes > 0 while others are not read yet",
+    "why": "No test reads the window mid-scan today. Without it, results appearing only after the ending would pass every existing case."
+   },
+   {
+    "behaviour": "attribute a hardlink to a row",
+    "shape": "two names for one file sit in two different top-level folders",
+    "why": "Each byte is counted once. If both rows charged it, the rows would sum above the totals; if neither, below."
+   },
+   {
+    "behaviour": "attribute an in-place size correction",
+    "shape": "the file is grown through the second name, so the scanner corrects the FIRST name's earlier record in place after it was already counted in another row",
+    "why": "The delta arrives during a different listing. Without tracker.Moved it lands in the wrong row: one row holds 0 and the other the full corrected size, or the reverse."
+   },
+   {
+    "behaviour": "show links in the top-level list",
+    "shape": "a top-level junction, a folder symlink and a file symlink (Developer Mode is on per Q-001; never skipped)",
+    "why": "Links are not followed, so each row must be NotFollowed with 0 bytes and must not stay at 'reading' waiting for a scan of the target."
+   },
+   {
+    "behaviour": "decide when a folder row is Done",
+    "shape": "a top-level folder that contains a link folder (never pushed) plus ordinary subfolders, scanned to Completed",
+    "why": "The pending counter is raised at the push site, not from the Folders counter delta. A link counted as a folder would leave the row Reading forever."
+   },
+   {
+    "behaviour": "show an unreadable folder",
+    "shape": "the top-level folder itself cannot be opened",
+    "why": "The row state is Unreadable, not Reading or NotRead, and it must not wedge pending or drop the row from the sums."
+   },
+   {
+    "behaviour": "show an unreadable folder",
+    "shape": "an unreadable folder sits deeper inside a readable top-level folder",
+    "why": "The row must still complete and report UnreadableBelow=1. The unreadable folder decrements pending the same as a listed one."
+   },
+   {
+    "behaviour": "cancel a scan",
+    "shape": "Cancel arrives between folder listings (after the third folder)",
+    "why": "Final must be set, rows must add up to ScanResult.Totals, at most one row is StoppedPartway, and at least one is NotRead. This is the AfterFolder-seam branch."
+   },
+   {
+    "behaviour": "cancel a scan",
+    "shape": "Cancel arrives while a folder listing is in flight and SynchronousIoCancel interrupts it",
+    "why": "The interrupted listing's partial adds are already in the running totals. If the credit is skipped on that exit, rows fall short of Totals after a stop."
+   },
+   {
+    "behaviour": "end a scan with nothing to show",
+    "shape": "the scan faults after snapshots were shown (hook 'throw' mode), or the root was never listed (already-cancelled token, unopenable root), or the root is empty",
+    "why": "With no final snapshot the list must clear, and an empty root must show an empty list. A stale 'reading' row after an ending is the defect this guards."
+   },
+   {
+    "behaviour": "read a snapshot mid-scan",
+    "shape": "a snapshot captured early is held while the scan keeps publishing",
+    "why": "Immutability is the whole thread-safety argument. Reusing dirty-row objects in place would make the held snapshot change, which shows as sums that no longer match."
+   },
+   {
+    "behaviour": "refresh the list under load",
+    "shape": "thousands of top-level entries, refreshed on every tick, with the final snapshot arriving right after a skipped tick",
+    "why": "Spike 2's conditional holds only with virtualization on (a silent loss realizes every container and freezes the UI) and a droppable refresh; and the skip rule must never swallow the ending's final snapshot."
+   },
+   {
+    "behaviour": "write the report",
+    "shape": "the tree's top-level folders have recognizable names",
+    "why": "Q-016 allows totals and the root, never a listing. The topLevel summary must be counts only, so no top-level name may appear anywhere in the report text."
+   },
+   {
+    "behaviour": "carry counting-rule figures through to rows",
+    "shape": "a compressed or sparse file (OnDisk < Bytes), or a path over 260 characters, under a top-level folder",
+    "material": false,
+    "why": "The tracker adds deltas and never branches on how a size was computed, and it attributes by store id and Parent, not by path. SL-020's totals-level tests for on-disk size and long paths must still pass unchanged, and the row-sum-equals-Totals test sums OnDisk too. The next slice may disagree and add row-level versions."
+   }
+  ],
+  "decidable_disagreements": [
+   {
+    "question": "Can the Scanner hook credit every change to the running totals, including an in-place CorrectSizes on an earlier record and the partial adds of an interrupted listing, to exactly one row?",
+    "positions": "The practice proposal says yes (tracker.Moved plus a credit on every exit). Nobody argued the other side, and the proposal was written without opening Scanner.cs or ScanStore.cs. The survey cites only Scanner.cs:60, :139, :163 and :165. It is decided by reading those two files before writing the tracker and running the hardlink-correction and cancel-in-flight row tests.",
+    "would_force_resynthesis": true
+   }
+  ],
+  "taste_disagreements": [
+   "Uncontested: a flat ListBox of the root's children, replaced by the tree slice's first level later, versus building the TreeView shell now. Chosen to avoid the two 'needs first' items and to stay light.",
+   "Uncontested: a pending-folder counter for Done or Reading versus deriving state from listing order. Chosen because it does not depend on the stack order the survey did not describe.",
+   "Uncontested: the tracker publishes unsorted and the view sorts, versus the tracker keeping a sorted structure.",
+   "Uncontested: no percentages or share bars at all, versus shares labelled 'so far'.",
+   "Uncontested: verifying through a counts-only --report extension versus having the hook log the final counts. Both fit the recorded window-test approach.",
+   "Uncontested: state suffix wording ('reading...', 'not read yet', 'stopped partway', 'could not be opened', 'link, not followed'). Exact text is settled at build."
+  ],
+  "open_questions": [
+   "Is a one-level list of the scan root's direct children enough to close PS-002's 'results fill in as it goes', or does the person expect drill-down into folders in this slice? Drill-down needs the two spike-blocked items (the store published before Finish with an ordered child-range publish, and a consistent rollup read path), so it is a later slice. This design assumes the one-level list closes C4."
+  ],
+  "contracts": [
+   {
+    "name": "ScanProgress.TopLevel",
+    "kind": "function",
+    "auth_model": "none: local single-user process",
+    "notes": "TopLevelSnapshot? TopLevel { get; }. Written by the scanner thread with Volatile.Write and read from any thread with Volatile.Read. Null until the root listing returns. Each read is an immutable snapshot whose figures all come from one moment on the scanner thread.",
+    "error_cases": "Null before the root is listed, and for the whole scan if the root cannot be opened (the existing ending text covers that). Never throws. An empty root gives Rows.Count == 0."
+   },
+   {
+    "name": "TopLevelSnapshot / TopLevelRow",
+    "kind": "function",
+    "auth_model": "none: local single-user process",
+    "notes": "Snapshot: Root, Sequence (rises with each publish), Final, Completed, Rows (unsorted IReadOnlyList<TopLevelRow>), Bytes, OnDisk, Files, Folders. The rows add up to these sums. Row: Name, Kind {File, Folder, Link}, State {Done, Reading, NotRead, StoppedPartway, Unreadable, NotFollowed}, Bytes, OnDisk (charged), Files, Folders, UnreadableBelow. File rows are always Done; Link rows are NotFollowed with 0 bytes. Rows use the same charged sizes as the totals.",
+    "error_cases": "A row can be NotRead at Final only after Cancel. At Completed a folder row still Reading or NotRead is a tracker bug, caught by the completed-scan row test."
+   },
+   {
+    "name": "ScanResult.TopLevel",
+    "kind": "function",
+    "auth_model": "none: local single-user process",
+    "notes": "The final snapshot (Final=true), published by tracker.Finish before Scan returns and the same object as the last ScanProgress.TopLevel. After Cancel the rows add up to ScanResult.Totals.",
+    "error_cases": "Null only when the root itself was never listed."
+   },
+   {
+    "name": "Results list",
+    "kind": "ui",
+    "auth_model": "none: local single-user process",
+    "notes": "TopLevelList sits under the counters line. Header while scanning: 'Largest at the top of <root>, so far; rows marked reading are still growing'. After Cancel: 'What was read before the stop; rows marked not read or stopped partway are short'. After Completed: 'Largest at the top of <root>'. Starting a new scan clears the list at once. No percentages. Exact wording settled at build.",
+    "error_cases": "An ending with no final snapshot clears the list, so it never keeps rows whose state can no longer be true. The final snapshot is always shown, even after a skipped tick."
+   },
+   {
+    "name": "--report schema-1 topLevel summary",
+    "kind": "cli",
+    "auth_model": "none: local single-user process",
+    "notes": "Additive only: \"topLevel\": {\"rows\", \"reading\", \"notRead\", \"stoppedPartway\", \"unreadable\", \"bytes\", \"onDisk\", \"files\", \"final\"}. Omitted when there is no final snapshot. No names or paths, per Q-016.",
+    "error_cases": "If eng/read-window.ps1 rejects unknown keys, it is updated in the same change."
+   },
+   {
+    "name": "FSA_HOOK_MODE=watch",
+    "kind": "cli",
+    "auth_model": "none: test hook, loaded only through DOTNET_STARTUP_HOOKS",
+    "notes": "Waits for a Folder row with Bytes > 0 while the scan is still running, logs 'watch rows=<n> folderBytes=<b> containers=<c> running=true' to FSA_HOOK_LOG, then presses Cancel.",
+    "error_cases": "After 30 s it logs 'watch timeout' and presses Cancel; the case fails on that line."
+   }
+  ],
+  "prior_art": [
+   {
+    "pattern": "Live file, folder and byte counter with Cancel on a background scan, and a sortable largest-first list as the first result view (the project's existing counters and Cancel match it; the list is what this slice adds)",
+    "where": "https://techygeekshome.info/diskgeek/",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2026-08-04"
+   },
+   {
+    "pattern": "Immutable snapshot published by a single writer (read-copy-update style), so readers never see a change in place and the writer never waits on them",
+    "where": "General concurrency practice, named by the practice proposal as 'RCU-style'; not from the fetched pages",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Volatile.Write / Volatile.Read on a reference to publish an immutable object across threads without a lock",
+    "where": "System.Threading.Volatile (.NET base class library)",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "none supplied",
+   "pattern": "No cross-domain proposal was handed to this composition.",
+   "transfer_found": false,
+   "rationale": "The single proposal is practice-only. Its RCU-style snapshot publication is a standard concurrency pattern and is recorded under prior_art as recalled, not counted as a cross-domain transfer.",
+   "invariants": []
+  },
+  "channeled_experts": [],
+  "whats_new": [
+   "TopLevelTracker: per-row accumulators and pending-folder counters, owned by the scanner thread",
+   "TopLevelSnapshot / TopLevelRow: public immutable types",
+   "ScanProgress.TopLevel and ScanResult.TopLevel, and an internal ScanOptions.TopLevelInterval so tests can publish on every listing",
+   "Tracker calls in Scanner.cs: at the per-listing publish, on every exit from a listing, at the unreadable-folder site, at in-place corrections of an earlier record, and on every return path",
+   "TopLevelList ListBox and header in the window, with ShowTopLevel: sequence check, skippable tick, UI-thread sort, scroll restore, final never skipped",
+   "Counts-only topLevel object in the schema-1 --report",
+   "FSA_HOOK_MODE=watch in FsaWindowHook",
+   "Two new window cases (watch mid-scan; thousands of top-level entries) and extra checks in C-002",
+   "A Core test class for row-level counting rules and for invariants on every mid-scan snapshot",
+   "docs/design/SL-039-live-results.md with the recorded scan-time measurement",
+   "Three architecture rules appended to the trunk rules file"
+  ],
+  "whats_reused": [
+   "The existing 250 ms DispatcherTimer polling of ScanProgress (MainWindow.xaml.cs:24, :35-39, :143)",
+   "The per-listing progress publish site (Scanner.cs:163)",
+   "The Cancel path, unchanged (MainWindow.xaml.cs:233-239, Scanner.cs:139/:165, SynchronousIoCancel)",
+   "The cancelled-ending text 'This is only what was read before the stop'",
+   "The virtualization settings already on UnreadableList (MainWindow.xaml:41-42)",
+   "The existing FormatSize used by the counters line",
+   "The first-name-charges hardlink rule and the charged sizes the totals already use",
+   "The SL-020 fixture helpers and CancellationTests pattern in Core.Tests, and ScanOptions.AfterFolder as the mid-scan seam",
+   "The window-test path: FsaWindowHook, FSA_HOOK_MODE, FSA_HOOK_LOG, WindowCases.ps1, the schema-1 --report and eng/read-window.ps1",
+   "The docs/design/SL-020-scanner.md convention for the design note"
+  ]
+ }
+}

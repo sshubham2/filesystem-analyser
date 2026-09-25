@@ -355,3 +355,47 @@ rules:
       read-window.ps1, rules-parity.ps1). An eng-level cleanup helper is a plausible home for a
       removal that bypasses RigLock and the sweep filter. One entry per root, because files takes
       one glob.
+
+  # settled by SL-039
+  - name: the window never touches the scan store
+    files: src/FsAnalyser.App/**/*.cs
+    must_not_match:
+    - '\bScanStore\b'
+    - '(?<!\bresult)\.Store\b'
+    - '\bStore\s*:'
+    because: 'Reading the live store from the UI thread was measured no-go twice: +12-18% scan
+      time at 200k (28% at 5M) against a 15% limit, and a child larger than its parent in 20
+      of 20 runs. Results reach the window only as immutable snapshots on ScanProgress.TopLevel
+      and ScanResult.TopLevel. The tree slice that builds the ScanStore ordering fix and the
+      rollup read path is the one that deletes this rule on purpose. Narrowed at build (SL-039
+      m8): the ending reads result.Store after the scan has returned, when nothing writes it
+      (MainWindow.xaml.cs, the unreadable list), so result.Store is allowed and any other .Store,
+      a property pattern on Store, or the type name fails. Run against trunk before it was
+      declared: the rule as first appended failed trunk on exactly that result.Store line, and
+      this one passes trunk and the slice. A tripwire on names, not a proof.'
+  - name: published snapshot types cannot be changed after they are built
+    files: src/FsAnalyser.Core/TopLevelSnapshot.cs
+    must_not_match:
+    - '\bset\s*;'
+    - '\bpublic\s+(?:List|Dictionary|HashSet|ObservableCollection)<'
+    - '\bpublic\s+\w+\[\]\s+\w+'
+    - '\bpublic\s+I(?:List|Collection|Dictionary|Set)<'
+    - '\bpublic\s+(?!const\b|static\b|readonly\b|override\b|abstract\b|sealed\b|class\b|record\b|enum\b|struct\b|interface\b)[\w.<>\[\],?]+\s+\w+\s*[;=](?!>)'
+    because: 'The snapshot is handed to the UI thread with a plain reference publish and no lock.
+      A setter, a public mutable field or a public mutable collection lets the scanner or the UI
+      change an object the other is reading, which shows as a torn row or a list that no longer
+      adds up. The last pattern is a public field (a type, a name, then ; or =), with (?!>) so an
+      expression-bodied property does not match (SL-039 M3). Aliasing is not a pattern: the
+      TopLevelSnapshot constructor copies the rows it is given and exposes them through
+      Array.AsReadOnly, which cannot be cast back to an array, and TopLevelTests pins it.'
+  - name: the tracker is owned by the scanner thread and takes no lock
+    files: src/FsAnalyser.Core/TopLevelTracker.cs
+    must_not_match:
+    - \block\s*\(
+    - \bMonitor\.(?:Enter|TryEnter)
+    - \b(?:Semaphore\w*|Mutex|ReaderWriterLock\w*)\b
+    - \bnew\s+Thread\s*\(|\bTask\.(?:Run|Factory)|\bThreadPool\.
+    - \bConcurrent\w+<
+    because: Its accumulators are plain fields written only by the scanner's thread. Letting
+      another thread reach them is a torn read; guarding them with a lock makes the scanner
+      wait on that lock, the exact cost that pushed spike 1 over its 15% limit.

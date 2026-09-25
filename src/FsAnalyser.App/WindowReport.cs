@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Threading;
+using FsAnalyser.Core;
 using FsAnalyser.Core.Scanning;
 
 namespace FsAnalyser.App;
@@ -30,7 +31,7 @@ namespace FsAnalyser.App;
 ///   { "schema": 1,
 ///     "root": the root argument as the app took it,
 ///     "window": { "OutcomeTitle": Text, "OutcomeDetail": [Text split into lines], "CountersText": Text,
-///                 "OutcomePanel": { "visible": bool, "actualHeight": number },
+///                 "OutcomePanel": { "visible": bool, "actualHeight": number }, "TopLevelHeader": Text,
 ///                 "LargestFilesPanel": { "visible": bool, "actualHeight": number },
 ///                 "LargestFilesCaption": Text,
 ///                 "LargestFilesList": { "actualHeight": number, "inView": bool, "realizedRows": number },
@@ -38,8 +39,14 @@ namespace FsAnalyser.App;
 ///                 "UnreadableList": { "actualHeight": number, "inView": bool } },
 ///     "largestFilesShown": rows bound to LargestFilesList, "largestFileOnDisk": the first row's on-disk
 ///         bytes or null, "largestFilesMs": how long ranking them took or null (SL-040),
-///     "core": { "status", "rootError", "files", "folders", "links", "bytes", "bytesOnDisk", "elapsedMs" } or null }
+///     "core": { "status", "rootError", "files", "folders", "links", "bytes", "bytesOnDisk", "elapsedMs" } or null,
+///     "topLevel": { "rows", "reading", "notRead", "stoppedPartway", "unreadable", "bytes", "onDisk", "files",
+///                   "final" } }   (SL-039; absent when the results list shows nothing)
 /// </code>
+/// "topLevel" counts the rows the results list (TopLevelList) holds: how many, how many in each unfinished
+/// or unreadable state, and their bytes, on-disk bytes and files added up, with whether the snapshot they
+/// came from is the scan's final one. It carries no name and no path, so the report stays a matter of
+/// totals and the root (Q-016).
 /// Every key under "window" is the x:Name of the control it was read from, and every value is what that
 /// control shows: its Text as displayed, or for a panel whether it is on screen. "inView" says the
 /// control is on screen with some height, and that neither it nor anything around it up to the window
@@ -69,24 +76,25 @@ internal static class WindowReport
         await Dispatcher.Yield(DispatcherPriority.Loaded); // below Render: layout and render have run
 
         ScanResult? result = window.LastResult;
-        var rows = window.LargestFilesList.ItemsSource as IReadOnlyList<MainWindow.LargestFileRow> ?? [];
-        var report = new
+        var largest = window.LargestFilesList.ItemsSource as IReadOnlyList<MainWindow.LargestFileRow> ?? [];
+        var report = new Dictionary<string, object?>
         {
-            schema = 1,
-            root,
-            window = new
+            ["schema"] = 1,
+            ["root"] = root,
+            ["window"] = new
             {
                 OutcomeTitle = window.OutcomeTitle.Text,
                 OutcomeDetail = Regex.Split(window.OutcomeDetail.Text, @"\r?\n"),
                 CountersText = window.CountersText.Text,
                 OutcomePanel = new { visible = window.OutcomePanel.IsVisible, actualHeight = window.OutcomePanel.ActualHeight },
+                TopLevelHeader = window.TopLevelHeader.Text,
                 LargestFilesPanel = new { visible = window.LargestFilesPanel.IsVisible, actualHeight = window.LargestFilesPanel.ActualHeight },
                 LargestFilesCaption = window.LargestFilesCaption.Text,
                 LargestFilesList = new
                 {
                     actualHeight = window.LargestFilesList.ActualHeight,
                     inView = InView(window.LargestFilesList),
-                    realizedRows = Enumerable.Range(0, rows.Count).Count(i => window.LargestFilesList.ItemContainerGenerator.ContainerFromIndex(i) is not null),
+                    realizedRows = Enumerable.Range(0, largest.Count).Count(i => window.LargestFilesList.ItemContainerGenerator.ContainerFromIndex(i) is not null),
                 },
                 UnreadableExpander = new
                 {
@@ -97,10 +105,10 @@ internal static class WindowReport
                 },
                 UnreadableList = new { actualHeight = window.UnreadableList.ActualHeight, inView = InView(window.UnreadableList) },
             },
-            largestFilesShown = rows.Count,
-            largestFileOnDisk = rows.Count > 0 ? rows[0].OnDisk : (long?)null,
-            largestFilesMs = window.LargestFilesMs,
-            core = result is null ? null : new
+            ["largestFilesShown"] = largest.Count,
+            ["largestFileOnDisk"] = largest.Count > 0 ? largest[0].OnDisk : (long?)null,
+            ["largestFilesMs"] = window.LargestFilesMs,
+            ["core"] = result is null ? null : new
             {
                 status = result.Status.ToString(),
                 rootError = result.Status == ScanStatus.RootUnreadable ? result.RootError : (int?)null,
@@ -112,6 +120,24 @@ internal static class WindowReport
                 elapsedMs = (long)result.Elapsed.TotalMilliseconds,
             },
         };
+        // The rows the results list holds, counted: never a name or a path (Q-016), only how many rows are in
+        // each state and what they add up to. Absent when the list shows nothing.
+        if (window.ShownTopLevel is { } shown && window.TopLevelList.ItemsSource is IEnumerable<TopLevelRow> listed)
+        {
+            List<TopLevelRow> rows = [.. listed];
+            report["topLevel"] = new
+            {
+                rows = rows.Count,
+                reading = rows.Count(r => r.State == TopLevelState.Reading),
+                notRead = rows.Count(r => r.State == TopLevelState.NotRead),
+                stoppedPartway = rows.Count(r => r.State == TopLevelState.StoppedPartway),
+                unreadable = rows.Count(r => r.State == TopLevelState.Unreadable),
+                bytes = rows.Sum(r => r.Bytes),
+                onDisk = rows.Sum(r => r.OnDisk),
+                files = rows.Sum(r => r.Files),
+                final = shown.Final,
+            };
+        }
 
         // The default encoder escapes everything outside ASCII, so Windows PowerShell 5.1 and pwsh read
         // the same text whatever code page or byte-order mark they assume.

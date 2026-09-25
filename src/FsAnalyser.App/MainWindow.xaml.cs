@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
+using FsAnalyser.Core;
 using FsAnalyser.Core.Analysis;
 using FsAnalyser.Core.Scanning;
 using Microsoft.Win32;
@@ -13,10 +14,22 @@ namespace FsAnalyser.App;
 
 /// <summary>
 /// Pick a drive or folder, watch it being read, and see how the scan ended. Progress is polled from
-/// the scanner's counters every 250 ms; there is one scan at a time.
+/// the scanner's counters every 250 ms; there is one scan at a time. The results list below them fills in
+/// from the scanner's published snapshots of the root's direct children (SL-039), and keeps the last one
+/// after the scan ends.
 /// </summary>
 public partial class MainWindow : Window
 {
+    // A refresh (handler and layout) that ran longer than this makes the next tick skip its refresh, so a
+    // busy machine gets the UI thread back (spike live-refresh-expanded-100k-folder, SL-039).
+    private static readonly TimeSpan SlowRefresh = TimeSpan.FromMilliseconds(100);
+
+    private static readonly Comparison<TopLevelRow> LargestFirst = (a, b) =>
+    {
+        int bySize = b.Bytes.CompareTo(a.Bytes);
+        return bySize != 0 ? bySize : string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+    };
+
     private static readonly (Brush Border, Brush Background) Finished = (Solid("#FF5E9E4A"), Solid("#FFF2F9EE"));
     private static readonly (Brush Border, Brush Background) Stopped = (Solid("#FFD69A2D"), Solid("#FFFFF8E6"));
     private static readonly (Brush Border, Brush Background) CouldNotRead = (Solid("#FFC84B4B"), Solid("#FFFDF0F0"));
@@ -31,6 +44,10 @@ public partial class MainWindow : Window
     private ScanResult? _result;
     private bool _scanning;
     private Stopwatch? _stoppingClock; // from Cancel until the scan returns; null otherwise
+    private TopLevelSnapshot? _shownTopLevel; // what the results list shows, compared by reference
+    private readonly Stopwatch _refreshClock = new();
+    private bool _skipNextRefresh;
+    private ScrollViewer? _topLevelScroll;
 
     public MainWindow(string? launchPath)
     {
@@ -39,6 +56,7 @@ public partial class MainWindow : Window
         _timer.Tick += (_, _) =>
         {
             ShowProgress();
+            RefreshTopLevel();
             ShowStopping();
         };
     }
@@ -54,6 +72,18 @@ public partial class MainWindow : Window
 
     /// <summary>How long ranking the largest files took for the list on screen; null when no list was made.</summary>
     internal double? LargestFilesMs { get; private set; }
+
+    /// <summary>The snapshot the results list shows, its rows sorted into the list; null when it shows none.</summary>
+    internal TopLevelSnapshot? ShownTopLevel => _shownTopLevel;
+
+    /// <summary>How long the last refresh of the results list took, to the end of its layout.</summary>
+    internal TimeSpan LastRefresh { get; private set; }
+
+    /// <summary>Timer ticks of this scan that skipped their refresh because the one before ran long.</summary>
+    internal int SkippedRefreshes { get; private set; }
+
+    /// <summary>Whether the next tick with something new to show will skip it.</summary>
+    internal bool SkipsNextRefresh => _skipNextRefresh;
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -138,6 +168,8 @@ public partial class MainWindow : Window
         UnreadableList.ItemsSource = null;
         HideLargestFiles(); // the last scan's list is never shown as this one's
         OutcomePanel.Visibility = Visibility.Collapsed;
+        ClearTopLevel();
+        SkippedRefreshes = 0;
         SetPickersEnabled(false);
 
         _progress = new ScanProgress();
@@ -184,6 +216,9 @@ public partial class MainWindow : Window
             SetPickersEnabled(true);
         }
 
+        // Always the final snapshot, never subject to the tick's skip; with none (the root never listed, or
+        // the scan failed) the list is cleared, so no row is left claiming a state that is no longer true.
+        ShowFinalTopLevel(failure is null ? result?.TopLevel : null);
         if (failure is not null)
             ShowProblem($"Scan failed: {path}",
                 $"The scan stopped on an error it did not expect, so nothing it read is shown.\n{failure.GetType().Name}: {failure.Message}");
@@ -267,6 +302,80 @@ public partial class MainWindow : Window
         string unreadable = p.Unreadable > 0 ? $", {p.Unreadable:N0} folders unreadable" : "";
         CountersText.Text = $"{p.Files:N0} files, {p.Folders:N0} folders, {FormatSize(p.Bytes)} ({FormatSize(p.BytesOnDisk)} on disk){unreadable}";
         CurrentFolderText.Text = p.CurrentFolder ?? "";
+    }
+
+    // ---- Results so far (SL-039) ----
+
+    // On a tick: the scanner's latest snapshot, if it is not the one shown. A tick after a refresh that ran
+    // long skips it and leaves the next tick to show whatever is latest then.
+    private void RefreshTopLevel()
+    {
+        if (_progress?.TopLevel is not { } snapshot || ReferenceEquals(snapshot, _shownTopLevel))
+            return;
+        if (_skipNextRefresh)
+        {
+            _skipNextRefresh = false;
+            SkippedRefreshes++;
+            return;
+        }
+        ShowTopLevel(snapshot);
+    }
+
+    // At the ending, whatever the last tick did.
+    private void ShowFinalTopLevel(TopLevelSnapshot? final)
+    {
+        if (final is null)
+            ClearTopLevel();
+        else if (!ReferenceEquals(final, _shownTopLevel))
+            ShowTopLevel(final);
+    }
+
+    // The rows are sorted on the UI thread into an array of their own and replace the list's items whole;
+    // the scroll position, in rows, is put back once layout has run. The time to that point is the refresh's.
+    private void ShowTopLevel(TopLevelSnapshot snapshot)
+    {
+        _refreshClock.Restart();
+        ScrollViewer? scroll = TopLevelScroll();
+        double offset = scroll?.VerticalOffset ?? 0;
+        TopLevelRow[] rows = [.. snapshot.Rows];
+        Array.Sort(rows, LargestFirst);
+        _shownTopLevel = snapshot;
+        TopLevelHeader.Text = !snapshot.Final
+            ? $"Largest at the top of {snapshot.Root}, so far. Rows marked reading are still growing."
+            : !snapshot.Completed
+                ? "What was read before the stop. Rows marked not read yet or stopped partway are short."
+                : rows.Length == 0 ? $"{snapshot.Root} is empty." : $"Largest at the top of {snapshot.Root}";
+        TopLevelList.ItemsSource = rows;
+        TopLevelPanel.Visibility = Visibility.Visible;
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+        {
+            scroll?.ScrollToVerticalOffset(offset);
+            LastRefresh = _refreshClock.Elapsed;
+            _skipNextRefresh = LastRefresh > SlowRefresh;
+        });
+    }
+
+    private void ClearTopLevel()
+    {
+        TopLevelList.ItemsSource = null;
+        TopLevelHeader.Text = "";
+        TopLevelPanel.Visibility = Visibility.Collapsed;
+        _shownTopLevel = null;
+        _skipNextRefresh = false;
+    }
+
+    // Null until the list's template has been applied, which is once it has first been on screen.
+    private ScrollViewer? TopLevelScroll() => _topLevelScroll ??= FindScrollViewer(TopLevelList);
+
+    private static ScrollViewer? FindScrollViewer(DependencyObject element)
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(element); i++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(element, i);
+            if ((child as ScrollViewer ?? FindScrollViewer(child)) is { } found)
+                return found;
+        }
+        return null;
     }
 
     // ---- Outcomes ----
@@ -390,9 +499,9 @@ public partial class MainWindow : Window
 
     private static string Win32Message(int error) => new Win32Exception(error).Message;
 
-    private static string Count(long n, string noun) => n == 1 ? $"1 {noun}" : $"{n:N0} {noun}s";
+    internal static string Count(long n, string noun) => n == 1 ? $"1 {noun}" : $"{n:N0} {noun}s";
 
-    private static string FormatSize(long bytes)
+    internal static string FormatSize(long bytes)
     {
         string[] units = ["bytes", "KB", "MB", "GB", "TB", "PB"];
         double value = bytes;

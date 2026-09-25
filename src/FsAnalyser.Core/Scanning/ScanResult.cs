@@ -39,6 +39,13 @@ public sealed class ScanResult
 
     public IReadOnlyList<UnreadableFolder> Unreadable { get; init; } = [];
 
+    /// <summary>
+    /// The scan root's direct children as the scan left them: the final snapshot (Final set), the same object
+    /// as the last <see cref="ScanProgress.TopLevel"/>. After Cancel its rows add up to <see cref="Totals"/>
+    /// like the rest. Null only when the root's listing never committed (unreadable, or cancelled before).
+    /// </summary>
+    public required TopLevelSnapshot? TopLevel { get; init; }
+
     /// <summary>Files whose true size was due to be read from the file but could not be; their listing sizes were kept.</summary>
     public int ProbeFailures { get; init; }
 
