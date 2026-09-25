@@ -1,0 +1,139 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-040",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-09-25T13:06:22.581Z",
+ "head": "11f7ad94de7fe9a47a10a57f0bb3058b8ff88cdc",
+ "run_id": 1083,
+ "summary": "The core is sound. It ranks with a bounded heap over charged values, the total-order key is correct (min-heap on (OnDisk, Size, -index) drains to OnDisk desc, Size desc, index asc), GetPath was proven by a spike, and the cited \"top 100\" prior art checks out (file.net: \"finds the 100 largest files … file name, full folder path, file size\"). I found three majors and no blockers. First, the one imported must-verify precondition, that no writer is still running when Top reads a Cancelled store, is said to be \"settled\" by a test. A test cannot prove that. The fix is to read Scanner.cs, and Top should take a ScanResult so the precondition holds by construction. Second, the new counting rule only covers a folder that later slices have to remember to use. The App project, and any analysis code placed elsewhere, can still read raw Size/OnDisk. Third, the only machine-readable proof that the list is \"shown to the person\" counts bound rows, not visibility. Nothing checks the design's own acceptance item that a second scan never shows the previous list. The minors cover: WPF ListBox wrapping needs the horizontal scrollbar disabled; the lone-surrogate render risk is caught later than it needs to be; tie membership at the cut can differ between scans; the empty-list and caption wording; largestFilesMs has no threshold that decides anything; the rule regex fires on comments, and its plant row can be written to match the regex instead of the real API; and Top should run after the existing outcome content. Nothing here needs admin rights, and no admin operation is requested.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The core is sound. It ranks with a bounded heap over charged values, the total-order key is correct (min-heap on (OnDisk, Size, -index) drains to OnDisk desc, Size desc, index asc), GetPath was proven by a spike, and the cited \"top 100\" prior art checks out (file.net: \"finds the 100 largest files … file name, full folder path, file size\"). I found three majors and no blockers. First, the one imported must-verify precondition, that no writer is still running when Top reads a Cancelled store, is said to be \"settled\" by a test. A test cannot prove that. The fix is to read Scanner.cs, and Top should take a ScanResult so the precondition holds by construction. Second, the new counting rule only covers a folder that later slices have to remember to use. The App project, and any analysis code placed elsewhere, can still read raw Size/OnDisk. Third, the only machine-readable proof that the list is \"shown to the person\" counts bound rows, not visibility. Nothing checks the design's own acceptance item that a second scan never shows the previous list. The minors cover: WPF ListBox wrapping needs the horizontal scrollbar disabled; the lone-surrogate render risk is caught later than it needs to be; tie membership at the cut can differ between scans; the empty-list and caption wording; largestFilesMs has no threshold that decides anything; the rule regex fires on comments, and its plant row can be written to match the regex instead of the real API; and Top should run after the existing outcome content. Nothing here needs admin rights, and no admin operation is requested.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "claim": "The design says the Cancelled-scan test 'settles the must-verify invariant that Scanner.Scan has joined its writers before it returns'. A test on a small %TEMP% tree cannot prove a join. If a worker is still appending, the test passes whenever that worker happens to finish first. If the precondition is false, Top runs on the UI thread inside ShowOutcome. It reads Count and then reaches entries whose Parent or name columns are not written yet, or a column the writer has just reallocated. GetPath then throws (NullReference or IndexOutOfRange) and takes ShowOutcome down, or it returns a wrong location with no error. The contract rule 'must be called only on a store the scanner has stopped writing' also relies on the caller remembering, because Top takes a bare ScanStore. There is related evidence the design did not cite: commit eafb1c3 (SL-038) says 'Cancel still waits for the scan to finish, and it never abandons the scan thread'. That covers the UI waiting on Scan. It does not show that Scan joins its own parallel writers.",
+    "evidence": "cross_domain_transfer.invariants[0] status must-verify; decidable_disagreements[0] would_force_resynthesis: true; cases 'list from a scan that was stopped' ('It also settles the must-verify invariant…'); contracts LargestFiles.Top error_cases 'It must be called only on a store the scanner has stopped writing'",
+    "fix": "Build settles the precondition by reading Scanner.cs and records the file:line where Scan waits for every writer before it constructs ScanResult. If there is no such line, it goes back to design (the design already marks this as forcing resynthesis). Change the signature to Top(ScanResult result, int count). A ScanResult exists only after Scan returns, so 'stopped store' then holds by construction rather than by the caller remembering. Remove the claim that the test settles the invariant. The test stays only as a check that a partial store does not throw."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "under-engineering",
+    "claim": "The rule's stated purpose is to protect later analysis slices ('largest folders, by extension') from ranking on raw Size/OnDisk, which would count hardlinks twice and 'pass every test on this slice'. It only protects them if they put their code under src/FsAnalyser.Core/Analysis/. That folder placement is itself an invariant held by remembering. A 'largest folders' computed in MainWindow code-behind is plausible, since the design already has the App compute the caption from ScanResult. So is a flat Core file. Either one can read the public raw accessors, and no rule fires. The survey's grep did not cover raw `.Size(`/`.OnDisk(` readers outside ScanStore.cs, so nobody knows whether the App already reads them.",
+    "evidence": "architecture_rules[0].files 'src/FsAnalyser.Core/Analysis/**/*.cs'; component 'Analysis reads only the store's charged values (rule)': 'Later analysis slices … inherit it'; survey: 'the read accessors are public and the writers internal'",
+    "fix": "Build greps src/ for raw Size/OnDisk readers outside ScanStore.cs and the scanner. If none are in the App, add src/FsAnalyser.App/**/*.cs to the rule's files. The first pattern's rationale applies there unchanged. If nothing outside Core reads them, make ScanStore's raw Size/OnDisk readers internal instead, so the compiler enforces it for every later project, and keep the regex for Core/Analysis only."
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "test-coverage",
+    "claim": "The design calls the report 'the only machine-readable proof for criterion 4' ('the list is shown to the person'). But largestFilesShown counts rows bound to ItemsSource. The design also hides the section at scan start and has to un-hide it in ShowOutcome. If the un-hide is missing or wrong, the report says 100 while the person sees nothing, and the window case passes. Acceptance item (6), 'A new scan never shows the previous scan's list', has no checker at all. Core tests cannot see it, the window case runs one scan per launch, and the validate-time list of facts checked by hand ('row text, the caption, a lone-surrogate path rendering, the panel layout') leaves it out. A failed second scan leaving the old list visible under the failure is the exact 'past reported as the present' the design warns about.",
+    "evidence": "component 'Window report fields' (largestFilesShown = 'rows actually bound'); component 'Window case for the list' list of validate-driven facts; contracts 'Largest-files panel' ACCEPTANCE (4) and (6); cases 'start another scan'",
+    "fix": "Add one scalar, largestFilesVisible (the section's IsVisible, read after the fill), and assert it in the window case. Add 'second scan, including a second scan that fails, clears the previous list' to the named validate drive list. If the hook can start two scans in one launch, make it a window case instead."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "The design relies on 'the full path in a wrapping TextBlock, so a long location is never clipped' in a ListBox copied from the UnreadableList pattern. A WPF ListBox's ScrollViewer defaults to HorizontalScrollBarVisibility=Auto, which measures items at infinite width, so TextWrapping never takes effect. The row grows sideways behind a horizontal scrollbar instead, as described in https://stackoverflow.com/questions/397257 ('The layout is fine until the message text should word wrap, but instead I get a horizontal scroll bar on the listbox'). With virtualization, the horizontal extent also jumps as rows are realized. The design never states the setting, so a builder copying the pattern gets no wrapping, and only the validate drive would notice.",
+    "evidence": "component 'Largest-files panel': 'the full path in a wrapping TextBlock'; key_decisions 'Wrapping instead of trimming keeps the whole location readable'",
+    "fix": "State it in the panel component: the ListBox sets ScrollViewer.HorizontalScrollBarVisibility=\"Disabled\", the ItemContainerStyle sets HorizontalContentAlignment=Stretch, and the path TextBlock uses TextWrapping=\"Wrap\" (not WrapWithOverflow, so a path with no spaces still breaks)."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "Whether WPF can draw an unpaired surrogate without throwing is left to 'driving the published exe once at validate'. If it throws during layout or render, the app dies on the dispatcher after the report may already have been written. The window case would pass, and the failure would show up only at validate, which means a rebuild. A web search found nothing either way on WPF's behaviour for lone surrogates. That is 'found nothing', so the risk is still open. The existing UnreadableList already shows GetPath strings, and nothing records that it was tested with such a name either.",
+    "evidence": "cases 'fit the list into the outcome panel': 'WPF drawing a lone surrogate has not been shown not to throw'; component 'Window case for the list'",
+    "fix": "Plant the 'a'+U+D800+'b.bin' file in the window case's tree, sized so it lands in the top 100. Write the report only after a Dispatcher pass at ContextIdle/ApplicationIdle that follows the fill. A render-time throw then kills the process before the report exists, and the case fails at build, not validate. To settle it, run the published exe on that planted tree."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "The 105-file cap case plants 'several sharing the same size at the cut' and requires 'exactly the 100 largest'. Ties are broken by store index, and the design itself says index order comes from a multithreaded scan. So which of the tied files make the cut can differ between runs, not just their order. The design warns only against asserting order among ties. A test that asserts which named files were kept will be flaky.",
+    "evidence": "cases 'cap the list at count'; contracts LargestFiles.Top notes 'Index order follows scan order, which is multithreaded, so tests must not assert an order among files with identical sizes'",
+    "fix": "State that the test asserts the multiset of (ChargedOnDisk, ChargedSize) pairs equals the planted top 100, that there are no duplicate paths, and that the output is non-increasing. It must not assert which of the tied files were kept."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "claim": "The panel says 'No files found' when no file qualifies. That also happens when the tree has files that are all zero-length, links, or later hardlink names, so the message is false in those cases. The caption 'Top {shown} of {files} files' takes {files} from ScanResult's file total. That total may count links, later hardlink names and empty files, which the list excludes, so the numbers do not describe the same set.",
+    "evidence": "component 'Largest-files panel': \"Zero rows shows 'No files found'\" and \"The caption reads 'Top {shown} of {files} files'\"; key_decisions filter 'ChargedSize > 0 or ChargedOnDisk > 0'",
+    "fix": "Change the empty text to 'No non-empty files found'. Word the caption as 'Top {shown} of {files} files scanned', or count survivors in Top and show that number."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "The design says largestFilesMs 'decides whether the Top call moves to Task.Run', but it states no number. Validate will read, say, 180 ms on the 4.4M-entry C:\\ scan and have no pass/fail rule. 'If it stalls visibly' is a judgement, not a measurement. The window case runs on a small planted tree, so its value there says nothing about this.",
+    "evidence": "cases 'rank a very large scan'; key_decisions 'Compute synchronously in ShowOutcome … If it stalls visibly, only the Top call moves to Task.Run'",
+    "fix": "State a threshold in the design, for example largestFilesMs > 100 on the real C:\\ scan means Top moves to Task.Run, and have validate record the number against it."
+   },
+   {
+    "id": "m6",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "There are three problems with the rule. (a) The second pattern `(?<![\\w.])(?:File|Directory|…)\\.\\w+` also matches comments and strings, so a doc comment like '/// never calls File.Exists' in Analysis fails the build. (b) The design lets the build 'fix the first pattern' after checking the accessor shape, but the plant row is written by the same hand. A plant written to match the regex proves only that the regex matches the plant, not that it matches a real raw-accessor call. (c) git status shows .taad/fitness.yaml already modified on slice/SL-040 before any build. If that is the engine's design-time append, eng/rules-parity.ps1 is red on the branch until ArchitectureRulesTests mirrors it, and the regex that landed is the unconfirmed one. Any correction has to be made in both places.",
+    "evidence": "architecture_rules[0].must_not_match; because: 'The build confirms the raw accessor shape … and fixes the first pattern in the same commit'; gitStatus 'M .taad/fitness.yaml'",
+    "fix": "The plant row's offending line must be a call copied from real code that compiles against ScanStore (for example the exact raw-accessor call in ScanStore's own tests), not text shaped to fit the pattern. Any regex change goes into fitness.yaml and ArchitectureRulesTests in one commit, and rules-parity must be green. Record that comments in Analysis/ must not name those APIs, or strip comments before matching if the harness supports it."
+   },
+   {
+    "id": "m7",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "claim": "Top runs synchronously inside ShowOutcome, which already fills the totals, the coverage notes and the unreadable list from earlier slices. The design does not say where in ShowOutcome the call goes. If Top throws (M1 false, or a GetPath failure nobody foresaw) and it runs before the existing content is filled, the new feature blanks outcome content that already worked.",
+    "evidence": "component 'Largest-files panel': 'ShowOutcome calls Top synchronously, times the call, and sets ItemsSource'; MainWindow.xaml.cs:266-312",
+    "fix": "Call Top and fill the section after all existing outcome content has been set in ShowOutcome, so a failure in the new code cannot remove what earlier slices shipped."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M1: the imported must-verify precondition (no concurrent writer on a Cancelled store) is said to be settled by a test, which cannot prove a join; SL-038's 'never abandons the scan thread' is partial evidence the design did not cite. m1: WPF ListBox wrapping assumed without the required HorizontalScrollBarVisibility=Disabled (cited SO 397257). The report-writer ordering is unverified, but the design flags it itself. I checked EnqueueDequeue: MS docs say DequeueEnqueue throws when empty, and EnqueueDequeue removes the minimum after inserting, so the under-capacity path must use Enqueue. The design's 'bounded at count' implies that, and the fewer-than-100 cases exercise it."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "m3: which tied files make the cut depends on multithreaded index order. I checked and found no problem with: drive-root children in GetPath (the pagefile spike's top-20 check resolved C:\\ root paths), count==0, fewer than count, sparse/online-only via the OR filter, and cluster-rounding ties (resolved by the ChargedSize tie-break)."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "M2: the counting rule's protection depends on later slices remembering to put code in Core/Analysis; the App and flat Core files are not covered. M1 also covers Top taking a bare ScanStore, so 'only on a stopped store' relies on the caller."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none: one static query, one ListBox, three report scalars, one rule. Hugefile Finder features, open-in-Explorer, delete, CSV, thresholds and a live list are all explicitly rejected. Each report scalar has a reader. The second rule pattern (no filesystem APIs in Analysis) is cheap and justified by the store-only counting rule."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "m4: 'No files found' is false when files exist but none qualify, and the caption's {files} total and the list's qualifying set count different things. The report's error_cases can tell 'no scan' (Ms null) from 'scan with zero rows' (Ms set). Top's throw contract is complete."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "m7: the design does not say where Top runs inside ShowOutcome, so a throw could blank outcome content earlier slices already shipped. A failed or absent scan hides the section and never reaches Top, which is covered."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "none: checked against Q-016 (report holds scalars, never paths), Q-010 (rule appended, file not recreated), Q-001 (link tests never skipped), Q-003 (eng/dotnet.ps1), the counting constraint (charged values only), and the tech stack (code-behind, no App test project, report verification, xUnit in Core.Tests). Cited prior art verified: https://www.file.net/freeware/largest-files-finder.html says 'finds the 100 largest files' and lists 'file name, full folder path, file size', which supports the top-100 and full-path choices. The PostgreSQL top-N heapsort reference is decorative and was not checked."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "m6: the rule regex fires on comments, the plant row can be written to fit the regex rather than the real accessor, and fitness.yaml is already modified on the branch, so parity is red until ArchitectureRulesTests mirrors it and any regex fix must land in both. The lookbehind (?<![\\w.]) is fixed-width and valid in both Python re and .NET, so no dialect split."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "M3: criterion 4 is proven only by rows bound, not visibility, and acceptance (6), no stale list on a second scan, has no checker. m2: the lone-surrogate render risk can be caught by the window case instead of at validate (web search found nothing either way on WPF behaviour). m5: largestFilesMs has no threshold, so validate cannot decide on it. The Core cases (depth, cap, empty, hardlink, links, sparse, odd names, cancelled) are otherwise complete for what Core can see."
+   },
+   {
+    "dimension": "security",
+    "result": "none: read-only over an in-memory store, no filesystem access in Analysis, no paths in the report (Q-016), no elevation. Neither the whoami nor read-denied-folders admin operation is needed: the unreadable-folder caption states the gap, and ranking files inside denied folders is out of scope for an ordinary-user scan."
+   }
+  ]
+ }
+}

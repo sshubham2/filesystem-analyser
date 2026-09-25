@@ -199,12 +199,12 @@ function Test-Rows($run, [string[]] $ids, [string] $verdict, [string] $xunit = '
 # ---- The cases ----
 
 function Case-C001 {
-    Write-Output 'C-001 the clean tree: 7 Facts, 10 twinned entries, 21 patterns, the settled entries below the marker'
-    # 7 settled: the 4 of SL-023 and SL-024, and the 3 this slice's design appended.
-    $agree = 'rules-parity: AGREE 7 facts <- 10 twinned entries, 21 patterns; 7 settled entries not compared'
+    Write-Output 'C-001 the clean tree: 8 Facts, 11 twinned entries, 23 patterns, the settled entries below the marker'
+    # 15 settled: SL-023 and SL-024 (4), SL-031 (3), SL-033 (3) and SL-038 (5). SL-040's rule is twinned (8th Fact).
+    $agree = 'rules-parity: AGREE 8 facts <- 11 twinned entries, 23 patterns; 15 settled entries not compared'
     foreach ($shell in $Shells) {
         CheckRun (Invoke-Parity $shell $Repo) 0 "the repo [$shell]" @($agree)
-        CheckRun (Invoke-Parity $shell $Repo @('-ExpectFacts', '7')) 0 "the repo with -ExpectFacts 7 [$shell]" @($agree)
+        CheckRun (Invoke-Parity $shell $Repo @('-ExpectFacts', '8')) 0 "the repo with -ExpectFacts 8 [$shell]" @($agree)
     }
 }
 
@@ -264,7 +264,7 @@ function Case-C003 {
         param($root)
         $path = Join-Path $root $YamlRel
         [System.IO.File]::AppendAllText($path, "`r`n  # settled by SL-999`r`n" + $newEntry.Replace("`n", "`r`n"), $Utf8)
-    } 0 @('rules-parity: AGREE 7 facts <- 10 twinned entries, 21 patterns; 8 settled entries not compared')
+    } 0 @('rules-parity: AGREE 8 facts <- 11 twinned entries, 23 patterns; 16 settled entries not compared')
 }
 
 function Case-C004 {
@@ -285,7 +285,7 @@ function Case-C004 {
             Edit-File $root $YamlRel $guard ('^' + $spelling + '?') -Pattern -All
             $text = [System.IO.File]::ReadAllText((Join-Path $root $YamlRel), $Utf8)
             if (-not $text.Contains('^' + $spelling + '?')) { throw "case setup: the copy does not carry ^$(Show $spelling)?" }
-        } 0 @('rules-parity: AGREE 7 facts <- 10 twinned entries, 21 patterns')
+        } 0 @('rules-parity: AGREE 8 facts <- 11 twinned entries, 23 patterns')
     }
 
     Test-Parity 'a BOM without the ? is not the guard' {
@@ -329,7 +329,7 @@ function Case-C005 {
         Edit-File $root $CsRel '\[Fact\]' '[Fect]' -Pattern -All
     } 2 @('rules-parity: CANNOT-READ tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs: zero [Fact]s found')
     Test-Parity 'a Fact count that differs from the reflected count' { param($root) } 2 `
-        @('rules-parity: CANNOT-READ tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs: the reader found 7 Facts where the test class has 8') @('-ExpectFacts', '8')
+        @('rules-parity: CANNOT-READ tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs: the reader found 8 Facts where the test class has 9') @('-ExpectFacts', '9')
 
     $isReparse = "      - '(?m)IsReparsePoint'"
     $yaml = @(
@@ -363,11 +363,11 @@ function Case-C005 {
             Edit-File $root $YamlRel $last ($last + $gap + $onlyInYaml)
         } 1 @('rules-parity: DRIFT 2 unpaired', "yaml entry 'TheScannerListsDirectoriesOnlyThroughDirectoryReader (*.cs)'", "only in yaml 'OnlyInYaml'")
     }
-    # ... and a blank line and a comment between two twinned items hide neither: still AGREE on 21 patterns.
+    # ... and a blank line and a comment between two twinned items hide neither: still AGREE on 23 patterns.
     Test-Parity 'a blank line and a comment between two items' {
         param($root)
         Edit-File $root $YamlRel "      - '(?m)EnumerationOptions'`n" ("      - '(?m)EnumerationOptions'`n`n    # a note`n")
-    } 0 @('rules-parity: AGREE 7 facts <- 10 twinned entries, 21 patterns')
+    } 0 @('rules-parity: AGREE 8 facts <- 11 twinned entries, 23 patterns')
 
     # An entry opened by a bare dash, with name: on the next line: legal YAML that Fitness reads as a rule,
     # so the reader must refuse it wherever it sits, never skip it or fold it into its neighbour (O-020).
@@ -559,7 +559,7 @@ def check(tree, build=False):
 function Case-C007 {
     Write-Output 'C-007 the clean scenario: no plants, zero hits in both engines'
     $run = Invoke-Harness @('--scenario', 'clean')
-    CheckRun $run 0 'the clean scenario on this repo' @('| CLEAN', 'xunit 7 Facts, 0 hits', 'none unmatched or unran')
+    CheckRun $run 0 'the clean scenario on this repo' @('| CLEAN', 'xunit 8 Facts, 0 hits', 'none unmatched or unran')
     $parity = [regex]::Match($run.Output, '(\d+) twinned entries, \d+ patterns; (\d+) settled')
     $rules = [regex]::Match($run.Output, 'fitness pass, (\d+) rules')
     Check ($parity.Success -and $rules.Success -and [int]$rules.Groups[1].Value -eq [int]$parity.Groups[1].Value + [int]$parity.Groups[2].Value) `
@@ -584,7 +584,7 @@ function Case-C008 {
     $copy = New-RepoCopy
     Edit-File $copy $YamlRel "(?ms)^  - name: 'InteropLivesOnlyInNative \(tests\)'.*?(?=^  - name: )" '' -Pattern
     $run = Invoke-Harness @('--root', $copy, '--dotnet-from', $Repo, '--scenario', 'plants', '--only', 'F02,F12')
-    CheckRun $run 1 'the tests scope of InteropLivesOnlyInNative deleted from yaml' @('rules-parity: AGREE 7 facts <- 9 twinned entries')
+    CheckRun $run 1 'the tests scope of InteropLivesOnlyInNative deleted from yaml' @('rules-parity: AGREE 8 facts <- 10 twinned entries')
     Test-Rows $run @('F02') 'AS-RECORDED'
     Test-Rows $run @('F12') 'MISSED-BY-FITNESS'
 
@@ -592,7 +592,7 @@ function Case-C008 {
     $copy = New-RepoCopy
     Edit-File $copy $CsRel 'Files("src", "*.cs").Concat(Files("tests", "*.cs"))' 'Files("src", "*.cs")'
     $run = Invoke-Harness @('--root', $copy, '--dotnet-from', $Repo, '--scenario', 'plants', '--only', 'F02,F12')
-    CheckRun $run 1 'the tests scope of InteropLivesOnlyInNative dropped from xUnit' @('rules-parity: AGREE 7 facts <- 10 twinned entries')
+    CheckRun $run 1 'the tests scope of InteropLivesOnlyInNative dropped from xUnit' @('rules-parity: AGREE 8 facts <- 11 twinned entries')
     Test-Rows $run @('F02') 'AS-RECORDED'
     Test-Rows $run @('F12') 'MISSED-BY-XUNIT'
 }

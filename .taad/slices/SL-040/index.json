@@ -1,0 +1,1395 @@
+{
+ "schema": "slice-record@1",
+ "slice": "SL-040",
+ "title": "Find the biggest files",
+ "status": "active",
+ "branch": "slice/SL-040",
+ "opened_at": "2026-09-25T12:41:05.263Z",
+ "merge_commit": null,
+ "how_to_read": "Each attempt is one line and a `details` filename in this same directory. Open a detail file ONLY when this index points you at one -- the summaries are here so you do not have to. `caused_by` is what sent the stage back; `changed` is what the attempt then touched, counted by kind. Several attempts in a row that were caused by the same stage and changed no `src` is a loop, not progress.",
+ "open": [
+  {
+   "stage": "build-check",
+   "issue": "A ranked list of the largest single files (files only, biggest first) exists: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "The list covers files anywhere under the scanned folder or drive, not only the top level: partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "Each listed file shows where it is (its location): partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "The list is shown to the person: missing"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Should the list rank by space actually taken on disk (the design's default, with both sizes shown) or by logical size? A person looking for 'the biggest files' may expect logical size, and it would put OneDrive online-only files near the top. The slice text did not settle it. Changing it swaps the heap key and the header text."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "On C:\\, pagefile.sys (20 GiB in the spike), hiberfil.sys (about 12.5 GiB) and swapfile.sys will lead the list. Should they be shown unlabelled (the design's default, since the spike measured them as correct), labelled as system files, or left out?"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "No one contested any of these: one proposal, no rival. Ranking basis (on-disk versus logical) is also an open question above."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "A fixed top 100 in an App constant versus a threshold or a person-set count."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Full path in one wrapping column versus separate name and folder columns, which would need a name accessor nobody has confirmed."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The list as a section inside the outcome panel above the unreadable list versus its own expander or tab."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Computing on the UI thread inside ShowOutcome versus Task.Run from the start. The report's largestFilesMs is meant to settle this with a number."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "LargestFiles under a new Core/Analysis folder, with the rule scoped to it, versus a flat Core folder."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "One architecture rule with two patterns, versus none (the proposal's choice) or two separate rules."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "All guarantees are measured at 100% display scaling. At other scalings the pickers' height and the list minimums scale together in device-independent pixels, but that has not been measured."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: The window's default height and MinHeight rise from 600 to 620. The finding offered a sideways-scrolling drive row as one fix and a larger minimum as another; this build needed both. The row's scroll…"
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: The drive row's horizontal scroll bar is always shown (HorizontalScrollBarVisibility=Visible), and disabled while every button fits, rather than Auto. With Auto the pickers would be 17 px taller when…"
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: Drive buttons no longer have an 8 px bottom margin, since they are one line directly above the scroll bar. The gap above Choose a folder is unchanged (its Margin top 8)."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: The report gained additive schema-1 keys window.PickerPanel {actualHeight} and window.DrivePanel {buttons}, per the x:Name convention, so a case can show the pickers' height is independent of the dri…"
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: Declared: the window's default size is now 880x620 and it cannot be made shorter than 620 DIPs. Every layout guarantee is measured at 100% scaling only."
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: Declared: the drive row always shows a horizontal scroll bar, disabled while every button fits, which on this PC is always. From reading the markup, not measured: with the vertical bar disabled, WPF'…"
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: Still standing from earlier reviews: a largest file's location shows at most 3 lines, with the full path only in a tooltip. UnreadableList keeps MaxHeight=200 inside its 2* row. The plants.json F17 n…"
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: No person looked at the live window. I viewed in-process renders of its content, without window chrome, at 560x620, 880x620 and 880x900. Hover tooltips (the only place a cut-off location is shown whole), scrolling the outcome's texts, clicking the expander and dragging the window to a new size were not exercised by a person or by input."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A person's call on how a bounded row shows a long location. Build 41 cuts the end, which hides the file's name. Nobody chose that over keeping the name visible (e.g. cutting the folder part in the middle). On this C:\\ that affects 0 of 100 rows at 880 px and 2 of 100 at 560 px; any path over about 300 characters is cut at the default width."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Whether the default experience is acceptable. At the default 880x620, which is also the minimum height, the list shows 2 of its 100 rows. On a system drive the ending's detail (the volume-coverage line and 'Read in') is partly a scroll away. This meets the person's one-full-row rule; nothing measured whether it is enough."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Non-100% DPI, larger text scaling, Windows 10, and displays whose work area is under 620 DIPs (e.g. 768 px tall at 125%), where the window's MinHeight cannot fit."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The on-disk sizes of pagefile.sys and hiberfil.sys: opening either fails unelevated with error 32, and no named elevated operation reads a file's allocation. Only logical sizes were compared."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A row-by-row check of all 100 real rows and a completeness walk at this HEAD. Core is unchanged since they passed (6fb88c8 and 658ed6a). The walk skipped OneDrive cloud-reparse folders."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: An open-and-growing file identified as a real row; that shape rests on the spike."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The contents of the 664 unreadable folders on C:\\, which the list cannot include."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Drives other than NTFS C:\\ (exFAT/FAT removable media, a mapped SMB share) with the list shown. N-001..N-004 were not run."
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The critique never asked what state the unreadable-folders Expander is in. The design case 'fit the list into the outcome panel ... with the unreadable list also filled' left the opened state out, and ShowOutcome forces IsExpanded=false, so L-003 could only ever pass on the collapsed layout. Opened…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: No layout case named a window size, though the window allows 560x400. Only the default 880x600 was ever tested. At 880x560 with the unreadable list open, both lists clip at MinHeight 40. At 560x400 nothing below the outcome texts is visible, open or closed."
+  },
+  {
+   "stage": "reflect",
+   "issue": "code-review missed: Code-review #3 accepted the O-024 fix with 'every departure is declared' and never asked how far below 880x600 it held. The fix lowered MinHeights (60 to 40, 80 to 40) and dropped MaxHeight=200, which leaves about 30 px to spare at the default size. L-003 opened checks only 880x600, so it cannot fa…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The critique took the design's 'multithreaded scan' and 'a test settles the invariant' as fact and filed M1 (major) and m3 on it, without asking whether the scanner has parallel writers. Scanner.cs:12 says it runs depth-first on the caller's thread. Both findings were overridden."
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique-review missed: The M3 disposition moved 'a second scan clears the previous list' to a manual validate drive, while the design's case C-009 still demanded a machine check (O-011). Nothing reconciled the two, and the hook's missing mode was never checked. This gate did not run on this slice (sized out for a medium …"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: What window size must the outcome panel support: the default 880x600 only, or the window's own MinWidth/MinHeight of 560x400? The answer decides whether the fix is a scrolling or tabbed panel or a higher minimum size."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does the largest-files list still fit at 880x600 with about 30 px spare on a drive with more outcome notes (a wrapped volume-coverage line, the probe-failure note) or at 125-150% DPI and larger text? Neither was measured, and this decides whether th…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Are the on-disk values shown for pagefile.sys and hiberfil.sys (ProbeFailed, cluster-aligned) correct? They could not be read independently without elevation, and both sit at the top of the C:\\ list. Only their logical sizes and the spike's CIM matc…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Is the list complete under OneDrive cloud-reparse folders? Validate's independent walk skipped them and refused a walk under the OneDrive path, so completeness was checked on about 2.6M of about 3.59M files."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: 34 of the 38 build attempts (#4-#37) were refusals from a provider session limit that resets at 22:50 IST, over 2h37m, with nothing changed. The loop kept restarting the stage against a limit it had been told about. Two slices ran at once (c998acc) …"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: O-024 was a layout defect from the first build: an opened unreadable Expander docked at the bottom pushed the whole largest-files list out of view, and a false XAML comment ('opened it leaves room for theirs') claimed otherwise. Only code-review #1,…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The code review filed O-024 as minor, but it made the slice's own acceptance item ('the list is shown to the person') false in a state a person reaches by clicking. Code-review #2 passed with 'no blocker outstanding' and validate #2 had to fail it. …"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The design and critique carried a false fact, 'the scan is multithreaded'. M1 (major, with a would-force-resynthesis flag) and m3 were built on it and both were overridden. Nobody in survey or design read Scanner.cs:12 until the disposition did."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Build #1 skipped the second-scan case O-011 because the hook lacked a mode. The M3 disposition had sent that check to a manual drive and nothing reconciled it with the case obligation. It cost build attempts #1-#3, and critique-review was sized out,…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Validate #3 passed with three [failed] rows and its own line 'What does not hold: the fit only holds at the default size'. At 880x560 with the list open, both lists clip at MinHeight 40. At 560x400 nothing below the outcome texts is on screen. No ob…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The survey declined to build because it read eng/dotnet.ps1's download as needing a person's decision, although Q-003 already said yes. Three nodes each improvised a way around the missing SDK 10 and none ran the project's own build."
+  }
+ ],
+ "stages": [
+  {
+   "stage": "repro",
+   "title": "Repro",
+   "order": 1,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "build-check",
+   "title": "Build check",
+   "order": 2,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "risk-spike",
+   "title": "Risk spike",
+   "order": 3,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "design-slice",
+   "title": "Design",
+   "order": 4,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-25T12:54:40.356Z",
+     "head": "11f7ad94de7fe9a47a10a57f0bb3058b8ff88cdc",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique",
+   "title": "Critique",
+   "order": 5,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-25T13:06:22.581Z",
+     "head": "11f7ad94de7fe9a47a10a57f0bb3058b8ff88cdc",
+     "summary": "The core is sound.",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique-review",
+   "title": "Critique review",
+   "order": 6,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-25T13:14:32.044Z",
+     "head": "11f7ad94de7fe9a47a10a57f0bb3058b8ff88cdc",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-review-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "build-slice",
+   "title": "Build",
+   "order": 7,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "failed",
+     "at": "2026-09-25T13:15:09.550Z",
+     "head": "ef74cd1a250319ebebbc9837d866ca63f412f7ec",
+     "summary": "I built the largest-files list as designed.",
+     "caused_by": null,
+     "changed": {
+      "src": 5,
+      "tests": 4,
+      "config": 2,
+      "listed": 11,
+      "measured_by_git": 15
+     },
+     "details": "build-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-25T13:47:53.740Z",
+     "head": "7610c6b22bcb8a46ea0ec2a9bd668b5fd02c6976",
+     "summary": "O-011 (C-009) is now a machine check, and nothing outside the test driver changed.",
+     "caused_by": null,
+     "changed": {
+      "tests": 2,
+      "listed": 2,
+      "measured_by_git": 4
+     },
+     "details": "build-slice-2.json"
+    },
+    {
+     "n": 3,
+     "state": "passed",
+     "at": "2026-09-25T14:41:13.706Z",
+     "head": "658ed6a5808b8e2f3b82f419050354c73c4ebd4e",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "validation partial this build: The validation is right: criterion 11 / O-024 fails, and the defect is in the build's layout code. No new check would change that. What I checked myself in the tree at HEAD 7610c6b: - src/FsAnalyser.App/MainWindow.xaml:40-45 docks UnreadableExpander at the bottom of the outcome DockPanel, and UnreadableList has MinHeight=80 and MaxHeight=200. That means the expander is measured before LargestFilesPanel (:50), which is the fill child and only gets what is left. LargestFilesList has MinHeight=60 (:63). - The comment at :40-41 says 'opened it leaves room for theirs…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-024"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-3.json"
+    },
+    {
+     "n": 4,
+     "state": "passed",
+     "at": "2026-09-25T14:57:38.570Z",
+     "head": "e19dc94f0e03c13f041bcc4e10e723fb200e5857",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "rejected at the merge, and sent back rather than stopped. What was objected to: SL-040 goes back to build to finish merging uat, and nothing else changes. The feature as built stays: the 100 largest files ranked by space on disk with both sizes shown (Q-042), system files like pagefile.sys shown without labels (Q-043), LargestFiles.cs, its tests and the report keys. What is wrong: slice/SL-040 is stuck partway through merging uat. The 18:13Z refresh hit conflicts in MainWindow.xaml, MainWindow.xaml.cs, WindowReport.cs and the window-test hook, and nobody has built or run the merged window. Th…",
+      "stage": "commit-slice",
+      "from": [
+       "commit-slice"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-4.json"
+    },
+    {
+     "n": 5,
+     "state": "passed",
+     "at": "2026-09-25T15:02:49.842Z",
+     "head": "2d6962c38bb21d4cc59f8ccf1efb5911c9d1a1c8",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "2 obligation(s) landed on this stage after it passed (O-025, O-026), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-025 (fix): B1 (blocker): In the merged window, SL-040's largest-files list pushes SL-039's results list (TopLevelPanel and TopLevelList) off the window after every real scan, at any window size. uat docks OutcomePanel at the top (MainWindow.xaml:38) and makes TopLevelPanel the last, filling child (:122). A top-docked child is laid out at its desired height. SL-040's 100-row LargestFilesList, a virtualiz…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-025",
+       "O-026"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-5.json"
+    },
+    {
+     "n": 6,
+     "state": "passed",
+     "at": "2026-09-25T15:07:55.694Z",
+     "head": "6fb88c89ff61392bb85a4b7be967925db28e3409",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-027), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-027 (fix): M1 (major): On short windows, which the window allows (MinHeight 400, MainWindow.xaml:5), the outcome row's fixed floor pushes SL-039's results list off the window again, and the outcome's own list runs past the bottom. The floor is MinHeight 316, or 328 while the unreadable list is open (MainWindow.xaml:55, :63). I measured the published exe with a throwaway startup hook that only sets Window.He… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-027"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-6.json"
+    },
+    {
+     "n": 7,
+     "state": "passed",
+     "at": "2026-09-25T15:08:00.875Z",
+     "head": "9387de0667ef78ecadd53f1e6ea4ef711075cc8a",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "validation partial this build: The validation is right. At the window's allowed minimum of 560x600, a stopped C:\\ scan with the unreadable folders opened leaves LargestFilesList at its 24 px MinHeight with inView false (criterion 11, O-013). Rebuild SL-040 for this one thing. It also settles the window-size question the outcome layout has been patched around four times (O-024, O-025, O-027, now width). The rule: at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row. That includes stopped with the unr…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-7.json"
+    },
+    {
+     "n": 8,
+     "state": "passed",
+     "at": "2026-09-25T15:13:17.026Z",
+     "head": "32ce91adfca1c779a85e68550e4233051d052f0f",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-8.json"
+    },
+    {
+     "n": 9,
+     "state": "unrecorded",
+     "at": "2026-09-25T15:18:28.141Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-9.json"
+    },
+    {
+     "n": 10,
+     "state": "unrecorded",
+     "at": "2026-09-25T15:23:39.233Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-10.json"
+    },
+    {
+     "n": 11,
+     "state": "unrecorded",
+     "at": "2026-09-25T15:28:55.272Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-11.json"
+    },
+    {
+     "n": 12,
+     "state": "unrecorded",
+     "at": "2026-09-25T15:34:06.293Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-12.json"
+    },
+    {
+     "n": 13,
+     "state": "unrecorded",
+     "at": "2026-09-25T15:39:17.333Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-13.json"
+    },
+    {
+     "n": 14,
+     "state": "unrecorded",
+     "at": "2026-09-25T15:44:33.672Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-14.json"
+    },
+    {
+     "n": 15,
+     "state": "unrecorded",
+     "at": "2026-09-25T15:49:44.723Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-15.json"
+    },
+    {
+     "n": 16,
+     "state": "unrecorded",
+     "at": "2026-09-25T15:54:55.790Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-16.json"
+    },
+    {
+     "n": 17,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:00:01.681Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-17.json"
+    },
+    {
+     "n": 18,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:05:17.745Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-18.json"
+    },
+    {
+     "n": 19,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:10:28.817Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-19.json"
+    },
+    {
+     "n": 20,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:10:33.989Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-20.json"
+    },
+    {
+     "n": 21,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:15:39.906Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-21.json"
+    },
+    {
+     "n": 22,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:15:50.616Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-22.json"
+    },
+    {
+     "n": 23,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:20:56.449Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-23.json"
+    },
+    {
+     "n": 24,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:26:07.819Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-24.json"
+    },
+    {
+     "n": 25,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:31:19.202Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-25.json"
+    },
+    {
+     "n": 26,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:36:35.634Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-26.json"
+    },
+    {
+     "n": 27,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:41:47.039Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-27.json"
+    },
+    {
+     "n": 28,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:46:58.483Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-28.json"
+    },
+    {
+     "n": 29,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:52:09.936Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-29.json"
+    },
+    {
+     "n": 30,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:57:21.424Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-30.json"
+    },
+    {
+     "n": 31,
+     "state": "unrecorded",
+     "at": "2026-09-25T17:02:32.816Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-31.json"
+    },
+    {
+     "n": 32,
+     "state": "unrecorded",
+     "at": "2026-09-25T17:02:43.733Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-32.json"
+    },
+    {
+     "n": 33,
+     "state": "unrecorded",
+     "at": "2026-09-25T17:07:55.162Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-33.json"
+    },
+    {
+     "n": 34,
+     "state": "unrecorded",
+     "at": "2026-09-25T17:13:06.583Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-34.json"
+    },
+    {
+     "n": 35,
+     "state": "unrecorded",
+     "at": "2026-09-25T17:18:18.020Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-35.json"
+    },
+    {
+     "n": 36,
+     "state": "unrecorded",
+     "at": "2026-09-25T17:18:29.072Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-36.json"
+    },
+    {
+     "n": 37,
+     "state": "unrecorded",
+     "at": "2026-09-25T17:23:40.489Z",
+     "head": "658ed6a5808b8e2f3b82f419050354c73c4ebd4e",
+     "summary": "This attempt fixes O-024 only.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {
+      "src": 2,
+      "tests": 2,
+      "listed": 4,
+      "measured_by_git": 42
+     },
+     "details": "build-slice-37.json"
+    },
+    {
+     "n": 38,
+     "state": "unrecorded",
+     "at": "2026-09-25T18:19:43.516Z",
+     "head": "e19dc94f0e03c13f041bcc4e10e723fb200e5857",
+     "summary": "I finished the half-done merge of uat (SL-039's commits 7fa507f, 88fd772 and d78635f) into slice/SL-040, resolved the five conflicted files, built the result and tested it.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {
+      "src": 3,
+      "tests": 2,
+      "listed": 5,
+      "measured_by_git": 24
+     },
+     "details": "build-slice-38.json"
+    },
+    {
+     "n": 39,
+     "state": "unrecorded",
+     "at": "2026-09-25T18:51:57.191Z",
+     "head": "2d6962c38bb21d4cc59f8ccf1efb5911c9d1a1c8",
+     "summary": "O-025: OutcomePanel and SL-039's TopLevelPanel are now the two rows of one Grid, which is the window's last child.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {
+      "src": 2,
+      "tests": 2,
+      "docs": 1,
+      "listed": 5,
+      "measured_by_git": 9
+     },
+     "details": "build-slice-39.json"
+    },
+    {
+     "n": 40,
+     "state": "unrecorded",
+     "at": "2026-09-25T19:56:13.870Z",
+     "head": "6fb88c89ff61392bb85a4b7be967925db28e3409",
+     "summary": "O-027 is fixed by raising the window's minimum height.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {
+      "src": 1,
+      "tests": 2,
+      "docs": 1,
+      "listed": 4,
+      "measured_by_git": 8
+     },
+     "details": "build-slice-40.json"
+    },
+    {
+     "n": 41,
+     "state": "unrecorded",
+     "at": "2026-09-25T21:06:55.694Z",
+     "head": "9387de0667ef78ecadd53f1e6ea4ef711075cc8a",
+     "summary": "I rebuilt the outcome layout so every list keeps at least one full row in view in every ending, at any size the window allows (down to 560x600) and for any length of text.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {
+      "src": 3,
+      "tests": 2,
+      "docs": 1,
+      "listed": 6,
+      "measured_by_git": 11
+     },
+     "details": "build-slice-41.json"
+    },
+    {
+     "n": 42,
+     "state": "unrecorded",
+     "at": "2026-09-25T22:15:31.616Z",
+     "head": "32ce91adfca1c779a85e68550e4233051d052f0f",
+     "summary": "O-028 is fixed: the pickers' height no longer depends on how many drives are ready.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-028), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-028 (fix): M1 (major): The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left belo… M…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {
+      "src": 3,
+      "tests": 2,
+      "docs": 1,
+      "listed": 6,
+      "measured_by_git": 10
+     },
+     "details": "build-slice-42.json"
+    }
+   ]
+  },
+  {
+   "stage": "code-review",
+   "title": "Code review",
+   "order": 8,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-25T14:08:46.312Z",
+     "head": "7610c6b22bcb8a46ea0ec2a9bd668b5fd02c6976",
+     "summary": "I reviewed the whole slice diff (11f7ad9..HEAD).",
+     "caused_by": null,
+     "changed": {},
+     "details": "code-review-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-25T17:25:47.922Z",
+     "head": "658ed6a5808b8e2f3b82f419050354c73c4ebd4e",
+     "summary": "I read the code diff 7610c6b..658ed6a (MainWindow.xaml, WindowReport.cs, StartupHook.cs, WindowCases.ps1) and the files it reaches.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "code-review passed on 2026-09-25T14:21:07.851Z, and build-slice has judged since (2026-09-25T17:25:47.592Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-2.json"
+    },
+    {
+     "n": 3,
+     "state": "passed",
+     "at": "2026-09-25T18:36:14.784Z",
+     "head": "e19dc94f0e03c13f041bcc4e10e723fb200e5857",
+     "summary": "This merge must not go to uat as it stands (B1, blocker).",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "code-review passed on 2026-09-25T17:39:45.582Z, and build-slice has judged since (2026-09-25T18:36:12.694Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-3.json"
+    },
+    {
+     "n": 4,
+     "state": "passed",
+     "at": "2026-09-25T19:42:53.634Z",
+     "head": "2d6962c38bb21d4cc59f8ccf1efb5911c9d1a1c8",
+     "summary": "Attempt 39 fixes B1 at the default window size and above, but not on short windows, which the window allows.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "code-review passed on 2026-09-25T18:51:28.956Z, and build-slice has judged since (2026-09-25T19:42:51.559Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-4.json"
+    },
+    {
+     "n": 5,
+     "state": "passed",
+     "at": "2026-09-25T20:16:04.141Z",
+     "head": "6fb88c89ff61392bb85a4b7be967925db28e3409",
+     "summary": "Attempt 40 closes O-027 the way the disposition allowed, and I found nothing new worth filing.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "code-review passed on 2026-09-25T19:56:08.606Z, and build-slice has judged since (2026-09-25T20:16:03.052Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-5.json"
+    },
+    {
+     "n": 6,
+     "state": "passed",
+     "at": "2026-09-25T22:01:57.315Z",
+     "head": "9387de0667ef78ecadd53f1e6ea4ef711075cc8a",
+     "summary": "Attempt 41 holds on this PC as it stands, but the \"one full row at any allowed size\" rule breaks as soon as a fourth drive appears.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "code-review passed on 2026-09-25T20:25:21.262Z, and build-slice has judged since (2026-09-25T22:01:56.098Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-6.json"
+    },
+    {
+     "n": 7,
+     "state": "passed",
+     "at": "2026-09-25T22:38:02.470Z",
+     "head": "32ce91adfca1c779a85e68550e4233051d052f0f",
+     "summary": "Attempt 42 fixes O-028 as the disposition asked, and I found nothing new worth filing.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "code-review passed on 2026-09-25T22:15:29.185Z, and build-slice has judged since (2026-09-25T22:38:01.606Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-7.json"
+    }
+   ]
+  },
+  {
+   "stage": "validate-slice",
+   "title": "Validate",
+   "order": 9,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "failed",
+     "at": "2026-09-25T14:22:35.181Z",
+     "head": "7610c6b22bcb8a46ea0ec2a9bd668b5fd02c6976",
+     "summary": "I tested the list on the real C:\\ drive.",
+     "caused_by": null,
+     "changed": {},
+     "details": "validate-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-25T17:43:45.726Z",
+     "head": "658ed6a5808b8e2f3b82f419050354c73c4ebd4e",
+     "summary": "I re-validated HEAD 658ed6a against the real C:\\ drive, using a freshly published exe and the project's own Core.",
+     "caused_by": null,
+     "changed": {},
+     "details": "validate-slice-2.json"
+    },
+    {
+     "n": 3,
+     "state": "failed",
+     "at": "2026-09-25T20:26:45.358Z",
+     "head": "6fb88c89ff61392bb85a4b7be967925db28e3409",
+     "summary": "Re-validated HEAD 6fb88c8.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "validate-slice passed on 2026-09-25T18:08:18.872Z, and build-slice has judged since (2026-09-25T18:36:12.694Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "validate-slice-3.json"
+    },
+    {
+     "n": 4,
+     "state": "passed",
+     "at": "2026-09-25T22:49:16.050Z",
+     "head": "32ce91adfca1c779a85e68550e4233051d052f0f",
+     "summary": "Re-validated HEAD 32ce91a after the window-size rework (build 41) and the O-028 drive-row fix (build 42).",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "validate-slice passed on 2026-09-25T18:08:18.872Z, and build-slice has judged since (2026-09-25T18:36:12.694Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "validate-slice-4.json"
+    }
+   ]
+  },
+  {
+   "stage": "reflect",
+   "title": "Reflect",
+   "order": 10,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-25T18:08:50.621Z",
+     "head": "658ed6a5808b8e2f3b82f419050354c73c4ebd4e",
+     "summary": "SL-040 added a top-100 largest-files list: LargestFiles.Top (a bounded heap over ChargedOnDisk) in a new Core/Analysis folder, a virtualized ListBox in the outcome panel, three report scalars, an analysis architecture rule, and window cases L-001 to L-006.",
+     "caused_by": null,
+     "changed": {},
+     "details": "reflect-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "commit-slice",
+   "title": "Commit",
+   "order": 11,
+   "state": "failed",
+   "attempts": []
+  }
+ ]
+}

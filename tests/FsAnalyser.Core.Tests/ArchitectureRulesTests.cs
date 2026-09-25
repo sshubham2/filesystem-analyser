@@ -96,6 +96,21 @@ public class ArchitectureRulesTests
             @"(Library|Dll)Import");
     }
 
+    /// <summary>
+    /// The analysis code reads sizes only as the store charged them, and only from the store (SL-040). Raw
+    /// Size and OnDisk skip the counting rules: a hardlink's later names, links and a duplicate's stale size.
+    /// A ranking built on them lists one file twice or shows a wrong size while its own tests still pass, and
+    /// asking the disk again bypasses what the scan measured. Comments are matched too. Outside Core the
+    /// compiler holds the rule, because the raw accessors are internal (SL-040, M2).
+    /// </summary>
+    [Fact]
+    public void TheAnalysisReadsOnlyChargedSizesAndOnlyFromTheStore()
+    {
+        AssertNoMatch(Files(@"src\FsAnalyser.Core\Analysis", "*.cs"),
+            @"\.(?:Size|OnDisk)\s*[\(\[]",
+            @"(?<![\w.])(?:File|Directory|FileInfo|DirectoryInfo|DriveInfo)\.\w+|System\.IO\.(?:File|Directory)\b|new\s+(?:FileInfo|DirectoryInfo|DriveInfo|FileStream)\b");
+    }
+
     private static IEnumerable<string> Files(string folder, params string[] patterns) =>
         patterns
             .SelectMany(p => Directory.EnumerateFiles(Path.Combine(Repo, folder), p, SearchOption.AllDirectories))
