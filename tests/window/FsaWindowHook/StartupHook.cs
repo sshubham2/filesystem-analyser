@@ -180,7 +180,7 @@ internal class StartupHook
         try
         {
             Log($"loaded mode={mode} pid={Environment.ProcessId}");
-            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "kinds" or "size" or "tree"))
+            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "kinds" or "size" or "tree" or "reveal"))
             {
                 Log($"refused mode={mode} reason=unknown mode");
                 return;
@@ -217,6 +217,11 @@ internal class StartupHook
                     Log("refused mode=tree reason=tree mode is not armed and takes no FSA_HOOK_SLOW_REFRESH_MS");
                 else
                     TreeMode.Drive();
+                return;
+            }
+            if (mode == "reveal")
+            {
+                RevealMode.Drive();
                 return;
             }
             if (mode is "watch" or "measure")

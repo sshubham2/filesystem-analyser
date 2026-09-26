@@ -9,6 +9,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using FsAnalyser.Core;
 using FsAnalyser.Core.Analysis;
+using FsAnalyser.Core.Native;
 using FsAnalyser.Core.Scanning;
 using Microsoft.Win32;
 
@@ -24,6 +25,14 @@ namespace FsAnalyser.App;
 /// </summary>
 public partial class MainWindow : Window
 {
+    public static readonly RoutedUICommand OpenInExplorer = new(
+        "Open in Explorer",
+        nameof(OpenInExplorer),
+        typeof(MainWindow),
+        new InputGestureCollection { new KeyGesture(Key.Enter, ModifierKeys.Control) });
+
+    internal RevealOutcome? LastRevealOutcome { get; private set; }
+    private long _revealSequence;
     // A refresh (handler and layout) that ran longer than this makes the next tick skip its refresh, so a
     // busy machine gets the UI thread back (spike live-refresh-expanded-100k-folder, SL-039).
     private static readonly TimeSpan SlowRefresh = TimeSpan.FromMilliseconds(100);
@@ -202,6 +211,9 @@ public partial class MainWindow : Window
         _result = null; // let the previous scan's store be collected
         LastResult = null;
         UnreadableList.ItemsSource = null;
+        RevealStatus.Text = string.Empty;
+        RevealStatus.Visibility = Visibility.Collapsed;
+        LastRevealOutcome = null;
         HideLargestFiles(); // the last scan's list is never shown as this one's
         AwaitKinds(); // nor its kinds
         OutcomePanel.Visibility = Visibility.Collapsed;
@@ -474,7 +486,11 @@ public partial class MainWindow : Window
         {
             UnreadableExpander.Header = $"{result.Unreadable.Count:N0} folders could not be read";
             UnreadableList.ItemsSource = result.Unreadable
-                .Select(u => $"{result.Store.GetPath(u.Entry)}  ({Win32Message(u.Win32Error)})")
+                .Select(u =>
+                {
+                    string path = result.Store.GetPath(u.Entry);
+                    return new UnreadableRow(path, $"{path}  ({Win32Message(u.Win32Error)})");
+                })
                 .ToList();
             UnreadableExpander.IsExpanded = false;
             UnreadableExpander.Visibility = Visibility.Visible;
@@ -672,4 +688,93 @@ public partial class MainWindow : Window
 
     /// <summary>One row of the largest-files list: the texts it shows, and the on-disk bytes it was ranked by.</summary>
     internal sealed record LargestFileRow(long OnDisk, string OnDiskText, string SizeText, string Path);
+
+    /// <summary>One row of the unreadable-folders list: carries a clean path for reveal and display text for the list.</summary>
+    internal sealed record UnreadableRow(string Path, string Text)
+    {
+        public override string ToString() => Text;
+    }
+
+    private static string PathOf(object? row) => row switch
+    {
+        LargestFileRow file => file.Path,
+        FolderTreeNode node => node.FullPath,
+        TopLevelRow top => top.Path,
+        UnreadableRow unreadable => unreadable.Path,
+        _ => string.Empty
+    };
+
+    private void OnCanOpenInExplorer(object sender, CanExecuteRoutedEventArgs e)
+    {
+        object? row = e.Parameter ?? (e.OriginalSource as FrameworkElement)?.DataContext;
+        e.CanExecute = !string.IsNullOrEmpty(PathOf(row));
+        e.Handled = true;
+    }
+
+    private async void OnOpenInExplorer(object sender, ExecutedRoutedEventArgs e)
+    {
+        object? row = e.Parameter ?? (e.OriginalSource as FrameworkElement)?.DataContext;
+        string path = PathOf(row);
+        if (string.IsNullOrEmpty(path))
+            return;
+
+        long seq = Interlocked.Increment(ref _revealSequence);
+        RevealStatus.Text = "Opening in Explorer\u2026";
+        RevealStatus.Visibility = Visibility.Visible;
+
+        try
+        {
+            RevealOutcome outcome = await ShellReveal.RevealAsync(path);
+            if (Interlocked.Read(ref _revealSequence) != seq)
+                return;
+
+            LastRevealOutcome = outcome;
+            RevealStatus.Text = FormatRevealStatus(outcome);
+            RevealStatus.Visibility = string.IsNullOrEmpty(RevealStatus.Text) ? Visibility.Collapsed : Visibility.Visible;
+        }
+        catch (Exception ex)
+        {
+            if (Interlocked.Read(ref _revealSequence) != seq)
+                return;
+
+            int hr = ex.HResult != 0 ? ex.HResult : unchecked((int)0x80004005);
+            LastRevealOutcome = new RevealOutcome(
+                RevealKind.Failed,
+                path,
+                null,
+                RevealReason.None,
+                null,
+                false,
+                false,
+                hr);
+            RevealStatus.Text = $"Couldn't open Explorer for '{path}': {Win32Message(hr).TrimEnd('.')} (0x{hr:X8}).";
+            RevealStatus.Visibility = Visibility.Visible;
+        }
+    }
+
+    private static string FormatRevealStatus(RevealOutcome outcome)
+    {
+        return outcome.Kind switch
+        {
+            RevealKind.Exact when outcome.Hidden =>
+                $"'{GetLeafName(outcome.Requested)}' is hidden, so Explorer only highlights it if it is set to show hidden files (and protected operating system files, for system items).",
+            RevealKind.Exact =>
+                string.Empty,
+            RevealKind.Ancestor when outcome.Reason == RevealReason.NameUnaddressable =>
+                $"Explorer can't select '{outcome.UnaddressableName}' by name (it ends in a dot or space, or is a reserved device name). Highlighting its folder '{outcome.Shown}' instead.",
+            RevealKind.Ancestor when outcome.Reason == RevealReason.NoLongerExists =>
+                $"'{outcome.Requested}' no longer exists. Highlighting '{outcome.Shown}', the nearest folder that does.",
+            RevealKind.Ancestor =>
+                $"Highlighting its folder '{outcome.Shown}'.",
+            RevealKind.Failed =>
+                $"Couldn't open Explorer for '{outcome.Requested}': {Win32Message(outcome.HResult).TrimEnd('.')} (0x{outcome.HResult:X8}).",
+            _ => string.Empty
+        };
+    }
+
+    private static string GetLeafName(string path)
+    {
+        string name = Path.GetFileName(path);
+        return string.IsNullOrEmpty(name) ? path : name;
+    }
 }

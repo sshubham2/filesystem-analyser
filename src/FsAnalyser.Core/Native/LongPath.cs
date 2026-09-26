@@ -6,7 +6,7 @@ namespace FsAnalyser.Core.Native;
 /// concatenation that is never normalised again. Normalising a child would strip trailing dots and
 /// spaces, turn names such as NUL into devices, or hit MAX_PATH.
 /// </summary>
-internal static class LongPath
+public static class LongPath
 {
     private const string Extended = @"\\?\";
     private const string ExtendedUnc = @"\\?\UNC\";

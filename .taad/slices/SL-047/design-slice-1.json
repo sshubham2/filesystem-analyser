@@ -1,0 +1,353 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-047",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-26T16:43:04.888Z",
+ "head": "1d53fba58b7fbc807ce594b6e4b693583647316e",
+ "run_id": 1377,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "One proposal (practice) was handed over. I selected it as a whole and changed three things against what the survey and spikes measured. (1) It is the only design that respects the odd-names no-go: SHParseDisplayName returns S_OK and Explorer selects the decoy 'dup'/'sp' for 'dup.'/'sp ' (4/4 each), and 'con' and 'dir.' fail to parse. A pure planner that never hands such a name to the shell, and lands on the nearest addressable ancestor, is the cheapest answer that does not ship a silent wrong target. The spike's 'needs first' remedy (a child PIDL built through IShellFolder) is unmeasured and is not built. (2) SHParseDisplayName plus SHOpenFolderAndSelectItems(pidl, 0, null, 0) is the call shape the long-path spike measured (300 and 600 characters, both manifest builds, 8.3 names on and off, at most 1.2 s). It returns an HRESULT the app can act on. explorer.exe /select gives no exit code and the voidtools thread shows it failing without feedback. (3) It fits the code as it stands. Shell32 P/Invoke goes in Core/Native under InteropLivesOnlyInNative. Store access stays inside FolderTree*.cs under the SL-039 rule. Row paths come from the groundwork that exists (LargestFileRow.Path, ScanStore.GetPath, LongPath's display form). Verification uses the FsaWindowHook and WindowCases.ps1 harness the project already chose, because there is no App test project. It also declines Win32Path and GetNativePath, since SHParseDisplayName takes the display form and 'delete' is still the slice that decides that type. Changes made to the proposal: RevealAsync's error contract is unified, a test seam for the climb logic is added, the status wording is corrected to what the API does, and the hook now exercises the context-menu binding as well as the command. The practice designer raised no over-engineering flag that I could see. The proposal is large for a medium slice, but every component maps to a criterion (C1 to C4) or to a measured failure.",
+  "components": [
+   {
+    "name": "ShellReveal.Plan (pure planner)",
+    "responsibility": "Turns a full path into an ordered list of places to reveal, with no I/O. It strips a \\\\?\\ or \\\\?\\UNC\\ prefix and splits the path into the volume root and its components. It finds the first component the shell mis-parses: the name ends in '.' or ' ', or its base name (text before the first '.', trailing spaces trimmed, case-insensitive) is CON, PRN, AUX, NUL, CONIN$, CONOUT$, COM0-9, LPT0-9, or COM or LPT with superscript 1-3. With no such component, the candidates are the item and then each ancestor up to the root. With one, the candidates start at that component's parent and the name is recorded. Drive roots are written 'C:\\' (the shell rejects 'C:'). UNC roots stop at \\\\server\\share. The check deliberately flags more than strictly needed: a false positive costs precision, a false negative is a silent wrong target.",
+    "lives_at": "src/FsAnalyser.Core/Native/ShellReveal.cs",
+    "key_interactions": "Called only by RevealAsync. Covered by ShellRevealTests. Uses the same display-form convention as LongPath.cs (the \\\\?\\ path minus its prefix)."
+   },
+   {
+    "name": "ShellReveal.RevealAsync and Walk (shell call on an STA thread)",
+    "responsibility": "RevealAsync starts a new background STA thread, runs Plan, and calls Walk(plan, tryReveal). The real tryReveal does SHParseDisplayName(candidate), then SHOpenFolderAndSelectItems(pidl, 0, null, 0), then ILFree. A not-found HRESULT (0x80070002 or 0x80070003) from either call moves Walk to the next candidate. Any other failing HRESULT stops it and is returned; it never climbs past access-denied or network errors. Walk is a public static method taking a Func<string,int> so the climb/stop logic is unit-testable without opening Explorer. The exact-item path reads Hidden and System with the managed File.GetAttributes on LongPath's prefixed form. The three shell32 declarations (SHParseDisplayName, SHOpenFolderAndSelectItems, ILFree) live in this one file.",
+    "lives_at": "src/FsAnalyser.Core/Native/ShellReveal.cs",
+    "key_interactions": "Interop stays inside Core/Native (InteropLivesOnlyInNative, .taad/fitness.yaml:140), and inside this one file (architecture rule 1). It never throws or faults the Task: an ArgumentException from Plan becomes Failed(0x80070057), and any other exception becomes Failed with its HRESULT. The App's await continues on the UI thread."
+   },
+   {
+    "name": "RevealOutcome record",
+    "responsibility": "Data-only result of one reveal: Kind (Exact | Ancestor | Failed), Requested path, Shown path, Reason (None | NameUnaddressable | NoLongerExists), UnaddressableName, Hidden, System, HResult. Reason precedence: NoLongerExists if the first candidate itself was not found, otherwise NameUnaddressable if the plan flagged a name.",
+    "lives_at": "src/FsAnalyser.Core/Native/ShellReveal.cs",
+    "key_interactions": "The App turns it into text. The window hook logs it. It carries no strings meant for display."
+   },
+   {
+    "name": "OpenInExplorer routed command and gestures",
+    "responsibility": "One static RoutedUICommand, 'Open in Explorer', with gesture Ctrl+Enter, and one CommandBinding on MainWindow. The row is e.Parameter, falling back to (e.OriginalSource as FrameworkElement)?.DataContext for the keyboard path. A PathOf(row) switch maps LargestFileRow.Path, FolderTreeNode.FullPath, TopLevelRow.Path and UnreadableRow.Path. CanExecute is true only when that path is non-empty. A ContextMenu resource (x:Shared=\"False\") holds one MenuItem whose CommandParameter is PlacementTarget.DataContext. It is applied through ItemContainerStyle on the largest-files ListBox (MainWindow.xaml:289-312), TopLevelList (:358-369), the folder TreeView (:378-412) and the unreadable-folders list. KindsList is excluded because it shows aggregates. No double-click binding, since double-click on a tree row already expands it. The handler wraps its await in try/catch and reports any exception as a Failed status.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml",
+    "key_interactions": "Handler in MainWindow.xaml.cs awaits ShellReveal.RevealAsync and writes RevealStatus; it never blocks on the Task (architecture rule 2) and never references ScanStore (SL-039 rule)."
+   },
+   {
+    "name": "FolderTreeNode.FullPath",
+    "responsibility": "Lazily computed full display path for any tree row: ScanStore.GetPath(entry) (ScanStore.cs:138), cached on the node. The root keeps its existing full-path Name (FolderTreeNode.cs:58) and FullPath returns it unchanged.",
+    "lives_at": "src/FsAnalyser.App/FolderTreeNode.cs",
+    "key_interactions": "Store access stays inside a FolderTree*.cs file, which the SL-039 rule allows. PathOf reads it as a plain string."
+   },
+   {
+    "name": "TopLevelRow.Path",
+    "responsibility": "Full path of each direct child of the root, set where the row is built, as the root path plus the child name through LongPath's Child/display helper. There is no store call. TopLevelList is the only results surface during a scan and after a stop or failure.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "key_interactions": "PathOf reads it. LongPath's helper must be reachable from the App; if it is internal, expose the single display-join helper rather than moving path logic into the window."
+   },
+   {
+    "name": "UnreadableRow",
+    "responsibility": "Replaces the plain strings in the unreadable-folders list (MainWindow.xaml.cs:476-478) with record UnreadableRow(string Path, string Text), where ToString() returns the same Text. The list looks unchanged and now carries a clean path instead of a display string with a Win32 message appended.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "key_interactions": "Built from the scan engine's existing unreadable-folder records, which must expose the clean path separately from the message. This is a must-verify at build."
+   },
+   {
+    "name": "RevealStatus line",
+    "responsibility": "One TextBlock in the window's status area. It shows 'Opening in Explorer…' while the call runs, then a message chosen by Kind and Reason (see the RevealStatus contract). An exact landing with no hidden note clears it. Each request carries a sequence number so a late finish cannot overwrite a newer message.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml",
+    "key_interactions": "Written only on the UI thread after the await. The window hook reads it."
+   },
+   {
+    "name": "ShellRevealTests",
+    "responsibility": "xUnit tests in the existing Core.Tests project. Plan theories: plain file and folder give the exact item first. 'dup.', 'sp ', 'con', 'con.txt', 'NUL', 'COM¹' and 'CONIN$' give the parent with the name recorded. 'x\\dir.\\in.txt' starts at the parent of 'dir.'. 'dup' (no dot), ' lead', 'a,b;c.txt' and an emoji name stay exact. A drive root gives 'C:\\' and an ancestor chain never yields 'C:'. UNC stops at \\\\server\\share. \\\\?\\ and \\\\?\\UNC\\ prefixes are stripped. A 600-character path is not truncated. Null, empty and relative input throw ArgumentException. Walk tests with a fake tryReveal: not-found then success gives Ancestor/NoLongerExists. 0x80070005 stops with Failed and no further call. All not-found gives Failed(0x80070003). A first success gives Exact with no further call.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ShellRevealTests.cs",
+    "key_interactions": "Runs through eng/dotnet.ps1 test with no new project or trait. Never opens an Explorer window."
+   },
+   {
+    "name": "FsaWindowHook reveal mode",
+    "responsibility": "FSA_HOOK_MODE=reveal with FSA_HOOK_REVEAL='surface:name,…' (surfaces: largest, tree, top, unreadable). After the scan ends (after a stop for 'top'), it finds the named row on each surface, opens the row container's ContextMenu and raises Click on its MenuItem, so the CommandParameter binding is exercised, not just the command. It waits for RevealStatus to settle, then writes one JSON line per request to FSA_HOOK_LOG: {surface, name, path, kind, shown, reason, hresult, status}.",
+    "lives_at": "tests/window/FsaWindowHook",
+    "key_interactions": "Reaches lists and rows by reflection and FindName, like the existing stop/throw/close modes. Report schema 1 is unchanged (Q-016). Not part of FsAnalyser.slnx. A missing row logs {error:'row-not-found'} instead of hanging."
+   },
+   {
+    "name": "WindowCases.ps1 'reveal' case",
+    "responsibility": "Builds a uniquely named %TEMP% tree: a largest file, a subfolder, a deny-ACL unreadable folder (existing fixture), 'dup.' next to a decoy 'dup' (created through \\\\?\\), 'a,b;c.txt', ' lead', an emoji name, a hidden+system file, and a junction and a symbolic link. It records the baseline ShellWindows hwnds and runs the app with the hook. For each request it polls Shell.Application.Windows() for up to 5 s across all entries (so a tab landing in an existing window is still seen) and asserts the expected folder has exactly the expected item selected. For 'dup.' it asserts the ancestor is highlighted and 'dup' is never selected anywhere. For the hidden+system file it asserts the Hidden flag and the note, not the selection. It checks the hook log path against the created paths, and closes only hwnds absent from the baseline.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "Uses the Shell.Application read the explorer-selection-observable-by-script spike measured (readable in 340 ms or less, matching the screen). Runs at validate, not in the default test filter, and must not run alongside another run that opens and closes Explorer windows, which the spikes showed closes each other's windows."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "ShellReveal.Plan(string path) -> RevealPlan",
+    "kind": "function",
+    "notes": "RevealPlan(IReadOnlyList<string> Candidates, string? UnaddressableName). When UnaddressableName is null, Candidates[0] is the item itself. Otherwise Candidates[0] is the parent of the first component the shell mis-parses. The following entries are ancestors ending at the volume root ('C:\\' or \\\\server\\share). Pure and deterministic. This is the only place the unaddressable-name rule lives.",
+    "error_cases": "ArgumentException for null, empty or relative paths. No I/O, so no other failures."
+   },
+   {
+    "name": "ShellReveal.RevealAsync(string path) -> Task<RevealOutcome>; ShellReveal.Walk(RevealPlan, Func<string,int>) -> RevealOutcome",
+    "kind": "function",
+    "auth_model": "Runs as the ordinary user, unelevated, in the person's own session. No Explorer settings are read or changed.",
+    "notes": "SHOpenFolderAndSelectItems(pidl, 0, null, 0) opens the candidate's parent with the candidate selected, for files and folders alike. So an Ancestor landing highlights the ancestor folder in ITS parent; it does not open the ancestor's contents. A drive root lands on This PC with the drive selected (unmeasured). The PIDL is freed on every path. The call can block for tens of seconds on an unreachable share; the UI stays responsive and shows 'Opening in Explorer…'. The Task never faults.",
+    "error_cases": "Not-found (0x80070002/0x80070003) from either shell call: try the next candidate. Any other failing HRESULT: Kind=Failed with that HRESULT, no further candidates. Every candidate not found: Failed(0x80070003). Bad path input: Failed(0x80070057). File.GetAttributes failure: Hidden and System stay false and the shell result decides."
+   },
+   {
+    "name": "OpenInExplorer command (context menu 'Open in Explorer' + Ctrl+Enter)",
+    "kind": "ui",
+    "notes": "Offered on rows of the largest-files list, TopLevelList, the folder TreeView and the unreadable-folders list, and not on KindsList. The context menu acts on the row that was right-clicked (CommandParameter = PlacementTarget.DataContext), never on SelectedItem, because TreeView right-click does not select. Ctrl+Enter acts on the focused row. CanExecute is false, and the menu entry disabled, when the row has no path. Quick repeated invocations run independently."
+   },
+   {
+    "name": "RevealStatus messages",
+    "kind": "ui",
+    "notes": "Exact: cleared. Exact + Hidden: \"'<name>' is hidden, so Explorer only highlights it if it is set to show hidden files (and protected operating system files, for system items).\" Ancestor/NameUnaddressable: \"Explorer can't select '<name>' by name (it ends in a dot or space, or is a reserved device name). Highlighting its folder '<shown>' instead.\" Ancestor/NoLongerExists: \"'<requested>' no longer exists. Highlighting '<shown>', the nearest folder that does.\" Failed: \"Couldn't open Explorer for '<requested>': <Win32 message> (0x<hr>).\"",
+    "error_cases": "Only the latest request's message is shown. An earlier request finishing late does not overwrite a newer one, because each request carries a sequence number."
+   },
+   {
+    "name": "Window hook reveal mode (FSA_HOOK_MODE=reveal, FSA_HOOK_REVEAL, FSA_HOOK_LOG)",
+    "kind": "cli",
+    "notes": "Test-only, in tests/window/FsaWindowHook, outside FsAnalyser.slnx. One JSON line per request. The --report schema-1 output is unchanged. The physical right-click hit test and the Ctrl+Enter keypress are not automated (the project has no UIA). The hook proves the menu item's binding and the command; the gesture is checked by reading the command's InputGestures.",
+    "error_cases": "A missing row logs {error:'row-not-found'} and moves on, so the case fails on that line instead of hanging."
+   },
+   {
+    "name": "WindowCases.ps1 reveal case",
+    "kind": "cli",
+    "notes": "pwsh tests/window/WindowCases.ps1, run at validate. It opens real Explorer windows and closes only hwnds that were absent at its own baseline. It never calls Quit() on a pre-existing window; the spikes' collateral closures are the lesson.",
+    "error_cases": "Fails if a request has no window with exactly the expected selection within 5 s, if the 'dup' decoy is ever selected, or if the hook's resolved path differs from the created path."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Reveal through SHParseDisplayName + SHOpenFolderAndSelectItems(pidl, 0, null, 0), P/Invoked in src/FsAnalyser.Core/Native/ShellReveal.cs. Never through Process.Start(\"explorer.exe\", \"/select,…\"). Only ShellReveal.cs may name these APIs (architecture rule 1).",
+    "reversibility": "cheap",
+    "rationale": "The long-path spike measured this exact pair selecting 300- and 600-character items in 1.2 s or less on both manifest builds. It returns an HRESULT the app can act on. explorer.exe /select goes through Explorer's command-line parser, where commas and quoting break it, and the voidtools thread shows the command-string form failing with no error feedback. There is one caller, so switching mechanism later is an hour's work."
+   },
+   {
+    "decision": "A reveal always means 'open the parent with the item selected' for files, folders and the scan root alike, rather than opening folders into their contents.",
+    "reversibility": "cheap",
+    "rationale": "It matches Windows' own 'Open file location' / 'Open folder location', which jumps there and highlights the item (cited superuser answer). It is also exactly what cidl=0 does, which is the measured call shape. One semantic across four surfaces is easier to test."
+   },
+   {
+    "decision": "A pure planner detects names the shell mis-parses (trailing '.' or ' ', reserved device names with or without an extension, and anything beneath such a folder). Such names are never passed to SHParseDisplayName. The nearest addressable ancestor is highlighted instead and the status line names the item. The spike's 'needs first' remedy (a child PIDL built through IShellFolder) is NOT built.",
+    "reversibility": "cheap",
+    "rationale": "The odd-names spike is a no-go: SHParseDisplayName('…\\dup.') returned S_OK and Explorer selected the decoy 'dup' (4/4, same for 'sp '), and 'con' and 'dir.' failed to parse. A wrong item selected with no error is the one outcome that must not ship. The IShellFolder route is untested and, per the proposal's recalled claim, Explorer itself cannot act on trailing-dot names, so an exact selection would buy little. Landing on the ancestor is a scope reduction against 'jump to it', so it is raised as an open question."
+   },
+   {
+    "decision": "Walk climbs to the next candidate only on not-found; any other failing HRESULT stops and is reported. The loop is a public static method taking a Func<string,int>, so the not-found/stop/all-gone contract is unit-tested without Explorer.",
+    "reversibility": "cheap",
+    "rationale": "Results go stale once the person starts deleting in Explorer, so landing near the item is more useful than an error. Climbing past access-denied or a network error would hide a real failure or retry the same unreachable share. The proposal had no seam for this and could only test it through a real deleted-item window case; the delegate is the smallest seam that makes it a unit test."
+   },
+   {
+    "decision": "Each reveal runs on its own background STA thread. RevealAsync returns Task<RevealOutcome> and never faults; the UI handler also wraps the await.",
+    "reversibility": "cheap",
+    "rationale": "Shell namespace calls want STA, and SHParseDisplayName on an unreachable UNC path can block for tens of seconds, which would freeze the window on the UI thread. Not measured: the spikes ran the calls from a pumped or main STA thread, not a short-lived background STA thread with no message pump. The window case at validate is the measurement; if it fails, the fix is inside RevealAsync and no contract changes."
+   },
+   {
+    "decision": "One RoutedUICommand offered through a context menu whose CommandParameter is the row under the mouse (PlacementTarget.DataContext), plus Ctrl+Enter on the focused row. No double-click binding. No reveal on KindsList.",
+    "reversibility": "cheap",
+    "rationale": "A right-click context-menu entry is the established gesture (cited VS extension; recalled Everything 'Open Path'). Binding to the row instead of SelectedItem avoids the WPF pitfall where right-click in a TreeView does not select, so an action on SelectedItem would hit the wrong item. Double-click on a tree row already expands it. The KindsList shows aggregates with nothing to open."
+   },
+   {
+    "decision": "Every surface exposes a clean full path: FolderTreeNode.FullPath (lazy, ScanStore.GetPath), TopLevelRow.Path (root + name through LongPath's display helper, no store call), UnreadableRow(Path, Text) with ToString() = Text, and the existing LargestFileRow.Path.",
+    "reversibility": "cheap",
+    "rationale": "This keeps store access inside FolderTree*.cs (SL-039 rule) and keeps P/Invoke inside Core/Native. It gives the unreadable list a real path instead of the display string with a Win32 message appended, and leaves the list's appearance unchanged."
+   },
+   {
+    "decision": "Win32Path and ScanStore.GetNativePath, which SL-020 deferred to 'the slice that adds a third Win32 caller', are not introduced here.",
+    "reversibility": "cheap",
+    "rationale": "SHParseDisplayName takes the display form, which is what the spikes passed, not a \\\\?\\ native path, so reveal is not the caller that type was waiting for. The one attribute read uses managed File.GetAttributes on LongPath's existing prefixed form. Recorded so that 'delete' remains the slice that decides it, and the SL-020 note is not skipped without a trace."
+   },
+   {
+    "decision": "Hidden items are revealed normally with a conditional status note. Explorer's hidden-file settings are neither read nor changed.",
+    "reversibility": "cheap",
+    "rationale": "On this machine's settings (Hidden=1, SuperHidden=0) hidden+system items such as pagefile.sys never got selected (0/6) while every HRESULT was 0, and the app cannot detect it. The result at Windows defaults is undecided, because the spike stopped for permission to write the registry. Changing the person's Explorer settings is not this app's business, so a one-line explanation covers the most common largest-files entries."
+   },
+   {
+    "decision": "Verification is planner and Walk tests in Core.Tests plus one real-Explorer window case driven by a FsaWindowHook 'reveal' mode that clicks the row's context-menu item. The App gets no unit-test project and the report schema is unchanged.",
+    "reversibility": "cheap",
+    "rationale": "The project already chose the hook plus WindowCases as the way App behaviour is proven. The selection-observability spike showed a script can read Explorer's selection in 340 ms or less, matching the screen. Only the planner and Walk have branching logic worth unit tests, and Explorer is never opened from xUnit. The reveal touches no counting rule, so no scanner-tier obligations apply."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal handed over. Taken whole, with these changes: RevealAsync's error contract unified with Plan's (ArgumentException becomes Failed(0x80070057)); a Walk(plan, Func<string,int>) seam added so the climb/stop contract is a unit test; the status wording changed from 'Showing' to 'Highlighting' because an Ancestor landing highlights the folder in its own parent; the hook clicks the row's ContextMenu MenuItem so the CommandParameter binding is exercised; the shell32 declarations pinned to ShellReveal.cs so architecture rule 1 has a single exception file; the hidden-item note limited to items with the Hidden attribute."
+   }
+  ],
+  "coherence_check": "ONE PROPOSAL, NO COMPOSITION TO CHECK. Nobody has disagreed with this design, so nothing in it has yet survived a disagreement. That is the first thing to argue with. I checked the proposal against itself and against the survey and spikes, and changed what did not hold.\n\nSeams checked and redesigned:\n- Error contract: Plan throws ArgumentException while RevealAsync 'never throws'. A Plan exception inside the thread would fault the Task and crash an async-void handler. RevealAsync now catches it and returns Failed(0x80070057), and the UI handler also wraps its await.\n- Landing semantics: the API (cidl=0) opens the candidate's PARENT with the candidate selected. The proposal's fallback wording 'Showing <ancestor>' implied the ancestor's contents. For an unaddressable or deleted item the person lands one level above the folder they wanted, with that folder highlighted. The status text now says 'Highlighting'. Opening the ancestor's contents would need a second, unmeasured mechanism (ShellExecute on a folder, unmeasured for long paths), so it stays a taste question.\n- Test seam: the climb/stop contract was testable only through real Explorer windows. Added the Walk delegate seam.\n- Store and interop rules: FolderTreeNode.FullPath is in a FolderTree*.cs file (allowed by SL-039). TopLevelRow.Path and the unreadable rows take no store call. All P/Invoke is in Core/Native (InteropLivesOnlyInNative). Those two existing rules already carry the seams, so I did not restate them. Architecture rule 1 adds the one thing they do not: only ShellReveal.cs may call the reveal APIs, because Plan is the only place the unaddressable-name rule lives, and a second caller would reintroduce the silent-wrong-target defect.\n\nNothing in this design touches the scanner, so the counting-rule tests are not owed.\n\nNot established by anyone, all cheap to reverse and all settled by the validate-stage window case:\n- A short-lived background STA thread with no message pump has not been measured; the spikes used a pumped or main STA thread.\n- The tab-landing case never formed in the spike, so it is untested.\n- Hidden-item selection at Windows defaults is undecided; the spike stopped for permission to edit the registry.\n- The odd-but-addressable names (leading space, comma/semicolon, emoji, '%TEMP%.txt') are listed in the proposal as exact, but their spike results were not in the record I was given.\n- A symbolic link or junction entry is unmeasured.\n- A drive-root landing is unmeasured.\n- The long-path go was measured only with LongPathsEnabled=1.\n\nFor the stage record: the spike stage passed with one no-go, and two experiments (hidden at defaults, tabs) stopped for a person's action. Nothing blocked this design, so no obligation is raised against an earlier stage.\n\nNo cross-domain proposal was supplied, so there is no transfer block. Stack: nothing outside the project's recorded stack was chosen, so stack_chosen is empty.",
+  "stack_chosen": [],
+  "architecture_rules": [
+   {
+    "name": "Only ShellReveal.cs calls the shell's reveal APIs or explorer.exe /select",
+    "files": "src/**/*.cs",
+    "must_not_match": [
+     "SHOpenFolderAndSelectItems",
+     "SHParseDisplayName",
+     "/select\\s*,"
+    ],
+    "except_files": [
+     "src/FsAnalyser.Core/Native/ShellReveal.cs"
+    ],
+    "because": "ShellReveal.Plan is the only place that knows which names the shell mis-parses. The odd-names spike showed SHParseDisplayName returning S_OK and Explorer selecting a decoy ('dup' for 'dup.') with no error. A second caller, or an explorer.exe /select command line, skips that check and ships a quiet wrong target. InteropLivesOnlyInNative only keeps P/Invoke inside Core/Native; it does not stop a second file in there from calling these APIs."
+   },
+   {
+    "name": "The window never blocks on the reveal",
+    "files": "src/FsAnalyser.App/**/*.cs",
+    "must_not_match": [
+     "RevealAsync\\([^;]*\\)\\s*\\.(Result\\b|Wait\\(|GetAwaiter\\(\\)\\s*\\.GetResult\\()"
+    ],
+    "because": "SHParseDisplayName on an unreachable UNC share can block for tens of seconds. Waiting on the reveal Task from the UI thread freezes the window for that long. The reveal runs on its own STA thread and the handler must await it."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "open a file from the largest-files list in Explorer",
+    "shape": "the row is a file whose full path comes from LargestFileRow.Path (already display form)",
+    "why": "The baseline path. The window case must see a window on the parent with SelectedItems equal to exactly that file within 5 s. An HRESULT of 0 is not enough: SHOpenFolderAndSelectItems returned S_OK for a wrong landing in the odd-names spike."
+   },
+   {
+    "behaviour": "open a folder from the folder tree",
+    "shape": "a non-root tree row at depth 2 or more, whose FolderTreeNode.Name is only its own name, so the full path must come from ScanStore.GetPath",
+    "why": "Without FullPath the row exposes only a bare name, and a relative path makes Plan throw. A wrong ancestor join reveals a different folder. Also proves a folder, not a file, is selected in its parent (the cidl=0 form)."
+   },
+   {
+    "behaviour": "open the scan root",
+    "shape": "the item is the root itself: the tree root row (Name is already a full path and must not be prefixed again), a drive root 'C:\\', or a \\\\server\\share root",
+    "why": "The root row is the one node whose Name is a full path, so a uniform 'root + name' join doubles it. The shell rejects 'C:' but accepts 'C:\\'. The ancestor climb must stop at the root. A drive-root landing on This PC with the drive selected is unmeasured."
+   },
+   {
+    "behaviour": "open an item with a very long path",
+    "shape": "full path of about 300 and about 600 characters, components 100 characters or fewer, with the \\\\?\\ prefix stripped to display form",
+    "why": "The spike measured go with SHParseDisplayName, on a machine with LongPathsEnabled=1 and with 8.3 names both on and off. It was not measured with LongPathsEnabled=0. Plan must not truncate, and the window case must confirm the whole stack through the App."
+   },
+   {
+    "behaviour": "open an item whose path holds a name the shell mis-parses",
+    "shape": "a component ends in '.' or ' ' (with a decoy 'dup' or 'sp' beside it), or is a reserved device name ('con', 'nul.txt', 'COM¹', 'CONIN$'), either as the final component or as an ancestor ('dir.\\in.txt')",
+    "why": "The odd-names spike is a no-go: the shell parses 'dup.' to S_OK and Explorer selects the decoy (4/4), and 'con' and 'dir.' fail to parse. Plan must route past them to the nearest addressable ancestor with the name recorded, and the window case must prove the decoy is never selected."
+   },
+   {
+    "behaviour": "open an item with an unusual but addressable name",
+    "shape": "a leading space, 'a,b;c.txt', a supplementary-plane emoji, '%TEMP%.txt', and 'dup' with no dot",
+    "why": "Plan passes these through as exact. The spike results for these rows are not in the record I was given, so Explorer must be seen selecting each exactly. Percent expansion and leading-space trimming are the likeliest ways to mis-target quietly, as trailing-dot names do."
+   },
+   {
+    "behaviour": "open an item that was deleted after the scan",
+    "shape": "the item's path no longer exists but its parent does; and separately, the whole chain up to the root is gone",
+    "why": "SHParseDisplayName returns not-found, so Walk must climb to the parent with Reason=NoLongerExists. If every candidate is gone the outcome must be Failed(0x80070003), not a hang or a crash. Results go stale as soon as the person deletes in Explorer."
+   },
+   {
+    "behaviour": "open a hidden or hidden+system item",
+    "shape": "an item with the Hidden attribute, or Hidden+System, such as pagefile.sys or hiberfil.sys, which top most largest-files lists",
+    "why": "On this machine's settings hidden+system items were never selected (0/6) while every HRESULT was 0, so the app cannot detect it. The outcome must carry Hidden/System and the status note must show. The window case asserts the flag and note, not the selection, because selection depends on the person's Explorer settings, which the spike could not decide at Windows defaults."
+   },
+   {
+    "behaviour": "open a junction or symbolic link entry",
+    "shape": "the item is a junction or a symlink (to a file and to a folder), if the scan lists it as an entry without following it",
+    "why": "Explorer's parse might resolve to the link's target instead of the link, which would be a quiet wrong target of the same kind as the trailing-dot case. Unmeasured. Developer Mode is on (Q-001), so the test creates real links and fails, never skips, if creation fails."
+   },
+   {
+    "behaviour": "handle a failing shell call that is not 'not found'",
+    "shape": "parse or open returns E_ACCESSDENIED (0x80070005) or a network error (0x80070035)",
+    "why": "Walk must stop and report Failed with that HRESULT, not climb. Climbing would hide a real failure or retry the same unreachable share. Exercised through the Walk delegate seam with a fake."
+   },
+   {
+    "behaviour": "open from the context menu on a tree row",
+    "shape": "right-click a tree row other than the selected one, including a nested row",
+    "why": "WPF TreeView right-click does not select. A command that reads SelectedItem would reveal the wrong item. The hook clicks the MenuItem of the right-clicked row's ContextMenu and checks the CommandParameter resolves to that row's DataContext."
+   },
+   {
+    "behaviour": "open from the unreadable-folders list and from top-level rows",
+    "shape": "an unreadable row whose display text has a Win32 message appended (MainWindow.xaml.cs:476-478), and a top-level row on screen during a running scan or after a stop or failure, when the store is incomplete",
+    "why": "Revealing the display string would parse to nonsense. UnreadableRow.Path must be the clean path, and the engine's unreadable records must expose it. TopLevelRow.Path must be built from root + name with no store call, or the SL-039 rule breaks and the row fails when the store is empty."
+   },
+   {
+    "behaviour": "offer the command on a row that has no path",
+    "shape": "a tree placeholder row, a KindsList aggregate row, or any row whose path is empty",
+    "why": "CanExecute must be false and the menu entry disabled. Otherwise Plan throws ArgumentException on relative or empty input. KindsList shows aggregates with nothing to open and must offer nothing."
+   },
+   {
+    "behaviour": "start a second reveal before the first returns",
+    "shape": "two invocations in quick succession, the first slower (an unreachable share)",
+    "why": "Only the status text depends on ordering; the shell calls are independent and each opens its own window. The sequence-number guard is three lines in code-behind and there is no App unit-test project to hold a test for it.",
+    "material": false
+   }
+  ],
+  "decidable_disagreements": [],
+  "taste_disagreements": [
+   "PathOf as a switch over four row types versus a shared IHasPath interface (or one common property name) on the rows. The switch was kept because it is four types and needs no new abstraction.",
+   "Fallback landing: highlight the nearest addressable ancestor in its own parent (measured call shape, one mechanism) versus open the ancestor's contents through ShellExecute (lands where the person wants, second mechanism, unmeasured for long paths).",
+   "Gestures: context menu plus Ctrl+Enter only, with no double-click on the flat lists (largest files, top-level). Uniformity with the tree, where double-click expands, won over double-click on the lists.",
+   "Failure and fallback reporting through a single status line, rather than a dialog or a toast. Only the latest message is kept.",
+   "The two architecture rules cover the shell-API boundary and the UI-thread block. Someone may want a rule for the planner's purity, and the design judged that a testability concern, not a defect."
+  ],
+  "open_questions": [
+   "Does PS-007's 'jump to it in Explorer and act on it there' accept landing on the nearest addressable ancestor (with the item's name in the status line) for items whose names Explorer mis-parses: trailing '.' or ' ', reserved device names, and anything under such a folder? Or must those items be selected exactly? Exact selection needs the untested route the odd-names spike named (a child PIDL built through IShellFolder on the parent), which adds a component and changes Plan's contract."
+  ],
+  "prior_art": [
+   {
+    "pattern": "'Open File Location' / 'Open Folder Location' opens the containing folder with the file or folder highlighted. This is the reveal semantic adopted.",
+    "where": "https://superuser.com/questions/289745/escape-from-windows-7-search-results-path",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2011-05-28"
+   },
+   {
+    "pattern": "The 'Open Path' command in a file search tool is a user-configurable command string, $exec(\"%SystemRoot%\\explorer.exe\" /select,\"%1\"), and gives no error feedback when it misbehaves. Evidence for choosing the shell API and its HRESULT over explorer.exe /select.",
+    "where": "https://www.voidtools.com/forum/viewtopic.php?t=16635",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2025-06-25"
+   },
+   {
+    "pattern": "A right-click context-menu entry on a file node that opens the item in Windows Explorer. This is the gesture adopted.",
+    "where": "https://marketplace.visualstudio.com/items?itemName=vs-publisher-599079.OpenFileinWindowsExplorer",
+    "authority": "community",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Chromium's ShowItemInFolder: SHParseDisplayName then SHOpenFolderAndSelectItems on a COM STA worker thread, falling back to the parent folder when the shell call fails with a spurious file-not-found.",
+    "where": "chromium/src/chrome/browser/platform_util_win.cc (ShowItemInFolder)",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Shell namespace items are PIDLs, not Win32 paths, and parsing a display name normalises it (trailing dots and spaces, device names). This is why full-path parsing mis-targets odd names.",
+    "where": "Raymond Chen, The Old New Thing (Microsoft devblog), articles on shell namespace parsing and path normalisation",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "In a WPF TreeView, right-click does not select the item, so a context-menu command must bind to the element under the mouse (PlacementTarget.DataContext) and not to SelectedItem. Everything's 'Open Path' on Ctrl+Enter is the keyboard analogue.",
+    "where": "WPF ContextMenu/TreeView code-behind practice; voidtools Everything context menu",
+    "authority": "community",
+    "basis": "recalled"
+   }
+  ],
+  "channeled_experts": [
+   "Chromium desktop platform team (platform_util_win ShowItemInFolder: shell reveal on a COM STA worker, with a fallback to the folder)",
+   "Raymond Chen / Old New Thing school: shell namespace PIDLs are not Win32 paths, and parsing normalizes names",
+   "WPF code-behind practitioners: ContextMenu PlacementTarget/DataContext and the TreeView right-click selection pitfall"
+  ],
+  "whats_reused": [
+   "ScanStore.GetPath (src/FsAnalyser.Core/Store/ScanStore.cs:138) supplies the full path for every folder-tree row",
+   "LargestFileRow.Path (MainWindow.xaml.cs:674) and LongPath.cs's display-form convention and Child/display helper",
+   "InteropLivesOnlyInNative (.taad/fitness.yaml:140) keeps the shell32 declarations in Core/Native",
+   "The SL-039 window-never-touches-the-store rule, with FolderTreeNode.cs as the one place store access is allowed",
+   "The existing FsaWindowHook (stop|throw|close modes, FSA_HOOK_LOG) and WindowCases.ps1, including the deny-ACL unreadable-folder fixture",
+   "The Shell.Application.Windows() selection read the explorer-selection-observable-by-script spike measured, and the long-path spike's call shape",
+   "The existing Core.Tests project and eng/dotnet.ps1; no new test project or framework",
+   "The schema-1 --report path (unchanged, per Q-016)"
+  ],
+  "whats_new": [
+   "src/FsAnalyser.Core/Native/ShellReveal.cs: Plan, RevealAsync, Walk, RevealOutcome, and the three shell32 declarations",
+   "tests/FsAnalyser.Core.Tests/ShellRevealTests.cs",
+   "The OpenInExplorer RoutedUICommand, its ContextMenu resource and Ctrl+Enter gesture, applied to four result surfaces",
+   "FolderTreeNode.FullPath, TopLevelRow.Path and UnreadableRow(Path, Text)",
+   "The RevealStatus line with sequence-numbered messages",
+   "FsaWindowHook reveal mode (FSA_HOOK_MODE=reveal, FSA_HOOK_REVEAL)",
+   "The WindowCases.ps1 'reveal' case, which drives real Explorer windows at validate",
+   "Two architecture rules: the reveal-API boundary, and no blocking wait on RevealAsync in the App"
+  ]
+ }
+}

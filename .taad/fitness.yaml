@@ -568,3 +568,26 @@ rules:
     because: A second classifier in the App would drift from Core's table, so the panel and
       the --report kinds section would disagree and the end-to-end reconcile would be comparing
       against a different table.
+
+  # settled by SL-047
+  - name: Only ShellReveal.cs calls the shell's reveal APIs or explorer.exe /select
+    files: src/**/*.cs
+    must_not_match:
+    - SHOpenFolderAndSelectItems
+    - SHParseDisplayName
+    - /select\s*,
+    because: ShellReveal.Plan is the only place that knows which names the shell mis-parses.
+      The odd-names spike showed SHParseDisplayName returning S_OK and Explorer selecting a
+      decoy ('dup' for 'dup.') with no error. A second caller, or an explorer.exe /select command
+      line, skips that check and ships a quiet wrong target. InteropLivesOnlyInNative only keeps
+      P/Invoke inside Core/Native; it does not stop a second file in there from calling these
+      APIs.
+    except_files:
+    - src/FsAnalyser.Core/Native/ShellReveal.cs
+  - name: The window never blocks on the reveal
+    files: src/FsAnalyser.App/**/*.cs
+    must_not_match:
+    - RevealAsync\([^;]*\)\s*\.(Result\b|Wait\(|GetAwaiter\(\)\s*\.GetResult\()
+    because: SHParseDisplayName on an unreachable UNC share can block for tens of seconds. Waiting
+      on the reveal Task from the UI thread freezes the window for that long. The reveal runs
+      on its own STA thread and the handler must await it.
