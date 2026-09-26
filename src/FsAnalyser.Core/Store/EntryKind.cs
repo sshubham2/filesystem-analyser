@@ -3,13 +3,16 @@ namespace FsAnalyser.Core.Store;
 /// <summary>What an entry in a scan is.</summary>
 public enum EntryKind : byte
 {
-    /// <summary>A folder, entered and listed. Includes cloud, WCI and ProjFS folders that carry a reparse point.</summary>
+    /// <summary>A folder, entered and listed. Includes cloud, WCI, ProjFS and DFS folders that carry a reparse point.</summary>
     Folder = 0,
 
-    /// <summary>A file. Includes WOF-compressed, AppExecLink, AF_UNIX, WSL-symlink and dedup files.</summary>
+    /// <summary>A file. Includes WOF-compressed, AppExecLink, AF_UNIX and dedup files.</summary>
     File = 1,
 
-    /// <summary>A junction, symbolic link or DFS link (tag 0xA0000003, 0xA000000C or 0x8000000A). Charged 0 bytes and never entered.</summary>
+    /// <summary>
+    /// A reparse point whose tag has the name-surrogate bit: a junction, a symbolic link, a WSL symlink.
+    /// Charged 0 bytes and never entered.
+    /// </summary>
     Link = 2,
 }
 

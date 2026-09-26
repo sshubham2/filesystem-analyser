@@ -26,10 +26,20 @@ internal static unsafe partial class Kernel32
     public const uint FILE_ATTRIBUTE_RECALL_ON_OPEN = 0x40000;
     public const uint FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS = 0x400000;
 
-    // Reparse tags that make an entry a link
+    // Reparse tags, for reference: the first two carry the name-surrogate bit and so are links, DFS does
+    // not and is entered. The classifier reads only the bit, never a list of tags (SL-043).
     public const uint IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003;
     public const uint IO_REPARSE_TAG_SYMLINK = 0xA000000C;
     public const uint IO_REPARSE_TAG_DFS = 0x8000000A;
+
+    /// <summary>
+    /// The name-surrogate bit of a reparse tag (winnt.h's IsReparseTagNameSurrogate): the reparse point
+    /// stands for another named entity, as a junction or a symbolic link does. EntryClassifier's link rule.
+    /// </summary>
+    public const uint REPARSE_TAG_NAME_SURROGATE = 0x20000000;
+
+    // Thread error mode: no "insert a disk" box for a drive with no media, the call fails instead.
+    public const uint SEM_FAILCRITICALERRORS = 0x0001;
 
     // FILE_INFO_BY_HANDLE_CLASS
     public const int FileStandardInfo = 1;
@@ -89,6 +99,46 @@ internal static unsafe partial class Kernel32
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool CloseHandle(nint handle);
+
+    /// <summary>
+    /// The bytes in use on the volume that holds <paramref name="root"/>: GetDiskFreeSpaceExW's total less its
+    /// free bytes, the figure Get-Volume reports as Size minus SizeRemaining (measured equal, SL-043's spike).
+    /// The critical-error box is off on this thread for the call, as the BCL's drive-space getters have it,
+    /// so a drive with no media answers false instead of asking for a disk. The call is not bracketed by the
+    /// cancel guard: it runs on a thread of its own that nothing waits for (VolumeSpace).
+    /// </summary>
+    /// <param name="root">A drive's root, <c>X:\</c>, in the plain form the spike measured.</param>
+    /// <returns>False, with the Win32 error, when the volume did not answer.</returns>
+    public static bool TryGetVolumeUsed(string root, out long used, out int error)
+    {
+        bool modeSet = SetThreadErrorMode(SEM_FAILCRITICALERRORS, out uint oldMode);
+        try
+        {
+            if (!GetDiskFreeSpaceEx(root, out _, out ulong total, out ulong free))
+            {
+                error = Marshal.GetLastPInvokeError();
+                used = 0;
+                return false;
+            }
+            error = 0;
+            used = (long)(total - free);
+            return true;
+        }
+        finally
+        {
+            if (modeSet)
+                SetThreadErrorMode(oldMode, out _);
+        }
+    }
+
+    [LibraryImport("kernel32.dll", EntryPoint = "GetDiskFreeSpaceExW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetDiskFreeSpaceEx(string directoryName, out ulong freeBytesAvailableToCaller,
+        out ulong totalNumberOfBytes, out ulong totalNumberOfFreeBytes);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool SetThreadErrorMode(uint newMode, out uint oldMode);
 }
 
 /// <summary>

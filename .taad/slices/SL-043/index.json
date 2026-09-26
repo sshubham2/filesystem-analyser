@@ -1,0 +1,394 @@
+{
+ "schema": "slice-record@1",
+ "slice": "SL-043",
+ "title": "Walk a folder or drive into the store without following links",
+ "status": "active",
+ "branch": "slice/SL-043",
+ "opened_at": "2026-09-26T01:32:15.317Z",
+ "merge_commit": null,
+ "how_to_read": "Each attempt is one line and a `details` filename in this same directory. Open a detail file ONLY when this index points you at one -- the summaries are here so you do not have to. `caused_by` is what sent the stage back; `changed` is what the attempt then touched, counted by kind. Several attempts in a row that were caused by the same stage and changed no `src` is a loop, not progress.",
+ "open": [
+  {
+   "stage": "build-check",
+   "issue": "1. Nested tree with paths over 260 characters: every file and folder in the store once per name under its real parent, compared with an independent recursive listing, in a non-elevated process: partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "4. Link only when the reparse attribute is set and the tag has the surrogate bit; cloud tags 0x9000201A, 0x9000401A, 0x9000601A, 0x9000E01A and reparse with tag 0 are descended; junction and symlink are not: partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "5. A folder that cannot be opened or listed is recorded with path and error code and the scan continues; errors 5, 363 and 1920 are all handled this way: partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "6. A scan of a drive's root records the used space the volume reports alongside the tree; compared with Get-Volume Size minus SizeRemaining: partial"
+  },
+  {
+   "stage": "risk-spike",
+   "issue": "long-path-testhost-vs-published-exe: needs first: If any App code path opens paths longer than 260 chars without the \\\\?\\ prefix, App needs an app.manifest with longPathAware=true (wired via ApplicationManifest in FsAnalyser.App.csproj)…"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Where the used-space figure lives. This design puts a Task<long?> on ScanStore, read by the App. The alternatives are a plain nullable on ScanResult (the read then has to be joined or polled at the end, which risks the stall) or leaving it in the App and rewording criterion 6 (which the survey said 'someone should decide'). A person may reasonably prefer the last; the design owns the agreed wording, so it moves the read."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "VolumeSpace as its own file with an injectable reader, versus a private method in Scanner. The separate file lets the rule 'may not name ScanStore' have a file to point at. It is boundary placement, and neither answer changes a contract."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The 64 MiB slack on the Get-Volume bracket. It is inherited from the spike's method, and a tighter or looser bound is a judgement about how noisy this machine's drive is."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Classification rows for 363/1920 extend SynchronousIoCancelTests, as beside the existing 0/5/995 test, rather than a new ClassifyReadErrorTests file."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "RuleCases.ps1 C-006 to C-014 (harness cases) still need a run with the TAAD engine. Their count strings were updated to 11 Facts and 14 or 15 twinned entries but not executed. The plants for SL-043's four twinned entries are also still absent from eng/rules-harness/plants.json (carried from attempt 1)."
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: Since attempt 2, a folder or share ending also raises EndingShown through a thread-pool hop and a dispatcher turn, not synchronously inside ShowOutcome. Build attempt 1's declared deviation says 'eve…"
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: SL-043's no-wait rule is now a split Fact (NothingWaitsOnTheVolumeFigure, twinned by the Core and App entries). RuleCases.ps1 C-008 still says '16 must-fire plants, one per scope of each split Fact',…"
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: Otherwise nothing new departed in attempt 2. It changed exactly the two things m1 and m2 asked for."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A volume figure that really lands after the ending, from a mapped drive letter whose volume stalls. The code now has one path for every ending, but no real late figure was produced; StallRig serves UNC with no drive letter."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The elevated-token case: whether the non-elevation assertion goes red in an elevated session. That needs a session of the project's own tests run as administrator, which only build-slice can declare."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A DFS namespace or referral. None is reachable here, so the accepted consequence is unmeasured: descending DFS follows the referral over SMB, and FileIds from another server mix into one table."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Real entries carrying the cloud tags 0x9000201A/401A/601A/E01A. A standalone .NET process on this PC sees OneDrive placeholders as plain entries with tag 0 (U-004), so only the classifier table covers those rows."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A real volume mounted on a folder, and a SUBST or share-subfolder letter reporting its host volume's figure. IsDriveRoot was checked only on strings."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A whole-drive scan of an empty removable drive, where the scanner's own root open lacks SEM_FAILCRITICALERRORS and could raise the 'insert a disk' box."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: RuleCases harness cases C-006 to C-014. They need the TAAD engine checkout, which is outside this worktree."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The opt-in SMB-loopback and TEST-NET-1 tests and window cases N-001..N-004, which change SMB mappings."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Windows 10. Only Windows 11 build 26200 was available."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Why the whole-C:\\ exe scan took 631-653 s here against 464 s at attempt 1 on the same Core code. Not investigated; no criterion bounds scan time."
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The design asserted that eng/rules-parity.ps1 'fails on a rule present in only one copy' and built a component ('Architecture rules, both twin forms') on it. Parity actually compares only the twinned entries above the first '# settled by' marker. Nobody read the script. The design's 'the three rule…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The critique did not ask what else reads .taad/fitness.yaml's twinned block once four entries are added to it. tests/rules/RuleCases.ps1 hard-codes the parity counts (lines about 204, 267, 288, 370, 587, 595, and the C-005 8/9 Facts fixture), and C-003's deletion regex (lookahead '# settled by SL-'…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The critique accepted the fix that shows ShowOutcome at once and applies the figure later, but never asked what report mode's EndingShown signal and Stopped endings do when the figure lands after the ending. The build had to change EndingShown to fire after the volume line settles, otherwise report…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The design specified a test, 'scan cancelled right after the figure lands' with the store read mid-scan, that the Scanner API cannot support. The store is unreachable from outside a running scan. The critique reviewed the test's bracket arithmetic (M3) but not whether the test could hold the store."
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique-review missed: The critique-review added M-add-2 (nothing checks that the App shows the figure) and the disposition specified a SUBST drive over a small tree as the vehicle. It did not notice that the local read lands before ShowOutcome on a 24-entry tree, so the case can only exercise the synchronous branch. The…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does a Windows client listing of a DFS namespace share actually carry tag 0x8000000A, and does descending it follow the referral into a target server with FileIds from a different volume mixed into one table? No DFS is reachable on this PC, so the D…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does the non-elevation assertion (Assert.False(Environment.IsPrivilegedProcess)) go red, and not skip, when Core.Tests runs in an elevated session or the Windows Sandbox? It is meant to. Only a person-run elevated session can show it, and any future…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does the pending branch of MainWindow.ShowVolumeInUse behave correctly in the shipped exe when a mapped drive letter stalls? StallRig serves a UNC share with no drive letter, so nothing here can produce it."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does a whole-drive scan of an empty removable drive raise the 'insert a disk' dialog from the scanner's own root open or SizeProbe? Only the new volume read is guarded with SEM_FAILCRITICALERRORS."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: This slice broke the project's own guard-proving script and it reached validate. tests/rules/RuleCases.ps1 C-004, C-005 and part of C-003 went red. The build never ran that script (only rules-parity.ps1) and dismissed the state as 'already stale'. C…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The design's App-consumer contract was false against the code it did not open. 'Keeps whatever blocking structure it has now' and 'never blocks the next scan' contradicted MainWindow.xaml.cs:185-217, where the volume query is awaited inside the try …"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The design stated tool and API behaviour without checking it. It said rules-parity fails on a one-sided rule (it does not), and it specified a test needing mid-scan access to a store the Scanner does not expose. The build fixed both as deviations."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The pending-figure branch of ShowVolumeInUse still has no test that reaches it. The disposition that added the window case (V-001) chose a vehicle that cannot stall. O-025 makes the same code path run, but no real stalled drive-letter read exists an…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Validate lost time to environment. The first whole-C:\\ probe run hit the tool's 10-minute cap and was stopped by hand. The first probe launch through the framework-dependent apphost failed because the machine has no .NET 10. The strict whole-drive r…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The build's first targeted test run failed 2 of 80 because TempTree.File does not create parent folders. It was caught immediately, but it is a test-helper assumption new tests keep hitting."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Nothing here was decided by a person. All 22 findings across critique, critique-review and code-review were disposed by a model, so none of these gates' findings counts as triaged in precision. The five 'ran twice' gates are halt-then-resume counts …"
+  }
+ ],
+ "stages": [
+  {
+   "stage": "repro",
+   "title": "Repro",
+   "order": 1,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "build-check",
+   "title": "Build check",
+   "order": 2,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "risk-spike",
+   "title": "Risk spike",
+   "order": 3,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "design-slice",
+   "title": "Design",
+   "order": 4,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-26T01:57:55.181Z",
+     "head": "c99123688f228a7a2ce1439518200fd43d3a0470",
+     "summary": "One proposal (practice), selected as the core.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique",
+   "title": "Critique",
+   "order": 5,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-26T02:12:35.975Z",
+     "head": "c99123688f228a7a2ce1439518200fd43d3a0470",
+     "summary": "The design is sound in its main choices.",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique-review",
+   "title": "Critique review",
+   "order": 6,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-26T02:23:41.522Z",
+     "head": "c99123688f228a7a2ce1439518200fd43d3a0470",
+     "summary": "Nine of the ten findings are valid at the severity they were filed.",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-review-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "build-slice",
+   "title": "Build",
+   "order": 7,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-26T02:30:35.120Z",
+     "head": "ec19fad245d07c2bf7bdbec37c1405188d903bc7",
+     "summary": "Built SL-043 as designed, with all accepted critique fixes.",
+     "caused_by": null,
+     "changed": {
+      "src": 8,
+      "docs": 1,
+      "config": 1,
+      "tests": 6,
+      "listed": 16,
+      "measured_by_git": 20
+     },
+     "details": "build-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-26T04:24:50.051Z",
+     "head": "8af2ac69be586b93f0aef046645068896ba3cc77",
+     "summary": "Made the two fixes the send-back asked for and nothing else.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "rejected at the merge, and sent back rather than stopped. What was objected to: The design stands. The build makes the two fixes it owes and nothing else. O-024: in tests/rules/RuleCases.ps1, update the expected parity text to 'AGREE 11 facts <- 15 twinned entries, 27 patterns; 24 settled', update C-005's fixture counts to match, and narrow C-003's deletion lookahead to (?=^ - name:|^ # settled by SL-) so it removes only its one entry. Then run RuleCases.ps1 at HEAD and record the output. O-025: drop the figure.IsCompleted shortcut in MainWindow.ShowVolumeInUse so every figure goes through Co…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-024",
+       "O-025"
+      ]
+     },
+     "changed": {
+      "tests": 1,
+      "src": 1,
+      "listed": 2,
+      "measured_by_git": 7
+     },
+     "details": "build-slice-2.json"
+    }
+   ]
+  },
+  {
+   "stage": "code-review",
+   "title": "Code review",
+   "order": 8,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-26T03:17:18.994Z",
+     "head": "ec19fad245d07c2bf7bdbec37c1405188d903bc7",
+     "summary": "The code matches the design and the accepted critique fixes.",
+     "caused_by": null,
+     "changed": {},
+     "details": "code-review-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-26T04:38:08.505Z",
+     "head": "8af2ac69be586b93f0aef046645068896ba3cc77",
+     "summary": "Attempt 2 changed two files, and both do what the accepted m1 and m2 asked.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "code-review passed on 2026-09-26T03:27:48.656Z, and build-slice has judged since (2026-09-26T04:38:08.056Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-2.json"
+    }
+   ]
+  },
+  {
+   "stage": "validate-slice",
+   "title": "Validate",
+   "order": 9,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-26T03:28:22.778Z",
+     "head": "ec19fad245d07c2bf7bdbec37c1405188d903bc7",
+     "summary": "I validated SL-043 against the real system drive and against the freshly published exe, all non-elevated (Medium integrity).",
+     "caused_by": null,
+     "changed": {},
+     "details": "validate-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-26T04:46:52.714Z",
+     "head": "8af2ac69be586b93f0aef046645068896ba3cc77",
+     "summary": "This was a stale re-validation.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "validate-slice passed on 2026-09-26T04:09:53.803Z, and build-slice has judged since (2026-09-26T04:38:08.056Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "validate-slice-2.json"
+    }
+   ]
+  },
+  {
+   "stage": "reflect",
+   "title": "Reflect",
+   "order": 10,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-26T04:09:53.863Z",
+     "head": "ec19fad245d07c2bf7bdbec37c1405188d903bc7",
+     "summary": "SL-043 was opened as six criteria on a mostly built scanner.",
+     "caused_by": null,
+     "changed": {},
+     "details": "reflect-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "commit-slice",
+   "title": "Commit",
+   "order": 11,
+   "state": "failed",
+   "attempts": []
+  }
+ ]
+}

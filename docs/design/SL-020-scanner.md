@@ -23,11 +23,20 @@ design disagree, this file is right. Do not "correct" the code back to the origi
   which can be stale. A display accessor that follows a duplicate to its charged record is left to
   the tree slice, the first reader that shows per-entry sizes.
 
-**EntryClassifier.** A Link is a reparse point with tag 0xA0000003 (junction or mount point),
-0xA000000C (symlink) or **0x8000000A (DFS)** (O-005). Entering a DFS link would continue the scan on
-another server's volume, and both the FileId dedup key (no volume part) and the listing class chosen
-once per scan assume the scan never leaves its volume. `CloudOnly` is set on **files only**. A folder
-carrying RECALL attributes is a Folder and is entered.
+**EntryClassifier.** A Link is a reparse point whose tag has the **name-surrogate bit, 0x20000000**
+(SL-043, criterion 4 and U-004; it replaced O-005's list of junction, symlink and DFS tags). The
+attribute is tested first, and the tag is never read without it: on the fallback listing class that
+field is EaSize. Junctions, mount points and symlinks carry the bit and stay links; so do WSL symlinks
+and every other surrogate tag, which were files or folders before. Cloud tags (0x9000x01A), tag 0 and
+**DFS (0x8000000A)** carry no surrogate bit, so they are entered or counted as data. What that means for
+DFS (SL-043, m1, from the critique and not measured on this machine): through a share the SMB client
+follows a DFS folder's referral, so the scan goes on in the target server's share, following the one
+kind of link it does not stop at, and the FileId dedup key (no volume part) and the listing class chosen
+once per scan then span two volumes. Whether a client's listing of a namespace share shows the DFS tag at
+all was not measured either. The criterion asks for this rule, and it was accepted with that
+consequence, which only DFS namespaces meet; an unreadable-folder record does not cover it, because
+nothing fails. `CloudOnly` is set on **files only**. A folder carrying RECALL attributes is a Folder and
+is entered.
 
 **SizeProbe** (O-004). It runs in **three** cases, never twice for one file, and never for a
 cloud-only file:
@@ -119,15 +128,27 @@ so it becomes `\` again.
   - **Only the guard's own abort empties a listing.** `LastCallAborted` means the call was refused, or a
     cancel was issued during it. A 995 that Windows returns with no cancel issued is an error like any
     other: the folder is `Unreadable(995)` and keeps what was listed before it (O-032).
-  - **The App's volume-usage query is awaited against Cancel, not guarded (O-031).** `MainWindow.VolumeInUse`
-    (DriveInfo, GetDiskFreeSpaceEx) runs after the scan, on its own thread, outside the guard. It is never
-    started once Cancel was requested. A Cancel that arrives while it is running ends the window's wait
-    at once, and the query finishes unobserved; the ending then omits the volume line. Why not guard it in
-    Core: on a stalled share even CancelSynchronousIo waits for the SMB client (62 to 66 s measured), so a
-    guarded query would still hold the window. Only not waiting for it frees the window on every shape. A
-    scan that completed and was not cancelled still waits for the query, which on a mapped drive whose
-    server stopped answering can take as long as the SMB client does; Cancel stays enabled throughout
-    and ends that wait.
+  - **The volume's used space is read by the scan and waited for by nobody (O-031, placement moved by
+    SL-043).** The guarantee is unchanged: a volume that does not answer cannot hold the scan or the
+    window. Only where the read lives moved, because SL-043's criterion 6 has the scan record the figure
+    alongside the tree. For a whole-drive root (`X:\`, after any `\\?\`: the App's old rule, moved and
+    not widened), `Scanner` starts `VolumeSpace` as the first thing a scan does. It reads
+    GetDiskFreeSpaceExW (total less free, measured equal to Get-Volume's Size minus SizeRemaining) on a
+    background thread of its own, outside the cancel guard, with the critical-error box off for the call.
+    The figure lands in `ScanStore.VolumeUsed`, a `Task<long?>`: null at once for a folder or a share,
+    null when the read fails, and null when it has not answered within its bound (30 s). Why not guard
+    it: on a stalled share even CancelSynchronousIo waits for the SMB client (62 to 66 s measured), so
+    only not waiting for it frees everything on every shape.
+    - Nothing in Core waits on the figure, and the thread is handed only the completion source: a read
+      stuck on a dead drive parks that one thread and keeps no scan's store alive (architecture rules
+      NothingWaitsOnTheVolumeFigure and TheVolumeReadHoldsNoScanStore; `VolumeUsageTests` shows a scan
+      that completes, and one that is cancelled, both ending while the read is stalled, and the store of
+      a dropped scan collected while it is).
+    - The window shows the ending at once, without the volume line, and adds the line when the figure
+      lands, from a continuation that holds the window and the scan's generation, never the result. A
+      figure for a scan the window has moved on from is dropped. `EndingShown` waits for the line, so the
+      report of a whole-drive ending carries it (window case V-001). A stopped whole-drive scan now shows
+      the line too, when the figure landed; before SL-043 it never did.
   - **The guard belongs to one thread.** `Enter` throws on any other thread. A later slice that lists
     in parallel gives each worker its own guard.
   - **What is guaranteed.** Cancel() returns promptly on the UI thread in every case. The scan returns
@@ -264,5 +285,8 @@ so it becomes `\` again.
 | Interop lives only in Native (**new**, O-003) | `src/**`, `tests/**` except `src/FsAnalyser.Core/Native/**` and `tests/FsAnalyser.Core.Tests/TestNative.cs` | `(Library\|Dll)Import` |
 | Filesystem calls go through the cancel guard (**new**, SL-024) | `src/**` except `Native/Kernel32.cs` and `Scanning/SynchronousIoCancel.cs` | `\bKernel32\.(CreateFile\|GetFileInformationByHandleEx)\s*\(` |
 | The scanner makes no BCL file-system calls (**new**, SL-024) | `src/FsAnalyser.Core/Scanning/**` | `\b(File\|Directory\|DirectoryInfo\|FileInfo\|DriveInfo)\.` (not `Path`: lexical, no I/O) |
+| The classifier lists no link tags: the surrogate bit is the rule (**new**, SL-043) | `src/FsAnalyser.Core/Scanning/EntryClassifier.cs` | `(?i)IO_REPARSE_TAG_(MOUNT_POINT\|SYMLINK\|DFS)\b\|0x(A0000003\|A000000C\|8000000A)\b` |
+| Nothing waits on the volume figure (**new**, SL-043, O-031) | `src/FsAnalyser.Core/**`, `src/FsAnalyser.App/**` | `(?i)VolumeUsed\w*\.(Task\.)?(Wait\|WaitAsync\|GetAwaiter\|Result)\b`, `(?i)\bawait\s+[\w.]*VolumeUsed` |
+| The volume read holds no scan store (**new**, SL-043) | `src/FsAnalyser.Core/Scanning/VolumeSpace.cs` | `\bScanStore\b` |
 
 xUnit stays on v2 (2.9.3, from `dotnet new xunit` under SDK 10.0.401). `--fail-skips` waits for a move to v3.

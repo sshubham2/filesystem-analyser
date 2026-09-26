@@ -1,0 +1,229 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-043",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-09-26T03:17:18.994Z",
+ "head": "ec19fad245d07c2bf7bdbec37c1405188d903bc7",
+ "run_id": 1246,
+ "summary": "The code matches the design and the accepted critique fixes. EntryClassifier now makes an entry a Link only when the reparse attribute is set and the tag has the 0x20000000 bit, and it tests the attribute first. VolumeSpace.Start is the first statement of Run.Execute. Its thread captures only the completion source, the stripped root and the reader, and a 30 s Task.Delay bound completes the figure with null. ScanStore exposes Task<long?> VolumeUsed plus an internal VolumeUsedSource. MainWindow's DriveInfo query is gone: the ending shows at once, and a generation-checked continuation that never holds the result adds the volume line.\n\nWhat I ran:\n- Release build of Core.Tests and App: 0 warnings, 0 errors.\n- Core suite: 240/240. The Get-Volume bracket matched on attempt 1 with 0 drift, the no-volume letter answered null in 1.8 ms, and the stall test took 5.0 s.\n- Engine Fitness: all 39 rules hold. rules-parity: AGREE 11/15/27, 24 settled.\n- Window cases P-001 (published exe; folders to 457 characters, files to 498) and V-001 (SUBST drive root carries 'The volume reports...'; the folder path does not): both passed, and no SUBST letter was left behind.\n\nEach of the 14 cases feeds its shape, except the elevated-token case, which the design marked non-material.\n\nTwo minor findings:\n1. This slice newly breaks tests/rules/RuleCases.ps1 C-004, C-005 and one check of C-003. I ran them on the base commit and they were green there. The build called that script stale from before.\n2. MainWindow's pending-figure branch is exercised by nothing. That is the branch M1's fix exists for: V-001 finishes before the figure could still be pending, so only the synchronous branch runs.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The code matches the design and the accepted critique fixes. EntryClassifier now makes an entry a Link only when the reparse attribute is set and the tag has the 0x20000000 bit, and it tests the attribute first. VolumeSpace.Start is the first statement of Run.Execute. Its thread captures only the completion source, the stripped root and the reader, and a 30 s Task.Delay bound completes the figure with null. ScanStore exposes Task<long?> VolumeUsed plus an internal VolumeUsedSource. MainWindow's DriveInfo query is gone: the ending shows at once, and a generation-checked continuation that never holds the result adds the volume line.\n\nWhat I ran:\n- Release build of Core.Tests and App: 0 warnings, 0 errors.\n- Core suite: 240/240. The Get-Volume bracket matched on attempt 1 with 0 drift, the no-volume letter answered null in 1.8 ms, and the stall test took 5.0 s.\n- Engine Fitness: all 39 rules hold. rules-parity: AGREE 11/15/27, 24 settled.\n- Window cases P-001 (published exe; folders to 457 characters, files to 498) and V-001 (SUBST drive root carries 'The volume reports...'; the folder path does not): both passed, and no SUBST letter was left behind.\n\nEach of the 14 cases feeds its shape, except the elevated-token case, which the design marked non-material.\n\nTwo minor findings:\n1. This slice newly breaks tests/rules/RuleCases.ps1 C-004, C-005 and one check of C-003. I ran them on the base commit and they were green there. The build called that script stale from before.\n2. MainWindow's pending-figure branch is exercised by nothing. That is the branch M1's fix exists for: V-001 finishes before the figure could still be pending, so only the synchronous branch runs.",
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "This slice newly turns three things in the project's own rule-copy case script red. C-004 and C-005 fail. So does C-003's check 'the twin of a one-scope Fact deleted ... DRIFT 1 unpaired', which now gets DRIFT 4.\n\nOn an extracted copy of base c99123688, C-004 and C-005 exit 0 and C-003 has only 2 failures; at HEAD it has 4. The build's follow-up says the script 'was already stale before this slice', which is true only of C-001 and C-003's settled-count check.\n\nThere are two causes:\n(a) Hard-coded parity text 'AGREE 8 facts <- 11 twinned entries, 23 patterns' (RuleCases.ps1:204, 267, 288, 370, 587, 595), and C-005's 'found 8 Facts where the test class has 9' fixture. The slice changed these numbers to 11/15/27.\n(b) C-003 deletes with `(?ms)^  - name: 'TheScannerMakesNoBclFileSystemCalls \\(\\*\\.cs\\)'.*?(?=^  # settled by SL-)`. The build inserted its four twinned entries between that entry and the '# settled by SL-023' marker, so the mutation now also deletes those four.\n\nThe guards themselves still bite (exit 1). Only the script that proves they bite is now red, so the next person to run it gets failures they did not cause.",
+    "evidence": "tests/rules/RuleCases.ps1:204,267,288,370,587,595 and the C-003 Edit-File regex. .taad/fitness.yaml: the four new entries sit directly after 'TheScannerMakesNoBclFileSystemCalls (*.cs)' and before '# settled by SL-023'. Runs at HEAD: C-001, C-003, C-004 and C-005 exit 1. Runs at base (git archive c99123688 into %TEMP%): C-004 exit 0, C-005 exit 0, C-003 2 failures.",
+    "fix": "Refresh the expected strings in RuleCases.ps1 to the current 'AGREE 11 facts <- 15 twinned entries, 27 patterns; 24 settled', and bump C-005's fixture counts to match. Change C-003's lookahead to `(?=^  - name:|^  # settled by SL-)` so it deletes only the one entry."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "MainWindow.ShowVolumeInUse has two branches. When the figure is already complete, it calls AddVolumeInUse synchronously. When the figure is still pending, it goes through figure.ContinueWith, then Dispatcher.InvokeAsync, then AddVolumeInUse. The pending branch is the one M1's fix exists for, and no test or window case reaches it.\n\n- V-001 scans a 24-entry SUBST tree ('Read in 0.0 s'). The local GetDiskFreeSpaceExW read, started at scan start, lands before ShowOutcome runs, so only the synchronous branch executes.\n- The build's full C:\\ run (404 s) also took the synchronous branch.\n- VolumeUsageTests.AStalledReadKeepsNoDroppedScanInMemory models the continuation with a plain object, not the window code.\n\nThe risk: a regression in the pending branch would pass every case. Examples are running AddVolumeInUse off the dispatcher (the exception would go unobserved) or a wrong generation capture. In report mode, EndingShown would then never fire for a slow volume, so the run hangs to its timeout and the line is never shown. M-add-2 was accepted so that the figure's only reader has a behavioural check, and that check covers only the branch that cannot stall.",
+    "evidence": "src/FsAnalyser.App/MainWindow.xaml.cs:401-408 (the `if (figure.IsCompleted)` shortcut) and :411-418. tests/window/WindowCases.ps1 Test-V001 (a small tree; my run: 'Read in 0.0 s', 4 lines). VolumeUsageTests.cs:224-243 (the object-shaped continuation).",
+    "fix": "Drop the `figure.IsCompleted` shortcut in ShowVolumeInUse and always go through ContinueWith and Dispatcher.InvokeAsync. A completed task continues at once, so V-001 then exercises the same path a slow volume takes. A folder ending gets its EndingShown one dispatcher turn later, which nothing depends on."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "tests/FsAnalyser.Core.Tests/TraversalTests.cs:248-312. The tree is 9 levels of 41-character segments under %TEMP%, created through \\\\?\\. The Fact asserts the longest folder is over 260 and the longest file over 400, Totals.Links == 0 and !Environment.IsPrivilegedProcess. It checks ordinal set equality and distinct counts against Directory.EnumerateFileSystemEntries(\\\\?\\root, AttributesToSkip=0, IgnoreInaccessible=false), and status Completed. Paths come from store.GetPath, which rebuilds them from the parent chain. Passed in my Release run."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "Same Fact. A hidden file at level 6 and a hidden folder with one child at level 7. It asserts both are in the store with the Hidden attribute and that the folder has ChildCount 1. The reference uses AttributesToSkip=0."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "EntryClassifierTests.cs, ANameSurrogateTagWithTheReparseAttributeIsALink: 0xA0000003 dir, 0xA000000C dir and file, 0xA000001D file, 0xA0000010 dir, 0xA0000027 dir, and a symlink with RecallOnDataAccess. All assert (Link, false)."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "EntryClassifierTests.cs, ANonSurrogateTagWithTheReparseAttributeIsData: 0x9000201A, 401A, 601A and E01A, tag 0, and DFS 0x8000000A, each as dir (Folder) and file (File)."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "EntryClassifierTests.cs, WithoutTheReparseAttributeTheTagFieldIsNeverRead: Dir/0x20000000 and Archive/0x20000000, plus 0xA0000003, 0xA000000C and 0xFFFFFFFF with the attribute clear. None is a Link. EntryClassifier.cs:35-36 short-circuits on the attribute."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "SynchronousIoCancelTests.cs:247-259. Rows for 363 and 1920, with and without a cancel, are Unreadable, beside the 995 true/false and 5 true/false rows."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "VolumeUsageTests.cs:38-60 and :247-280. Get-Volume is read via powershell.exe before the scan and again after the figure lands. The real VolumeSpace.Read is wrapped, and the scan is cancelled from AfterFolder once the read has returned. There are 3 attempts with 64 MiB slack. My run: attempt 1, before = figure = after = 828,481,040,384, status Cancelled."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "VolumeUsageTests.AFolderScanRecordsNoFigure asserts IsCompletedSuccessfully right after Scans.Run returns, and a null result. VolumeSpace.cs:51-55 completes the figure synchronously."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "VolumeUsageTests.OnlyAWholeDriveIsADriveRoot: C:\\, c:\\ and \\\\?\\C:\\ are true. C:\\Users, \\\\server\\share\\, \\\\?\\UNC\\server\\share\\, C:\\Mounted\\Data (with and without a trailing backslash) and \\\\?\\Volume{...}\\ are false. IsDriveRoot (VolumeSpace.cs:30-36) is lexical and is applied to NormalizeRoot's display form."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "VolumeUsageTests.ADriveLetterWithNoVolumeRecordsNoFigure. My run: TryGetVolumeUsed(Y:\\) failed with error 3, and the scan ended RootUnreadable. The figure was null and not faulted, and the test took 1.8 ms, so the null came from the reader and not from the 30 s bound."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "VolumeUsageTests.ADriveRootScanEndsWhileTheReadIsStalled. The reader blocks, the bound is 5 s, and the scan of the system root is cancelled after the root listing. It asserts Cancelled, the scan ending under 5 s with the figure pending, and then null at or after the bound. My run took 5.0 s."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "tests/window/WindowCases.ps1 Test-P001 runs artifacts\\publish\\FsAnalyser.App.exe, published by Update-App. I ran it: folder 457, file 498, counts and bytes match, no unreadable expander, 27/27 in the largest-files list. PASSED."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "MainWindow.xaml.cs no longer has VolumeInUse or UnlessCancelled. ShowOutcome:391 passes result.Store.VolumeUsed to ShowVolumeInUse. I ran V-001: the SUBST root had 4 lines, line 3 'The volume reports 771.5 GB in use, so ...', and the folder path had 3 lines. Only the synchronous branch was exercised (finding m2)."
+   },
+   {
+    "key": "O-014",
+    "discharged": "cannot-tell",
+    "evidence": "Owed to validate-slice. The build's 25 runs and my one full-suite run bracketed on attempt 1 (0 drift in mine), but no run had concurrent heavy disk writes. The precondition under load is unmeasured."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "MainWindow.xaml.cs:342-418: ShowOutcome shows the ending without the figure. ShowVolumeInUse's continuation captures this, the generation and OutcomeDetailText, never the result. AddVolumeInUse drops the figure on a generation mismatch. fitness.yaml has 'NothingWaitsOnTheVolumeFigure (App)', and ArchitectureRulesTests.NothingWaitsOnTheVolumeFigure covers src/FsAnalyser.App. The WeakReference test is VolumeUsageTests.cs:199-243. The StallRig measurement was not done and was declared."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "ScanOptions.cs has ReadVolumeOfAnyRoot and VolumeReader, used by VolumeUsageTests.AScanCompletesWhileTheReadIsStalled: Completed, figure pending, then 42 once released. ScanStore.VolumeUsedSource is named so that the pattern VolumeUsed\\w*\\.(Task\\.)?(Wait|...) matches '.VolumeUsedSource.Task.Wait'."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "VolumeUsageTests.cs:10-11 and 23: [CollectionDefinition(DisableParallelization = true)]. :42-59: up to 3 attempts, each printed with invariant culture, and all of them listed on failure."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "The EntryClassifier.cs remarks and docs/design/SL-020-scanner.md's EntryClassifier paragraph state the DFS-over-SMB consequence (referral followed, FileIds from two volumes), say it was not measured, and say no unreadable record covers it. The 'never silent' claim is removed."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "Kernel32.cs TryGetVolumeUsed calls SetThreadErrorMode(SEM_FAILCRITICALERRORS, out old) around GetDiskFreeSpaceEx and restores the old mode in a finally."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "TraversalTests.cs: the first statement is Assert.False(Environment.IsPrivilegedProcess, ...). No TokenElevation.cs exists. It passed in my run in a non-elevated shell."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "Scanner.cs:83: VolumeSpace.Start comes before the `if (ct.IsCancellationRequested)` return at :84. VolumeUsageTests.AScanCancelledBeforeItStartsAnswersTheFigure uses a folder root, so it would stay pending if Start were moved after the check."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "VolumeSpace.cs:58-60: Task.Delay(bound ?? DefaultBound).ContinueWith(static ..., state: figure) calls TrySetResult(null). DefaultBound is 30 s. ScanOptions.VolumeReadBound is the seam, and the stall test asserts null after 5 s."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "WindowCases.ps1 Test-V001 asserts OutcomeDetail line 3 starts with 'The volume reports' on a SUBST root and that no such line appears for the folder path. It passed when I ran it. Schema 1 is unchanged. Coverage is of the synchronous branch only (m2)."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "TraversalTests.AgreesWithAnIndependentListingOfADeepTreeAsAnOrdinaryUser builds folders over 260 and files over 400 characters (asserted), a link-free tree (Links == 0), non-elevated. It compares with EnumerateFileSystemEntries over \\\\?\\ and rebuilds paths from the parent chain."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "The same Fact creates a hidden file (level 6) and a hidden folder with a child (level 7). The reference uses AttributesToSkip=0, and the Fact asserts both entries in the store carry Hidden."
+   },
+   {
+    "key": "C-003",
+    "exercised": "no",
+    "evidence": "The elevated-token shape is never fed. The Fact asserts !Environment.IsPrivilegedProcess, which would go red under elevation. The design marks this case material:false, and no finding is filed."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "EntryClassifierTests.ANameSurrogateTagWithTheReparseAttributeIsALink has literal rows 0xA0000003 dir, 0xA000000C dir and file, 0xA000001D file and 0xA0000010 dir, calling Classify directly."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "EntryClassifierTests.ANonSurrogateTagWithTheReparseAttributeIsData covers the four cloud tags, tag 0 and 0x8000000A, each as dir and file."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "EntryClassifierTests.WithoutTheReparseAttributeTheTagFieldIsNeverRead: Dir and Archive with tag 0x20000000 and the attribute clear give Folder and File."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "SynchronousIoCancelTests.OnlyARequestedCancelMakesAnAbortedCallACancellation: 363 and 1920 with the cancel true and false, beside the 5 and 995 rows."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "VolumeUsageTests.ASystemDriveScanRecordsWhatGetVolumeReports scans the real system root with the real reader (wrapped). It cancels after the figure lands and brackets it with powershell Get-Volume before and after. My run: 0 drift, Cancelled."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "VolumeUsageTests.AFolderScanRecordsNoFigure: a %TEMP% folder scan, with the figure already completed as null when Scan returns."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "VolumeUsageTests.OnlyAWholeDriveIsADriveRoot has all seven listed shapes, plus a trailing-backslash mount path and a \\\\?\\Volume{} path. The rule is lexical, so the path strings are the shape."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "VolumeUsageTests.ADriveLetterWithNoVolumeRecordsNoFigure picks a free letter (Y:), where TryGetVolumeUsed returns false with error 3. It scans that root with default options: the result is null and not faulted, returned in 1.8 ms, so it came from the reader and not the bound."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "VolumeUsageTests.ADriveRootScanEndsWhileTheReadIsStalled uses a blocking substituted reader on the system root and cancels after the root listing: Cancelled in under 5 s with the figure pending, then null after the bound."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "WindowCases.ps1 Test-P001 runs the published single-file artifacts\\publish\\FsAnalyser.App.exe on a tree with folders to 457 and files to 498 characters. I ran it and it passed."
+   },
+   {
+    "key": "C-014",
+    "exercised": "yes",
+    "evidence": "WindowCases.ps1 Test-V001: VolumeInUse is deleted, so the line can only come from store.VolumeUsed. A SUBST drive root carries line 3 'The volume reports...', and the folder path does not. I ran it and it passed. Only the synchronous branch of ShowVolumeInUse runs (finding m2)."
+   }
+  ],
+  "drift": [
+   "The four twinned fitness.yaml entries added above the marker set `including_comments: true`, which makes them stricter than the rules the design declared (those are kept below '# settled by SL-043' without it). A yaml comment records this, but it is not among the build's declared deviations.",
+   "The build's follow-up says tests/rules/RuleCases.ps1 'was already stale before this slice'. That holds only for C-001 and C-003's settled-count check. C-004, C-005 and C-003's 'DRIFT 1 unpaired' check pass at base c99123688 and fail at HEAD (finding m1).",
+   "Beyond that, nothing new departed. The declared departures are all present in the code as described: the 30 s bound and the generation-checked continuation replacing 'pending forever, the App waits', EndingShown raised after the volume line settles, the Stopped whole-drive volume line, test seams on ScanOptions, IsPrivilegedProcess instead of TokenElevation.cs, and V-001/P-001 added to WindowCases.ps1."
+  ],
+  "matches_design": true,
+  "unreviewed": []
+ }
+}

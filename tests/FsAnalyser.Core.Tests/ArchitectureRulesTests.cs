@@ -111,6 +111,45 @@ public class ArchitectureRulesTests
             @"(?<![\w.])(?:File|Directory|FileInfo|DirectoryInfo|DriveInfo)\.\w+|System\.IO\.(?:File|Directory)\b|new\s+(?:FileInfo|DirectoryInfo|DriveInfo|FileStream)\b");
     }
 
+    /// <summary>
+    /// A link is a reparse point whose tag has the name-surrogate bit (SL-043, U-004). Listing tags again
+    /// brings DFS back as a link, so its folders go unread, and makes every surrogate tag outside the list
+    /// (WSL symlinks and others) a file or a folder that is charged or entered. Comments are matched too.
+    /// </summary>
+    [Fact]
+    public void TheClassifierListsNoLinkTags()
+    {
+        AssertNoMatch(Files(@"src\FsAnalyser.Core\Scanning", "EntryClassifier.cs"),
+            @"(?i)IO_REPARSE_TAG_(MOUNT_POINT|SYMLINK|DFS)\b|0x(A0000003|A000000C|8000000A)\b");
+    }
+
+    /// <summary>
+    /// A volume that does not answer (a dead mapped drive) must not hold a scan (O-031), so nothing in Core
+    /// waits on the used-space figure. Nor does the window: a wait there would hold the ending and keep the
+    /// scan's store alive for as long as the read is stuck (SL-043, M1). The completion source the scan holds
+    /// is named after the figure, so a wait on it matches too (M2). A tripwire on names, not a proof:
+    /// VolumeUsageTests is the behaviour.
+    /// </summary>
+    [Fact]
+    public void NothingWaitsOnTheVolumeFigure()
+    {
+        AssertNoMatch(Files(@"src\FsAnalyser.Core", "*.cs").Concat(Files(@"src\FsAnalyser.App", "*.cs")),
+            @"(?i)VolumeUsed\w*\.(Task\.)?(Wait|WaitAsync|GetAwaiter|Result)\b",
+            @"(?i)\bawait\s+[\w.]*VolumeUsed");
+    }
+
+    /// <summary>
+    /// The volume read runs on a thread a dead drive can park for good, so it is handed only the completion
+    /// source it answers through. A read that named the store would keep a discarded scan (about 700 MiB at
+    /// 5M entries) alive for as long as it is stuck (SL-043).
+    /// </summary>
+    [Fact]
+    public void TheVolumeReadHoldsNoScanStore()
+    {
+        AssertNoMatch(Files(@"src\FsAnalyser.Core\Scanning", "VolumeSpace.cs"),
+            @"\bScanStore\b");
+    }
+
     private static IEnumerable<string> Files(string folder, params string[] patterns) =>
         patterns
             .SelectMany(p => Directory.EnumerateFiles(Path.Combine(Repo, folder), p, SearchOption.AllDirectories))

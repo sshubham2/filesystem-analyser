@@ -182,6 +182,36 @@ rules:
     including_comments: true
     because: 'A BCL file-system call on the scan thread would block with no guard around it, and Cancel could not free it (SL-024, M1). Path is not covered: GetFullPath and GetPathRoot are lexical and do no I/O.'
 
+  - name: 'TheClassifierListsNoLinkTags (*.cs)'
+    files: 'src/FsAnalyser.Core/Scanning/EntryClassifier.cs'
+    must_not_match:
+      - '(?m)(?i)IO_REPARSE_TAG_(MOUNT_POINT|SYMLINK|DFS)\b|0x(A0000003|A000000C|8000000A)\b'
+    including_comments: true
+    because: 'A link is a reparse point whose tag has the name-surrogate bit (SL-043 criterion 4, U-004; declared by its design and twinned by its build). Listing tags again brings DFS back as a link, so its folders go unread, and makes every surrogate tag outside the list (WSL symlinks and others) a file or a folder that is charged or entered. Comments are matched too.'
+
+  - name: 'NothingWaitsOnTheVolumeFigure (Core)'
+    files: 'src/FsAnalyser.Core/**/*.cs'
+    must_not_match:
+      - '(?m)(?i)VolumeUsed\w*\.(Task\.)?(Wait|WaitAsync|GetAwaiter|Result)\b'
+      - '(?m)(?i)\bawait\s+[\w.]*VolumeUsed'
+    including_comments: true
+    because: 'O-031: a volume that does not answer (a dead mapped drive) must not hold a scan, so nothing in Core waits on the used-space figure (SL-043, declared by its design and twinned by its build). The completion source the scan holds is named VolumeUsedSource, so a wait on it matches too (M2). A tripwire on names, not a proof: VolumeUsageTests is the behaviour.'
+
+  - name: 'NothingWaitsOnTheVolumeFigure (App)'
+    files: 'src/FsAnalyser.App/**/*.cs'
+    must_not_match:
+      - '(?m)(?i)VolumeUsed\w*\.(Task\.)?(Wait|WaitAsync|GetAwaiter|Result)\b'
+      - '(?m)(?i)\bawait\s+[\w.]*VolumeUsed'
+    including_comments: true
+    because: 'The window does not wait on the used-space figure either (SL-043, M1): a wait or an await there holds the ending until the volume answers and keeps the scan''s store alive for as long as the read is stuck. The window applies the figure from a continuation that holds only the window and the scan''s generation.'
+
+  - name: 'TheVolumeReadHoldsNoScanStore (*.cs)'
+    files: 'src/FsAnalyser.Core/Scanning/VolumeSpace.cs'
+    must_not_match:
+      - '(?m)\bScanStore\b'
+    including_comments: true
+    because: 'The volume read runs on a thread a dead drive can park for good, so it is handed only the completion source it answers through (SL-043, declared by its design and twinned by its build). A read that named the store would keep a discarded scan (about 700 MiB at 5M entries, against about 136 MiB of headroom) alive for as long as it is stuck.'
+
   # settled by SL-023
   - name: the window report reads the window, never rebuilds it from Core
     files: src/FsAnalyser.App/WindowReport.cs
@@ -426,3 +456,33 @@ rules:
     because: The project's testing constraint says counting-rule tests are never skipped, and
       criterion 6 is a measured number. A skipped or default-filtered test reports green while
       proving nothing, which is the failure this slice's cases exist to prevent.
+
+  # settled by SL-043
+  # These three are as SL-043's design declared them. Its build also twinned them above, where they match
+  # comments too and the no-wait rule covers the App as well (M1): TheClassifierListsNoLinkTags,
+  # NothingWaitsOnTheVolumeFigure (Core) and (App), and TheVolumeReadHoldsNoScanStore.
+  - name: the classifier does not list link tags; the surrogate bit is the rule
+    files: src/FsAnalyser.Core/Scanning/EntryClassifier.cs
+    must_not_match:
+    - (?i)IO_REPARSE_TAG_(MOUNT_POINT|SYMLINK|DFS)\b|0x(A0000003|A000000C|8000000A)\b
+    because: A link is 'reparse attribute AND name-surrogate bit' (criterion 4, U-004). Re-listing
+      tags brings back DFS as a link, so directories are silently skipped, and lets surrogate
+      tags outside the list (LX_SYMLINK and others) be counted as files, so bytes are counted
+      twice or charged to the wrong place.
+  - name: nothing in Core waits on the volume figure
+    files: src/FsAnalyser.Core/**/*.cs
+    must_not_match:
+    - (?i)VolumeUsed\w*\.(Task\.)?(Wait|WaitAsync|GetAwaiter|Result)\b
+    - (?i)\bawait\s+[\w.]*VolumeUsed
+    because: O-031 exists so a stalled share or dead mapped drive cannot hold a scan. One Wait,
+      Result or await on the figure anywhere on the scan's path makes the scan never end when
+      GetDiskFreeSpaceExW never returns, and the person sees a frozen progress bar. The App
+      may wait on it because it does so on its own thread, and it is outside this glob.
+  - name: the volume read cannot hold a scan's memory
+    files: src/FsAnalyser.Core/Scanning/VolumeSpace.cs
+    must_not_match:
+    - \bScanStore\b
+    because: A read stalled on an unreachable drive parks its dedicated thread indefinitely.
+      If that thread's closure names the store, the discarded scan (~700 MiB at 5M rows, against
+      ~136 MiB of headroom) stays alive for as long as the thread. The read is handed only the
+      completion source.

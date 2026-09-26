@@ -21,6 +21,9 @@ namespace FsAnalyser.Core.Scanning;
 /// reported as ERROR_OPERATION_ABORTED (995). Under a requested cancel 995 is cancellation, never an
 /// unreadable folder, and the folder it hit commits nothing: it stays as the scan left every folder it
 /// never reached. With no cancel requested, 995 is an unreadable folder like any other error.</para>
+/// <para>For a scan of a whole drive, the volume's used space is read as the scan starts, on a thread of
+/// its own (<see cref="VolumeSpace"/>), and lands in <see cref="ScanStore.VolumeUsed"/>. The scan never waits
+/// for it: it ends, completed or cancelled, whether or not the volume has answered.</para>
 /// </remarks>
 public static class Scanner
 {
@@ -75,6 +78,9 @@ public static class Scanner
 
         public ScanResult Execute()
         {
+            // First, before any way out of the scan, so that whatever its ending the figure is answered or
+            // owned by its read (SL-043, m5). Nothing here waits for it.
+            VolumeSpace.Start(display, _store.VolumeUsedSource, options.VolumeReader, options.VolumeReadBound, options.ReadVolumeOfAnyRoot);
             if (ct.IsCancellationRequested)
                 return Finish(ScanStatus.Cancelled);
 

@@ -45,11 +45,17 @@
 # at the default size and at the window's minimum size; B-008 is a stopped scan of a long path at the
 # minimum size. Every list must keep at least one full row in view (the report's fullRows), with 26 drive
 # buttons added by the hook (FSA_HOOK_DRIVES), so these cases never depend on what is plugged into the machine.
+#
+# V-001 and P-001 (SL-043). V-001 is the only case whose root is a whole drive: a SUBST letter over a small
+# tree, made for this user's session and removed however the case ends. Its ending must carry the volume line
+# the window now builds from the scan's own figure (ScanStore.VolumeUsed); the same tree scanned by its folder
+# path must not. P-001 is a tree whose folders and files run past 260 characters, the deepest past 400, read
+# by the published exe, which has no longPathAware manifest, unlike the xUnit testhost that runs the Core tests.
 
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
-        'L-001', 'L-002', 'L-003', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002', 'N-003', 'N-004')]
+        'L-001', 'L-002', 'L-003', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'N-001', 'N-002', 'N-003', 'N-004')]
     [string] $Case,
     [switch] $IncludeNetwork
 )
@@ -1869,9 +1875,109 @@ function Test-B008 {
     }
 }
 
+# ---- The volume line and long paths (SL-043) ----
+
+# The first letter from Z down that names no drive, for a SUBST that lasts one case.
+function Get-FreeDriveLetter {
+    $used = @([System.Environment]::GetLogicalDrives() | ForEach-Object { $_.Substring(0, 1).ToUpperInvariant() })
+    foreach ($letter in 'ZYXWVUTSRQPONMLKJIHGFED'.ToCharArray()) {
+        if ($used -notcontains [string]$letter) { return [string]$letter }
+    }
+    throw 'every drive letter from D to Z is in use, so no SUBST letter is free'
+}
+
+# V-001: the ending of a whole-drive scan carries the volume line, and a folder's does not. The window no
+# longer asks the drive itself: the line comes from the figure the scan recorded, which the scan reads for a
+# root that is exactly X:\. A SUBST letter is such a root, over a tree small enough to finish at once, and
+# GetDiskFreeSpaceExW answers it with the volume under it (so the line reports that volume, m3). The line
+# sits between the bytes line and the elapsed time.
+function Test-V001 {
+    $case = New-CaseFolder
+    $letter = $null
+    try {
+        $root = Join-Path $case 'small'
+        $manifest = New-SmallTree $root
+        $letter = Get-FreeDriveLetter
+        $output = & subst.exe "${letter}:" $root 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "subst ${letter}: $root failed with exit ${LASTEXITCODE}: $output" }
+        $drive = "${letter}:\"
+
+        Write-Output "  the tree as the whole drive $drive"
+        $read = Read-Window $drive
+        CheckFinished $read $drive $drive $manifest
+        if ($null -ne $read.Report) {
+            $lines = @($read.Report.window.OutcomeDetail)
+            CheckEqual 4 $lines.Count "OutcomeDetail has four lines: counts, bytes, the volume line, the time ($(Show ($lines -join ' | ')))"
+            Check ($lines.Count -eq 4 -and $lines[2].StartsWith('The volume reports ') -and $lines[2].Contains(' in use, so ')) "line 3 is the finished scan's volume line ($(Show $lines[2]))"
+            Check ($lines.Count -eq 4 -and $lines[3].StartsWith('Read in ')) "line 4 is the time ($(Show $lines[3]))"
+        }
+
+        Write-Output "  the same tree by its folder path"
+        $read = Read-Window $root
+        CheckFinished $read $root $root $manifest
+        if ($null -ne $read.Report) {
+            $lines = @($read.Report.window.OutcomeDetail)
+            Check (@($lines | Where-Object { $_.StartsWith('The volume reports') }).Count -eq 0) "a folder's ending has no volume line ($(Show ($lines -join ' | ')))"
+            CheckEqual 3 $lines.Count 'OutcomeDetail has three lines: counts, bytes, the time'
+        }
+    }
+    finally {
+        if ($letter) { & subst.exe "${letter}:" /D 2>&1 | Out-Null }
+        Remove-CaseFolder $case
+    }
+}
+
+# P-001: a tree whose paths run past MAX_PATH, read by the published exe. The testhost that runs the Core tests
+# is longPathAware and the exe is not (risk spike: a plain long path opens in one and fails with error 3 in the
+# other), so only the exe can show that nothing the App or Core opens drops the \\?\ prefix. Nine nested
+# folders of 41 characters, two files and a side folder with one file at each level: folders past 260
+# characters and files past 400, every file 64 KiB so the size on disk is the size.
+function Test-P001 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'deep'
+        $extended = '\\?\' + $root
+        [void][System.IO.Directory]::CreateDirectory($extended)
+        $path = ''
+        $files = 0
+        $folders = 0
+        $longestFolder = 0
+        $longestFile = 0
+        for ($level = 1; $level -le 9; $level++) {
+            $path += "\level$level-" + ('d' * 33)
+            [void][System.IO.Directory]::CreateDirectory($extended + $path)
+            $folders++
+            $longestFolder = [Math]::Max($longestFolder, ($root + $path).Length)
+            for ($k = 1; $k -le 2; $k++) {
+                $name = "$path\file$k-" + ('f' * 30) + '.bin'
+                [System.IO.File]::WriteAllBytes($extended + $name, [byte[]]::new($KiB64))
+                $files++
+                $longestFile = [Math]::Max($longestFile, ($root + $name).Length)
+            }
+            [void][System.IO.Directory]::CreateDirectory("$extended$path\side-$level")
+            $folders++
+            [System.IO.File]::WriteAllBytes("$extended$path\side-$level\note.bin", [byte[]]::new($KiB64))
+            $files++
+        }
+        $manifest = [pscustomobject]@{ Files = $files; Folders = $folders; Links = 0; Bytes = $files * $KiB64 }
+        Check ($longestFolder -gt 260) "a folder path runs past 260 characters ($longestFolder)"
+        Check ($longestFile -gt 400) "a file path runs past 400 characters ($longestFile)"
+
+        $read = Read-Window $root
+        CheckFinished $read $root $root $manifest
+        if ($null -ne $read.Report) {
+            CheckEqual $false $read.Report.window.UnreadableExpander.visible 'no folder was unreadable (UnreadableExpander is not shown)'
+            CheckEqual $manifest.Files $read.Report.largestFilesShown 'the largest-files list holds every file of the tree'
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $case) { [System.IO.Directory]::Delete('\\?\' + $case, $true) }
+    }
+}
+
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008') + $NetworkCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001') + $NetworkCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })

@@ -16,4 +16,13 @@ internal sealed class ScanOptions
     /// last are always published. Tests set it to zero to see every change.
     /// </summary>
     public TimeSpan TopLevelInterval { get; init; } = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>The volume read, given the root without <c>\\?\</c>; <see cref="VolumeSpace.Read"/> when null. Tests pass one that blocks.</summary>
+    public Func<string, long?>? VolumeReader { get; init; }
+
+    /// <summary>How long the used-space figure waits for the volume before it is given up as null.</summary>
+    public TimeSpan VolumeReadBound { get; init; } = VolumeSpace.DefaultBound;
+
+    /// <summary>Read the volume whatever the root, so a folder scan can be shown to complete while the read is stalled.</summary>
+    public bool ReadVolumeOfAnyRoot { get; init; }
 }
