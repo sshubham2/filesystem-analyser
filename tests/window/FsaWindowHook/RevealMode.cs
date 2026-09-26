@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -31,19 +32,25 @@ internal static class RevealMode
                 return;
             }
 
-            string[] targets = System.Text.RegularExpressions.Regex.Split(revealEnv, @",(?=(?:largest|tree|top|unreadable|gesture|tree-competing|placeholder):)");
+            string[] targets = System.Text.RegularExpressions.Regex.Split(revealEnv, @",(?=(?:largest|tree|top|top-live|unreadable|gesture|tree-competing|placeholder):)");
             window = WaitForWindow();
 
             bool hasTopTarget = targets.Any(t => t.Trim().StartsWith("top:", StringComparison.OrdinalIgnoreCase));
+            bool hasTopLive = targets.Any(t => t.Trim().StartsWith("top-live:", StringComparison.OrdinalIgnoreCase));
 
             if (hasTopTarget)
             {
-                // Stop the scan mid-scan so TopLevelList remains on screen
+                string? topTarget = targets.FirstOrDefault(t => t.Trim().StartsWith("top:", StringComparison.OrdinalIgnoreCase));
+                int c = topTarget!.IndexOf(':');
+                string targetName = topTarget[(c + 1)..].Trim();
+
+                // Stop the scan mid-scan after the target row has appeared in TopLevelList
                 WaitForScanToStart(window);
+                WaitForTopRow(window, targetName);
                 StopScan(window);
                 WaitForScanToStop(window);
             }
-            else
+            else if (!hasTopLive)
             {
                 // Wait for scan to complete normally
                 WaitForScanToEnd(window);
@@ -91,6 +98,12 @@ internal static class RevealMode
             return;
         }
 
+        if (surface.Equals("top-live", StringComparison.OrdinalIgnoreCase))
+        {
+            ProcessTopLive(window, name);
+            return;
+        }
+
         string via = "menu";
         FrameworkElement? container = null;
 
@@ -129,9 +142,16 @@ internal static class RevealMode
 
         object? initialOutcome = Ui(() => GetLastOutcome(window));
 
-        bool executed = Ui(() =>
+        // The menu is opened as ContextMenuService opens it on a right-click (its PlacementTarget, then IsOpen) and is
+        // left to the app: the row it acts on is whatever the app's own Opened handler put in its Tag, which is read and
+        // logged as "captured", never written, here (B3-3). The click comes only once the dispatcher has run everything
+        // the opening queued, as it has by the time a person's click lands.
+        bool? captured = null;
+        bool? enabled = null;
+        bool executed;
+        if (via == "gesture")
         {
-            if (via == "gesture")
+            executed = Ui(() =>
             {
                 container.Focus();
                 Keyboard.Focus(container);
@@ -149,41 +169,23 @@ internal static class RevealMode
 
                 cmd.Execute(null, window);
                 return true;
-            }
-            else
+            });
+        }
+        else
+        {
+            ContextMenu? menu = Ui(() => OpenMenu(container));
+            MenuItem? item = null;
+            if (menu != null)
             {
-                ContextMenu? menu = container.ContextMenu ?? ContextMenuService.GetContextMenu(container) as ContextMenu;
-                if (menu == null)
-                    return false;
-
-                menu.PlacementTarget = container;
-                menu.Tag = container.DataContext;
-                menu.IsOpen = true;
-                container.UpdateLayout();
-
-                MenuItem? menuItem = menu.Items.OfType<MenuItem>().FirstOrDefault(m =>
-                    (m.Header as string) == "Open in Explorer" ||
-                    (m.Command as RoutedUICommand)?.Name == "OpenInExplorer");
-
-                if (menuItem == null)
+                Flush();
+                (captured, enabled, item) = Ui(() =>
                 {
-                    menu.IsOpen = false;
-                    return false;
-                }
-
-                var onClick = typeof(MenuItem).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-                if (onClick != null)
-                {
-                    onClick.Invoke(menuItem, null);
-                }
-                else
-                {
-                    menuItem.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
-                }
-
-                return true;
+                    MenuItem? found = ItemOf(menu);
+                    return ((bool?)(container.DataContext != null && ReferenceEquals(menu.Tag, container.DataContext)), (bool?)found?.IsEnabled, found);
+                });
             }
-        });
+            executed = item != null && Ui(() => Click(item));
+        }
 
         if (!executed)
         {
@@ -192,16 +194,216 @@ internal static class RevealMode
                 ["surface"] = surface,
                 ["name"] = name,
                 ["via"] = via,
+                ["captured"] = captured,
+                ["enabled"] = enabled,
                 ["error"] = "click-failed"
             }));
             return;
         }
 
-        // Wait for RevealStatus to settle
-        var sw = Stopwatch.StartNew();
-        object? finalOutcome = null;
-        string statusText = "";
+        (object? finalOutcome, string statusText) = WaitForOutcome(window, initialOutcome);
 
+        Ui(() =>
+        {
+            if (MenuOf(container) is { } menu)
+                menu.IsOpen = false;
+        });
+
+        var entry = OutcomeEntry(surface, name, finalOutcome, statusText, container);
+        entry["via"] = via;
+        entry["captured"] = captured;
+        entry["enabled"] = enabled;
+        StartupHook.Log(JsonSerializer.Serialize(entry));
+    }
+
+    // top-live (B3-1): 'Open in Explorer' from a results-list row while the scan is still running. The menu is opened on
+    // the row, then left open until a live refresh has replaced the list's items and so detached the row's container,
+    // as it does for a person who right-clicks mid-scan and reads the menu. Then the entry is re-queried, as the
+    // CommandManager does after input, and clicked. The line logs what the premise needs (the container no longer holds
+    // the row, "detached", while the scan still runs, "scanning") beside what the fix must give: the entry still enabled
+    // and a reveal of the row the menu was opened on.
+    private static void ProcessTopLive(Window window, string name)
+    {
+        WaitForScanToStart(window);
+        WaitForTopRow(window, name);
+
+        FrameworkElement? container = Ui(() => FindTopContainer(window, name));
+        object? row = container == null ? null : Ui(() => container.DataContext);
+        ContextMenu? menu = container == null ? null : Ui(() => OpenMenu(container));
+        if (container == null || row == null || menu == null)
+        {
+            StartupHook.Log(JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                ["surface"] = "top-live",
+                ["name"] = name,
+                ["error"] = container == null ? "row-not-found" : "open-failed"
+            }));
+            StopScan(window);
+            WaitForScanToStop(window);
+            return;
+        }
+
+        object? initialOutcome = Ui(() => GetLastOutcome(window));
+        Flush();
+        bool captured = Ui(() => ReferenceEquals(menu.Tag, row));
+
+        bool detached = false;
+        bool sentinel = false;
+        bool scanning = false;
+        var since = Stopwatch.StartNew();
+        while (since.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            (detached, sentinel, scanning) = Ui(() => (
+                !ReferenceEquals(container.DataContext, row),
+                ReferenceEquals(container.DataContext, BindingOperations.DisconnectedSource),
+                IsScanning(window)));
+            if (detached)
+                break;
+            Thread.Sleep(10);
+        }
+
+        Ui(() => CommandManager.InvalidateRequerySuggested());
+        Flush();
+        (bool enabled, bool open, MenuItem? item) = Ui(() =>
+        {
+            MenuItem? found = ItemOf(menu);
+            return (found?.IsEnabled ?? false, menu.IsOpen, found);
+        });
+        bool clicked = item != null && Ui(() => Click(item));
+        (object? finalOutcome, string statusText) = clicked ? WaitForOutcome(window, initialOutcome) : (null, "");
+
+        Ui(() => menu.IsOpen = false);
+        StopScan(window);
+        WaitForScanToStop(window);
+
+        var entry = OutcomeEntry("top-live", name, finalOutcome, statusText, null);
+        entry["rowPath"] = row.GetType().GetProperty("Path")?.GetValue(row) as string;
+        entry["via"] = "menu";
+        entry["captured"] = captured;
+        entry["detached"] = detached;
+        entry["sentinel"] = sentinel;
+        entry["scanning"] = scanning;
+        entry["enabled"] = enabled;
+        entry["open"] = open;
+        StartupHook.Log(JsonSerializer.Serialize(entry));
+    }
+
+    // placeholder (m3, B3-3): the row that stands in for a folder's children until it is opened, with the app's own
+    // RowContextMenu on its own container. The window replaces that row inside its Expanded handler, before layout, so
+    // no container of it is ever drawn; to draw one, the hook opens a folder of the root with that handler held back
+    // (a handler on the folder's own container marks Expanded handled, and is removed straight after). The folder's
+    // children are left unread. The line logs whether a real placeholder container was found and its menu opened
+    // ("found"), whether the app's Opened handler captured the placeholder ("captured"), and whether the entry is
+    // disabled after a re-query ("disabled").
+    private static void ProcessPlaceholder(Window window, string name)
+    {
+        (TreeViewItem? folder, TreeViewItem? placeholder) = Ui(() => RealizePlaceholder(window));
+        object? node = placeholder == null ? null : Ui(() => placeholder.DataContext);
+        bool isPlaceholder = node != null && node.GetType().GetProperty("FullPath")?.GetValue(node) as string == "";
+        ContextMenu? menu = placeholder == null || !isPlaceholder ? null : Ui(() => OpenMenu(placeholder));
+
+        bool captured = false;
+        bool disabled = false;
+        if (menu != null)
+        {
+            Flush();
+            Ui(() => CommandManager.InvalidateRequerySuggested());
+            Flush();
+            (captured, disabled) = Ui(() => (ReferenceEquals(menu.Tag, node), ItemOf(menu) is { IsEnabled: false }));
+            Ui(() => menu.IsOpen = false);
+        }
+        if (folder != null)
+            Ui(() => folder.IsExpanded = false);
+
+        StartupHook.Log(JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["surface"] = "placeholder",
+            ["name"] = name,
+            ["found"] = menu != null,
+            ["captured"] = captured,
+            ["disabled"] = disabled,
+            ["enabled"] = menu != null && !disabled
+        }));
+    }
+
+    private static (TreeViewItem? Folder, TreeViewItem? Placeholder) RealizePlaceholder(Window window)
+    {
+        if (window.FindName("FolderTree") is not TreeView tree || tree.Items.Count == 0)
+            return (null, null);
+        tree.UpdateLayout();
+        if (tree.ItemContainerGenerator.ContainerFromIndex(0) is not TreeViewItem rootItem)
+            return (null, null);
+
+        object rootNode = tree.Items[0];
+        if (rootNode.GetType().GetProperty("Children")?.GetValue(rootNode) is not IEnumerable<object> children)
+            return (null, null);
+        int index = 0;
+        foreach (object child in children)
+        {
+            object? first = (child.GetType().GetProperty("Children")?.GetValue(child) as IEnumerable<object>)?.FirstOrDefault();
+            if (first != null && first.GetType().GetProperty("FullPath")?.GetValue(first) as string == "")
+            {
+                TreeViewItem? folder = Realize(rootItem, index);
+                if (folder == null)
+                    return (null, null);
+                RoutedEventHandler holdBack = (_, e) => e.Handled = true;
+                folder.AddHandler(TreeViewItem.ExpandedEvent, holdBack);
+                try
+                {
+                    folder.IsExpanded = true;
+                    folder.UpdateLayout();
+                }
+                finally
+                {
+                    folder.RemoveHandler(TreeViewItem.ExpandedEvent, holdBack);
+                }
+                return (folder, Realize(folder, 0));
+            }
+            index++;
+        }
+        return (null, null);
+    }
+
+    private static ContextMenu? MenuOf(FrameworkElement container) =>
+        container.ContextMenu ?? ContextMenuService.GetContextMenu(container) as ContextMenu;
+
+    private static MenuItem? ItemOf(ContextMenu menu) =>
+        menu.Items.OfType<MenuItem>().FirstOrDefault(m =>
+            (m.Header as string) == "Open in Explorer" ||
+            (m.Command as RoutedUICommand)?.Name == "OpenInExplorer");
+
+    // As ContextMenuService opens a row's menu on a right-click: its PlacementTarget, then IsOpen.
+    private static ContextMenu? OpenMenu(FrameworkElement container)
+    {
+        if (MenuOf(container) is not { } menu)
+            return null;
+        menu.PlacementTarget = container;
+        menu.IsOpen = true;
+        return menu;
+    }
+
+    // A click on the menu item, as the mouse's raises it: MenuItem.OnClick, which runs the command only if it can
+    // execute then.
+    private static bool Click(MenuItem item)
+    {
+        var onClick = typeof(MenuItem).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+        if (onClick != null)
+            onClick.Invoke(item, null);
+        else
+            item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        return true;
+    }
+
+    // Everything already queued on the UI thread, down to Background (layout, the popup's opening, a requery), has run.
+    private static void Flush() => _app.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+
+    private static bool IsScanning(Window window) =>
+        (window.FindName("ScanningPanel") as UIElement)?.Visibility == Visibility.Visible;
+
+    // Waits up to 5 s for a reveal outcome newer than the one before the click and a status that has settled.
+    private static (object? Outcome, string Status) WaitForOutcome(Window window, object? initialOutcome)
+    {
+        var sw = Stopwatch.StartNew();
         while (sw.ElapsedMilliseconds < 5000)
         {
             (object? outcome, string status) = Ui(() =>
@@ -211,30 +413,23 @@ internal static class RevealMode
                 return (oc, tb?.Text ?? "");
             });
 
-            if (outcome != null && !ReferenceEquals(outcome, initialOutcome) && status != "Opening in Explorer\u2026")
-            {
-                finalOutcome = outcome;
-                statusText = status;
-                break;
-            }
+            if (outcome != null && !ReferenceEquals(outcome, initialOutcome) && status != "Opening in Explorer…")
+                return (outcome, status);
 
             Thread.Sleep(Poll);
         }
+        return (null, "");
+    }
 
-        Ui(() =>
-        {
-            ContextMenu? menu = container.ContextMenu ?? ContextMenuService.GetContextMenu(container) as ContextMenu;
-            if (menu != null)
-                menu.IsOpen = false;
-        });
+    private static Dictionary<string, object?> OutcomeEntry(string surface, string name, object? outcome, string status, FrameworkElement? container)
+    {
+        string kind = outcome?.GetType().GetProperty("Kind")?.GetValue(outcome)?.ToString() ?? "";
+        string shown = outcome?.GetType().GetProperty("Shown")?.GetValue(outcome)?.ToString() ?? "";
+        string reason = outcome?.GetType().GetProperty("Reason")?.GetValue(outcome)?.ToString() ?? "";
+        int hresult = outcome?.GetType().GetProperty("HResult")?.GetValue(outcome) as int? ?? 0;
+        string requested = outcome?.GetType().GetProperty("Requested")?.GetValue(outcome)?.ToString() ?? "";
 
-        string kind = finalOutcome?.GetType().GetProperty("Kind")?.GetValue(finalOutcome)?.ToString() ?? "";
-        string shown = finalOutcome?.GetType().GetProperty("Shown")?.GetValue(finalOutcome)?.ToString() ?? "";
-        string reason = finalOutcome?.GetType().GetProperty("Reason")?.GetValue(finalOutcome)?.ToString() ?? "";
-        int hresult = finalOutcome?.GetType().GetProperty("HResult")?.GetValue(finalOutcome) as int? ?? 0;
-        string requested = finalOutcome?.GetType().GetProperty("Requested")?.GetValue(finalOutcome)?.ToString() ?? "";
-
-        if (string.IsNullOrEmpty(requested))
+        if (string.IsNullOrEmpty(requested) && container != null)
         {
             requested = Ui(() =>
             {
@@ -245,7 +440,7 @@ internal static class RevealMode
             });
         }
 
-        var entry = new Dictionary<string, object?>
+        return new Dictionary<string, object?>
         {
             ["surface"] = surface,
             ["name"] = name,
@@ -254,67 +449,8 @@ internal static class RevealMode
             ["shown"] = shown,
             ["reason"] = reason,
             ["hresult"] = hresult,
-            ["status"] = statusText,
-            ["via"] = via
+            ["status"] = status
         };
-
-        StartupHook.Log(JsonSerializer.Serialize(entry));
-    }
-
-    private static void ProcessPlaceholder(Window window, string name)
-    {
-        bool disabled = Ui(() =>
-        {
-            var cmd = window.GetType().GetField("OpenInExplorer", BindingFlags.Static | BindingFlags.Public)?.GetValue(null) as RoutedUICommand;
-            if (cmd == null)
-                return false;
-
-            object? placeholderNode = null;
-            if (window.FindName("FolderTree") is TreeView tree && tree.Items.Count > 0)
-            {
-                object rootNode = tree.Items[0];
-                var children = rootNode.GetType().GetProperty("Children")?.GetValue(rootNode) as IEnumerable<object>;
-                if (children != null)
-                {
-                    foreach (object child in children)
-                    {
-                        var childChildren = child.GetType().GetProperty("Children")?.GetValue(child) as IEnumerable<object>;
-                        if (childChildren != null)
-                        {
-                            object? first = childChildren.FirstOrDefault();
-                            if (first != null && (first.GetType().GetProperty("FullPath")?.GetValue(first) as string == ""))
-                            {
-                                placeholderNode = first;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            var menu = new ContextMenu();
-            var mi = new MenuItem
-            {
-                Header = "Open in Explorer",
-                Command = cmd,
-                CommandParameter = placeholderNode
-            };
-            menu.Items.Add(mi);
-            menu.PlacementTarget = window;
-            menu.IsOpen = true;
-            window.UpdateLayout();
-            bool isEnabled = mi.IsEnabled;
-            menu.IsOpen = false;
-            return !isEnabled;
-        });
-
-        StartupHook.Log(JsonSerializer.Serialize(new Dictionary<string, object?>
-        {
-            ["surface"] = "placeholder",
-            ["name"] = name,
-            ["disabled"] = disabled,
-            ["enabled"] = !disabled
-        }));
     }
 
     private static FrameworkElement? FindContainer(Window window, string surface, string name)
@@ -546,6 +682,29 @@ internal static class RevealMode
                 (window.FindName("OutcomePanel") as UIElement)?.Visibility == Visibility.Visible
             ));
             if (scanning || stoppedOrDone)
+                return;
+            Thread.Sleep(10);
+        }
+    }
+
+    private static void WaitForTopRow(Window window, string targetName)
+    {
+        var since = Stopwatch.StartNew();
+        while (since.Elapsed < EndingDeadline)
+        {
+            bool ready = Ui(() =>
+            {
+                if (window.FindName("TopLevelList") is not ListBox list)
+                    return false;
+                foreach (object item in list.Items)
+                {
+                    string? name = item.GetType().GetProperty("Name")?.GetValue(item) as string;
+                    if (name == targetName || (name != null && name.EndsWith(targetName, StringComparison.OrdinalIgnoreCase)))
+                        return true;
+                }
+                return false;
+            });
+            if (ready)
                 return;
             Thread.Sleep(10);
         }

@@ -4,6 +4,7 @@ using System.IO;
 using System.Runtime.ExceptionServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -704,32 +705,23 @@ public partial class MainWindow : Window
         _ => string.Empty
     };
 
-    private void OnRowContextMenuOpening(object sender, ContextMenuEventArgs e)
-    {
-        if (e.OriginalSource is FrameworkElement fe)
-        {
-            FrameworkElement? current = fe;
-            while (current != null && current.ContextMenu == null && ContextMenuService.GetContextMenu(current) == null)
-            {
-                current = VisualTreeHelper.GetParent(current) as FrameworkElement;
-            }
-            if (current != null)
-            {
-                ContextMenu? menu = current.ContextMenu ?? ContextMenuService.GetContextMenu(current) as ContextMenu;
-                if (menu != null && current.DataContext != null && current.DataContext.GetType().Name != "DisconnectedItem")
-                {
-                    menu.Tag = current.DataContext;
-                }
-            }
-        }
-    }
+    // Stands in for a row the menu could not capture: PathOf gives it no path, so the entry is disabled, and it is
+    // never null, so the command does not fall back to whatever row has the keyboard focus.
+    private static readonly object NoRow = new();
 
+    // The row a menu acts on is captured as the menu opens (review m1, B3-1, R2-B4-2). While a scan runs every refresh
+    // replaces the results list's items, which detaches the container the menu was opened on: its DataContext turns
+    // into the disconnected sentinel and a command routed from it never reaches the window's binding. So the command
+    // is sent to the window itself, with the captured row as its parameter. A row already detached as the menu opens
+    // is not captured, and the entry is disabled rather than acting on the row an earlier opening left behind.
     private void OnRowContextMenuOpened(object sender, RoutedEventArgs e)
     {
-        if (sender is ContextMenu menu && menu.PlacementTarget is FrameworkElement target && target.DataContext != null && target.DataContext.GetType().Name != "DisconnectedItem")
-        {
-            menu.Tag = target.DataContext;
-        }
+        if (sender is not ContextMenu menu)
+            return;
+        foreach (MenuItem item in menu.Items.OfType<MenuItem>())
+            item.CommandTarget = this;
+        object? row = (menu.PlacementTarget as FrameworkElement)?.DataContext;
+        menu.Tag = row is null || ReferenceEquals(row, BindingOperations.DisconnectedSource) ? NoRow : row;
     }
 
     private void OnCanOpenInExplorer(object sender, CanExecuteRoutedEventArgs e)
@@ -775,7 +767,7 @@ public partial class MainWindow : Window
                 false,
                 false,
                 hr);
-            RevealStatus.Text = $"Couldn't open Explorer for '{path}': {Win32Message(hr).TrimEnd('.')} (0x{hr:X8}).";
+            RevealStatus.Text = $"Couldn't open Explorer: {Win32Message(hr).TrimEnd('.')} (0x{hr:X8}). '{path}'";
             RevealStatus.Visibility = Visibility.Visible;
         }
     }
@@ -791,11 +783,11 @@ public partial class MainWindow : Window
             RevealKind.Ancestor when outcome.Reason == RevealReason.NameUnaddressable =>
                 $"Explorer can't select '{outcome.UnaddressableName}' by name (it ends in a dot or space, or is a reserved device name). Highlighting its folder '{outcome.Shown}' instead.",
             RevealKind.Ancestor when outcome.Reason == RevealReason.NoLongerExists =>
-                $"'{outcome.Requested}' no longer exists. Highlighting '{outcome.Shown}', the nearest folder that does.",
+                $"No longer exists, so highlighting '{outcome.Shown}' instead: '{outcome.Requested}'",
             RevealKind.Ancestor =>
                 $"Highlighting its folder '{outcome.Shown}'.",
             RevealKind.Failed =>
-                $"Couldn't open Explorer for '{outcome.Requested}': {Win32Message(outcome.HResult).TrimEnd('.')} (0x{outcome.HResult:X8}).",
+                $"Couldn't open Explorer: {Win32Message(outcome.HResult).TrimEnd('.')} (0x{outcome.HResult:X8}). '{outcome.Requested}'",
             _ => string.Empty
         };
     }
