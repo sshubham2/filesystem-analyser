@@ -1,0 +1,84 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-044",
+ "stage": "code-review",
+ "attempt": 2,
+ "at": "2026-09-26T10:07:50.500Z",
+ "head": "3dbaedf25a623491d2601479410a947e0299713a",
+ "run_id": 1284,
+ "summary": "Attempt 2 does what the three accepted findings asked, and it passes on my runs:\n- **Build and tests:** build clean, Core.Tests 240 passed, Fitness holds all 43 rules.\n- **Window cases:** `WindowCases.ps1 -Case All` passed all 34 cases. N-001..N-004 were not run; they are person-run.\n- **T-005 (O-028):** the probe now runs every 10 ms, giving 73 to 115 probes per phase. p95 is asserted only with at least 20 probes, and the maximum is always held under 1 s. On my run the longest wait outside the open was 67 ms.\n- **Tree room (O-029):** the rows split 1:3 while the tree is shown, the default height is 860 px clamped to the work area, and the window is moved up if it opens past the bottom. B-007 measured an 860 px window and a 284 px tree viewport.\n- **Unreadable folders (O-030):** B-007 now reads the 12 denied folders through tree mode. The Note reads 'could not be read in full' when an unreadable folder still has rows. That branch has no window case, which the builder declared.\n\nI read the whole diff and the files it touches. The only new defect is in the move-up. It measures the window against `SystemParameters.WorkArea`, which is the primary monitor's work area. Windows can open the window on another monitor, and there the move-up can push it onto the wrong monitor, or leave its title bar in space no monitor covers.\n\nNo stale statements that matter remain in untouched files. Only the design doc and the XAML comment say the split is 3:1 'after a failure', which is loose wording, not wrong behaviour. No loop: two build attempts, the second sent back by the code review.\n\nSecond round: This round found nothing new; the first round's minor finding m1 (the move-up and height clamp use the primary monitor's work area) still stands. I walked attempt 2's diff again looking for inputs and boundaries it does not handle.\n\n- **XAML row triggers.** The two MultiDataTriggers only override Height. Both rows keep their minimum heights, 292 and 84. The tree is shown just before the outcome panel within the same dispatcher operation, so no layout pass runs in between. The inner grid of the outcome panel never has every star row capped with a MaxHeight, which is the known WPF Grid crash shape.\n- **Window placement.** The height clamp and the move-up are harmless when Top is NaN (no move), when the work area is 0 (MinHeight wins), and when the work area is smaller than 620. On such a screen the window cannot fit either way.\n- **FolderTreeNode.Note.** Links are tested first. The Unreadable flag is only ever set on folders, so the ChildCount branch is sound.\n- **Hook changes.** The 10 ms probe, the maxAt field and the viewport, move and StartScan diagnostics are all sound: the first ScrollViewer found under the TreeView is its own, and a phase with 0 probes is skipped before p95 is read.\n- **WindowCases changes.** The name regex has no metacharacters in `$Planted` and the 37-row count is right. The p95 floor, the geometry checks and T-003's work-area run all hold on this machine.\n\nThe CheckTopsTree geometry check and T-003's VOID guard can only fail on a screen whose work area is under 860 or 620 px. That is a limit of the test, not a defect.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "Attempt 2 does what the three accepted findings asked, and it passes on my runs:\n- **Build and tests:** build clean, Core.Tests 240 passed, Fitness holds all 43 rules.\n- **Window cases:** `WindowCases.ps1 -Case All` passed all 34 cases. N-001..N-004 were not run; they are person-run.\n- **T-005 (O-028):** the probe now runs every 10 ms, giving 73 to 115 probes per phase. p95 is asserted only with at least 20 probes, and the maximum is always held under 1 s. On my run the longest wait outside the open was 67 ms.\n- **Tree room (O-029):** the rows split 1:3 while the tree is shown, the default height is 860 px clamped to the work area, and the window is moved up if it opens past the bottom. B-007 measured an 860 px window and a 284 px tree viewport.\n- **Unreadable folders (O-030):** B-007 now reads the 12 denied folders through tree mode. The Note reads 'could not be read in full' when an unreadable folder still has rows. That branch has no window case, which the builder declared.\n\nI read the whole diff and the files it touches. The only new defect is in the move-up. It measures the window against `SystemParameters.WorkArea`, which is the primary monitor's work area. Windows can open the window on another monitor, and there the move-up can push it onto the wrong monitor, or leave its title bar in space no monitor covers.\n\nNo stale statements that matter remain in untouched files. Only the design doc and the XAML comment say the split is 3:1 'after a failure', which is loose wording, not wrong behaviour. No loop: two build attempts, the second sent back by the code review.\n\nSecond round: This round found nothing new; the first round's minor finding m1 (the move-up and height clamp use the primary monitor's work area) still stands. I walked attempt 2's diff again looking for inputs and boundaries it does not handle.\n\n- **XAML row triggers.** The two MultiDataTriggers only override Height. Both rows keep their minimum heights, 292 and 84. The tree is shown just before the outcome panel within the same dispatcher operation, so no layout pass runs in between. The inner grid of the outcome panel never has every star row capped with a MaxHeight, which is the known WPF Grid crash shape.\n- **Window placement.** The height clamp and the move-up are harmless when Top is NaN (no move), when the work area is 0 (MinHeight wins), and when the work area is smaller than 620. On such a screen the window cannot fit either way.\n- **FolderTreeNode.Note.** Links are tested first. The Unreadable flag is only ever set on folders, so the ChildCount branch is sound.\n- **Hook changes.** The 10 ms probe, the maxAt field and the viewport, move and StartScan diagnostics are all sound: the first ScrollViewer found under the TreeView is its own, and a phase with 0 probes is skipped before p95 is read.\n- **WindowCases changes.** The name regex has no metacharacters in `$Planted` and the 37-row count is right. The p95 floor, the geometry checks and T-003's work-area run all hold on this machine.\n\nThe CheckTopsTree geometry check and T-003's VOID guard can only fail on a screen whose work area is under 860 or 620 px. That is a limit of the test, not a defect.",
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "The new window placement treats the primary monitor's work area as the window's work area. `SystemParameters.WorkArea` is the primary display's. Windows opens a new window on the monitor it was launched from, which can be another monitor. There, OnSourceInitialized compares `Top + Height` with the primary monitor's bottom and sets `Top = area.Bottom - Height`, still in primary-monitor terms. Two cases go wrong:\n- A second monitor stacked below the primary: the window is moved up onto the primary.\n- A second monitor beside the primary but set lower (say its top at y=500): a window Windows placed at Top=600 is moved to Top=172. Its title bar then sits in space no monitor covers, so the person cannot drag it.\nThe constructor's height clamp uses the same primary figure, so on a second monitor the window can still open taller than that monitor's work area, the case the move-up was added to fix.",
+    "evidence": "src/FsAnalyser.App/MainWindow.xaml.cs:62 (`Height = Math.Min(Height, SystemParameters.WorkArea.Height)`), :107-113 (OnSourceInitialized: `Rect area = SystemParameters.WorkArea; if (Top + Height > area.Bottom) Top = Math.Max(area.Top, area.Bottom - Height);`). The App cannot call MonitorFromWindow, because the rule in .taad/fitness.yaml:146-148 keeps (Library|Dll)Import in Native.",
+    "fix": "Move the window only when it lies on the primary work area: skip the move-up unless `Left >= area.Left && Left < area.Right && Top >= area.Top`, and leave placement on other monitors to Windows. Alternatively, set WindowStartupLocation=\"CenterScreen\", which WPF resolves against the monitor the window is on, and keep the height clamp."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-028",
+    "discharged": "yes",
+    "evidence": "tests/window/FsaWindowHook/TreeMode.cs: Probe.Every = 10 ms, and Report logs probes, p95, max and maxAt. tests/window/WindowCases.ps1: `$GapP95Floor = 20`; Test-T005 asserts p95 < 200 only when probes >= 20 and always asserts max < 1000. My All run passed T-005 with 106/77/115/73 probes in the asserted phases, p95 at most 21.9 ms, max 67 ms. docs/design/SL-044-folder-tree.md:133-138 corrects the '47 ms' claim, and :162-171 records the existing stall as left to SL-039/SL-040."
+   },
+   {
+    "key": "O-029",
+    "discharged": "yes",
+    "evidence": "src/FsAnalyser.App/MainWindow.xaml:5 sets Height=860 and keeps MinHeight 620. Two MultiDataTriggers (while FolderTree is Visible: outcome row 1*, results row 3*) keep MinHeights 292 and 84. MainWindow.xaml.cs:62 clamps to the work area and :107-113 moves the window up. My B-007 run logged 'window 860 px tall at 104, work area 1,032 px from 0; the tree's viewport 284 px'. B-007 and B-008 passed, and T-002's viewport is now 284 px. The primary-monitor assumption is finding m1."
+   },
+   {
+    "key": "O-030",
+    "discharged": "yes",
+    "evidence": "src/FsAnalyser.App/FolderTreeNode.cs Note: 'could not be read in full' when Unreadable and ChildCount > 0, otherwise 'could not be opened'. WindowCases.ps1 CheckTopsTree runs first in Test-B007 (FSA_HOOK_WALK=1). It asserts the 12 b*-folders draw no expander, '0 bytes', '0.0 %' and 'could not be opened', and the other 24 folders have an expander and no note. B-007 passed on my run. The partial-listing wording has no case; the builder declared this."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "Owed to validate-slice; my read only. ClearFolderTree still closes the session and StartScan nulls _result and LastResult (unchanged by this diff). T-004 passed again in my All run. Proven on small stores only; the at-scale 1 GiB re-measure is still an open follow-up."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "T-005 now passes (my All run), under the decided rule from O-028. It still feeds the designed shape: the window was moved 22 times, followed by the hand-off, an open of big and a rescan over the open tree."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "T-003 re-run in the All run: cold open at the work-area height 123.5 ms (456 px viewport, 46 rows built), warm opens 2.8 to 3.6 ms, all under 500 ms. The default-size run also passed."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "T-002 passed in the All run, now with a 284 px viewport. Its VOID guard (extent above 2x viewport) still holds for 60 folders."
+   }
+  ],
+  "matches_design": true,
+  "drift": [
+   "The 1:3 split and the 860 px default apply only in this slice's window. The long XAML layout comment (MainWindow.xaml:137-150) and docs/design/SL-044-folder-tree.md:57-58 say the rows keep SL-040's 3:1 'after a stop or a failure'. After a failure (Could not read, Scan failed) TopLevelPanel is collapsed, so there is no split at all. The wording is loose, and the behaviour is as intended.",
+   "T-003's comment (WindowCases.ps1, above its second run) says that at the default size the tree has 'three quarters of the height below the pickers'. At 860 px the outcome row sits at its 292 px minimum, because a quarter of the space is less than that, so the tree gets the remainder rather than three quarters. The builder's declared departures cover everything else in this diff; nothing else departed undeclared."
+  ],
+  "cases": [
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "T-005 feeds the designed shape: 100k files and 20k folders, the window moved and resized 22 times during the scan, the hand-off, big opened, and a rescan over the open tree. With the 10 ms probe every asserted phase had 73 to 115 probes. It passed on my run."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "T-001's empty folder, plus B-007's new CheckTopsTree over 12 folders denied to the account (ChildCount 0), each drawn with no expander and 'could not be opened'. A folder whose listing failed partway (ChildCount > 0) is not exercised, as declared."
+   }
+  ],
+  "unreviewed": [],
+  "second_round": {
+   "run_id": 1285,
+   "filed": 0
+  }
+ }
+}

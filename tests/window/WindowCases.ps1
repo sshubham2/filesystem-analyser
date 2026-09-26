@@ -51,11 +51,23 @@
 # the window now builds from the scan's own figure (ScanStore.VolumeUsed); the same tree scanned by its folder
 # path must not. P-001 is a tree whose folders and files run past 260 characters, the deepest past 400, read
 # by the published exe, which has no longPathAware manifest, unlike the xUnit testhost that runs the Core tests.
+#
+# T-001 to T-006 (SL-044) are the folder tree a completed scan shows in the results list's place. They read it
+# through the hook's tree mode, which runs the app without --report (the app stays open until the hook closes
+# it) and logs one JSON line per thing it read: what each row's container draws, never only what the row holds
+# (tests/window/FsaWindowHook/TreeMode.cs). The rows' names go to the hook's log, never to the report (Q-016).
+# T-001 is every row of a planted tree against the tree: order by space on disk, totals, shares and bars, links,
+# an empty folder and names as written. T-002 is expand state through recycling. T-003 opens a folder of 100,000
+# files five times and presses the numpad * key. T-004 starts a second scan with a row selected and checks the
+# first scan's store is collectable. T-005 samples the UI thread through a scan, the hand-off to the tree and a
+# second scan over an open large folder. T-006 is the endings that show no tree. C-002, L-003, B-003, B-007 and
+# M-001 read the tree where they read the results list after a completed scan.
 
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
-        'L-001', 'L-002', 'L-003', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'N-001', 'N-002', 'N-003', 'N-004')]
+        'L-001', 'L-002', 'L-003', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'N-001', 'N-002', 'N-003', 'N-004',
+        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006')]
     [string] $Case,
     [switch] $IncludeNetwork
 )
@@ -70,8 +82,10 @@ $HookDll = Join-Path $Repo 'artifacts\window-hook\FsaWindowHook.dll'
 $RigProject = Join-Path $Repo 'tests\window\StallRig\StallRig.csproj'
 $RigExe = Join-Path $Repo 'artifacts\stall-rig\StallRig.exe'
 $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS',
-    'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND', 'FSA_HOOK_MINSIZE', 'FSA_HOOK_DRIVES'
-$HookedCases = 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002'
+    'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND', 'FSA_HOOK_MINSIZE', 'FSA_HOOK_DRIVES',
+    'FSA_HOOK_WALK', 'FSA_HOOK_RECYCLE', 'FSA_HOOK_MULTIPLY', 'FSA_HOOK_SELECT', 'FSA_HOOK_RELEASE', 'FSA_HOOK_GAP', 'FSA_HOOK_HEIGHT'
+$HookedCases = 'C-002', 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
+    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004'
 $RigOnlyCases = 'N-003', 'N-004'
 $KiB64 = 64KB
@@ -627,7 +641,8 @@ function Test-C001 {
     finally { Remove-CaseFolder $case }
 }
 
-# C-002: a tree large enough for many timer ticks before the ending (New-LargeTree).
+# C-002: a tree large enough for many timer ticks before the ending (New-LargeTree). Since SL-044 its ending
+# shows the folder tree, whose root's children the hook reads where SL-039 read the results list.
 function Test-C002 {
     $case = New-CaseFolder
     try {
@@ -642,15 +657,27 @@ function Test-C002 {
             Check ($elapsed -ge 750) "the scan ran for at least three 250 ms ticks ($elapsed ms)"
             Write-Output "        CountersText after the last tick: $(Show $read.Report.window.CountersText)"
         }
-        # SL-039: the results list at the ending holds every top-level folder, each read to the end, and
-        # they add up to the tree.
+        # SL-044: at a completed ending the folder tree takes the results list's place, and the report holds no
+        # rows of either (Q-016).
         if ($null -ne $read.Report) {
-            CheckTopLevel $read.Report.topLevel @{
-                rows = 150; reading = 0; notRead = 0; stoppedPartway = 0; unreadable = 0
-                bytes = $manifest.Bytes; onDisk = $manifest.Bytes; files = $manifest.Files; final = $true
-            } 'against the tree'
-            CheckEqual "Largest at the top of $root" $read.Report.window.TopLevelHeader 'TopLevelHeader'
+            CheckEqual $true $read.Report.window.FolderTree.visible 'FolderTree is on screen'
+            CheckEqual $false $read.Report.window.TopLevelList.inView 'TopLevelList is not: the tree took its place'
+            Check ($read.Text -notmatch '"topLevel"') 'no topLevel in the report: the results list holds nothing once the tree shows'
+            CheckEqual "Largest at the top of $root, by space on disk" $read.Report.window.TopLevelHeader 'TopLevelHeader'
         }
+        # The tree root's children, where SL-039 read the list: every top-level folder, each drawn with its size,
+        # and they add up to the tree.
+        $run = Invoke-TreeRun $root @{ FSA_HOOK_WALK = '1' }
+        $before = $script:Failures.Count
+        CheckTreeRun $run $root
+        if ($script:Failures.Count -gt $before) { return }
+        $rows = @(Lines-Of $run 'tree-row' | Where-Object depth -eq 1)
+        CheckEqual 150 $rows.Count 'the root row holds a row per top-level folder'
+        $drawn = @($rows | Where-Object { $null -ne $_.rendered -and $_.rendered.onDisk -ceq (Format-Size $KiB64) -and $_.rendered.size -ceq (Format-Size $KiB64) })
+        CheckEqual 150 $drawn.Count 'each is drawn with its 64 KiB, on disk and in bytes'
+        CheckEqual $manifest.Bytes ($rows | Measure-Object -Property size -Sum).Sum 'they add up to the tree'
+        $root_ = @(Lines-Of $run 'tree-row' | Where-Object depth -eq 0)
+        CheckEqual (Format-Size $manifest.Bytes) $root_[0].rendered.size 'the root row draws the whole tree''s size'
     }
     finally { Remove-CaseFolder $case }
 }
@@ -1138,9 +1165,9 @@ function Test-L002 {
     finally { Remove-CaseFolder $case }
 }
 
-# L-003 (SL-039): endings with nothing to show. An empty root shows an empty list under its header; a root
-# that is not there, and one refused before any scan, show no list at all, so no row from anything is left
-# on screen. (A scan that faults after rows were shown ends the app in report mode, C-012: no report can
+# L-003 (SL-039): endings with nothing to show. An empty root shows the folder tree with its root row alone
+# (SL-044) under its header; a root that is not there, and one refused before any scan, show no list and no tree
+# at all, so no row from anything is left on screen. (A scan that faults after rows were shown ends the app in report mode, C-012: no report can
 # show its list.)
 function Test-L003 {
     $case = New-CaseFolder
@@ -1151,7 +1178,10 @@ function Test-L003 {
         CheckEqual 'EXIT 0' $read.Exit 'empty root: exit code'
         if ($null -ne $read.Report) {
             CheckEqual "Finished: $empty" $read.Report.window.OutcomeTitle 'empty root: OutcomeTitle'
-            CheckTopLevel $read.Report.topLevel @{ rows = 0; reading = 0; notRead = 0; bytes = 0; files = 0; final = $true } 'for an empty root'
+            # SL-044: completed, so the tree, holding the root alone, where the empty list was.
+            CheckEqual $true $read.Report.window.FolderTree.visible 'empty root: FolderTree is on screen'
+            CheckEqual 1 $read.Report.window.FolderTree.realizedRows 'empty root: the tree has the root row alone'
+            Check ($read.Text -notmatch '"topLevel"') 'empty root: no topLevel in the report (the list holds nothing)'
             CheckEqual "$empty is empty." $read.Report.window.TopLevelHeader 'empty root: TopLevelHeader'
         }
 
@@ -1165,6 +1195,7 @@ function Test-L003 {
             Check ($read.Report.window.OutcomeTitle -like 'Could not read *') "$($shape.Name): the ending is Could not read ($(Show $read.Report.window.OutcomeTitle))"
             Check ($read.Text -notmatch '"topLevel"') "$($shape.Name): no topLevel in the report (the list shows nothing)"
             CheckEqual '' $read.Report.window.TopLevelHeader "$($shape.Name): TopLevelHeader"
+            CheckEqual $false $read.Report.window.FolderTree.visible "$($shape.Name): no folder tree"
         }
     }
     finally { Remove-CaseFolder $case }
@@ -1202,7 +1233,9 @@ function Test-M001 {
         Check ($inputP95 -lt 200) "Input probe p95 $inputP95 ms is under 200 ms"
         CheckEqual '0' $run.Exit 'exit code'
         if ($null -ne $run.Report) {
-            CheckTopLevel $run.Report.topLevel @{ rows = 100000; reading = 0; notRead = 0; final = $true } 'after completion'
+            # SL-044: completed, so the folder tree has taken the list's place.
+            CheckEqual $true $run.Report.window.FolderTree.visible 'after completion FolderTree is on screen'
+            Check ($run.Text -notmatch '"topLevel"') 'and the results list holds nothing'
         }
     }
     finally { Remove-CaseFolder $case }
@@ -1503,7 +1536,7 @@ function Test-B003 {
             CheckEqual $false $read.Report.window.UnreadableExpander.expanded 'UnreadableExpander is closed'
             CheckEqual $true $read.Report.window.UnreadableExpander.visible 'UnreadableExpander is on screen'
             CheckEqual $true $read.Report.window.UnreadableExpander.inView 'UnreadableExpander is inside the panel, not pushed out by the list'
-            CheckEqual $true $read.Report.window.TopLevelList.inView "TopLevelList is inside the window below the outcome ($($read.Report.window.TopLevelList.actualHeight) px)"
+            CheckEqual $true $read.Report.window.FolderTree.inView "FolderTree, in TopLevelList's place (SL-044), is inside the window below the outcome ($($read.Report.window.FolderTree.actualHeight) px)"
         }
 
         Write-Output '  the unreadable folders opened'
@@ -1523,7 +1556,7 @@ function Test-B003 {
         CheckEqual $true $window.UnreadableExpander.expanded 'the report: UnreadableExpander is open'
         CheckEqual $true $window.UnreadableExpander.inView 'the report: UnreadableExpander is inside the panel'
         CheckEqual $true $window.UnreadableList.inView 'the report: UnreadableList is inside the panel'
-        CheckEqual $true $window.TopLevelList.inView "the report: TopLevelList is inside the window below the outcome ($($window.TopLevelList.actualHeight) px)"
+        CheckEqual $true $window.FolderTree.inView "the report: FolderTree is inside the window below the outcome ($($window.FolderTree.actualHeight) px)"
         $built = $window.LargestFilesList.realizedRows
         Check ($built -gt 0 -and $built -lt 100) "LargestFilesList still virtualizes: $built of 100 rows built"
         Check ($window.LargestFilesList.fullRows -ge 1) "LargestFilesList keeps at least one full row in view ($($window.LargestFilesList.fullRows) in $($window.LargestFilesList.actualHeight) px)"
@@ -1664,18 +1697,20 @@ function Test-B006 {
     }
 }
 
-# After an ending, the outcome's lists and the results list below it (SL-039) are on screen together, none
-# pushed off the window by another or by any text (O-025), and each with at least one full row in view: a
-# row wholly inside the list's viewport, readable without scrolling (the window-size rework). The outcome's
-# texts are in view too, scrolling whatever does not fit.
-function CheckBothLists($window, [bool] $opened) {
+# After an ending, the outcome's lists and the results list below it (SL-039), or the folder tree in its place
+# after a completed scan (SL-044), are on screen together, none pushed off the window by another or by any text
+# (O-025), and each with at least one full row in view: a row wholly inside the list's viewport, readable
+# without scrolling (the window-size rework). The outcome's texts are in view too, scrolling whatever does not fit.
+function CheckBothLists($window, [bool] $opened, [bool] $completed) {
     $largest = $window.LargestFilesList
     CheckEqual $true $largest.inView "LargestFilesList is inside the window ($($largest.actualHeight) px)"
     Check ($largest.fullRows -ge 1) "LargestFilesList shows at least one full row ($($largest.fullRows) of $($largest.realizedRows) built)"
     CheckEqual $true $window.TopLevelPanel.visible 'TopLevelPanel is on screen'
-    $results = $window.TopLevelList
-    CheckEqual $true $results.inView "TopLevelList is inside the window ($($results.actualHeight) px)"
-    Check ($results.fullRows -ge 1) "TopLevelList shows at least one full row ($($results.fullRows) of $($results.realizedRows) built)"
+    $results = if ($completed) { $window.FolderTree } else { $window.TopLevelList }
+    $name = if ($completed) { 'FolderTree' } else { 'TopLevelList' }
+    CheckEqual $true $results.inView "$name is inside the window ($($results.actualHeight) px)"
+    Check ($results.fullRows -ge 1) "$name shows at least one full row ($($results.fullRows) of $($results.realizedRows) built)"
+    CheckEqual (-not $completed) $window.TopLevelList.inView "TopLevelList is $(if ($completed) { 'not shown: the tree took its place' } else { 'shown' })"
     CheckEqual $opened $window.UnreadableExpander.expanded "UnreadableExpander is $(if ($opened) { 'open' } else { 'closed' })"
     CheckEqual $true $window.UnreadableExpander.inView 'UnreadableExpander is inside the window'
     if ($opened) {
@@ -1731,6 +1766,58 @@ function New-TopsTree([string] $root) {
     , $denied
 }
 
+# The window's size when nothing has sized it: MainWindow.xaml's Width and Height, the height no more than the
+# work area's (SL-044, review M2).
+$DefaultWidth = 880
+$DefaultHeight = 860
+
+# New-TopsTree's completed scan as the folder tree draws the root's rows (the hook's tree mode, FSA_HOOK_WALK=1), at
+# the window's default size (code review m1). Each of the 12 folders the scan could not open is a row with no
+# expander, nothing on disk, a share of 0.0 % and the note 'could not be opened'; every other folder can be opened
+# and has no note. The window is its default height, inside the work area, and the tree has a screenful of rows
+# in view, not the two it had beside the outcome before (code review M2).
+function CheckTopsTree($run, [string] $root) {
+    $before = $script:Failures.Count
+    CheckTreeRun $run $root
+    if ($script:Failures.Count -gt $before) { return }
+    $walked = @(Lines-Of $run 'walked')
+    Check ($walked.Count -eq 1 -and $walked[0].rows -eq 37 -and $walked[0].unrendered -eq 0) "the hook read the root and its 36 rows, all drawn ($(Show ($walked | ConvertTo-Json -Compress)))"
+    $rows = @(Lines-Of $run 'tree-row' | Where-Object depth -eq 1)
+    $unreadable = @($rows | Where-Object { $_.name -match "^b\d\d-$Planted$" })
+    CheckEqual 12 $unreadable.Count 'the root holds the 12 folders the scan could not open'
+    foreach ($row in $unreadable) {
+        $r = $row.rendered
+        $bad = [System.Collections.Generic.List[string]]::new()
+        if ($null -eq $r) { $bad.Add('no container drew it') }
+        else {
+            if ($r.name -cne $row.name) { $bad.Add("name drawn $(Show $r.name)") }
+            if ($r.expander -ne $false) { $bad.Add('an expander is drawn') }
+            if ($r.note -cne 'could not be opened') { $bad.Add("note $(Show $r.note)") }
+            if ($r.onDisk -cne (Format-Size 0)) { $bad.Add("on disk drawn $(Show $r.onDisk)") }
+            if ($r.share -cne (Format-Share 0)) { $bad.Add("share drawn $(Show $r.share)") }
+        }
+        if ([int]$row.childCount -ne 0 -or [long]$row.onDisk -ne 0) { $bad.Add("childCount $($row.childCount), onDisk $($row.onDisk)") }
+        Check ($bad.Count -eq 0) "$($row.name) draws as a folder that could not be opened ($(Show ($bad -join '; ')))"
+    }
+    $others = @($rows | Where-Object { $_.name -notmatch "^b\d\d-$Planted$" })
+    $wrong = @($others | Where-Object { $null -eq $_.rendered -or $_.rendered.note -cne '' -or $_.rendered.expander -ne $true })
+    Check ($others.Count -eq 24 -and $wrong.Count -eq 0) "the other 24 folders can be opened and have no note ($(Show (($wrong | ForEach-Object { "$($_.name) note=$($_.rendered.note) expander=$($_.rendered.expander)" }) -join ', ')))"
+    $rootRow = @(Lines-Of $run 'tree-row' | Where-Object depth -eq 0)
+    Check ($rootRow.Count -eq 1 -and $null -ne $rootRow[0].rendered -and $rootRow[0].rendered.note -ceq '') 'the root row has no note'
+
+    $ending = @(Lines-Of $run 'ending')[0]
+    $height = [Math]::Min($DefaultHeight, [double]$ending.workAreaHeight)
+    Write-Output ("        window {0:N0} px tall at {1:N0}, work area {2:N0} px from {3:N0}; the tree's viewport {4:N0} px" -f $ending.windowHeight, $ending.windowTop, $ending.workAreaHeight, $ending.workAreaTop, $ending.viewportHeight)
+    Check ([Math]::Abs([double]$ending.windowHeight - $height) -le 1) "the window is $height px tall by default, $DefaultHeight or the work area's height ($($ending.windowHeight) px)"
+    Check ([double]$ending.windowTop -ge [double]$ending.workAreaTop - 1 -and [double]$ending.windowTop + [double]$ending.windowHeight -le [double]$ending.workAreaTop + [double]$ending.workAreaHeight + 1) "the window lies inside the work area (top $($ending.windowTop), $($ending.windowHeight) px)"
+    if ($height -ge $DefaultHeight) {
+        Check ([double]$ending.viewportHeight -ge 12 * 20) "the tree shows at least 12 rows at the default size ($($ending.viewportHeight) px of 20 px rows)"
+    }
+    else {
+        Write-Output "        the work area is under $DefaultHeight px: the tree's rows at the default size are not asserted"
+    }
+}
+
 # One Cancelled ending of New-TopsTree's tree, pressed by the hook's watch mode once the files are read and the
 # slow folders are not, with the unreadable folders closed or opened (FSA_HOOK_EXPAND), at the window's minimum
 # size (FSA_HOOK_MINSIZE) or not, and with $extra drive buttons added (FSA_HOOK_DRIVES) or none. Its checks
@@ -1759,7 +1846,7 @@ function Invoke-StoppedEnding([string] $case, [string] $root, [bool] $opened, [b
     CheckLargestFiles $read 100 $KiB64 "Top 100 of $files scanned in the part read before the scan stopped. Files in 12 unreadable folders are not included."
     CheckTopLevel $run.Report.topLevel @{ rows = 36; unreadable = 12; final = $true } 'against the tree'
     Check ([int]$run.Report.topLevel.notRead -ge 1) "some slow folders were not read before the stop ($($run.Report.topLevel.notRead))"
-    CheckBothLists $run.Report.window $opened
+    CheckBothLists $run.Report.window $opened $false
     $after = $run.Report.window.TopLevelList.actualHeight
     Check ([double]$watch.listHeight -gt $after) "mid-scan, with no outcome on screen, TopLevelList had more height ($($watch.listHeight) px) than beside the outcome after the stop ($after px)"
     $script:StoppedReport = $run.Report
@@ -1782,7 +1869,8 @@ function CheckPickers($pickers) {
 # opened. Every hooked run adds 26 drive buttons beside the ready ones (FSA_HOOK_DRIVES); the default-size
 # Completed run with the list closed has only the ready ones, and the pickers must take the same height in all
 # eight. Mid-scan, with no outcome on screen, the results list has more height than it keeps beside the outcome
-# after the ending (watch's listHeight).
+# after the ending (watch's listHeight). First, the Completed ending read through the hook's tree mode: the 12
+# unreadable folders as the folder tree draws them, and the tree's room at the default size (CheckTopsTree).
 function Test-B007 {
     $case = New-CaseFolder
     $denied = @()
@@ -1792,8 +1880,11 @@ function Test-B007 {
         $denied = New-TopsTree $root
         $unread = ' Files in 12 unreadable folders are not included.'
 
+        Write-Output '  Completed, the root''s rows as the folder tree draws them, at the default size'
+        CheckTopsTree (Invoke-TreeRun $root @{ FSA_HOOK_WALK = '1' }) $root
+
         foreach ($smallest in $false, $true) {
-            $at = if ($smallest) { "at the window's minimum size" } else { 'at the default 880x620' }
+            $at = if ($smallest) { "at the window's minimum size" } else { "at the default size ($DefaultWidth by $DefaultHeight, or the work area)" }
             # FSA_HOOK_MINSIZE sizes the window to its minimum ahead of watch and expand; size mode does only that.
             $sizing = if ($smallest) { @{ FSA_HOOK_MINSIZE = '1' } } else { @{} }
 
@@ -1820,8 +1911,8 @@ function Test-B007 {
                 if ($null -eq $read.Report) { continue }
                 CheckEqual "Finished: $root" $read.Report.window.OutcomeTitle 'OutcomeTitle'
                 CheckLargestFiles $read 100 $KiB64 "Top 100 of 104 files scanned.$unread"
-                CheckTopLevel $read.Report.topLevel @{ rows = 36; unreadable = 12; final = $true } 'against the tree'
-                CheckBothLists $read.Report.window $opened
+                Check ($read.Text -notmatch '"topLevel"') 'no topLevel in the report: the folder tree shows the completed scan (SL-044)'
+                CheckBothLists $read.Report.window $opened $true
                 $pickers += [pscustomobject]@{ Run = $label; Height = $read.Report.window.PickerPanel.actualHeight; Buttons = $read.Report.window.DrivePanel.buttons }
             }
 
@@ -1975,9 +2066,575 @@ function Test-P001 {
     }
 }
 
+# ---- The folder tree (SL-044) ----
+
+# Files here are whole multiples of 4 KiB, at least 4 KiB, or empty: on this machine's NTFS (4 KiB clusters) the
+# space on disk is then the size. Every row's own on-disk figure is checked against that too, so a volume where
+# it does not hold fails by name rather than on a share.
+$KiB4 = 4KB
+$ShareTrack = 60 # FolderTreeRowText.BarTrack, the width of a share bar's track
+
+# The hook's JSON lines, as objects. Other lines ("loaded ...", "refused ...") are left out.
+function Read-HookJson($log) {
+    foreach ($line in @($log)) {
+        if ($line -and $line.StartsWith('{')) { $line | ConvertFrom-Json }
+    }
+}
+
+# One launch of the app on $root without --report, under the hook's tree mode with $variables: the exit code (or
+# TIMEOUT) and the hook's lines, raw and as objects.
+function Invoke-TreeRun([string] $root, [hashtable] $variables = @{}, [int] $timeoutSec = 120) {
+    $run = Invoke-WithHook 'tree' $HookDll { Wait-App (Start-App "`"$root`"") $timeoutSec } $variables
+    [pscustomobject]@{
+        Exit  = $run.Result
+        Log   = $run.Log
+        Lines = @(Read-HookJson $run.Log)
+    }
+}
+
+function Lines-Of($run, [string] $kind) { @($run.Lines | Where-Object kind -ceq $kind) }
+
+# What every tree run must show before its own checks: the hook ran, found the tree at a Finished ending in the
+# results list's place, logged no error, closed the window, and the app exited as a closed window does.
+function CheckTreeRun($run, [string] $root) {
+    foreach ($line in $run.Log) {
+        if ($line -notmatch '^\{"kind":"(tree-row|recycle-row)"') { Write-Output "        hook: $line" }
+    }
+    $errors = @(Lines-Of $run 'error')
+    Check ($errors.Count -eq 0) "the hook reported no error ($(Show (($errors | ForEach-Object reason) -join ' | ')))"
+    CheckTreeEnding $run $root 'ending'
+    Check (@(Lines-Of $run 'closed').Count -eq 1) 'the hook closed the window'
+    CheckEqual '0' $run.Exit 'exit code (a closed window)'
+}
+
+# The ending the hook logged as $kind ('ending', or 'second-ending' after a scan it started): Finished, with the
+# tree of $root alone shown where the results list was.
+function CheckTreeEnding($run, [string] $root, [string] $kind) {
+    $ending = @(Lines-Of $run $kind)
+    Check ($ending.Count -eq 1) "the hook saw the ending ('$kind')"
+    if ($ending.Count -ne 1) { return }
+    CheckEqual "Finished: $root" $ending[0].title "$($kind): Finished"
+    CheckEqual $true $ending[0].tree "$($kind): FolderTree is shown"
+    CheckEqual 1 $ending[0].treeItems "$($kind): the tree holds one row at its top"
+    CheckEqual $root $ending[0].root "$($kind): that row is the root, by its path"
+    CheckEqual $true $ending[0].headings "$($kind): the tree's headings are shown"
+    CheckEqual $false $ending[0].list "$($kind): TopLevelList is not shown, the tree took its place"
+}
+
+# A share as the window writes it: one decimal place, a midpoint away from zero (review m2), in this culture.
+function Format-Share([double] $share) {
+    '{0:F1} %' -f [math]::Round($share * 100, 1, [MidpointRounding]::AwayFromZero)
+}
+
+function Parent-Of([string] $path) {
+    $i = $path.LastIndexOf('\')
+    if ($i -lt 0) { '' } else { $path.Substring(0, $i) }
+}
+
+function Leaf-Of([string] $path) { $path.Substring($path.LastIndexOf('\') + 1) }
+
+# A sparse file of $length bytes with $dataBytes of data at $dataOffset (both 64 KiB-aligned), and the space NTFS
+# allocated to it as it reports it (fsutil sparse queryrange, which an ordinary user may run): the case's oracle
+# for its on-disk size, which bytes written do not give (review m3). The data goes in before the file is
+# extended to its length: written the other way round, the file's directory entry kept an allocation of 0 while
+# 64 KiB were allocated (measured at SL-044's build, also after a rename and after a reopen), and the scan
+# charges a sparse file what its directory entry says. That is a question for the scanner, not the tree.
+function New-SparseFile([string] $path, [long] $length, [long] $dataOffset, [long] $dataBytes) {
+    [void][System.IO.Directory]::CreateDirectory((Split-Path -Parent $path))
+    [System.IO.File]::WriteAllBytes($path, [byte[]]::new(0))
+    $out = & fsutil.exe sparse setflag $path 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "fsutil sparse setflag $path exited ${LASTEXITCODE}: $out" }
+    $stream = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite)
+    try {
+        $stream.Position = $dataOffset
+        $data = [byte[]]::new($dataBytes)
+        [Array]::Fill($data, [byte]1)
+        $stream.Write($data, 0, $data.Length)
+        $stream.SetLength($length)
+    }
+    finally { $stream.Dispose() }
+    $ranges = @(& fsutil.exe sparse queryrange $path 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw "fsutil sparse queryrange $path exited ${LASTEXITCODE}: $ranges" }
+    $allocated = 0
+    foreach ($line in $ranges) {
+        if ("$line" -match 'Length:\s*0x([0-9A-Fa-f]+)') { $allocated += [Convert]::ToInt64($Matches[1], 16) }
+    }
+    $allocated
+}
+
+# The rows a tree should show, from what the case built: its files and links with their bytes and space on disk,
+# and its folders with the sums of every file below them (links and empty folders add 0). Keyed by path from
+# the root ('' is the root); each row has its Name, Kind, Bytes, OnDisk, Parent, Children and its Share of its
+# parent's space on disk.
+function Get-TreeOracle([string] $root, $entries) {
+    $rows = [ordered]@{}
+    $rows[''] = [pscustomobject]@{ Path = ''; Name = $root; Kind = 'Folder'; Bytes = [long]0; OnDisk = [long]0; Parent = $null; Children = [System.Collections.Generic.List[string]]::new(); Share = $null }
+    foreach ($e in $entries) {
+        $rows[$e.Path] = [pscustomobject]@{ Path = $e.Path; Name = (Leaf-Of $e.Path); Kind = $e.Kind; Bytes = [long]$e.Bytes; OnDisk = [long]$e.OnDisk
+            Parent = (Parent-Of $e.Path); Children = [System.Collections.Generic.List[string]]::new(); Share = $null }
+    }
+    foreach ($row in @($rows.Values)) {
+        if ($null -ne $row.Parent) { $rows[$row.Parent].Children.Add($row.Path) }
+    }
+    foreach ($row in @($rows.Values)) {
+        if ($row.Kind -ne 'File') { continue }
+        for ($p = $row.Parent; $null -ne $p; $p = $(if ($p -eq '') { $null } else { Parent-Of $p })) {
+            $rows[$p].Bytes += $row.Bytes
+            $rows[$p].OnDisk += $row.OnDisk
+        }
+    }
+    foreach ($row in @($rows.Values)) {
+        if ($null -eq $row.Parent) { continue }
+        $parent = $rows[$row.Parent]
+        $row.Share = if ($parent.OnDisk -eq 0) { [double]0 } else { [double]$row.OnDisk / $parent.OnDisk }
+    }
+    $rows
+}
+
+# Every row of the oracle against the row the hook logged at the same path: what its container draws (name,
+# note, on disk, size, share, the bar's laid-out width, the expander) and the raw values behind it; then each
+# folder's children in the order drawn, largest on disk first.
+function CheckTreeRows($oracle, $logged) {
+    $byPath = @{}
+    foreach ($row in $logged) { $byPath[$row.path] = $row }
+    CheckEqual $oracle.Count $logged.Count "the hook read one row per row of the tree ($($oracle.Count))"
+    foreach ($want in $oracle.Values) {
+        $label = if ($want.Path -eq '') { 'the root row' } else { "row $($want.Path)" }
+        $row = $byPath[$want.Path]
+        if ($null -eq $row) {
+            Check $false "$label was read"
+            continue
+        }
+        if ($null -eq $row.rendered) {
+            Check $false "$label has a container that draws it (rendered)"
+            continue
+        }
+        $r = $row.rendered
+        $bad = [System.Collections.Generic.List[string]]::new()
+        if ($r.name -cne $want.Name) { $bad.Add("name $(Show $r.name)") }
+        if ([long]$row.onDisk -ne $want.OnDisk) { $bad.Add("onDisk $($row.onDisk), want $($want.OnDisk)") }
+        if ([long]$row.size -ne $want.Bytes) { $bad.Add("size $($row.size), want $($want.Bytes)") }
+        if ($r.onDisk -cne (Format-Size $want.OnDisk)) { $bad.Add("on disk drawn $(Show $r.onDisk), want $(Show (Format-Size $want.OnDisk))") }
+        if ($r.size -cne (Format-Size $want.Bytes)) { $bad.Add("size drawn $(Show $r.size), want $(Show (Format-Size $want.Bytes))") }
+        $note = if ($want.Kind -eq 'Link') { 'link, not followed' } else { '' }
+        if ($r.note -cne $note) { $bad.Add("note $(Show $r.note), want $(Show $note)") }
+        $expander = $want.Kind -eq 'Folder' -and $want.Children.Count -gt 0
+        if ([bool]$r.expander -ne $expander) { $bad.Add("expander $($r.expander), want $expander") }
+        if ($want.Path -eq '') {
+            if ($r.share -cne '') { $bad.Add("share drawn $(Show $r.share), want none") }
+            if ($r.barShown -ne $false) { $bad.Add('a bar is shown') }
+        }
+        else {
+            if ($r.share -cne (Format-Share $want.Share)) { $bad.Add("share drawn $(Show $r.share), want $(Show (Format-Share $want.Share))") }
+            if ($r.barShown -ne $true -or [double]$r.barTrackWidth -ne $ShareTrack) { $bad.Add("bar track shown=$($r.barShown) width=$($r.barTrackWidth)") }
+            $bar = [double]$r.barActualWidth
+            if ($want.Share -eq 0 -and $bar -ne 0) { $bad.Add("bar $bar px for a share of 0") }
+            if ([Math]::Abs($bar - $want.Share * $ShareTrack) -gt 1) { $bad.Add("bar $bar px, want $($want.Share * $ShareTrack) within 1 px") }
+        }
+        if ([double]$r.rowHeight -ne 20) { $bad.Add("row height $($r.rowHeight)") }
+        Check ($bad.Count -eq 0) "$label draws as the tree says ($(Show ($bad -join '; ')))"
+    }
+    foreach ($want in $oracle.Values) {
+        if ($want.Children.Count -eq 0) { continue }
+        $drawn = @($logged | Where-Object { $_.depth -gt 0 -and (Parent-Of $_.path) -eq $want.Path } | Sort-Object order)
+        $sizes = @($drawn | ForEach-Object { [long]$_.onDisk })
+        $descending = $true
+        for ($i = 1; $i -lt $sizes.Count; $i++) { if ($sizes[$i] -gt $sizes[$i - 1]) { $descending = $false } }
+        $names = @($drawn | ForEach-Object { $_.rendered.name } | Sort-Object)
+        $expected = @($want.Children | ForEach-Object { $oracle[$_].Name } | Sort-Object)
+        $label = if ($want.Path -eq '') { 'the root' } else { $want.Path }
+        Check ($descending -and ($names -join '|') -ceq ($expected -join '|')) "under $label, the rows are its children, largest on disk first ($(Show (($drawn | ForEach-Object { "$($_.rendered.name)=$($_.onDisk)" }) -join ', ')))"
+    }
+}
+
+# Case A's tree (T-001), under $root, and a folder beside it that its links point into. Returns the entries the
+# oracle is built from and the links, for the caller to remove before the tree.
+function New-TreeCaseA([string] $root, [string] $outside) {
+    $entries = [System.Collections.Generic.List[object]]::new()
+    function Add([string] $path, [string] $kind, [long] $bytes, [long] $onDisk) {
+        $entries.Add([pscustomobject]@{ Path = $path; Kind = $kind; Bytes = $bytes; OnDisk = $onDisk })
+    }
+    function Folder([string] $path) {
+        [void][System.IO.Directory]::CreateDirectory((Join-Path $root $path))
+        Add $path 'Folder' 0 0
+    }
+    function Plain([string] $path, [long] $bytes) {
+        New-File (Join-Path $root $path) $bytes
+        Add $path 'File' $bytes $bytes
+    }
+
+    New-File (Join-Path $outside 'o.bin') 1MB # outside the scanned tree; the links point here
+
+    # A folder three levels deep, and one that holds only a chain of folders and no file of its own.
+    Folder 'deep'; Folder 'deep\mid'; Folder 'deep\mid\low'
+    Plain 'deep\mid\low\leaf.bin' (5 * $KiB4)
+    Plain 'deep\mid\mid.bin' (2 * $KiB4)
+    Folder 'chain'; Folder 'chain\only'; Folder 'chain\only\end'
+    Plain 'chain\only\end\e.bin' (9 * $KiB4)
+    # Bytes and space on disk rank these differently: sparse.bin is the largest in bytes, dense.bin on disk.
+    Folder 'size_&_order'
+    $sparse = Join-Path $root 'size_&_order\sparse.bin'
+    $allocated = New-SparseFile $sparse 1MB 256KB 64KB
+    Add 'size_&_order\sparse.bin' 'File' 1MB $allocated
+    Plain 'size_&_order\dense.bin' (32 * $KiB4)
+    Plain 'size_&_order\my_file&co.bin' (3 * $KiB4)
+    # Nothing in it.
+    Folder 'empty'
+    # A parent that takes nothing on disk, with children: every share 0.
+    Folder 'zeros'
+    foreach ($z in 'z1.txt', 'z2.txt', 'z3.txt') { Plain "zeros\$z" 0 }
+    # Shares with no terminating decimal, exact midpoints and one too small to show at one decimal place.
+    Folder 'thirds'
+    foreach ($t in 't1.bin', 't2.bin', 't3.bin') { Plain "thirds\$t" $KiB4 }
+    Folder 'twothirds'
+    Plain 'twothirds\a.bin' (4 * $KiB4)
+    Plain 'twothirds\b.bin' (8 * $KiB4)
+    Folder 'sixteenths'
+    Plain 'sixteenths\one.bin' $KiB4
+    Plain 'sixteenths\fifteen.bin' (15 * $KiB4)
+    Folder 'tiny'
+    Plain 'tiny\big.bin' 8MB
+    Plain 'tiny\small.bin' $KiB4
+    # A name far too long for its column.
+    Plain ('long-' + ('n' * 140) + '.bin') (6 * $KiB4)
+    # Links: never followed, charged 0, never opened (Q-001: junctions and both kinds of symbolic link).
+    $links = @()
+    $junction = Join-Path $root 'j'
+    New-Item -ItemType Junction -Path $junction -Value $outside | Out-Null
+    $links += $junction
+    Add 'j' 'Link' 0 0
+    $folderLink = Join-Path $root 'sd'
+    New-Item -ItemType SymbolicLink -Path $folderLink -Value $outside | Out-Null
+    $links += $folderLink
+    Add 'sd' 'Link' 0 0
+    $fileLink = Join-Path $root 'sf'
+    New-Item -ItemType SymbolicLink -Path $fileLink -Value (Join-Path $outside 'o.bin') | Out-Null
+    $links += $fileLink
+    Add 'sf' 'Link' 0 0
+    [pscustomobject]@{ Entries = $entries; Links = $links; SparseOnDisk = $allocated }
+}
+
+# Links go first, one by one, so no removal can reach through one into its target.
+function Remove-Links($links) {
+    foreach ($link in @($links)) {
+        if (-not $link) { continue }
+        if ([System.IO.Directory]::Exists($link)) { [System.IO.Directory]::Delete($link) }
+        elseif ([System.IO.File]::Exists($link)) { [System.IO.File]::Delete($link) }
+    }
+}
+
+# T-001 (rows 1 to 4): every row of case A's tree, walked to depth 4 with each folder opened, against the tree the
+# case built: each row as its container draws it, the order under every folder, totals rolled up through folders
+# with no files of their own, shares to one decimal place and their bars, links and an empty folder with no
+# expander, and names with '_', '&' and far too long for their column drawn as written.
+function Test-T001 {
+    $case = New-CaseFolder
+    $built = $null
+    try {
+        $root = Join-Path $case 'tree'
+        $built = New-TreeCaseA $root (Join-Path $case 'outside')
+        $oracle = Get-TreeOracle $root $built.Entries
+        Write-Output ("        sparse.bin: 1 MB in bytes, {0:N0} bytes allocated (fsutil sparse queryrange)" -f $built.SparseOnDisk)
+        Check ($built.SparseOnDisk -gt 0 -and $built.SparseOnDisk -lt 32 * $KiB4) "VOID unless sparse.bin takes less on disk than dense.bin while larger in bytes ($($built.SparseOnDisk) allocated)"
+
+        $run = Invoke-TreeRun $root @{ FSA_HOOK_WALK = '4' }
+        $before = $script:Failures.Count
+        CheckTreeRun $run $root
+        if ($script:Failures.Count -gt $before) { return }
+        $walked = @(Lines-Of $run 'walked')
+        Check ($walked.Count -eq 1 -and $walked[0].unrendered -eq 0) "every row read had a container that drew it ($(Show ($walked | ConvertTo-Json -Compress)))"
+        $rows = @(Lines-Of $run 'tree-row')
+        CheckTreeRows $oracle $rows
+
+        # The shapes by name, so a failure says which one.
+        $byPath = @{}
+        foreach ($row in $rows) { $byPath[$row.path] = $row }
+        $order = @($rows | Where-Object { (Parent-Of $_.path) -eq 'size_&_order' -and $_.depth -eq 2 } | Sort-Object order | ForEach-Object { $_.rendered.name })
+        CheckEqual 'dense.bin|sparse.bin|my_file&co.bin' ($order -join '|') 'size_&_order: dense.bin, smaller in bytes, ranks above sparse.bin, larger in bytes (row 2)'
+        $sum = ($rows | Where-Object depth -eq 1 | Measure-Object -Property size -Sum).Sum
+        CheckEqual $oracle[''].Bytes $byPath[''].size 'the root row''s size is everything below it (row 4)'
+        CheckEqual $sum $byPath[''].size 'the root row''s size is the sum of its rows (it holds no file of its own)'
+        CheckEqual (Format-Size (5 * $KiB4)) $byPath['deep\mid\low'].rendered.size 'deep\mid\low, three levels deep, draws its file''s size'
+        CheckEqual (Format-Size (9 * $KiB4)) $byPath['chain'].rendered.size 'chain, which holds only a chain of folders, draws the file at its end'
+        foreach ($z in 'z1.txt', 'z2.txt', 'z3.txt') {
+            $r = $byPath["zeros\$z"].rendered
+            Check ($r.share -ceq (Format-Share 0) -and [double]$r.barActualWidth -eq 0) "zeros\$z, under a parent that takes nothing, draws $(Format-Share 0) and no bar ($(Show $r.share), $($r.barActualWidth) px)"
+        }
+        CheckEqual (Format-Share (1 / 3)) $byPath['thirds\t1.bin'].rendered.share 'a third'
+        CheckEqual (Format-Share (2 / 3)) $byPath['twothirds\b.bin'].rendered.share 'two thirds'
+        CheckEqual (Format-Share (1 / 16)) $byPath['sixteenths\one.bin'].rendered.share 'a sixteenth, an exact midpoint (6.25), rounded away from zero'
+        CheckEqual (Format-Share (15 / 16)) $byPath['sixteenths\fifteen.bin'].rendered.share 'fifteen sixteenths (93.75)'
+        $small = $byPath['tiny\small.bin'].rendered
+        Check ($small.share -ceq (Format-Share 0) -and [double]$small.barActualWidth -gt 0) "tiny\small.bin, a share too small for one decimal place, draws $(Format-Share 0) and a bar that is not empty ($(Show $small.share), $($small.barActualWidth) px)"
+        foreach ($name in 'size_&_order', 'size_&_order\my_file&co.bin', ('long-' + ('n' * 140) + '.bin')) {
+            CheckEqual (Leaf-Of $name) $byPath[$name].rendered.name "$(if ($name.Length -gt 40) { 'the long name' } else { $name }) is drawn as written"
+        }
+        foreach ($link in 'j', 'sd', 'sf') {
+            $r = $byPath[$link].rendered
+            Check (-not $r.expander -and $r.onDisk -ceq '0 bytes' -and $r.note -ceq 'link, not followed') "link $link has no expander, 0 bytes and says it is not followed"
+        }
+        Check (-not $byPath['empty'].rendered.expander) 'the empty folder has no expander'
+    }
+    finally {
+        if ($null -ne $built) { Remove-Links $built.Links }
+        Remove-CaseFolder $case
+    }
+}
+
+# T-002 (row 2): expand state through recycling. A folder of 60 folders, far more rows than the tree's height;
+# the hook opens it, opens its third child from the end, scrolls the tree to its end and back twice, closes and
+# reopens the folder, and reads every child as drawn: only that child open, on the row it was opened on, and the
+# order and figures as before.
+function Test-T002 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'tree'
+        for ($i = 0; $i -lt 60; $i++) {
+            New-File (Join-Path $root ('many\f{0:D2}\x.bin' -f $i)) (($i + 1) * $KiB4)
+        }
+        New-File (Join-Path $root 'other.bin') $KiB4
+        $expected = @(for ($i = 59; $i -ge 0; $i--) { 'f{0:D2}' -f $i })
+
+        $run = Invoke-TreeRun $root @{ FSA_HOOK_WALK = '0'; FSA_HOOK_RECYCLE = 'many' }
+        $before = $script:Failures.Count
+        CheckTreeRun $run $root
+        if ($script:Failures.Count -gt $before) { return }
+        $recycle = @(Lines-Of $run 'recycle')
+        Check ($recycle.Count -eq 1) "the hook logged one 'recycle' line"
+        if ($recycle.Count -ne 1) { return }
+        $r = $recycle[0]
+        Check ([double]$r.extentHeight -gt 2 * [double]$r.viewportHeight) "the rows run far past what the tree shows ($($r.extentHeight) px of rows in $($r.viewportHeight) px)"
+        CheckEqual 'f02' $r.child 'the child opened is the third from the end, f02'
+        CheckEqual ($expected -join '|') (@($r.before) -join '|') 'before: the children largest on disk first'
+        CheckEqual (@($r.before) -join '|') (@($r.after) -join '|') 'after scrolling away and back and reopening the folder: the same order'
+        CheckEqual 'f02' (@($r.expandedNodes) -join '|') 'only f02 is open, by the rows'' own state'
+        CheckEqual 'f02' (@($r.expandedContainers) -join '|') 'only f02 is drawn open'
+        CheckEqual 'x.bin' (@($r.childRowsBefore) -join '|') 'f02 showed x.bin when opened'
+        CheckEqual 'x.bin' (@($r.childRowsAfter) -join '|') 'and still draws it after'
+        CheckEqual 0 $r.unrendered 'every child had a container that drew it'
+        $wrong = @(Lines-Of $run 'recycle-row' | Where-Object {
+                $null -eq $_.rendered -or $_.rendered.name -cne $_.name -or $_.rendered.onDisk -cne (Format-Size $_.onDisk) -or $_.rendered.expanded -ne $_.nodeExpanded })
+        Check ($wrong.Count -eq 0) "every child draws its own name, size and open state ($(Show (($wrong | ForEach-Object name) -join ', ')))"
+        $sizes = @(Lines-Of $run 'recycle-row' | ForEach-Object { [long]$_.onDisk })
+        CheckEqual (@($r.beforeOnDisk) -join '|') ($sizes -join '|') 'every child''s size is what it was before'
+    }
+    finally { Remove-CaseFolder $case }
+}
+
+# A folder of 100,000 files directly under $root\big (never the root itself, review m7): 50 of them distinct 4 KiB
+# multiples up to 200 KiB, the rest empty, a tie block at 0. Beside it a folder chain and a file. About 30 s.
+function New-HundredThousand([string] $root) {
+    $big = Join-Path $root 'big'
+    [void][System.IO.Directory]::CreateDirectory($big)
+    $empty = [byte[]]::new(0)
+    for ($i = 0; $i -lt 100000; $i++) {
+        # Assigned in each branch: an if's output would unroll the array.
+        if ($i % 2000 -eq 0) { $bytes = [byte[]]::new(($i / 2000 + 1) * $KiB4) } else { $bytes = $empty }
+        [System.IO.File]::WriteAllBytes([System.IO.Path]::Combine($big, ('e{0:D6}.bin' -f $i)), $bytes)
+    }
+    New-File (Join-Path $root 'deep\a\b.bin') $KiB4
+    New-File (Join-Path $root 'top.bin') (2 * $KiB4)
+}
+
+# T-003 (row 5, review M1): opening a folder of 100,000 files, cold and then four more times after closing it,
+# each timed by the hook from setting IsExpanded on its row to the first ContextIdle pass with its first child's
+# row built: every open under 0.5 s, only a screenful of rows built (virtualization on), the largest file first.
+# Then every folder closed, the root row selected and the numpad * key sent to it: no folder may open.
+function Test-T003 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'tree'
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        New-HundredThousand $root
+        Write-Output ("        built 100,000 files in {0:N1} s" -f $clock.Elapsed.TotalSeconds)
+
+        Write-Output '  at the default window size, then the * key'
+        $run = Invoke-TreeRun $root @{ FSA_HOOK_WALK = '0'; FSA_HOOK_EXPAND = 'big'; FSA_HOOK_MULTIPLY = '1' } 300
+        $before = $script:Failures.Count
+        CheckTreeRun $run $root
+        if ($script:Failures.Count -gt $before) { return }
+        CheckOpens $run
+        $defaultViewport = [double]@(Lines-Of $run 'expand')[0].viewportHeight
+        $multiply = @(Lines-Of $run 'multiply')
+        Check ($multiply.Count -eq 1) "the hook sent * ('multiply' line)"
+        if ($multiply.Count -eq 1) {
+            CheckEqual $true $multiply[0].selected 'the root row was selected'
+            CheckEqual $true $multiply[0].previewHandled 'the tree took the * key'
+            CheckEqual 0 $multiply[0].expandedBeyondRoot "no folder below the root opened ($(Show (@($multiply[0].expanded) -join ', ')))"
+        }
+
+        # At the default size the tree has three quarters of the height below the pickers beside the outcome (review
+        # M2), a screenful of rows; a person looking for space may make the window as tall as the screen allows, and
+        # every row then on screen is built as the folder opens.
+        Write-Output '  in a window as tall as the work area'
+        $run = Invoke-TreeRun $root @{ FSA_HOOK_WALK = '0'; FSA_HOOK_EXPAND = 'big'; FSA_HOOK_HEIGHT = '4000' } 300
+        $before = $script:Failures.Count
+        CheckTreeRun $run $root
+        if ($script:Failures.Count -gt $before) { return }
+        $first = @(Lines-Of $run 'expand')[0]
+        Check ([double]$first.viewportHeight -gt $defaultViewport) "VOID unless the taller window gave the tree more room than the default ($($first.viewportHeight) px against $defaultViewport px)"
+        CheckOpens $run
+    }
+    finally { Remove-CaseFolder $case }
+}
+
+# T-003's checks on the five opens of big: each under 0.5 s to its first rows, only the rows on screen built, the
+# largest file first; open 1 cold, with its sort and row build logged apart, and 2 to 5 warm.
+function CheckOpens($run) {
+    $opens = @(Lines-Of $run 'expand')
+    CheckEqual 5 $opens.Count 'the hook opened big five times'
+    foreach ($open in $opens) {
+        $split = if ($open.cold) { (' (sort {0:N1} ms, row build {1:N1} ms, the rest {2:N1} ms)' -f $open.sortMs, $open.buildMs, $open.layoutMs) } else { '' }
+        Write-Output ("        open {0}: {1:N1} ms{2}, {3} rows built, a viewport of {4:N0} px" -f $open.open, $open.ms, $split, $open.realized, $open.viewportHeight)
+        CheckEqual ($open.open -eq 1) $open.cold "open $($open.open) is $(if ($open.open -eq 1) { 'cold, building its rows' } else { 'warm, reusing them' })"
+        Check ($open.firstChild -and [double]$open.ms -lt 500) ("open {0} drew its first rows in {1:N1} ms (under 500)" -f $open.open, $open.ms)
+        Check ($open.realized -gt 0 -and $open.realized -le 200) "open $($open.open) built only a screenful of rows ($($open.realized))"
+        CheckEqual 100000 $open.children "open $($open.open): big holds 100,000 rows"
+        CheckEqual (50 * $KiB4) $open.firstOnDisk "open $($open.open): the first row is the largest file"
+    }
+    $cold = @($opens | Where-Object cold)
+    Check ($cold.Count -eq 1 -and $null -ne $cold[0].sortMs -and $null -ne $cold[0].buildMs) 'the cold open logged its sort and row build times'
+}
+
+# T-004 (rows 1 and 6, review M2): a second scan started while a tree is shown with a large folder open and a row
+# three levels deep selected, as a person picking a new folder would leave it. The first scan's store must be
+# collectable while the second scan runs (New-LargeTree's scan takes a second or more, so it is still running when
+# the hook checks), and again after it ends, when the tree shows only the new root.
+function Test-T004 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'first'
+        $big = Join-Path $root 'big'
+        [void][System.IO.Directory]::CreateDirectory($big)
+        for ($i = 0; $i -lt 3000; $i++) {
+            New-File (Join-Path $big ('e{0:D4}.bin' -f $i)) $(if ($i % 150 -eq 0) { ($i / 150 + 1) * $KiB4 } else { 0 })
+        }
+        New-File (Join-Path $root 'a\b\c.bin') $KiB4
+        $second = Join-Path $case 'second'
+        [void](New-LargeTree $second)
+
+        $run = Invoke-TreeRun $root @{ FSA_HOOK_WALK = '0'; FSA_HOOK_EXPAND = 'big'; FSA_HOOK_SELECT = 'a\b\c.bin'; FSA_HOOK_RELEASE = $second }
+        $before = $script:Failures.Count
+        CheckTreeRun $run $root
+        CheckTreeEnding $run $second 'second-ending'
+        if ($script:Failures.Count -gt $before) { return }
+        $opens = @(Lines-Of $run 'expand')
+        Check ($opens.Count -eq 5 -and $opens[-1].firstChild) 'the large folder was open when the second scan started'
+        $selected = @(Lines-Of $run 'selected')
+        Check ($selected.Count -eq 1 -and $selected[0].selected -and $selected[0].treeSelected -and $selected[0].depth -eq 3) "a row three levels deep was selected ($(Show ($selected | ConvertTo-Json -Compress)))"
+        $released = @(Lines-Of $run 'store-released')
+        CheckEqual 2 $released.Count "the hook checked the first store twice"
+        if ($released.Count -eq 2) {
+            Check ($released[0].scanning -and -not $released[0].tree) "VOID unless the first check came while the second scan ran, with no tree shown (scanning=$($released[0].scanning) tree=$($released[0].tree))"
+            CheckEqual $true $released[0].released 'the first scan''s store was collectable while the second scan ran'
+            CheckEqual $true $released[1].released 'and after the second scan ended'
+        }
+    }
+    finally { Remove-CaseFolder $case }
+}
+
+# T-005 (row 6, review m7): the UI thread sampled by the hook every 10 ms (an Input-priority probe) through a scan
+# while the window is moved and resized, the hand-off to the tree, one open of a folder of 100,000 files, and a
+# second scan started over that open tree, to its hand-off. In every phase but the open, whose own bar is T-003's,
+# no probe may wait a second, and where a phase has at least 20 probes, 95% of them must get through within
+# 200 ms. With fewer, the 95th percentile is the longest wait itself, and one stall already there before SL-044
+# (the first resize after a scan starts, 0.4 to 0.8 s, the code review's M1) would fail the phase on the second
+# bar rather than the first; so a phase that short is held to the second alone, and says so.
+$GapP95Floor = 20
+function Test-T005 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'tree'
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        New-HundredThousand $root
+        # Folders are what take a scan time (New-LargeTree), so these keep it running about a second.
+        for ($s = 0; $s -lt 20; $s++) {
+            for ($j = 0; $j -lt 1000; $j++) { [void][System.IO.Directory]::CreateDirectory((Join-Path $root "slow\s$s\m$j")) }
+        }
+        Write-Output ("        built 100,000 files and 20,000 folders in {0:N1} s" -f $clock.Elapsed.TotalSeconds)
+
+        $run = Invoke-TreeRun $root @{ FSA_HOOK_WALK = '0'; FSA_HOOK_GAP = 'big' } 300
+        $before = $script:Failures.Count
+        CheckTreeRun $run $root
+        CheckTreeEnding $run $root 'second-ending'
+        if ($script:Failures.Count -gt $before) { return }
+        $first = @(Lines-Of $run 'ending')[0]
+        $again = @(Lines-Of $run 'second-ending')[0]
+        Check ([int]$first.moves -ge 5) "the window was moved and resized while the first scan ran ($($first.moves) times)"
+        Write-Output ("        moved {0} times during the first scan (the longest move held the UI thread {1:N0} ms), {2} during the second ({3:N0} ms)" -f $first.moves, $first.longestMoveMs, $again.moves, $again.longestMoveMs)
+        $started = @(Lines-Of $run 'rescan-started')
+        if ($started.Count -eq 1) { Write-Output ("        the second scan's start, the open tree's release included, held the UI thread {0:N1} ms" -f $started[0].startScanMs) }
+        $phases = @(Lines-Of $run 'gap')
+        CheckEqual 5 $phases.Count 'the hook sampled five phases'
+        foreach ($phase in $phases) {
+            Write-Output ("        {0}: {1} probes, p95 {2} ms, max {3} ms (posted at {4} ms)" -f $phase.phase, $phase.probes, $phase.p95, $phase.max, $phase.maxAt)
+            if ($phase.phase -eq 'open') { continue }
+            Check ([int]$phase.probes -ge 1) "$($phase.phase): the UI thread was sampled"
+            if ([int]$phase.probes -eq 0) { continue }
+            Check ([double]$phase.max -lt 1000) "$($phase.phase): no probe waited a second ($($phase.max) ms)"
+            if ([int]$phase.probes -ge $GapP95Floor) {
+                Check ([double]$phase.p95 -lt 200) "$($phase.phase): 95% of $($phase.probes) probes got through within 200 ms ($($phase.p95) ms)"
+            }
+            else {
+                Write-Output "        $($phase.phase): p95 not asserted, $($phase.probes) probes (fewer than $GapP95Floor)"
+            }
+        }
+    }
+    finally { Remove-CaseFolder $case }
+}
+
+# T-006 (row 1): the endings that show no tree, because their shares would be of an incomplete whole or of
+# nothing. Stop pressed mid-scan: the results list stays with the final snapshot and FolderTree is not shown. A
+# fault on the UI thread mid-scan: the app ends 70, and as it shuts down the tree is not shown. A root that is not
+# there: Could not read, no tree.
+function Test-T006 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'large'
+        [void](New-LargeTree $root)
+
+        Write-Output '  Stop pressed mid-scan'
+        $run = Invoke-HookedRun 'stop' $root (Join-Path $case 'report.json')
+        $before = $script:Failures.Count
+        CheckActed $run 'stop'
+        if ($script:Failures.Count -eq $before) {
+            CheckEqual '0' $run.Exit 'exit code'
+            Check ($null -ne $run.Report) 'a report was written'
+            if ($null -ne $run.Report) {
+                CheckEqual 'Cancelled' $run.Report.core.status 'core.status'
+                CheckEqual $false $run.Report.window.FolderTree.visible 'FolderTree is not shown after a stop'
+                CheckEqual $true $run.Report.window.TopLevelPanel.visible 'the results panel is'
+                CheckEqual $true $run.Report.window.TopLevelList.inView 'with the results list in view'
+                Check ($null -ne $run.Report.topLevel -and $run.Report.topLevel.final) 'holding the final snapshot'
+            }
+        }
+
+        Write-Output '  a fault on the UI thread mid-scan'
+        $report = Join-Path $case 'fault.json'
+        Set-Content -LiteralPath $report -Value '{"schema":1,"stale":true}'
+        $run = Invoke-HookedRun 'throw' $root $report
+        $before = $script:Failures.Count
+        CheckActed $run 'throw'
+        if ($script:Failures.Count -eq $before) {
+            Check ($run.Exit -eq '70') "exit code is the app's 70 (actual $(Show-Exit $run.Exit))"
+            $shutdown = @($run.Log | Where-Object { $_.StartsWith('shutdown ') })
+            Check ($shutdown.Count -eq 1 -and (Field $shutdown[0] 'tree') -eq 'False' -and (Field $shutdown[0] 'treeItems') -eq '0') "as the app shut down, the tree was found, not shown and empty ($(Show ($shutdown -join ' | ')))"
+        }
+
+        Write-Output '  a root that is not there'
+        $read = Read-Window (Join-Path $case 'missing')
+        CheckEqual 'EXIT 0' $read.Exit 'exit code'
+        if ($null -ne $read.Report) {
+            Check ("$($read.Report.window.OutcomeTitle)".StartsWith('Could not read ')) 'the ending is Could not read'
+            CheckEqual $false $read.Report.window.FolderTree.visible 'FolderTree is not shown'
+        }
+    }
+    finally { Remove-CaseFolder $case }
+}
+
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001') + $NetworkCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006') + $NetworkCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })

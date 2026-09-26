@@ -1,0 +1,158 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-044",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-09-26T11:42:22.246Z",
+ "head": "3dbaedf25a623491d2601479410a947e0299713a",
+ "run_id": 1290,
+ "summary": "SL-044 built the folder tree App-only on top of SL-042's Core rollups: a stock virtualizing TreeView over the finished ScanResult.Store, with a FolderTreeSession the next scan closes, a tree-mode window hook and cases T-001..T-006. It appears only after a scan completes, because two spikes showed the live mid-scan path fails. Attempt 1 drew a tree with a 39 px viewport at the default window size and shipped a T-005 that failed on re-run, so a second build attempt was needed. Validation met all six owed rows on the designed temp trees and real D:\\ and C:\\ roots, but on real D:\\ the responsiveness row broke its 1 s bar in 1 of 6 runs, and owed fix O-031 (primary-monitor placement) was still open when the slice was accepted.",
+ "payload": {
+  "status": "complete",
+  "summary": "SL-044 built the folder tree App-only on top of SL-042's Core rollups: a stock virtualizing TreeView over the finished ScanResult.Store, with a FolderTreeSession the next scan closes, a tree-mode window hook and cases T-001..T-006. It appears only after a scan completes, because two spikes showed the live mid-scan path fails. Attempt 1 drew a tree with a 39 px viewport at the default window size and shipped a T-005 that failed on re-run, so a second build attempt was needed. Validation met all six owed rows on the designed temp trees and real D:\\ and C:\\ roots, but on real D:\\ the responsiveness row broke its 1 s bar in 1 of 6 runs, and owed fix O-031 (primary-monitor placement) was still open when the slice was accepted.",
+  "estimate_error": "Opened as medium size, medium risk. Undersized. The product code was small (App-only, Core unchanged). The tests/window hook (TreeMode.cs), the 34-case WindowCases.ps1 run (about 643 s) and the layout rework were the bulk, and they drove 2 build attempts, 4 code-review passes and 2 validation runs. Risk was right on memory: the stock TreeView held (816 MiB spike peak, 731 MiB on real C: with the root open) and the cold 100k open took about 98 ms against the 500 ms bar. Risk was under-called on responsiveness and layout. Row 6 inherits a display-state-dependent stall from SL-039/SL-040 that went red in review and again on real D:\\, and the tree's pane size depended on SL-040's grid. The critique-review was skipped by the sizing rule, and the code review then found two design-level majors (39 px viewport, T-005's percentile over too few probes).",
+  "what_went_wrong": [
+   "Attempt 1 gave the tree a 39 px viewport (about 2 rows) at the default 620 px window, because the design dropped it into SL-040's 1* results row (MinHeight 84) beside a 3* outcome row (MinHeight 292). The hook logged '1,410 px of rows in a 39 px viewport' and no case asserted a minimum, so nothing failed until the code review measured it. The point of the slice, working down from the drive, was nearly unusable.",
+   "Attempt 1 recorded T-005 as 'passed, longest wait 47 ms' from one run. The code review ran it 3 times and it failed 3/3. The p95 was taken over 11-20 probes at 50 ms cadence, which makes p95 the maximum, so it flipped with display state. Attempt 2 ran it 4 times and moved to 10 ms probes.",
+   "Attempt 2's fix for the tiny viewport planted a new defect. The move-up and height clamp use SystemParameters.WorkArea, the primary monitor only, so on another monitor the window can be pushed onto the primary or leave its title bar in space no monitor covers (O-031). The move-up itself went beyond what the fix asked for. The code review found it, but the fix was not built and validation could not reproduce it (one monitor). The slice is accepted with an owed [fix] open.",
+   "Row 6 is marked MET on the designed temp tree, but on real D:\\ at the default 860 px, 1 of 6 runs measured a 1,318.5 ms rescan wait against the 1 s bar. Validation accepted it as an earlier stall of SL-039/SL-040's window. That rests on the same slow first move at 620 px and in the pre-tree scan phase, not on running de51999 through the D:\\ scenario. Whether the taller 860 px default made it worse (n=6 against n=3 at 620) is unmeasured.",
+   "The 'Real C:\\ tree read through the hook' check failed. The hook has a fixed 120 s ending deadline and the C:\\ scan took 1,299 s, so no tree row on the biggest real drive was read. Drill-down, opening a 100k folder and memory growth past the root were never measured at that scale. Only the report-mode peak of 731 MiB with the root open exists.",
+   "The 1:3 split squeezes SL-040's largest-files list to 56 px (2 rows) whenever the unreadable-folders expander shows, which is every real drive scanned (D:\\ and C:\\). Nobody has judged whether that is acceptable.",
+   "The 'could not be read in full' wording for a folder whose listing failed partway (Scanner.cs:158-166) has no window case, and N-001..N-004 (StallRig network cases, design case D) were never run in either build attempt or validation, because they change SMB client mappings and are person-run.",
+   "The code review halted 2 of its 4 runs and each halt needed a fresh model disposal. Finding ids restart at M1/m1 in every gate (critique M1-M5, code-review M1/M2/m1), so 'M1' and 'M2' name different findings in the record. The obligation numbers (O-016.., O-028..) are the only unambiguous handle."
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "dimension": "unfounded-assumptions",
+    "severity": "major",
+    "what": "The design put FolderTree 'in the same grid cell as TopLevelList' and warned only about Auto/StackPanel hosts (virtualization). It never asked how tall that cell is at the default window size. MainWindow.xaml's 3*/1* rows (MinHeight 292/84) and Height=MinHeight=620 gave a 39 px viewport, about 2 rows. The check that would have caught it is: for any control placed in an existing MainWindow grid cell, state its pixel height at the default and minimum window sizes.",
+    "caught_by": "code-review #1 (measured the 39 px viewport, which became O-029)"
+   },
+   {
+    "gate": "critique",
+    "dimension": "test-coverage",
+    "severity": "major",
+    "what": "The responsiveness case (row 6) named no probe cadence, phase length or percentile rule. The critique's own m7 disposition handed it to 'a hook-driven UI-gap measurement in a new window case' with no statistical bar. The builder wrote p95 over 11-20 probes at 50 ms, which is the maximum, so T-005 failed 3/3 in review after a one-run 'pass 47 ms'. It cost a full build attempt and code-review round. The check to ask: how many samples land in each asserted phase, and is the statistic meaningful at that count?",
+    "caught_by": "code-review #1 (O-028)"
+   },
+   {
+    "gate": "critique",
+    "dimension": "missing-edge-cases",
+    "severity": "minor",
+    "what": "The design equated ChildCount 0 with 'unreadable' and had no case for how an unreadable row reads. Scanner.cs:158-166 appends a partly listed folder's children and then flags it Unreadable, so it is both expandable and 'could not be opened'. The build also dropped B-007's topLevel.unreadable=12 check without moving it to the tree, so the 12 denied folders had no tree check.",
+    "caught_by": "code-review #1 (O-030)"
+   },
+   {
+    "gate": "critique",
+    "dimension": "test-coverage",
+    "severity": "minor",
+    "what": "The hook contract did not say what tree mode does when a scan outlasts the hook's fixed 120 s ending deadline, although the epic's own target is a 5M-entry drive. On real C:\\ (1,299 s scan) no tree rows could be read, so drill-down and 100k-open behaviour at that scale is unmeasured.",
+    "caught_by": "validate-slice (real C:\\ hook read failed)"
+   },
+   {
+    "gate": "code-review",
+    "dimension": "cross-cutting-conformance",
+    "severity": "minor",
+    "what": "The review of attempt 2's 1:3 split checked that both rows keep their MinHeights and that B-007/B-008 hold at the minimum size. It did not check what the outcome panel's largest-files list is left with once the unreadable-folders expander shows, which every real drive scan produces. Validation found 56 px, 2 rows, on D:\\ and C:\\, a regression to SL-040's list caused by this slice.",
+    "caught_by": "validate-slice"
+   }
+  ],
+  "learned": [
+   {
+    "kind": "design",
+    "lesson": "Budget pixels against MainWindow's existing layout before designing anything that lands in it. SL-040's grid gives the outcome row MinHeight 292 and the results row MinHeight 84. This slice made the default window 860 px (MinHeight still 620, clamped to the work area) and split the rows 1:3 while the tree is shown. The tree now gets a 284 px viewport (14 rows) by default and 48 px (2 rows) at the 620 px minimum. The largest-files list gets 76 px, or 56 px when the unreadable-folders expander shows. The next slice that adds to this window (progress, cancel, SC-002) starts from those numbers, not from the old 3:1 split.",
+    "evidence": "O-029; B-007 'FolderTree 288 px with 14 full rows at default, 48 px with 2 at minimum'; validation 'largest-files list 56 px with 2 full rows' on D:\\ and C:\\."
+   },
+   {
+    "kind": "risk",
+    "lesson": "Window responsiveness on this machine depends on display state, so an absolute pass/fail bar on 'move and resize during a scan' flips between batches. Compare against de51999 in the same batch. Assert p95 only in phases with at least 20 probes (10 ms cadence gives 54-143). Repeat any 'passed' at least 3 times before recording it.",
+    "evidence": "Same T-005 shape gave longest waits 361-467 ms (scan) and 378-857 ms (rescan) in one batch and 17-39 ms minutes later. Attempt 1's single-run 47 ms pass failed 3/3 in review. Real D:\\ broke 1 s in 1 of 6 runs (1,318.5 ms)."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "The first-move stall while a scan starts predates this slice and is not the tree. With no moves the rescan's longest wait was 10 ms, and de51999 stalled 419-511 ms in T-005's shape. T-005 now logs when the longest wait was posted, each move's duration and how long StartScan held the UI thread, so a later slice can chase it. Do not treat a T-005 red as a tree regression before reading those fields.",
+    "evidence": "Build attempt 2 diagnostic: stall present with a deep or a big folder open and absent minutes later; StartScan held the UI thread 2.8-7.4 ms and 22 moves took at most 27 ms each in the calm batch."
+   },
+   {
+    "kind": "design",
+    "lesson": "The tree's shape is settled and measured: stock TreeView, virtualizing, Recycling, Pixel scroll; rows built once on the first expand in an Expanded handler (not the IsExpanded setter); rows hold a FolderTreeSession, never the store; StartScan closes the session. The 100k cold open took 97.9 ms at the default size and 135.6-141.9 ms in a work-area-tall window, against a 500 ms bar and U-001's 230 ms median. The store was released with a row selected and focused. Do not reopen a custom control or the worker-thread sort fallback (O-015).",
+    "evidence": "T-003, T-004 in validation's full run; C:\\ real scan peak 731 MiB private with the root opened (3,597,756 files, 830,964 folders)."
+   },
+   {
+    "kind": "risk",
+    "lesson": "A live tree during a scan is blocked by Core, not by WPF. Core exposes no consistent rollup read below level 1 while the scanner writes: child above parent 10-21 times per scan, children summing above the parent about 400 times. Whoever builds a live tree must first add a Core read path (immutable per-folder snapshots to depth 4, or a store published with a seqlock or epoch) and must change the allow-list architecture rule (\\bScanStore\\b in src/FsAnalyser.Core/**/*.cs, except Store/ScanStore*.cs, Scanning/Scanner.cs, Scanning/ScanResult.cs, TopLevelTracker.cs, Analysis/LargestFiles.cs) on purpose. docs/design/SL-044-folder-tree.md records this.",
+    "evidence": "Both no-go spikes; design decision 'tree built only from the finished ScanResult.Store'; critique m5 fix (allow-list)."
+   },
+   {
+    "kind": "process",
+    "lesson": "The test hook logged numbers that nobody asserted, and both attempt-1 misses hid there. The 39 px viewport was in T-002's log, and the display-state-dependent T-005 gap sat in a one-run pass. When a slice adds hook logging, add an assertion on every logged quantity that decides usability (viewport rows, realized-container count), not only on the quantities the design's cases name.",
+    "evidence": "T-002 logged '1,410 px of rows in a 39 px viewport' and passed; the code review measured the viewport and filed M2 (O-029)."
+   },
+   {
+    "kind": "process",
+    "lesson": "A reviewer's prescribed fix can plant the next defect. The M2 fix said 'raise the default Height, clamped to the work area' without naming which monitor. The builder used SystemParameters.WorkArea (primary only) and added an unrequested move-up, which became O-031. This machine has one monitor, so validation could not reproduce it. When a fix touches window placement, name the monitor rule in the fix and route the multi-monitor check to a person.",
+    "evidence": "O-031; validation 'O-031 reproduction: not-run, monitor layouts do not exist on this machine'; MainWindow.xaml.cs:62 and :110-112."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "Real-drive validation is costly and the hook is not built for it. Real C: took 1,299 s to scan (3.6M files, 830,964 folders, 20,003 links) against 2.3 s for D: (527,495 files). The scanner is a single scan thread, whereas U-012's 41-46 s warm figure used 16 workers. The hook's 120 s ending deadline is shorter than the C: scan. Iterate on D: or the repo-local .dotnet tree (5,578 files, exact oracle via Get-ChildItem). Make the deadline configurable before any C:-scale check.",
+    "evidence": "Validation: report-mode C:\\ run 1,299 s; hook read of C:\\ tree rows failed on the 120 s deadline; D:\\ 2.3 s."
+   },
+   {
+    "kind": "process",
+    "lesson": "On this repo plain `dotnet` fails (exit 145: machine SDKs 8.0.425/9.0.318 against global.json 10.0.100). Everything must go through pwsh eng/dotnet.ps1, which downloads SDK 10.0.401 (about 300 MB) into a gitignored .dotnet/ once per worktree (Q-003). Build-check, both spikes and the build each rediscovered this. A full `WindowCases.ps1 -Case All` on the published exe takes about 643 s and N-001..N-004 need -IncludeNetwork and a person, so iterate with -Case <id> and reserve -Case All for the final gate.",
+    "evidence": "Build-check commands (exit 145 then the wrapper's exit 0); spikes' 'no .NET 10 SDK' deviations; validation's 643 s run."
+   },
+   {
+    "kind": "estimate",
+    "lesson": "For window-adjacent slices, size the test hook and case suite as the main body of work, not the product code. This slice's App diff was modest, but tests/window/FsaWindowHook/TreeMode.cs (breadth-first walk, BringIndexIntoViewPublic realization, expand timing, recycle, release, multiply-key, UI probe) and about 34 window cases drove both build attempts. A medium slice that skips the critique-review because of its size still got two design-level majors from the code review.",
+    "evidence": "Attempt 2 diff touched MainWindow.xaml, MainWindow.xaml.cs, FolderTreeNode.cs, TreeMode.cs, WindowCases.ps1 and the design doc; rework counts: build 2, code-review 4, validate 2; critique-review skipped by sizing."
+   }
+  ],
+  "unknowns": [
+   "Does de51999 also break the 1 s bar on the real D:\\ move-and-resize scenario, and does this slice's 860 px default raise the first-move stall compared with 620 px? Validation ran n=6 at 860 and n=3 at 620 and never ran the pre-slice exe on D:\\.",
+   "Does the tree stay under 1 GiB on the real C: store (about 4.45M entries) after drilling down and opening a big folder? Only the report-mode peak with the root open (731 MiB) was measured; the hook's 120 s deadline blocked the tree read.",
+   "How does the O-031 placement code behave on a monitor below or beside the primary but set lower? No such layout exists on this machine.",
+   "Is a 22-minute single-threaded C:\\ scan (1,299 s, 3.6M files) acceptable to the epic, given that U-012's 41-46 s warm figure used 16 workers? The tree only appears at the end of that scan.",
+   "Is a 56 px, 2-row largest-files list acceptable to the person whenever the unreadable-folders expander shows (D:\\ and C:\\)?"
+  ],
+  "candidates": [
+   {
+    "title": "Fix O-031: base the window's height clamp and startup move-up on the monitor the window opens on, or skip the move-up when it is not on the primary work area",
+    "urgency": "now",
+    "why": "Owed [fix] still open at slice end. MainWindow.xaml.cs:62 and :110-112 use SystemParameters.WorkArea (primary only), which can push the window onto the primary or strand its title bar off every monitor. Validation could not reproduce it with one monitor, so it needs a person or a multi-monitor check."
+   },
+   {
+    "title": "Chase the move/resize stall while a scan starts in SL-039/SL-040's window: A/B de51999 against HEAD on real D:\\ in the same batch, then find what blocks the UI thread",
+    "urgency": "soon",
+    "why": "Real D:\\ at 860 px broke the 1 s bar in 1 of 6 runs (1,318.5 ms rescan wait). Stalls of 361-857 ms appeared in one batch and 17-39 ms minutes later. T-005 now logs when the longest wait was posted and each move's duration. Whether the 860 px default worsened it is unmeasured."
+   },
+   {
+    "title": "Make the tree hook's ending deadline configurable and run drill-down, a 100k open and a private-bytes sample on the real C:\\ store",
+    "urgency": "soon",
+    "why": "Validation's C:\\ tree read failed on the fixed 120 s deadline against a 1,299 s scan. The 1 GiB claim past the root rests on the 816 MiB stand-in spike and a 731 MiB report-mode peak with only the root open."
+   },
+   {
+    "title": "Rebalance the results area so the largest-files list keeps usable rows when the unreadable-folders expander shows",
+    "urgency": "soon",
+    "why": "The 1:3 split leaves SL-040's largest-files list 56 px (2 rows) on D:\\ and C:\\. Nobody has judged whether that is acceptable, and no case asserts a minimum for it."
+   },
+   {
+    "title": "Run the StallRig network cases N-001..N-004 (-IncludeNetwork) on the SL-044 build",
+    "urgency": "soon",
+    "why": "Design case D was cut from both build attempts and from validation because the cases create and remove SMB client mappings. They are person-run, and row 6's stalled-share shape has never been exercised against the tree."
+   },
+   {
+    "title": "Add a Core test seam or scanner-level test for a directory listing that fails partway, then a window case for the tree's 'could not be read in full' row",
+    "urgency": "someday",
+    "why": "Scanner.cs:158-166 appends children then flags Unreadable. The row has an expander over the listed rows and its own wording, but an ordinary user cannot make it happen, so no window case covers it."
+   },
+   {
+    "title": "Live tree during a scan: build a Core read path for consistent rollups to depth 4 (immutable per-folder snapshots, or a store published with a seqlock or epoch), then show and refresh the tree while scanning",
+    "urgency": "someday",
+    "why": "The tree only appears when the scan ends. On real C: that is 1,299 s with only the flat list showing. Both spikes (live refresh: 84 ms median, 866 ms UI gap; mid-scan shares: child above parent 10-21 times per scan) say it needs that Core path first, and the Core architecture rule must be changed on purpose."
+   }
+  ]
+ }
+}

@@ -200,9 +200,9 @@ function Test-Rows($run, [string[]] $ids, [string] $verdict, [string] $xunit = '
 
 function Case-C001 {
     Write-Output 'C-001 the clean tree: 11 Facts, 15 twinned entries, 27 patterns, the settled entries below the marker'
-    # 24 settled: SL-023 and SL-024 (4), SL-031 (3), SL-033 (3), SL-038 (5), SL-039 (3), SL-042 (3) and SL-043 (3).
-    # SL-040's rule is twinned (8th Fact), and so are SL-043's three (9th to 11th Facts, 4 twinned entries).
-    $agree = 'rules-parity: AGREE 11 facts <- 15 twinned entries, 27 patterns; 24 settled entries not compared'
+    # 28 settled: SL-023 and SL-024 (4), SL-031 (3), SL-033 (3), SL-038 (5), SL-039 (3), SL-042 (3), SL-043 (3) and
+    # SL-044 (4). SL-040's rule is twinned (8th Fact), and so are SL-043's three (9th to 11th Facts, 4 twinned entries).
+    $agree = 'rules-parity: AGREE 11 facts <- 15 twinned entries, 27 patterns; 28 settled entries not compared'
     foreach ($shell in $Shells) {
         CheckRun (Invoke-Parity $shell $Repo) 0 "the repo [$shell]" @($agree)
         CheckRun (Invoke-Parity $shell $Repo @('-ExpectFacts', '11')) 0 "the repo with -ExpectFacts 11 [$shell]" @($agree)
@@ -265,7 +265,7 @@ function Case-C003 {
         param($root)
         $path = Join-Path $root $YamlRel
         [System.IO.File]::AppendAllText($path, "`r`n  # settled by SL-999`r`n" + $newEntry.Replace("`n", "`r`n"), $Utf8)
-    } 0 @('rules-parity: AGREE 11 facts <- 15 twinned entries, 27 patterns; 25 settled entries not compared')
+    } 0 @('rules-parity: AGREE 11 facts <- 15 twinned entries, 27 patterns; 29 settled entries not compared')
 }
 
 function Case-C004 {
