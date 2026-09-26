@@ -11,7 +11,9 @@ namespace FsAnalyser.Core.Scanning;
 /// <remarks>
 /// Depth-first with an explicit stack, on the caller's thread. Each folder is listed once through
 /// <see cref="DirectoryReader"/> and its listing is appended as one contiguous block, so the first name
-/// of a hardlinked file the scan meets is always the same one. Links are recorded and never entered.
+/// of a hardlinked file the scan meets is always the same one: the store charges that name and flags the
+/// rest, and it is repeatable only because this is the one thread appending, in this order. Links are
+/// recorded and never entered.
 /// Nothing that goes wrong inside the tree fails the scan: an unreadable folder is flagged and listed in
 /// <see cref="ScanResult.Unreadable"/>.
 /// <para>Cancel interrupts the filesystem call the scan is blocked in, through the scan thread's
@@ -193,14 +195,14 @@ public static class Scanner
                 (EntryKind kind, bool cloudOnly) = EntryClassifier.Classify(raw.Attributes, raw.ReparseTag, isDirectory);
                 if (kind != EntryKind.File
                         || !SizeProbe.IsDue(raw.AllocationSize, raw.EndOfFile, raw.Attributes, cloudOnly)
-                        || (raw.FileId != UInt128.Zero && _settled.Contains(raw.FileId)))
+                        || (ScanStore.HasFileId(raw.FileId) && _settled.Contains(raw.FileId)))
                     continue;
 
                 int error = SizeProbe.Probe(io, LongPath.Child(folderPath, _reader.NameOf(raw)), out long size, out long onDisk);
                 if (ClassifyReadError(error, ct.IsCancellationRequested) == ReadOutcome.Cancelled)
                     return false;
                 _dueProbes.Add(new DueProbe(k, error, size, onDisk));
-                if (raw.FileId != UInt128.Zero)
+                if (ScanStore.HasFileId(raw.FileId))
                     _settled.Add(raw.FileId);
             }
             return true;
@@ -212,8 +214,11 @@ public static class Scanner
             bool isDirectory = (raw.Attributes & Kernel32.FILE_ATTRIBUTE_DIRECTORY) != 0;
             (EntryKind kind, bool cloudOnly) = EntryClassifier.Classify(raw.Attributes, raw.ReparseTag, isDirectory);
             ReadOnlySpan<char> name = _reader.NameOf(raw);
+            // The store applies the counting rule: a folder or a link posts nothing, and a later name of a
+            // file already charged is flagged and posts one file and no bytes.
             int entry = _store.Append(parent, name, kind, cloudOnly ? EntryFlags.CloudOnly : EntryFlags.None,
-                raw.Attributes, raw.EndOfFile, raw.AllocationSize, raw.FileId);
+                raw.Attributes, raw.EndOfFile, raw.AllocationSize, raw.FileId, out int charged, out ScanStore.Posted posted);
+            Credit(entry, posted, inPlace: false);
 
             switch (kind)
             {
@@ -222,21 +227,17 @@ public static class Scanner
                     return;
                 case EntryKind.Folder:
                     _folders++;
-                    _bytes += raw.EndOfFile;
-                    _bytesOnDisk += raw.AllocationSize;
                     return;
             }
 
-            _files++;
             DueProbe? due = null;
             if (_nextDueProbe < _dueProbes.Count && _dueProbes[_nextDueProbe].Index == index)
                 due = _dueProbes[_nextDueProbe++];
 
-            if (!_store.TryAddFileId(entry, out int charged))
+            if (charged != entry)
             {
-                // A later name of a file already charged: it counts as a file and adds no bytes. The
-                // first repeat corrects the charged record, whose listing may be stale.
-                _store.AddFlags(entry, EntryFlags.HardlinkDuplicate);
+                // A later name of a file already charged, which the store found by its ID. The first repeat
+                // corrects the charged record, whose listing may be stale.
                 const EntryFlags settled = EntryFlags.SizeProbed | EntryFlags.ProbeFailed | EntryFlags.CloudOnly;
                 if (!cloudOnly && (_store.Flags(charged) & settled) == 0)
                 {
@@ -248,8 +249,6 @@ public static class Scanner
                 return;
             }
 
-            _bytes += raw.EndOfFile;
-            _bytesOnDisk += raw.AllocationSize;
             if (due is { } probed)
                 Correct(entry, probed.Error, probed.Size, probed.OnDisk);
         }
@@ -263,13 +262,13 @@ public static class Scanner
                 Correct(charged, error, size, onDisk);
         }
 
-        // Replaces a charged record's listing sizes with the file's own, and the totals by the difference,
-        // or flags it ProbeFailed and keeps the listing sizes.
+        // Replaces a charged record's listing sizes with the file's own, which the store posts up its folders
+        // and this credits to the totals, or flags it ProbeFailed and keeps the listing sizes.
         private void Correct(int charged, int probeError, long size, long onDisk)
         {
             _probes++;
             UInt128 fileId = _store.FileId(charged);
-            if (fileId != UInt128.Zero)
+            if (ScanStore.HasFileId(fileId))
                 _settled.Add(fileId);
             if (probeError != 0)
             {
@@ -278,12 +277,21 @@ public static class Scanner
                 return;
             }
 
-            long bytes = size - _store.Size(charged), onDiskBytes = onDisk - _store.OnDisk(charged);
-            _bytes += bytes;
-            _bytesOnDisk += onDiskBytes;
-            _store.CorrectSizes(charged, size, onDisk);
-            _topLevel.Moved(charged, bytes, onDiskBytes); // the charged name's row, whatever listing this is
+            Credit(charged, _store.CorrectSizes(charged, size, onDisk), inPlace: true);
             _store.AddFlags(charged, EntryFlags.SizeProbed);
+        }
+
+        // The one way what the store posted reaches the running totals, so the root's rollups stay the
+        // totals. An append is always under the folder being listed, whose row the tracker credits when the
+        // listing commits. A correction can land on a record under any row, so that row is credited now,
+        // whatever listing this is.
+        private void Credit(int entry, ScanStore.Posted posted, bool inPlace)
+        {
+            _files += posted.Files;
+            _bytes += posted.Size;
+            _bytesOnDisk += posted.OnDisk;
+            if (inPlace)
+                _topLevel.Moved(entry, posted.Size, posted.OnDisk);
         }
 
         private ScanTotals Totals => new(_files, _folders, _links, _bytes, _bytesOnDisk);

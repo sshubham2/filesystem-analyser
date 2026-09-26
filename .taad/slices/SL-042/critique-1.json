@@ -1,0 +1,163 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-042",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-09-25T23:31:43.342Z",
+ "head": "d78635f2fdc4035f3b04a6a8aad86a6e4a83d22b",
+ "run_id": 1207,
+ "summary": "The core shape is sound and I found no blocker. It posts charges incrementally up the Parent chain inside Append, owns deduplication in the store with TryAddFileId private, sorts on read with an Entry tiebreak, and uses an independent iterative oracle. It serves all six criteria, and each criterion has a case.\n\nFour major issues remain:\n- **M1, SizeProbe and dedup.** The Scanner's size probes may depend on the dedup result that this design moves inside Append, and may correct the first holder's row. The design hands this to a one-grep builder decision that asks the wrong question.\n- **M2, all-ones file ID.** MS-FSCC says an all-ones 128-bit file ID MUST be ignored. The store would treat it as a real ID and deduplicate every such file into 0 bytes.\n- **M3, single writer.** The one decision marked expensive to reverse, a single writer thread, is held only by documentation. Breaking it fails silently: the root total stays right and only the per-folder split moves. A two-line guard would enforce it.\n- **M4, the two unmeasured claims.** Sort time and memory are gated by tests that xUnit runs in parallel with the new heavy tests. Neither gate says what it measures or what it must be isolated from.\n\nThe minor findings: a self-contradictory FilesBelow invariant; a claim that totals match \"by construction\" when it actually depends on each call site remembering; Unreadable set after children are appended; the root append sentinel; architecture-rule globs and comment matches that no planted violation has checked; xUnit v3 Explicit getting past the never-skip rule; a real-tree test that probably proves nothing because NTFS normally lists a subfolder's size as 0; the SL-040 semantic merge point; and an architecture line that is departed from but not updated.\n\nThere were no `cited` prior-art entries to check, because the design's prior-art block was clipped from what I was given. The design says it downgraded two entries to recalled. I could not confirm the recalled ncdu per-subtree behaviour from the pages the search returned, and it is only decorative.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The core shape is sound and I found no blocker. It posts charges incrementally up the Parent chain inside Append, owns deduplication in the store with TryAddFileId private, sorts on read with an Entry tiebreak, and uses an independent iterative oracle. It serves all six criteria, and each criterion has a case.\n\nFour major issues remain:\n- **M1, SizeProbe and dedup.** The Scanner's size probes may depend on the dedup result that this design moves inside Append, and may correct the first holder's row. The design hands this to a one-grep builder decision that asks the wrong question.\n- **M2, all-ones file ID.** MS-FSCC says an all-ones 128-bit file ID MUST be ignored. The store would treat it as a real ID and deduplicate every such file into 0 bytes.\n- **M3, single writer.** The one decision marked expensive to reverse, a single writer thread, is held only by documentation. Breaking it fails silently: the root total stays right and only the per-folder split moves. A two-line guard would enforce it.\n- **M4, the two unmeasured claims.** Sort time and memory are gated by tests that xUnit runs in parallel with the new heavy tests. Neither gate says what it measures or what it must be isolated from.\n\nThe minor findings: a self-contradictory FilesBelow invariant; a claim that totals match \"by construction\" when it actually depends on each call site remembering; Unreadable set after children are appended; the root append sentinel; architecture-rule globs and comment matches that no planted violation has checked; xUnit v3 Explicit getting past the never-skip rule; a real-tree test that probably proves nothing because NTFS normally lists a subfolder's size as 0; the SL-040 semantic merge point; and an architecture line that is departed from but not updated.\n\nThere were no `cited` prior-art entries to check, because the design's prior-art block was clipped from what I was given. The design says it downgraded two entries to recalled. I could not confirm the recalled ncdu per-subtree behaviour from the pages the search returned, and it is only decorative.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "claim": "The design moves hardlink detection inside Append and deletes the Scanner's hardlink branch. It settles the SizeProbe question by asking whether each probe happens before the append. That is the wrong question.\n\nA listing-only scanner learns that a file has several names at one moment: when a later name's ID collides. The listing gives no link count (spike store-5m), and probing every file is ruled out (U-012 impossible). If the Scanner's probe is triggered by TryAddFileId returning 'already present', then after the hand-off:\n- (a) the trigger no longer exists in the Scanner, and deleting lines 235-249 may delete the probe call with it;\n- (b) the correction targets the first holder's row. U-005 says the listing is stale for names other than the one written through, so the charged first name can be the stale one. That row was appended earlier, so correcting it is a post-append write to a different entry, and it needs the first holder's index. The design says nothing needs that index.\n\nA builder following the design literally can pass the grep test ('the probe happens before append') and still lose or misdirect the correction. The HardlinkTests stale-name case catches this only if the stale name is the first-seen one.",
+    "evidence": "Append posting: 'If every probe happens before the append, the method is not added. The builder settles which with one grep of Scanner.cs.' Scanner hand-off: 'Deletes ... the hardlink branch calling TryAddFileId (235-249)'. Real-tree extensions: 'It includes the stale-listing name that SizeProbe corrects.' Selection rationale: 'Nothing in the design needs the first holder's index.' U-005: 'Listing!=handle: hardlink 5/5'.",
+    "fix": "Make the correction method unconditional, taking the index of the entry to correct, and let Append return whether the entry was flagged a duplicate plus the first holder's index. The existing FileIdIndex already stores entry indices, so this costs no memory. The Scanner's probe trigger reads that return value instead of TryAddFileId. Before deleting 235-249, the builder moves any probe call out of it. Add a real-tree case where the write went through a later name, so the first-seen charged name is the stale one, and assert the first name's folder chain carries the handle size."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "missing-edge-cases",
+    "claim": "The store treats every non-zero 128-bit ID as a real identity. MS-FSCC defines a second 'no ID' sentinel that clients MUST ignore: all-ones, meaning a unique ID cannot be established. The 64-bit ID has the same sentinel, which becomes hi=0, lo=ulong.MaxValue once zero-extended the way the project builds keys.\n\nOn any volume or file that returns the sentinel, the first file is charged and every later file is flagged HardlinkDuplicate and charged 0 bytes. The loss is silent. Criterion 2's dedup then drops real bytes, which is the failure the design's 'IDs that must not match' case exists to prevent. The case covers only all-zero IDs and low-half collisions.",
+    "evidence": "Contract 'ScanStore append': 'An all-zero ID never deduplicates.' Case: 'IDs that must not match: two files with an all-zero ID, and two files with the same low 64 bits'. MS-FSCC 2.1.10 (https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/98860416-1caf-4c80-a9ab-8d61e1ccf5a5): 'For files for which a unique 128-bit file ID cannot be established, this field MUST be set to 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF, and MUST be ignored.' 64-bit ID (https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/2d3333fe-fc98-4a6f-98a2-4bb805aff407): 'MUST be set to 0xFFFFFFFFFFFFFFFF, and MUST be ignored.'",
+    "fix": "Define one private HasId(hi, lo) predicate in the store that Append uses. It is false for all-zero, for all-ones, and for hi==0 && lo==ulong.MaxValue (a zero-extended 64-bit sentinel). Add both sentinels to the 'IDs that must not match' case: two files each, both charged, neither flagged."
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "under-engineering",
+    "claim": "The decision marked 'expensive' to reverse, one writer thread with deterministic order, is held only by an XML doc comment. The spike shows the failure is silent: under parallel appends the root total is conserved and only the per-folder split drifts. A future parallel Scanner (U-012 makes one likely) that calls Append from workers would therefore compile, pass every root-equals-Totals assertion, and pass small real-tree tests on most runs.\n\nDeterministic order cannot be enforced at the seam, but single-writer can, and cheaply. As designed, the invariant depends on every future writer remembering it.",
+    "evidence": "Key decision: 'Single writer plus deterministic append order is a documented invariant of the store ... reversibility: expensive'. Append posting: 'The XML doc states the two caller obligations'. Spike first-seen-charging-repeatable: 'Root C:\\Windows was 41,044,790,312 bytes under (a) in all 5 runs, so the total is conserved and only the split between folders moves.'",
+    "fix": "In Append, take an Interlocked in-append flag and throw InvalidOperationException if it is already held. This detects concurrent writers without false-firing on sequential thread hops from async continuations. Add one unit test in which two threads append concurrently and at least one gets the exception. Keep the doc for the ordering half, which cannot be checked."
+   },
+   {
+    "id": "M4",
+    "severity": "major",
+    "dimension": "test-coverage",
+    "claim": "Both of the design's unmeasured claims are settled by tests: (a) sort time, by the timing test, and (b) memory, by ScanStoreBudgetTests. The design never says how those tests are isolated, what the budget test measures, or its threshold.\n\nxUnit runs test classes in parallel by default. The new tests land in the same assembly as the 5M-entry budget test: two 100k-child stores (the wide case and the timing case), the 10,000-deep chain, and a 50k mixed tree checked after every append.\n- The timing test asserts that every read, including the cold one, is under 250 ms. It can absorb a blocking GC or CPU contention caused by the budget test's ~0.8 GiB build.\n- If the budget test samples process memory, as the spike did, the new tests' allocations count against the store. A false failure there triggers the pre-decided folder-slot fallback for a reason that has nothing to do with the store's layout.\n\nThe design also says the budget test 'must pass unchanged' while migrating 'any use of TryAddFileId in the budget test' onto Append. Those two statements conflict.",
+    "evidence": "Rollup columns: 'Gated by the existing ScanStoreBudgetTests.FiveMillionEntriesFitTheMemoryBudget, which must pass unchanged'. Synthetic tests: '(and any use of TryAddFileId in the budget test) move onto the append path'. Timing decision: 'The 6x or greater margin ... absorbs the load of two slices building at once' (this covers other processes, not in-process parallel tests). xUnit parallel by default and DisableParallelization: https://xunit.net/docs/running-tests-in-parallel, https://github.com/xunit/xunit/discussions/2237 ('any test in that collection will not run in parallel with any other collections').",
+    "fix": "Put ScanStoreBudgetTests and ScanStoreRollupTimingTests in a [CollectionDefinition(DisableParallelization = true)] collection. State that the budget gate measures peak private bytes against 1,073,741,824, and that the build records the measured peak with the rollup columns present. Replace 'must pass unchanged' with 'its threshold and shape unchanged; entries fed through Append'."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "claim": "The read contract contradicts itself on FilesBelow. It defines FilesBelow(file) = 0, and it also states 'at rest, a folder's three values equal the sums of its children's three values'. With files returning 0, a folder holding three files has children summing to 0 but its own FilesBelow is 3. CheckStructure is specified to assert exactly this sum, so it fails on any folder with direct files. The builder then has to bend either the independent oracle or the public file contract, and the contract is exactly what the future tree UI will read.",
+    "evidence": "Contract RolledSize/RolledOnDisk/FilesBelow: 'File: its own charge, and FilesBelow 0 ... At rest, a folder's three values equal the sums of its children's three values.' RollupOracle: 'that each folder's total equals the sum of its children's totals'.",
+    "fix": "State the invariant as: RolledSize and RolledOnDisk equal the sum of the children's values; FilesBelow(folder) equals the sum of FilesBelow over child folders plus the number of child entries of Kind File (duplicates included, links excluded). Alternatively, define FilesBelow(file) = 1 as 'files at or below'. Pick one in the contract."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "'Root RolledSize/RolledOnDisk/FilesBelow equal Totals.Bytes/OnDisk/Files by construction' is not by construction. Three accumulators hold the same numbers: the store's rollups, ScanTotals and TopLevelTracker. The Scanner has to feed Totals and the tracker at every site where the store posts a charge.\n\nThe size-correction contract posts its delta up the Parent chain only. It does not say that Totals and the tracker receive the delta, so the second writer site (M1) is where they drift. The real-tree equality assertions catch this only on the trees they build.",
+    "evidence": "Key decision: 'root RolledSize/RolledOnDisk/FilesBelow equal Totals.Bytes/OnDisk/Files by construction'. Contract 'ScanStore size correction': 'computes Charges() before and after and posts the delta up the Parent chain' (it does not mention Totals or TopLevelTracker).",
+    "fix": "Have Append and the correction method return the (dSize, dOnDisk, dFiles) they posted. The Scanner feeds Totals and TopLevelTracker through one private Credit(entry, delta) helper that both call sites use."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "'An Unreadable folder adds nothing and has nothing below it' is enforced only when a child is appended under a folder already flagged Unreadable. The flag itself must be set after the folder's own append, because the folder is listed before anyone tries to open it. U-004 also treats a failed list, not just a failed open, as skip.\n\nIf the Scanner appends part of a child block and then marks the folder Unreadable (for example, after a failure on page 2 of a listing), the folder keeps non-zero rollups. ChildrenLargestFirst then returns empty for a folder whose RolledOnDisk is above 0, and criterion 4 is broken with no guard firing.",
+    "evidence": "Contract ChildrenLargestFirst: 'an Unreadable folder returns an empty array'. Contract rollup reads: 'Links and unreadable folders add nothing to any of the three.' U-004: 'Treat a failed directory open or list as skip/unknown'.",
+    "fix": "Make the store's mark-Unreadable path throw if ChildCount > 0, or state that the Scanner commits a folder's child block only after its listing completes. Cover it with the existing Unreadable leaf case."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "claim": "The append error rule 'ArgumentOutOfRangeException when the parent index is not already in the store' has no exception for the root, whose parent is by definition not in the store. Taken literally, it rejects the first append of every scan.",
+    "evidence": "Contract 'ScanStore append' error_cases: 'ArgumentOutOfRangeException when the parent index is not already in the store'.",
+    "fix": "State the root sentinel explicitly: parent -1 is accepted only for entry 0, and only once."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "No planted violation has checked the two rules that back up the store's ownership of dedup.\n\nThe globs are 'src/FsAnalyser.Core/Scanning/**/*.cs' and 'src/FsAnalyser.Core/Store/**/*.cs'. The files they must police (Scanner.cs, ScanStore.cs) sit directly in those folders. Under fnmatch-style matching, '**/' needs at least one directory level, so both rules would be vacuous. That matters most in the branch the design names: TryAddFileId kept internal, where only the rule stops the Scanner calling it.\n\nSeparately, the regex '\\b(Scanner|DirectoryReader|SizeProbe|TopLevelTracker)\\b' also matches comments. The append XML doc the design asks for, or an existing comment in ScanStore.cs, can trip it falsely.",
+    "evidence": "architecture_rules[0].files 'src/FsAnalyser.Core/Scanning/**/*.cs'; architecture_rules[1].files 'src/FsAnalyser.Core/Store/**/*.cs'; survey paths 'src/FsAnalyser.Core/Store/ScanStore.cs', 'Scanning\\DirectoryReader.cs'. Decision: 'the architecture rule covers the case where the builder must keep it internal'.",
+    "fix": "Add plant rows for eng/rules-harness: 'store.TryAddFileId(' planted in Scanning/Scanner.cs and 'Scanner' planted in Store/ScanStore.cs, each of which must fail. Run both rules against the current tree to confirm there is no false hit from existing comments. What must run: the rules harness with those plant rows."
+   },
+   {
+    "id": "m6",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "The never-skipped rule forbids Skip=, Assert.Skip and the Network trait, but not xUnit v3's Explicit=true. An explicit test is skipped by default, and a slow timing test is exactly what gets marked Explicit. The project's xUnit major version is whatever the SDK 10 template generates, so v3 is possible.",
+    "evidence": "architecture_rules[2].must_not_match. api.xunit.net FactAttribute.Explicit (https://api.xunit.net/v3/3.2.1/v3.3.2.1-Xunit.FactAttribute.Explicit.html): 'An explicit test is skipped by default unless explicit tests are requested to be run.'",
+    "fix": "Add '\\bExplicit\\s*=\\s*true' to must_not_match."
+   },
+   {
+    "id": "m7",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "The new real-tree test builds a folder large enough to own a directory allocation and asserts that the allocation is in no total. It proves nothing if the parent's listing reports 0 for the subfolder, which is the normal case for subdirectory entries. The test then passes both before and after the Scanner change.\n\nThe same fact bears on the design's open Totals question. On local NTFS, dropping folders' own sizes is probably a no-op. Over SMB, the report below shows subfolders intermittently listing 4096, so dropping them removes run-to-run noise from Totals.",
+    "evidence": "Real-tree extensions: 'One new test builds a folder large enough to own a non-zero directory allocation and asserts it is in no total.' devhide Q&A on FileBothDirectoryInformation over SMB (https://devhide.com/ntqueryinformationfile-filebothdirectoryinformation-intermittently-reports-non-zero-size-endoffile-allocationsize-for-certain-subdirectories-67064765): 'Normally all subdirs are reported as having size 0, but if I rerun ... some subdirs are reported to have size 4096.'",
+    "fix": "Have the test first assert its precondition: the Scanner's listing gave that folder non-zero EndOfFile or AllocationSize. If that cannot be built on local NTFS, drop the real-tree variant and keep the synthetic 4096/4096 case. What must run: list the parent of a folder holding more than 1,000 long-named files with the project's DirectoryReader, print the subfolder's EndOfFile and AllocationSize, and attach the result to the open Totals question."
+   },
+   {
+    "id": "m8",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "The merge note with slice/SL-040 covers text only. The semantic change is wider. Append now clears a caller-supplied HardlinkDuplicate, and TryAddFileId becomes private, which changes how any synthetic store with a duplicate is built. Any SL-040 test that builds a duplicate by hand, to prove LargestFiles skips it, will either fail to compile or silently start charging that entry. The survey did not look at SL-040's tests.",
+    "evidence": "Contract ChargedSize/ChargedOnDisk: 'Expect a textual merge touchpoint in ScanStore.cs with slice/SL-040, kept small on purpose.' Append: 'clears any caller-supplied HardlinkDuplicate bit'. Decision: 'TryAddFileId becomes private'.",
+    "fix": "Name this touchpoint in the merge note. Whichever slice merges second greps its tests for TryAddFileId and HardlinkDuplicate and rebuilds those duplicates through a repeated ID on Append."
+   },
+   {
+    "id": "m9",
+    "severity": "minor",
+    "dimension": "drift-from-design",
+    "claim": "The design knowingly departs from the recorded architecture line that the store holds children sorted largest first, but it does not update that line. The next slice, probably the tree UI, will read the old line and may 'restore' a stored order, spending the memory headroom this design deliberately kept.",
+    "evidence": "Key decision: 'This departs from the architecture line that the store holds children sorted largest first'. The design never says the line is revised.",
+    "fix": "Revise the architecture line in the same slice: 'children are ordered largest first on read (ChildrenLargestFirst); no order is stored unless criterion 6's timing test fails'."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M1: the SizeProbe timing and first-holder assumption. Checked and holding: 'the Scanner is single-threaded DFS' (spike evidence and the survey agree); the key-only ID index (the project index stores entry indices, so the Dictionary constraint does not apply); the 20 B/row arithmetic (95 MiB at 5M rows). The memory claim is plausibly fine: U-001 measured 699 MiB for the whole app, and adding 95 MiB leaves ~230 MiB of margin. It is still the budget test's job to show it, and M4 covers how that test is run. I could not see any cited prior-art entries because the block was clipped. The recalled ncdu per-subtree behaviour is decorative, and the search results did not confirm it either way."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "M2: the all-ones ID sentinel, per MS-FSCC 2.1.10. m3: Unreadable set after a child block. Considered and not raised: SMB shares spanning server-side mount points, where IDs from two volumes could collide without the volume serial in the key. That is out of this slice's criteria. Covered by the design: 0/0 shares, a 10k-deep chain, page-boundary fan-out, non-folder arguments."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "M3: the single-writer invariant is held by documentation only. The design did move the other invariants into the seam: Append clears the caller's flag, TryAddFileId is private, and parent validation makes the Parent chain strictly decreasing, so the walk always terminates."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none: each component serves a criterion or guards a named failure. The share clamp and the JIT guard were rightly dropped. The partial-class split is cheap and justified by the SL-040 merge surface. The correction method is conditional, though M1 argues it should be unconditional."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "m1: FilesBelow's sum invariant contradicts FilesBelow(file)=0. m4: the root append sentinel. M1 and m2: the correction method's target and its missing feed into Totals and the tracker."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "m3 is the one real gap. The Append throws for a bad parent, Unreadable or Link are programmer-error guards, and aborting the scan on them is right. ChildrenLargestFirst returns empty rather than throwing for non-folders. A cancelled scan leaves exact totals because posting happens at append."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "m9: a departure from the architecture line that is not recorded. Scope: removing folders' own sizes from Totals is not required by any criterion, but the design flags it as open. m7 supplies evidence that it is probably a no-op on local NTFS and removes noise over SMB. No criterion is left without a case, and no case serves no criterion."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "m2: three accumulators kept equal by remembering, not by construction. m5: rule globs and comment matches not proven by a planted violation. m8: the SL-040 semantic touchpoint."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "M4: the timing and budget gates are not isolated from parallel tests, and the budget test's measure and threshold are unstated. m6: Explicit=true gets past the never-skip rule. m7: the real NTFS big-folder test is probably vacuous. Covered by the design: all six criteria, the full Core.Tests run on real trees, and an oracle independent of Charges()."
+   },
+   {
+    "dimension": "security",
+    "result": "none: this is local, single-user and unelevated, with no network input beyond the file system's own names. An adversarially deep tree costs O(depth x files) in the ancestor walk, but that only slows the person's own scan, and every walk is iterative, so there is no stack exhaustion."
+   }
+  ]
+ }
+}

@@ -1,0 +1,96 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-042",
+ "stage": "critique-review",
+ "attempt": 1,
+ "at": "2026-09-25T23:42:56.826Z",
+ "head": "d78635f2fdc4035f3b04a6a8aad86a6e4a83d22b",
+ "run_id": 1209,
+ "summary": "The frame holds. The criteria require dedup in the store: criterion 2's check feeds the store IDs, not flags. Incremental posting up the Parent chain fits the store's existing shape. M1 and M2 are correct majors. M1 matters because U-005 says hardlink listings are stale, the only thing that shows a file has several names is a colliding ID, and after the hand-off that collision happens inside Append. So the design's one-grep question can pass even though the correction is lost or lands on the wrong row. M2 is cheap to fix and prevents a silent, near-total loss of bytes. Two majors are overstated. M3's guard only catches overlapping Append calls, and any parallel scanner would lock around a store that is not thread-safe anyway. The failure the spike measured is a serialized writer fed in non-deterministic order, and the guard does not catch that. M4's parallel-test contention can only make time and memory higher, so every failure it causes is a loud false fail, not a false pass, and the fix is one attribute. All nine minors are valid at minor. One gap was missed: the design changes ChargedSize/ChargedOnDisk for every folder row but lists only the readers it expected. The only test project is Core.Tests, so a reader in the App would change without any test noticing.",
+ "payload": {
+  "status": "complete",
+  "verdict": "adjust",
+  "summary": "The frame holds. The criteria require dedup in the store: criterion 2's check feeds the store IDs, not flags. Incremental posting up the Parent chain fits the store's existing shape. M1 and M2 are correct majors. M1 matters because U-005 says hardlink listings are stale, the only thing that shows a file has several names is a colliding ID, and after the hand-off that collision happens inside Append. So the design's one-grep question can pass even though the correction is lost or lands on the wrong row. M2 is cheap to fix and prevents a silent, near-total loss of bytes. Two majors are overstated. M3's guard only catches overlapping Append calls, and any parallel scanner would lock around a store that is not thread-safe anyway. The failure the spike measured is a serialized writer fed in non-deterministic order, and the guard does not catch that. M4's parallel-test contention can only make time and memory higher, so every failure it causes is a loud false fail, not a false pass, and the fix is one attribute. All nine minors are valid at minor. One gap was missed: the design changes ChargedSize/ChargedOnDisk for every folder row but lists only the readers it expected. The only test project is Core.Tests, so a reader in the App would change without any test noticing.",
+  "assessments": [
+   {
+    "finding": "M1",
+    "classification": "valid",
+    "note": "The survey records SizeProbe corrections for stale listing sizes, and U-005 says listing and handle differ for hardlinks (5/5). With listing only, a multi-name file is detectable only when a later name's ID collides, and after the hand-off that collision happens inside Append. The design's test ('does every probe happen before the append') can come out yes, because the probe runs before the second name is appended, even though the probe corrects the first holder's row, which was appended earlier. The FileIdIndex already stores entry indices, so returning the first holder costs no memory. The existing stale-name real-tree test probably catches a deleted probe in the build lap, but only if the stale name is the first-seen one. Major is right."
+   },
+   {
+    "finding": "M2",
+    "classification": "valid",
+    "note": "The design already treats all-zero as 'no ID (SMB or FAT)', so non-NTFS volumes are in scope. The MS-FSCC all-ones sentinel belongs to the same class. Missing it charges one file and zeroes every other file on an affected volume, silently. hi==0 && lo==ulong.MaxValue cannot be a real NTFS reference: it would need MFT index 2^48-1 with sequence 0xFFFF. So the predicate is safe, and the fix is a one-line predicate plus two case rows. Major is right for silent, total data loss even if the trigger is uncommon."
+   },
+   {
+    "finding": "M3",
+    "classification": "severity-wrong",
+    "corrected_severity": "minor",
+    "note": "The proposed Interlocked guard fires only when Append calls overlap. A parallel scanner that calls Append from workers without a lock would corrupt a store that is not thread-safe (the open-addressing ID index, page writes, ChildCount) and fail loudly, so the silent scenario the finding describes needs a serialized writer. The spike's own no-go was measured with arrival order serialized through a global Interlocked sequence, which the guard would not catch. The design already names the real hazard, order, and puts the choice to the future parallel slice as an open question (serialize deterministically, or re-agree criterion 2). The guard is cheap and harmless, but it does not enforce the invariant the finding says is unenforced, so it does not justify a design lap."
+   },
+   {
+    "finding": "M4",
+    "classification": "severity-wrong",
+    "corrected_severity": "minor",
+    "note": "Running tests in parallel in the same process can only raise measured time and memory. Every failure mode it adds is a false fail that stops the build, never a false pass that ships a defect. The timing assertion sits about 10x above the estimate. The budget-test coupling depends on a measurement method the reviewer did not check ('If the budget test samples process memory'). The 'must pass unchanged' vs 'migrate TryAddFileId onto Append' contradiction is real but only a matter of wording. Migrating the fixture onto Append also subjects it to the new parent validation and the O(depth) posting, so its shape may need adjusting, which the fix's wording ('threshold and shape unchanged') should allow. Adding [CollectionDefinition(DisableParallelization = true)] is the right fix, and the builder can apply it without a design lap."
+   },
+   {
+    "finding": "m1",
+    "classification": "valid",
+    "note": "Real contradiction. With FilesBelow(file)=0, the invariant 'folder equals the sum of its children' fails on any folder that directly contains files, and CheckStructure is specified to assert exactly that. The builder would hit it at once. Minor is right."
+   },
+   {
+    "finding": "m2",
+    "classification": "valid",
+    "note": "'By construction' is overstated: three accumulators have to be fed at each writer site, and the conditional correction contract posts only up the Parent chain. It is linked to M1 but separately worth fixing. Minor."
+   },
+   {
+    "finding": "m3",
+    "classification": "valid",
+    "note": "The Append guard checks the Unreadable flag only on later appends. A flag set after part of a child block has been appended leaves rollups above 0 on a folder whose ChildrenLargestFirst returns empty. Whether this is reachable depends on how the Scanner commits child blocks, which the design does not state. Minor."
+   },
+   {
+    "finding": "m4",
+    "classification": "valid",
+    "note": "As written, the error rule rejects the root's own append. Trivial to fix. Minor."
+   },
+   {
+    "finding": "m5",
+    "classification": "valid",
+    "note": "Whether '**/' matches zero directory levels depends on which glob engine the rules checker uses, and the design does not say. Planting a violation is the right way to find out. The 'eng/rules-harness' path the fix names appears nowhere in the brief, so the builder should use whatever checker actually enforces the rules file. Comment false-positives on the Store rule would be loud, not silent. Minor."
+   },
+   {
+    "finding": "m6",
+    "classification": "valid",
+    "note": "Explicit=true skips a test by default and is not in must_not_match. The project's xUnit major version is unverified, but the extra pattern costs nothing. Minor."
+   },
+   {
+    "finding": "m7",
+    "classification": "valid",
+    "note": "On local NTFS, parent listings normally report subdirectories as 0 bytes, so the real-tree folder-allocation test would probably pass both before and after the change. A precondition assertion is the right fix. The observation also bears on the design's open Totals question. Minor."
+   },
+   {
+    "finding": "m8",
+    "classification": "valid",
+    "note": "The design notes only the textual merge touchpoint. Clearing caller-supplied HardlinkDuplicate and making TryAddFileId private changes how SL-040's tests can build a duplicate. It will break loudly or change charging when the second of the two slices merges. Minor."
+   },
+   {
+    "finding": "m9",
+    "classification": "valid",
+    "note": "The design knowingly departs from the recorded architecture line and leaves that line unrevised, so the next slice could reintroduce a stored order and spend the memory headroom this design kept. Minor."
+   }
+  ],
+  "missed": [
+   {
+    "dimension": "contract-gaps",
+    "severity": "minor",
+    "claim": "The design changes ChargedSize/ChargedOnDisk for every folder row, which used to return the folder's stated size and will now return 0. Its list of readers covers only the ones it expected: append posting, rollup reads, the Scanner's Totals and TopLevelTracker feed, and SL-040's LargestFiles. Nothing records a grep of all callers. The solution's only test project is Core.Tests, so if the App or the --report writer reads a folder row's ChargedSize (for example the root entry, which the report 'holds'), its output would change and no test in the full suite would notice.",
+    "evidence": "Charge rule key_interactions lists four readers. Contract 'ChargedSize / ChargedOnDisk (changed semantics)': 'Folders ... return 0 whatever size they state.' Survey build: 'built Core, Core.Tests and App' (no App test project). Q-016: the report 'holds the schema-1 totals and the root'. Design: 'The build stage runs the whole Core.Tests suite'.",
+    "fix": "Before the build, grep src/ for ChargedSize, ChargedOnDisk and Charges( and record each caller, noting whether it can receive a folder index. Any reader of a folder row outside Core moves to RolledSize/RolledOnDisk in this slice, or is named as a user-visible change next to the open Totals question.",
+    "route": "premortem"
+   }
+  ],
+  "frame_challenged": false,
+  "notes": "The first reviewer was thorough and cited evidence for every finding. Every minor holds at minor. The inflation was in the majors that guard the future or the test setup. M3 raises a future-slice invariant to major but proposes a guard that does not cover the failure the spike measured (a serialized writer fed in non-deterministic order). M4 treats harness contention, which can only produce loud false failures, as a major. The majors about real data (M1 stale hardlink correction, M2 ID sentinel) are correctly weighted and are the findings the build most needs. m5's fix names an 'eng/rules-harness' path that nothing in the brief establishes. Treat it as 'whatever checker enforces the rules file'. The claims that depend on code (M1's probe trigger, M4's budget measurement method, m3's child-block commit timing) were inferred from the survey text, not read from Scanner.cs or ScanStoreTests.cs. The builder should confirm them against the source before acting."
+ }
+}

@@ -16,8 +16,13 @@ namespace FsAnalyser.Core.Store;
 /// corrects an already-written entry's Size and OnDisk in place (aligned 8-byte writes), so a reader
 /// must not assume those values never change once written. Anything that adds bytes up reads
 /// <see cref="ChargedSize"/> and <see cref="ChargedOnDisk"/>, which hold the count-each-byte-once rule.
+/// <para>The store owns that rule: each append finds a repeated file ID and flags the later name, and
+/// posts every file's charge up its Parent chain
+/// into each folder's <see cref="RolledSize"/>, <see cref="RolledOnDisk"/> and <see cref="FilesBelow"/>.
+/// Those are exact between appends: on the writing thread, and once the scan has ended or was
+/// cancelled. Reading them from another thread while appends go on is not part of this contract.</para>
 /// </remarks>
-public sealed class ScanStore
+public sealed partial class ScanStore
 {
     internal const int PageShift = 16;
     internal const int PageSize = 1 << PageShift;
@@ -74,9 +79,9 @@ public sealed class ScanStore
     public long OnDisk(int index) => At(index, out int i).OnDisk[i];
 
     /// <summary>
-    /// The logical bytes this entry adds to any total, so each byte is counted once: its Size, or 0 for
-    /// a link and for a later name of a file already charged. Summed over entries 1..Count-1 this is
-    /// the scan's <c>Totals.Bytes</c>.
+    /// The logical bytes this entry adds to any total, so each byte is counted once: a file's Size, or 0
+    /// for a later name of a file already charged. A folder (readable or not) and a link charge 0,
+    /// whatever size they state. Summed over entries 1..Count-1 this is the scan's <c>Totals.Bytes</c>.
     /// </summary>
     public long ChargedSize(int index)
     {
@@ -91,7 +96,10 @@ public sealed class ScanStore
         return Charges(page, i) ? Volatile.Read(ref page.OnDisk[i]) : 0;
     }
 
-    /// <summary>The volume's 128-bit file ID, or 0 when the volume did not supply one.</summary>
+    /// <summary>
+    /// The volume's 128-bit file ID as listed: 0 when the volume did not supply one, and possibly one of
+    /// the "no ID" values <see cref="HasFileId"/> rules out.
+    /// </summary>
     public UInt128 FileId(int index)
     {
         Page page = At(index, out int i);
@@ -131,7 +139,20 @@ public sealed class ScanStore
         return builder.ToString();
     }
 
+    /// <summary>
+    /// Whether <paramref name="fileId"/> identifies a file, so that two entries carrying it are two names
+    /// of one file. False for 0 (the volume gave no ID), for all ones (MS-FSCC: no unique ID could be
+    /// established, and the value must be ignored), and for the 64-bit all-ones value widened to 128 bits.
+    /// </summary>
+    internal static bool HasFileId(UInt128 fileId) =>
+        fileId != UInt128.Zero && fileId != UInt128.MaxValue && fileId != NoFileId64;
+
+    private static readonly UInt128 NoFileId64 = new(0, ulong.MaxValue);
+
     // ---- Writes: internal to Core ----
+
+    /// <summary>What an append or a correction added to every folder above the entry, and so to the totals.</summary>
+    internal readonly record struct Posted(long Size, long OnDisk, int Files);
 
     internal int AppendRoot(string path, uint attributes)
     {
@@ -140,12 +161,39 @@ public sealed class ScanStore
         return Append(-1, path, EntryKind.Folder, EntryFlags.None, attributes, 0, 0, UInt128.Zero);
     }
 
+    /// <summary>Appends one entry; see the overload that reports what the append posted.</summary>
     internal int Append(int parent, ReadOnlySpan<char> name, EntryKind kind, EntryFlags flags,
-        uint attributes, long size, long onDisk, UInt128 fileId)
+        uint attributes, long size, long onDisk, UInt128 fileId) =>
+        Append(parent, name, kind, flags, attributes, size, onDisk, fileId, out _, out _);
+
+    /// <summary>
+    /// Appends one entry under <paramref name="parent"/> and applies the counting rule to it. A file whose
+    /// ID (<see cref="HasFileId"/>) an earlier entry already holds is flagged HardlinkDuplicate: it counts
+    /// as a file and charges nothing. Every file then posts its charge, and one file, to each folder from
+    /// its parent up to the root. A folder or a link posts nothing.
+    /// </summary>
+    /// <remarks>
+    /// Two obligations on the caller, because the first name seen is the one charged: one writing
+    /// thread, and a fixed append order, a parent before its children and each folder's children as one
+    /// contiguous block in listing order. Appended from several threads in a varying order, the root's
+    /// total still comes out right, but which folder holds a hardlinked file's bytes moves from run to run
+    /// (measured with 16 threads on C:\Windows: 68 folders moved by more than 10 MiB between runs).
+    /// </remarks>
+    /// <param name="flags">Anything but HardlinkDuplicate, which only the store sets: it is cleared here.</param>
+    /// <param name="firstHolder">The entry already holding this file's ID when the append flagged it a
+    /// duplicate; otherwise the new entry itself.</param>
+    /// <param name="posted">What was added to every folder above it: (0, 0, 0) for a folder or a link.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The parent is not already in the store. Only the first
+    /// entry, the root, has no parent (-1).</exception>
+    /// <exception cref="InvalidOperationException">The parent is a file, a link, or a folder flagged
+    /// Unreadable.</exception>
+    internal int Append(int parent, ReadOnlySpan<char> name, EntryKind kind, EntryFlags flags,
+        uint attributes, long size, long onDisk, UInt128 fileId, out int firstHolder, out Posted posted)
     {
         int index = _count;
         if (index == int.MaxValue)
             throw new InvalidOperationException("The scan store is full.");
+        CheckParent(parent, index);
 
         int pageIndex = index >> PageShift;
         Page page = _pages[pageIndex] ??= new Page();
@@ -155,7 +203,7 @@ public sealed class ScanStore
         page.NameOffset[i] = StoreName(name);
         page.NameLength[i] = (ushort)name.Length;
         page.Kind[i] = (byte)kind;
-        page.Flags[i] = (byte)flags;
+        page.Flags[i] = (byte)(flags & ~EntryFlags.HardlinkDuplicate);
         page.Attributes[i] = attributes;
         page.Size[i] = size;
         page.OnDisk[i] = onDisk;
@@ -163,8 +211,21 @@ public sealed class ScanStore
         page.IdHigh[i] = (ulong)(fileId >> 64);
         page.FirstChild[i] = -1;
         page.ChildCount[i] = 0;
+        page.RolledSize[i] = 0;
+        page.RolledOnDisk[i] = 0;
+        page.FilesBelow[i] = 0;
 
         Volatile.Write(ref _count, index + 1);
+
+        firstHolder = index;
+        posted = default;
+        if (kind != EntryKind.File)
+            return index;
+
+        if (!TryAddFileId(index, fileId, out firstHolder))
+            page.Flags[i] |= (byte)EntryFlags.HardlinkDuplicate;
+        posted = Charges(page, i) ? new Posted(size, onDisk, 1) : new Posted(0, 0, 1);
+        Post(parent, posted);
         return index;
     }
 
@@ -175,40 +236,92 @@ public sealed class ScanStore
         page.ChildCount[i] = childCount;
     }
 
+    /// <summary>Adds flags other than HardlinkDuplicate, which only an append sets.</summary>
     internal void AddFlags(int index, EntryFlags flags)
     {
+        if ((flags & EntryFlags.HardlinkDuplicate) != 0)
+        {
+            throw new ArgumentException("Only an append flags a hardlink duplicate: the flag changes what the entry charges, " +
+                "and its charge is already in every folder above it.", nameof(flags));
+        }
         Page page = At(index, out int i);
         page.Flags[i] |= (byte)flags;
     }
 
-    internal void CorrectSizes(int index, long size, long onDisk)
+    /// <summary>
+    /// Replaces an appended entry's Size and OnDisk with what the file itself says, and posts the change in
+    /// its charge up the same chain its append posted to. The only write to those columns after an append.
+    /// A later name of a hardlinked file charges nothing before or after, so it posts nothing.
+    /// </summary>
+    /// <returns>What was added to every folder above it. Files is always 0.</returns>
+    internal Posted CorrectSizes(int index, long size, long onDisk)
     {
         Page page = At(index, out int i);
+        Posted posted = Charges(page, i) ? new Posted(size - page.Size[i], onDisk - page.OnDisk[i], 0) : default;
         Volatile.Write(ref page.Size[i], size);
         Volatile.Write(ref page.OnDisk[i], onDisk);
-    }
-
-    /// <summary>
-    /// Records <paramref name="index"/>'s FileId. Returns false, with the entry that already holds the
-    /// same ID, when the file was seen under another name. A FileId of 0 is never deduplicated.
-    /// </summary>
-    internal bool TryAddFileId(int index, out int charged)
-    {
-        Page page = At(index, out int i);
-        if (page.IdLow[i] == 0 && page.IdHigh[i] == 0)
-        {
-            charged = index;
-            return true;
-        }
-        return _fileIds.TryAdd(index, out charged);
+        Post(page.Parent[i], posted);
+        return posted;
     }
 
     internal int FileIdTableSlots => _fileIds.Slots;
 
     // ---- Internals ----
 
+    // Only a file charges, and only under the first name seen. What a folder or a link states as its own
+    // size is nobody's bytes.
     private static bool Charges(Page page, int i) =>
-        page.Kind[i] != (byte)EntryKind.Link && (page.Flags[i] & (byte)EntryFlags.HardlinkDuplicate) == 0;
+        page.Kind[i] == (byte)EntryKind.File && (page.Flags[i] & (byte)EntryFlags.HardlinkDuplicate) == 0;
+
+    // A parent is an entry already appended, so every Parent chain climbs to lower indices and ends at the
+    // root; Post relies on it.
+    private void CheckParent(int parent, int index)
+    {
+        if (index == 0)
+        {
+            if (parent != -1)
+                throw new ArgumentOutOfRangeException(nameof(parent), parent, "The first entry is the root, whose parent is -1.");
+            return;
+        }
+        if ((uint)parent >= (uint)index)
+            throw new ArgumentOutOfRangeException(nameof(parent), parent, $"A parent must already be in the store, which holds {index} entries. Only the root has none.");
+
+        Page page = _pages[parent >> PageShift]!;
+        int p = parent & PageMask;
+        if (page.Kind[p] != (byte)EntryKind.Folder)
+            throw new InvalidOperationException($"Entry {parent} is a {(EntryKind)page.Kind[p]}, and only a folder holds entries.");
+        if ((page.Flags[p] & (byte)EntryFlags.Unreadable) != 0)
+            throw new InvalidOperationException($"Entry {parent} is a folder that could not be read, and nothing more is appended under it.");
+    }
+
+    // First seen wins: false, with the entry that already holds the ID, when the file was appended under
+    // another name before. An entry with no ID (HasFileId) is never deduplicated.
+    private bool TryAddFileId(int index, UInt128 fileId, out int firstHolder)
+    {
+        if (!HasFileId(fileId))
+        {
+            firstHolder = index;
+            return true;
+        }
+        return _fileIds.TryAdd(index, out firstHolder);
+    }
+
+    // Adds a change to every folder from `folder` up to the root. A loop, never recursion: a chain can be
+    // thousands of folders deep.
+    private void Post(int folder, Posted posted)
+    {
+        if (posted == default)
+            return;
+        while (folder >= 0)
+        {
+            Page page = _pages[folder >> PageShift]!;
+            int i = folder & PageMask;
+            page.RolledSize[i] += posted.Size;
+            page.RolledOnDisk[i] += posted.OnDisk;
+            page.FilesBelow[i] += posted.Files;
+            folder = page.Parent[i];
+        }
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private Page At(int index, out int offset)
@@ -278,6 +391,11 @@ public sealed class ScanStore
         public readonly ulong[] IdHigh = new ulong[PageSize];
         public readonly int[] FirstChild = new int[PageSize];
         public readonly int[] ChildCount = new int[PageSize];
+
+        // Meaningful on folder rows only: the sums over every file below the folder, at any depth.
+        public readonly long[] RolledSize = new long[PageSize];
+        public readonly long[] RolledOnDisk = new long[PageSize];
+        public readonly int[] FilesBelow = new int[PageSize];
     }
 
     /// <summary>

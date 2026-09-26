@@ -16,7 +16,9 @@ public enum ScanStatus
 
 /// <summary>
 /// Totals over every entry under the root (the root itself is not counted). Each byte is charged once:
-/// links and later names of a hardlinked file add 0 bytes.
+/// links and later names of a hardlinked file add 0 bytes, and a folder adds nothing of its own stated
+/// size. Bytes, BytesOnDisk and Files are the root's <see cref="ScanStore.RolledSize"/>,
+/// <see cref="ScanStore.RolledOnDisk"/> and <see cref="ScanStore.FilesBelow"/>.
 /// </summary>
 public readonly record struct ScanTotals(long Files, long Folders, long Links, long Bytes, long BytesOnDisk);
 

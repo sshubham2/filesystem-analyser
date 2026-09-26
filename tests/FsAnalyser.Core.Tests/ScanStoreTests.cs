@@ -73,6 +73,7 @@ public class ScanStoreTests
         Assert.Equal(@"C:\dot.\NUL", store.GetPath(nul));
     }
 
+    /// <summary>The ID table on the append path, which is the only way into it (SL-042).</summary>
     [Fact]
     public void ARepeatedFileIdIsFoundAndZeroIsNeverDeduplicated()
     {
@@ -81,21 +82,21 @@ public class ScanStoreTests
         const int unique = 200_000; // enough to make the table rehash many times
         for (int i = 1; i <= unique; i++)
         {
-            int e = store.Append(0, "f", EntryKind.File, EntryFlags.None, 0, 0, 0, new UInt128((ulong)(i % 7), (ulong)i));
-            Assert.True(store.TryAddFileId(e, out int charged));
+            int e = store.Append(0, "f", EntryKind.File, EntryFlags.None, 0, 0, 0, new UInt128((ulong)(i % 7), (ulong)i), out int charged, out _);
             Assert.Equal(e, charged);
+            Assert.Equal(EntryFlags.None, store.Flags(e));
         }
         for (int i = 1; i <= unique; i++)
         {
-            int e = store.Append(0, "g", EntryKind.File, EntryFlags.None, 0, 0, 0, new UInt128((ulong)(i % 7), (ulong)i));
-            Assert.False(store.TryAddFileId(e, out int charged));
+            int e = store.Append(0, "g", EntryKind.File, EntryFlags.None, 0, 0, 0, new UInt128((ulong)(i % 7), (ulong)i), out int charged, out _);
             Assert.Equal(i, charged);
+            Assert.Equal(EntryFlags.HardlinkDuplicate, store.Flags(e));
         }
 
-        int zeroA = store.Append(0, "z", EntryKind.File, EntryFlags.None, 0, 0, 0, UInt128.Zero);
-        int zeroB = store.Append(0, "z", EntryKind.File, EntryFlags.None, 0, 0, 0, UInt128.Zero);
-        Assert.True(store.TryAddFileId(zeroA, out _));
-        Assert.True(store.TryAddFileId(zeroB, out _));
+        int zeroA = store.Append(0, "z", EntryKind.File, EntryFlags.None, 0, 0, 0, UInt128.Zero, out int chargedA, out _);
+        int zeroB = store.Append(0, "z", EntryKind.File, EntryFlags.None, 0, 0, 0, UInt128.Zero, out int chargedB, out _);
+        Assert.Equal((zeroA, zeroB), (chargedA, chargedB));
+        Assert.Equal(EntryFlags.None, store.Flags(zeroB));
     }
 
     internal static string NameOf(int i) =>
@@ -111,9 +112,16 @@ public class MemoryBudget;
 
 /// <summary>
 /// Whether a full drive fits: U-001's shape (5,000,000 entries, 4.5M files and 0.5M folders, names
-/// averaging about 27 characters, 4.3M distinct FileIds with 300,000 names sharing 100,000 of them).
-/// Runs alone, because it reads the process's GC heap.
+/// averaging about 27 characters, 4.3M distinct FileIds with 300,000 names sharing 100,000 of them), with
+/// every row carrying the folder-total columns (SL-042) and one folder of 100,000 entries read largest
+/// first. Runs alone, because it reads the process's GC heap.
 /// </summary>
+/// <remarks>
+/// Folders sit at most 16 deep. Until SL-042 each folder was appended under the one before, a chain about
+/// 500,000 deep, which cost nothing while appends posted nothing up the chain; posting every file's bytes
+/// up it would be about 10^12 additions. Entry count, names, IDs, duplicate count and budget are as they
+/// were; 100,000 entries in a row go into one folder, which turns about 10,000 folders into files.
+/// </remarks>
 [Collection(nameof(MemoryBudget))]
 public class ScanStoreBudgetTests(ITestOutputHelper output)
 {
@@ -126,6 +134,8 @@ public class ScanStoreBudgetTests(ITestOutputHelper output)
     {
         const int entries = 5_000_000;
         const int sharedNames = 300_000;
+        const int maxDepth = 16;
+        const int wideAt = 2_000_000, wideChildren = 100_000;
 
         GC.Collect();
         GC.WaitForPendingFinalizers();
@@ -135,34 +145,54 @@ public class ScanStoreBudgetTests(ITestOutputHelper output)
         var store = new ScanStore();
         store.AppendRoot(@"C:\", 0x10);
         Span<char> name = stackalloc char[64];
-        int folder = 0, files = 0, duplicates = 0;
+        Span<int> path = stackalloc int[maxDepth + 1]; // path[d]: the folder files now go into at depth d
+        int depth = 0, files = 0, duplicates = 0, wide = -1;
+        long bytes = 0;
         for (int i = 1; i < entries; i++)
         {
             int length = 5 + (int)((uint)(i * 2654435761u) % 44u); // 5..48, mean 26.5
             name[..length].Fill((char)('a' + i % 26));
-            if (i % 10 == 0)
+            bool inWide = wide >= 0 && i <= wideAt + wideChildren;
+            if (i == wideAt || (i % 10 == 0 && !inWide))
             {
-                folder = store.Append(folder, name[..length], EntryKind.Folder, EntryFlags.None, 0x10, 0, 0, new UInt128(1, (ulong)i));
+                // One level below any folder on the current path, at most maxDepth deep.
+                int d = i == wideAt ? depth + 1 : Math.Min(depth + 1, 1 + (int)((uint)(i * 2246822519u) % maxDepth));
+                d = Math.Min(d, maxDepth);
+                path[d] = store.Append(path[d - 1], name[..length], EntryKind.Folder, EntryFlags.None, 0x10, 0, 0, new UInt128(1, (ulong)i));
+                depth = d;
+                if (i == wideAt)
+                    wide = path[d];
                 continue;
             }
 
             ulong id = files < sharedNames ? (ulong)(files / 3) + 1 : (ulong)files + 1_000_000;
             files++;
-            int e = store.Append(folder, name[..length], EntryKind.File, EntryFlags.None, 0x20, i, i, new UInt128(0, id));
-            if (!store.TryAddFileId(e, out _))
+            int e = store.Append(path[depth], name[..length], EntryKind.File, EntryFlags.None, 0x20, i, i, new UInt128(0, id), out int charged, out _);
+            if (charged != e)
                 duplicates++;
+            else
+                bytes += i;
 
             if ((i & 0xFFFF) == 0)
                 peak = Math.Max(peak, GC.GetTotalMemory(forceFullCollection: false) - before);
         }
+        store.SetChildren(wide, wide + 1, wideChildren);
+
+        ChildRow[] ordered = store.ChildrenLargestFirst(wide);
+        peak = Math.Max(peak, GC.GetTotalMemory(forceFullCollection: false) - before);
+        Assert.Equal(wideChildren, ordered.Length);
+        Assert.Equal(wideAt + wideChildren, ordered[0].Entry); // sizes rise with the index
+        ordered = [];
 
         long retained = GC.GetTotalMemory(forceFullCollection: true) - before;
         peak = Math.Max(peak, retained);
-        output.WriteLine($"entries {store.Count:N0}, files {files:N0}, duplicate names {duplicates:N0}, FileId slots {store.FileIdTableSlots:N0}");
+        output.WriteLine($"entries {store.Count:N0}, files {files:N0}, duplicate names {duplicates:N0}, FileId slots {store.FileIdTableSlots:N0}, " +
+            $"folder totals on every row, one folder of {wideChildren:N0} read largest first");
         output.WriteLine($"retained {retained / 1048576.0:N1} MiB, sampled peak {peak / 1048576.0:N1} MiB, budget {StoreBudget / 1048576:N0} MiB");
 
         Assert.Equal(entries, store.Count);
         Assert.Equal(200_000, duplicates);
+        Assert.Equal((bytes, bytes, files), (store.RolledSize(0), store.RolledOnDisk(0), store.FilesBelow(0)));
         Assert.True(retained < StoreBudget, $"the store retained {retained / 1048576.0:N1} MiB");
         Assert.True(peak < StoreBudget, $"the store peaked at {peak / 1048576.0:N1} MiB");
         GC.KeepAlive(store);

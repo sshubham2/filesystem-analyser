@@ -1,0 +1,425 @@
+{
+ "schema": "slice-record@1",
+ "slice": "SL-042",
+ "title": "Scan store: folder totals, hardlinks counted once, children largest first",
+ "status": "active",
+ "branch": "slice/SL-042",
+ "opened_at": "2026-09-25T14:25:36.994Z",
+ "merge_commit": null,
+ "how_to_read": "Each attempt is one line and a `details` filename in this same directory. Open a detail file ONLY when this index points you at one -- the summaries are here so you do not have to. `caused_by` is what sent the stage back; `changed` is what the attempt then touched, counted by kind. Several attempts in a row that were caused by the same stage and changed no `src` is a loop, not progress.",
+ "open": [
+  {
+   "stage": "build-check",
+   "issue": "Each folder's rolled-up size and rolled-up on-disk size equal the sums over every file below it, at any depth (10,000-deep chain, very wide, empty, mixed trees vs brute force): missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "When several names share one 128-bit file ID, the first name seen charges the bytes; later names count as files and add 0 bytes (unit test: one ID under three names in three folders; root total equals one copy, only the first name's folder is charged): partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "Each folder records how many files are below it, counting every name of a hardlinked file (asserted at every level in the hardlink test): missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "A link entry, or a folder that could not be opened, stays in the tree as a leaf that adds no bytes and has nothing below it (unit test with non-zero stated sizes; parent's totals unchanged; no children): partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "A folder's children can be read largest first by on-disk size, each with its share of the parent; a 0-byte parent gives every child a 0 share, not an error (tests: ordering, equal sizes stable, hand-computed shares, 0-byte parent): missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "Reading the ordered children of a folder with 100,000 children takes under 0.25 s (timed test in a release build over 10 reads on a synthetic store): missing"
+  },
+  {
+   "stage": "risk-spike",
+   "issue": "first-seen-charging-repeatable: 16-worker first-seen: 68 folders swing >10 MiB in 5 runs (WinSxS 587 MiB); control moved 0 B"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Should scan-wide Totals and --report stop counting a folder's own allocation (a big directory's index)? This design says yes, per criteria 1 and 4. It changes reported totals only where a directory lists a non-zero size. If the person wants that space shown, it needs its own column, not RolledOnDisk."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Criterion 2's 'first name seen charges the bytes' is repeatable only with one writer thread and a fixed append order (spike: no-go with 16 workers). U-012 says per-file queries are 5x slower than listing, so a parallel scanner is likely later. Should that future slice serialize appends deterministically, or should criterion 2 be re-agreed as per-subtree counting, which lets children sum to more than their parent?"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Sort-on-read with no stored order departs from the architecture line that the store holds children sorted largest first. A reviewer may prefer a cached or stored order."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Rollup columns sit on every row (simple, 95 MiB) rather than a folder-slot layout (about 30 MiB, an extra indirection). A reviewer may prefer the smaller one up front."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "I dropped the proposal's share clamp and its JIT-optimised guard on the timing test. The proposal kept both as defensive measures."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "New store reads live in a partial-class file ScanStore.Rollup.cs, a boundary chosen to shrink the SL-040 merge surface. A reviewer may prefer them inline or in a separate type."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The oracle is split into Expected(model) and CheckStructure(store). A reviewer may want a single helper."
+  }
+ ],
+ "stages": [
+  {
+   "stage": "repro",
+   "title": "Repro",
+   "order": 1,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "build-check",
+   "title": "Build check",
+   "order": 2,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "risk-spike",
+   "title": "Risk spike",
+   "order": 3,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "design-slice",
+   "title": "Design",
+   "order": 4,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-25T14:44:43.032Z",
+     "head": "d78635f2fdc4035f3b04a6a8aad86a6e4a83d22b",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50pm (Asia/Kolkata)",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "unrecorded",
+     "at": "2026-09-25T14:57:43.900Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-2.json"
+    },
+    {
+     "n": 3,
+     "state": "unrecorded",
+     "at": "2026-09-25T15:08:05.947Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-3.json"
+    },
+    {
+     "n": 4,
+     "state": "unrecorded",
+     "at": "2026-09-25T15:13:22.090Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-4.json"
+    },
+    {
+     "n": 5,
+     "state": "unrecorded",
+     "at": "2026-09-25T15:18:33.186Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-5.json"
+    },
+    {
+     "n": 6,
+     "state": "unrecorded",
+     "at": "2026-09-25T15:23:44.198Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-6.json"
+    },
+    {
+     "n": 7,
+     "state": "unrecorded",
+     "at": "2026-09-25T15:29:00.238Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-7.json"
+    },
+    {
+     "n": 8,
+     "state": "unrecorded",
+     "at": "2026-09-25T15:34:11.258Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-8.json"
+    },
+    {
+     "n": 9,
+     "state": "unrecorded",
+     "at": "2026-09-25T15:39:22.684Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-9.json"
+    },
+    {
+     "n": 10,
+     "state": "unrecorded",
+     "at": "2026-09-25T15:44:38.650Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-10.json"
+    },
+    {
+     "n": 11,
+     "state": "unrecorded",
+     "at": "2026-09-25T15:49:49.707Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-11.json"
+    },
+    {
+     "n": 12,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:00:06.657Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-12.json"
+    },
+    {
+     "n": 13,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:05:22.717Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-13.json"
+    },
+    {
+     "n": 14,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:15:44.896Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-14.json"
+    },
+    {
+     "n": 15,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:21:01.790Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-15.json"
+    },
+    {
+     "n": 16,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:26:13.158Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-16.json"
+    },
+    {
+     "n": 17,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:31:24.573Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-17.json"
+    },
+    {
+     "n": 18,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:36:41.001Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-18.json"
+    },
+    {
+     "n": 19,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:41:52.435Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-19.json"
+    },
+    {
+     "n": 20,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:47:03.871Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-20.json"
+    },
+    {
+     "n": 21,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:52:15.355Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-21.json"
+    },
+    {
+     "n": 22,
+     "state": "unrecorded",
+     "at": "2026-09-25T16:57:26.765Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-22.json"
+    },
+    {
+     "n": 23,
+     "state": "unrecorded",
+     "at": "2026-09-25T17:02:38.188Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-23.json"
+    },
+    {
+     "n": 24,
+     "state": "unrecorded",
+     "at": "2026-09-25T17:02:49.100Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-24.json"
+    },
+    {
+     "n": 25,
+     "state": "unrecorded",
+     "at": "2026-09-25T17:08:00.505Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-25.json"
+    },
+    {
+     "n": 26,
+     "state": "unrecorded",
+     "at": "2026-09-25T17:13:11.946Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-26.json"
+    },
+    {
+     "n": 27,
+     "state": "unrecorded",
+     "at": "2026-09-25T17:18:23.373Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-27.json"
+    },
+    {
+     "n": 28,
+     "state": "unrecorded",
+     "at": "2026-09-25T17:18:34.362Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-28.json"
+    },
+    {
+     "n": 29,
+     "state": "unrecorded",
+     "at": "2026-09-25T17:23:45.832Z",
+     "head": "",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-29.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique",
+   "title": "Critique",
+   "order": 5,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-25T23:31:43.342Z",
+     "head": "d78635f2fdc4035f3b04a6a8aad86a6e4a83d22b",
+     "summary": "The core shape is sound and I found no blocker.",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique-review",
+   "title": "Critique review",
+   "order": 6,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-25T23:42:56.826Z",
+     "head": "d78635f2fdc4035f3b04a6a8aad86a6e4a83d22b",
+     "summary": "The frame holds.",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-review-1.json"
+    }
+   ]
+  }
+ ]
+}

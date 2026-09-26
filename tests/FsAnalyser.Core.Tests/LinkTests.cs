@@ -41,7 +41,12 @@ public class LinkTests
             Assert.Equal(-1, store.FirstChild(entry));
             Assert.Equal(0, store.ChargedSize(entry));
             Assert.Equal(0, store.ChargedOnDisk(entry));
+            Assert.Equal(default, Rolled.Of(store, entry));
         }
+        // "inside" holds real.txt and three links: the links add nothing to any of its totals (SL-042).
+        int real = Scans.Find(result, insideFile);
+        Assert.Equal(new Rolled(100, store.ChargedOnDisk(real), 1), Rolled.Of(store, Scans.Find(result, inside)));
+        Assert.Equal(new Rolled(100, store.ChargedOnDisk(real), 1), Rolled.Of(store, 0));
         Assert.Empty(Scans.UnderLinks(store));
         Assert.Equal(1 + 1 + 1 + links.Length, store.Count); // root, inside, real.txt, the links
         Assert.Equal(new ScanTotals(Files: 1, Folders: 1, Links: links.Length, Bytes: 100, BytesOnDisk: result.Totals.BytesOnDisk), result.Totals);
