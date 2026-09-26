@@ -12,10 +12,12 @@ namespace FsAnalyser.Core.Store;
 /// moves or doubles; there is no object per entry (paths are rebuilt from Parent when asked for); and
 /// repeated FileIds are found by an open-addressing table of entry indices that reads the FileId
 /// columns, so no key is stored twice.
-/// Reads are public. Writes are internal to Core, so the scanner is the only writer. A hardlink probe
-/// corrects an already-written entry's Size and OnDisk in place (aligned 8-byte writes), so a reader
-/// must not assume those values never change once written. Anything that adds bytes up reads
-/// <see cref="ChargedSize"/> and <see cref="ChargedOnDisk"/>, which hold the count-each-byte-once rule.
+/// Reads are public, except the raw sizes. Writes are internal to Core, so the scanner is the only writer.
+/// A hardlink probe corrects an already-written entry's Size and OnDisk in place (aligned 8-byte writes),
+/// so a reader must not assume those values never change once written. Anything that adds bytes up or
+/// ranks by them reads <see cref="ChargedSize"/> and <see cref="ChargedOnDisk"/>, which hold the
+/// count-each-byte-once rule. <see cref="Size"/> and <see cref="OnDisk"/> skip that rule, so they are
+/// internal to Core (SL-040, M2): the compiler keeps the App and every later project to the charged values.
 /// <para>The store owns that rule: each append finds a repeated file ID and flags the later name, and
 /// posts every file's charge up its Parent chain
 /// into each folder's <see cref="RolledSize"/>, <see cref="RolledOnDisk"/> and <see cref="FilesBelow"/>.
@@ -73,10 +75,10 @@ public sealed partial class ScanStore
     /// Logical size in bytes (EndOfFile), as this name was listed or probed. Do not sum it: a later name
     /// of a hardlinked file carries the file's size again. Sum <see cref="ChargedSize"/>.
     /// </summary>
-    public long Size(int index) => At(index, out int i).Size[i];
+    internal long Size(int index) => At(index, out int i).Size[i];
 
     /// <summary>Space taken on disk in bytes (AllocationSize). Do not sum it; sum <see cref="ChargedOnDisk"/>.</summary>
-    public long OnDisk(int index) => At(index, out int i).OnDisk[i];
+    internal long OnDisk(int index) => At(index, out int i).OnDisk[i];
 
     /// <summary>
     /// The logical bytes this entry adds to any total, so each byte is counted once: a file's Size, or 0

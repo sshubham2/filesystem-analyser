@@ -1,0 +1,97 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-040",
+ "stage": "build-slice",
+ "attempt": 37,
+ "at": "2026-09-25T17:23:40.489Z",
+ "head": "658ed6a5808b8e2f3b82f419050354c73c4ebd4e",
+ "run_id": 1173,
+ "summary": "This attempt fixes O-024 only. In the outcome panel, the old DockPanel (unreadable folders docked at the bottom) is replaced by a Grid. Row 0 is Auto and holds the texts. Row 1 is 3* and holds LargestFilesPanel. Row 2 holds UnreadableExpander: it is Auto while closed, and a MultiDataTrigger switches it to 2* when the expander is opened and visible. Opened, the two lists therefore split the remaining space 3:2, each scrolls within its share, and neither can push the other out. The false XAML comment is replaced with one describing this. The window report gained the additive keys UnreadableExpander.expanded and UnreadableList{actualHeight,inView}. FsaWindowHook gained an `expand` mode that opens the expander after the list is shown, the way a person would. L-003 now plants 12 unreadable folders and checks the closed layout, then the opened layout under the hook, at 880x600. The opened run requires LargestFilesList, UnreadableExpander and UnreadableList all to be inView.",
+ "payload": {
+  "status": "complete",
+  "summary": "This attempt fixes O-024 only. In the outcome panel, the old DockPanel (unreadable folders docked at the bottom) is replaced by a Grid. Row 0 is Auto and holds the texts. Row 1 is 3* and holds LargestFilesPanel. Row 2 holds UnreadableExpander: it is Auto while closed, and a MultiDataTrigger switches it to 2* when the expander is opened and visible. Opened, the two lists therefore split the remaining space 3:2, each scrolls within its share, and neither can push the other out. The false XAML comment is replaced with one describing this. The window report gained the additive keys UnreadableExpander.expanded and UnreadableList{actualHeight,inView}. FsaWindowHook gained an `expand` mode that opens the expander after the list is shown, the way a person would. L-003 now plants 12 unreadable folders and checks the closed layout, then the opened layout under the hook, at 880x600. The opened run requires LargestFilesList, UnreadableExpander and UnreadableList all to be inView.",
+  "files": [
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml",
+    "change": "modified",
+    "why": "O-024: the outcome panel's DockPanel (bottom-docked expander measured before the fill child) is replaced by a Grid. The texts are Auto, the largest files are 3*, and the unreadable folders are Auto when closed and 2* when opened and visible (RowDefinition style with a MultiDataTrigger). UnreadableList MinHeight goes from 80 to 40 and its MaxHeight 200 is removed. LargestFilesList MinHeight goes from 60 to 40. The false 'opened it leaves room for theirs' comment is replaced with an accurate one."
+   },
+   {
+    "path": "src/FsAnalyser.App/WindowReport.cs",
+    "change": "modified",
+    "why": "Adds the additive report keys UnreadableExpander.expanded and UnreadableList{actualHeight,inView}, and documents them in the schema comment, so the opened state can be asserted. No existing key is renamed or changed."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/StartupHook.cs",
+    "change": "modified",
+    "why": "New `expand` hook mode. It waits until the largest-files list is on screen, then sets UnreadableExpander.IsExpanded=true, which is the person's action. It logs 'acted mode=expand rows=n unreadable=n' and 'expanded=b STATE'. It refuses when there is no list or no closed, pressable expander. DriveRescan is generalised to DriveAfterList(mode, missing); rescan behaviour is unchanged."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "change": "modified",
+    "why": "L-003 now plants 104 files, the lone-surrogate largest file and 12 list-denied folders, and runs twice. The closed run asserts expanded=false with the expander and list inView. The opened run uses the hook's expand mode and asserts the hook acted and that expanded=True. It also asserts that LargestFilesList, UnreadableExpander and UnreadableList are all inView at the default 880x600, that the list still virtualizes, and that each list is at least 40 px. L-003 is added to the hooked cases, and cleanup undoes every deny."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-024",
+    "done": true,
+    "how": "The two lists now share the outcome space. In a Grid, the largest files are 3*, and the unreadable-folders row is Auto when closed and 2* when opened (MainWindow.xaml:39-70). The false comment is replaced (:34-38). L-003 gained an opened variant through the new FsaWindowHook `expand` mode, which sets UnreadableExpander.IsExpanded. With 12 unreadable folders at 880x600, the report shows LargestFilesList inView at 95.8 px (7 of 100 rows realized), UnreadableExpander inView and expanded, and UnreadableList inView at 74.8 px. PASSED: L-003, re-run just now on the final tree. As a mutant check, the HEAD layout fails the same opened run: LargestFilesPanel 26.46 px and LargestFilesList not in view. On the real system drive at 880x600 with the expander opened (664 unreadable folders), LargestFilesList was 63.47 px and in view, UnreadableExpander 76.23 px and in view, and UnreadableList 53.23 px and in view."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-011",
+    "test_name": "tests/window/WindowCases.ps1::Test-L003",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case L-003"
+   }
+  ],
+  "deviations": [
+   "The finding's example fix was an Auto expander row with UnreadableList.MaxHeight bound to a fraction of the available height. It was built instead as star rows (3* for the largest files, 2* for the unreadable folders), and the 2* is applied only while the expander is opened and visible. A fixed fraction under an Auto row can still overflow when the outcome texts above grow taller, for example on the real system drive where the coverage line wraps and the probe note shows. Star rows always sum to exactly the space left, so neither list can be pushed out. Closed, the expander row is Auto (header line only), and the largest files get all the rest, as the finding asked.",
+   "The MinHeights were lowered: UnreadableList from 80 to 40, and LargestFilesList from 60 to 40. UnreadableList's MaxHeight of 200 was removed. With both lists opened in the 880x600 outcome panel, the old minimums did not fit their shares, and the cap is replaced by the 2* share.",
+   "The report schema gained two additive keys, UnreadableExpander.expanded and UnreadableList{actualHeight,inView}, so the check can show that the expander is open and that the list inside it is on screen. This follows the one-key-per-x:Name convention, and no key was renamed.",
+   "The hook's expand mode sets IsExpanded directly, which is the value the expander header's toggle sets when clicked. It does not click through UI Automation, which is forbidden."
+  ],
+  "not_built": [],
+  "follow_ups": [
+   "The ≥40 px ActualHeight checks in L-003 do not catch the old layout, because a clipped ListBox still reports its MinHeight. inView is the check that fails it. A future report key could give the height a list actually has on screen, if that distinction is ever needed."
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case L-003",
+    "outcome": "passed",
+    "note": "Re-run on the final tree. Opened: LargestFilesPanel 151.676 px, LargestFilesList 95.796 px inView with 7 of 100 rows realized, UnreadableExpander expanded and inView, UnreadableList 74.784 px inView."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case L-003 (against the HEAD 7610c6b layout of MainWindow.xaml, as a mutant)",
+    "outcome": "failed",
+    "note": "Failed as intended. With the expander opened, LargestFilesPanel is 26.46 px and LargestFilesList is not in view, so the new variant detects the O-024 defect."
+   },
+   {
+    "command": "eng/read-window.ps1 on the system drive root with FSA_HOOK_MODE=expand (880x600)",
+    "outcome": "passed",
+    "note": "EXIT 0. 3,586,619 files, 664 unreadable folders, scan 80.2 s, largestFilesMs 27.7. LargestFilesList 63.47 px inView (5 rows realized). UnreadableExpander 76.23 px inView and expanded. UnreadableList 53.23 px inView."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case All",
+    "outcome": "passed",
+    "note": "21 cases passed, including L-001 to L-006."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/HookCases.ps1",
+    "outcome": "passed",
+    "note": "H-001 and H-002 passed after the hook change."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 (clean scenario)",
+    "outcome": "passed",
+    "note": "CLEAN, exit 0."
+   },
+   {
+    "command": "eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests",
+    "outcome": "passed",
+    "note": "166/166."
+   }
+  ]
+ }
+}

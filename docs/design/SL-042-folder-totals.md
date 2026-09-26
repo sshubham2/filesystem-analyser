@@ -141,6 +141,16 @@ The touchpoints for whichever slice merges second:
   file, a link or an Unreadable folder.
 - Re-run the whole Core.Tests suite after the merge; the store tests and the counting-rule tests cover both.
 
+**As merged** (SL-040 reached uat first, at 2e089a1, and SL-042 took it in). The only textual conflict was
+the class remarks of `ScanStore.cs`: SL-040's paragraph on the internal raw sizes is kept, followed by
+SL-042's. The grep found one duplicate built by hand, in `LargestFilesScaleTests`
+(`Append(..., EntryFlags.HardlinkDuplicate, ..., Terabyte, Terabyte, UInt128.Zero)`). Against the merged
+store that name is charged 1 TB and takes the top of the list; the test failed that way when run. It is now a
+later name of the file appended just before it, with the same ID and in the same folder, still listed at
+1 TB. The store flags it and charges it nothing. `LargestFiles` itself reads only `ChargedSize`/
+`ChargedOnDisk` of Files and needed no change. The whole suite, SL-040's tests included, passes on the
+merged tree.
+
 ## Not done, and why
 
 - The real NTFS "folder owning a directory allocation" test: see the m7 section. It cannot fail on local

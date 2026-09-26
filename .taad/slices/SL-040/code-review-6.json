@@ -1,0 +1,243 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-040",
+ "stage": "code-review",
+ "attempt": 6,
+ "at": "2026-09-25T22:01:57.315Z",
+ "head": "9387de0667ef78ecadd53f1e6ea4ef711075cc8a",
+ "run_id": 1200,
+ "summary": "Attempt 41 holds on this PC as it stands, but the \"one full row at any allowed size\" rule breaks as soon as a fourth drive appears. One major finding, M1.\n\nI read the diff 6fb88c8..9387de0.\n\nMainWindow.xaml:\n- The outer Grid is now 3* (MinHeight 292) for the outcome and 1* (MinHeight 84) for the results.\n- The outcome's texts sit in the OutcomeTexts ScrollViewer. Their row is 100* with a MaxHeight set from code while a list row is star, and Auto otherwise, to avoid the measured Grid bug.\n- LargestFilesList has its own 3* row (min 56). Its path cell is capped at 3 lines with an ellipsis and a tooltip.\n- The expander row is 2* (min 74) when open, and UnreadableList's MinHeight is 41.\n- SL-039's TopLevelHeader is now one trimmed line, and TopLevelList no longer scrolls sideways.\n\nElsewhere:\n- MainWindow.xaml.cs: OnOutcomeTextsSizeChanged, and HideLargestFiles now also collapses the list.\n- WindowReport.cs: the additive keys OutcomeTexts and fullRows.\n- The hook's size mode and FSA_HOOK_MINSIZE set MinWidth and MinHeight and hold the report until the drive buttons are in.\n- New B-008, and B-007 re-run at 560x600.\n\nWhat I ran:\n- WindowCases -Case All: all 26 non-network cases pass.\n- HookCases H-001 and H-002: pass.\n- Core tests: 181 of 181 pass.\n- rules-parity: AGREE.\n- Fitness: all 29 rules hold.\n\nThe rule that sent build back reads \"at any size the window allows … every list stays in view with at least one full row\". It holds only while the drive buttons fit on one line. This PC has 3 ready drives (C:, D:, network Z:) and two empty removable slots, E: and F:. I added simulated drive buttons, shaped like the app's own, with a throwaway hook that is now deleted:\n\n| Size | Extra drives | Lists in view | TopLevelList |\n|---|---|---|---|\n| 560x600 | 0 | all | 55.26 px |\n| 560x600 | 1 | none | 46.04 px, cut off |\n| 880x600 | 2 | all | 55.26 px |\n| 880x600 | 3 | none | 46.04 px, cut off |\n\nSo inserting a USB stick or SD card breaks the rule at narrow widths, and with six ready drives it breaks at the default size. B-007 and B-008 would then fail depending on what is plugged into the machine running them.\n\nEvery other departure is declared: the 3-line trimmed location with a tooltip, the SL-039 header and horizontal-scroll changes, texts that scroll only while a list is shown, and the renamed hook variable.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "matches_design": true,
+  "summary": "Attempt 41 holds on this PC as it stands, but the \"one full row at any allowed size\" rule breaks as soon as a fourth drive appears. One major finding, M1.\n\nI read the diff 6fb88c8..9387de0.\n\nMainWindow.xaml:\n- The outer Grid is now 3* (MinHeight 292) for the outcome and 1* (MinHeight 84) for the results.\n- The outcome's texts sit in the OutcomeTexts ScrollViewer. Their row is 100* with a MaxHeight set from code while a list row is star, and Auto otherwise, to avoid the measured Grid bug.\n- LargestFilesList has its own 3* row (min 56). Its path cell is capped at 3 lines with an ellipsis and a tooltip.\n- The expander row is 2* (min 74) when open, and UnreadableList's MinHeight is 41.\n- SL-039's TopLevelHeader is now one trimmed line, and TopLevelList no longer scrolls sideways.\n\nElsewhere:\n- MainWindow.xaml.cs: OnOutcomeTextsSizeChanged, and HideLargestFiles now also collapses the list.\n- WindowReport.cs: the additive keys OutcomeTexts and fullRows.\n- The hook's size mode and FSA_HOOK_MINSIZE set MinWidth and MinHeight and hold the report until the drive buttons are in.\n- New B-008, and B-007 re-run at 560x600.\n\nWhat I ran:\n- WindowCases -Case All: all 26 non-network cases pass.\n- HookCases H-001 and H-002: pass.\n- Core tests: 181 of 181 pass.\n- rules-parity: AGREE.\n- Fitness: all 29 rules hold.\n\nThe rule that sent build back reads \"at any size the window allows … every list stays in view with at least one full row\". It holds only while the drive buttons fit on one line. This PC has 3 ready drives (C:, D:, network Z:) and two empty removable slots, E: and F:. I added simulated drive buttons, shaped like the app's own, with a throwaway hook that is now deleted:\n\n| Size | Extra drives | Lists in view | TopLevelList |\n|---|---|---|---|\n| 560x600 | 0 | all | 55.26 px |\n| 560x600 | 1 | none | 46.04 px, cut off |\n| 880x600 | 2 | all | 55.26 px |\n| 880x600 | 3 | none | 46.04 px, cut off |\n\nSo inserting a USB stick or SD card breaks the rule at narrow widths, and with six ready drives it breaks at the default size. B-007 and B-008 would then fail depending on what is plugged into the machine running them.\n\nEvery other departure is declared: the 3-line trimmed location with a tooltip, the SL-039 header and horizontal-scroll changes, texts that scroll only while a list is shown, and the renamed hook variable.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "missing-edge-cases",
+    "claim": "The rework's rule, 'at any size the window allows (down to MinWidth x MinHeight, at 100% scaling), in every ending, every list stays in view with at least one full row', holds only while the drive buttons fit on one line. The outer Grid's row minimums are fixed pixels: 292 for the outcome and 84 for the results (MainWindow.xaml:66, :79). They sum to 376 px against the 385 px left below the pickers at 560x600, and a second line of drive buttons takes about 52 px. I measured the published exe with the project's `size` hook plus a throwaway hook (now deleted) that adds drive buttons shaped like the app's own once its real ones are in, on a tree of 104 files over 4 folders. At 560x600 with this PC's 3 ready drives (C:, D:, network Z:), everything is in view and TopLevelList is 55.26 px with 1 full row. With one more drive, OutcomeTexts, LargestFilesList and TopLevelList all read inView=false: the Grid overflows its slot, TopLevelPanel shrinks to 68 px and TopLevelList to 46.04 px, cut off at the window's bottom edge. At the default 880x600, 2 extra drives still fit and 3 extra (6 drives) give the same overflow. This PC has two removable slots, E: and F:, so inserting a USB stick or SD card is enough to break the rule at widths below roughly 780 px, and mapping another share does the same. The XAML comment qualifies the guarantee ('with the drive buttons on one line as on the machine measured; a second line of them … has not been measured'). But docs/design/SL-039-live-results.md:67-74 states it without condition: the results panel 'gets at least that at every size the window allows (560 by 600 and up), whatever the texts above it hold'. B-007's and B-008's minimum-size runs, and B-007's default runs with 6 or more drives, depend on how many drives are ready on the machine running them. They pass on this PC today and would fail with a stick plugged in.",
+    "evidence": "src/FsAnalyser.App/MainWindow.xaml:5 (MinWidth 560, MinHeight 600), :56-68 (MinHeights 292 and 84), :9-16 (PickerPanel with the DrivePanel WrapPanel); MainWindow.xaml.cs LoadDrives adds one button per ready Fixed, Removable or Network drive; docs/design/SL-039-live-results.md:67-74; this PC's drives: C: fixed, D: fixed, Z: network, E: and F: removable and not ready; my measurements above.",
+    "fix": "Make the pickers' height independent of the drive count, so the 376 px of minimums always has a fixed amount to fit into. For example, put the drive buttons in one row that scrolls sideways, or cap DrivePanel at one line of buttons with its own scrolling. Alternatively, derive the rows' minimums from the height actually left, or raise MinWidth and MinHeight to a size proven with the most drive buttons Windows can list. Then give the window cases a way to feed more drives in, such as a hook variable that adds buttons like the app's own, so the minimum-size runs no longer depend on what is plugged into the test machine. Qualify or correct the SL-039 doc statement."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "Core is unchanged. Scanner.cs:12 and :35-37: a single thread, returning inside the using blocks."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "Same as O-001. ShowLargestFiles still runs after the awaited scan (MainWindow.xaml.cs)."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "RanksFilesAtAnyDepthAndNeverAFolder passes (181/181)."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "KeepsExactlyTheCountLargestWhenSizesTieAtTheCut passes."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "ATreeWithNothingToRankGivesAnEmptyList passes. B-004 passed, and LargestFilesList is collapsed with 0 rows (ShowLargestFiles sets its Visibility from the row count)."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "AFileWithTwoNamesIsListedOnce passes."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "NoRowComesFromALink passes."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "RanksBySpaceOnDiskAndKeepsBothSizes passes."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "EachPathIsTheFilesExactPath passes. The Core path is exact. The window now shows at most 3 lines of it, with the full path as a tooltip (declared)."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "AStoppedScanListsOnlyWhatItRead passes, and B-005, B-007 and B-008's stopped runs passed."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "B-006 passed. HideLargestFiles (MainWindow.xaml.cs) now also collapses LargestFilesList, which has its own row, and StartScan and ShowProblem both call it."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "B-002, B-007 and B-008 assert the unreadable-folder caption and passed."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "B-003, B-007 and B-008 pass with fullRows ≥ 1 and inView for every list at 880x600 and 560x600 on this PC's 3 drives. The fit fails with a 4th drive at 560 wide (M1)."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "B-001 passed."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "LargestFilesScaleTests passes."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "ScanStore Size and OnDisk are still internal. Core is unchanged."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "LargestFilesPanel.visible and LargestFilesList.inView are still reported, and CheckLargestFiles asserts them."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "LargestFilesList (MainWindow.xaml:181-203) keeps HorizontalScrollBarVisibility=Disabled, the Stretch container and TextWrapping=Wrap. The path now stops at 3 lines (MaxHeight 48) with CharacterEllipsis and a full-path ToolTip, a declared departure from 'never clipped'."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "B-003 plants the U+D800 file as row 0, and both runs exit 0 with a report."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "The caption code is unchanged, and the B-cases assert its text."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "largestFilesMs is unchanged. The builder's C:\\\\ runs report 28.4 and 35.7 ms."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "The rule and its twin are unchanged. Fitness holds all 29 rules, and rules-parity reports AGREE."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "ShowLargestFiles still runs last in ShowOutcome, before OutcomePanel is made visible and EndingShown is raised."
+   },
+   {
+    "key": "O-024",
+    "discharged": "yes",
+    "evidence": "The outcome's inner Grid still splits the lists 3:2 when the unreadable list is open, now with minimums of 56 and 74 (MainWindow.xaml:118-150). B-003 and B-007 opened pass with fullRows ≥ 1."
+   },
+   {
+    "key": "O-025",
+    "discharged": "yes",
+    "evidence": "The shared outer Grid is now 3*/1* with minimums of 292 and 84 (MainWindow.xaml:56-83). The results list keeps 55.26 px and a full row after every ending at 880x600 and 560x600 on this PC, and all B-007 runs pass. With more drives than fit on one line of buttons it is cut off (M1)."
+   },
+   {
+    "key": "O-026",
+    "discharged": "yes",
+    "evidence": "The TopLevelPanel and TopLevelList keys remain, with fullRows added (WindowReport.cs FullRows). CheckBothLists asserts inView and fullRows ≥ 1."
+   },
+   {
+    "key": "O-027",
+    "discharged": "yes",
+    "evidence": "MinHeight stays 600. B-007 and B-008 run at MinWidth x MinHeight (560x600) through FSA_HOOK_MINSIZE, CheckSized asserts the size and the 'drives in' hold, and all runs pass. The comment at MainWindow.xaml:34-52 states its conditions."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "RanksFilesAtAnyDepthAndNeverAFolder, unchanged and passing."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "KeepsExactlyTheCountLargestWhenSizesTieAtTheCut, unchanged and passing."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "ATreeWithNothingToRankGivesAnEmptyList plus B-004, which passed."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "AFileWithTwoNamesIsListedOnce asserts HardlinkDuplicate."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "NoRowComesFromALink asserts EntryKind.Link for all three links."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "RanksBySpaceOnDiskAndKeepsBothSizes asserts the sparse file's on-disk size is ≤ 4 KiB."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "EachPathIsTheFilesExactPath covers the Core paths. B-008's 224-character root feeds paths long enough to be trimmed at 3 lines in the window, and every list keeps fullRows ≥ 1."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "AStoppedScanListsOnlyWhatItRead, B-005, and the stopped runs of B-007 and B-008."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "B-006 passed."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "AFileInAFolderTheScanCouldNotReadIsNotListed, plus the captions checked in B-002, B-007 and B-008."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "B-003, B-007 and B-008 feed the full list with 12 unreadable folders, closed and opened, beside SL-039's list, at 880x600 and 560x600, asserting fullRows ≥ 1 and inView. They do so only with this machine's 3 drive buttons: the picker height is a shape the code depends on and nothing feeds more drives in (M1)."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "B-001 passed."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "LargestFilesScaleTests passes."
+   },
+   {
+    "key": "C-014",
+    "exercised": "no",
+    "evidence": "The design marks this case material:false, and no test feeds a probed file. The deferral still holds: LargestFiles.cs is unchanged and never reads Flags."
+   }
+  ],
+  "drift": [
+   "The design's acceptance item (3), 'Each row shows the file's full path, never clipped', and its 'the path column wraps instead of trimming, so a 400-character location is never hidden' are superseded by the declared 3-line cap. Past about 140 characters at 560 px wide (more when wider), the location ends in an ellipsis and the whole path is only in the tooltip, which needs a mouse hover. The report never carries paths, so no case checks the tooltip.",
+   "SL-039's controls were changed by this slice (declared): TopLevelHeader is one trimmed line with a tooltip, and TopLevelList no longer scrolls sideways. docs/design/SL-039-live-results.md records both.",
+   "At the default 880x600 the outcome row sits at its 292 px minimum, and a finished C:\\\\ scan's texts show 95 of 129 px (54 px with the unreadable list open), the rest a scroll away (declared).",
+   "The report's fullRows counts rows wholly inside the list's own viewport, even when the window cuts off the list itself: my clipped runs read fullRows 1-2 with inView false. The B-cases pair fullRows with inView, so they would catch it.",
+   "Still standing: UnreadableList keeps MaxHeight=200 inside its 2* row, so at tall windows the opened list stops at 200 px. The plants.json F17 note still cites Scanner.cs:267, whereas the raw read is now at :281."
+  ],
+  "unreviewed": []
+ }
+}
