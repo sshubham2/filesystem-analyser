@@ -1,0 +1,152 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-043",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-09-26T04:09:53.863Z",
+ "head": "ec19fad245d07c2bf7bdbec37c1405188d903bc7",
+ "run_id": 1249,
+ "summary": "SL-043 was opened as six criteria on a mostly built scanner. Two were cut as already present, and three residuals were built: the classifier's surrogate-bit link rule, a GetDiskFreeSpaceExW volume read moved into Core as VolumeSpace and ScanStore.VolumeUsed, and the tests the criteria name. The classifier change and the tests were small and uncontested. The volume-figure seam drew all three major critique findings and both additions. Validate then ran the shipped exe and a probe against the real C:\\ (4.44M entries, 663 unreadable folders, exact match to two independent walks) and found no product defect. It shipped with two minor build-slice fixes still owed: the project's own rule-copy case script (tests/rules/RuleCases.ps1) is red, and one App branch is untested.",
+ "payload": {
+  "status": "complete",
+  "reason": "Nothing in the record blocks this reflection. O-024 and O-025 (both minor, both aimed at build-slice) are still open. Validate recorded each as failed and still passed the slice, so they are listed under what_went_wrong rather than raised again.",
+  "summary": "SL-043 was opened as six criteria on a mostly built scanner. Two were cut as already present, and three residuals were built: the classifier's surrogate-bit link rule, a GetDiskFreeSpaceExW volume read moved into Core as VolumeSpace and ScanStore.VolumeUsed, and the tests the criteria name. The classifier change and the tests were small and uncontested. The volume-figure seam drew all three major critique findings and both additions. Validate then ran the shipped exe and a probe against the real C:\\ (4.44M entries, 663 unreadable folders, exact match to two independent walks) and found no product defect. It shipped with two minor build-slice fixes still owed: the project's own rule-copy case script (tests/rules/RuleCases.ps1) is red, and one App branch is untested.",
+  "estimate_error": "Tier and size were right for one criterion and too big for the rest, and the seam was under-sized. The survey framed the slice as three residuals on a mostly built scanner (2 of 6 criteria cut). Only criterion 6 was expensive: the O-031 contradiction became VolumeSpace.cs, ScanStore.VolumeUsed, three ScanOptions test seams (ReadVolumeOfAnyRoot, VolumeReader, VolumeReadBound), a 30 s bound, four twinned rules, two window cases (V-001, P-001) and a rework of when report mode fires EndingShown. All 3 majors and both critique-review additions landed there. Criterion 4 (one predicate) and criteria 1 and 5 (tests only) drew no major finding and passed in validate. High risk was earned by the Core-to-App seam, not by the link rule.",
+  "learned": [
+   {
+    "kind": "codebase",
+    "lesson": "Twinned architecture rules have a second consumer besides rules-parity.ps1: tests/rules/RuleCases.ps1. It hard-codes the parity output ('AGREE N facts <- M twinned entries, P patterns; S settled') at about lines 204, 267, 288, 370, 587 and 595, plus a C-005 fixture ('8 Facts where the test class has 9'). C-003 deletes a twinned entry with a regex whose lookahead is '# settled by SL-', so any twinned entry inserted after 'TheScannerMakesNoBclFileSystemCalls (*.cs)' is deleted with it. Current parity is AGREE 11 facts <- 15 twinned, 27 patterns, 24 settled. Any slice that declares architecture_rules must run RuleCases.ps1 (C-001..C-005) as well as rules-parity.ps1. SL-039 and SL-042 had already left it stale, so this is the third slice in a row.",
+    "evidence": "Code review ran C-004 and C-005 at base c99123688 and they were green; at HEAD they fail and C-003 goes from 2 to 4 failures (O-024). The build ran only rules-parity.ps1 and called the script 'already stale', which was true only of C-001 and C-003's settled-count check."
+   },
+   {
+    "kind": "process",
+    "lesson": "A build's claim that a red check 'was already stale before this slice' has to come with a run at the base commit. Here it was half wrong, and the half that was wrong was the regression this slice caused. Code review disproved it only because it ran the script on an extracted base copy.",
+    "evidence": "Build follow-up said RuleCases.ps1 'was already stale before this slice'. Code-review drift finding: that holds only for C-001 and C-003's settled-count check. C-004, C-005 and C-003's 'DRIFT 1 unpaired' check were green on c99123688."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "MainWindow.StartScan awaits its post-scan work inside the try (MainWindow.xaml.cs:185-217), before the finally that clears _scanning and re-enables the pickers. Anything Core hands the App that can stall must not be awaited there. The pattern that now exists is ShowVolumeInUse: ShowOutcome runs at once, then a ContinueWith on a local copy of the Task, capturing only the window and a scan generation number, applies the result through Dispatcher.InvokeAsync. Every Core handle that can be pending needs a bound that completes it. VolumeSpace's is 30 s (DefaultBound, ScanOptions.VolumeReadBound), a bound that completes the task with null. A design that says the App 'keeps whatever blocking structure it has now' is unfounded until someone has read that block.",
+    "evidence": "M1 and M-add-1: with 'pending forever' as a legitimate state, the existing await would hold the window in Reading with the pickers disabled until Cancel, and the async state machine would pin the ~700 MiB store. The design's claim that a pending figure 'never blocks the next scan' was false against the code."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "This PC has no .NET 10 SDK or runtime, so everything goes through eng/dotnet.ps1, which uses the repo-local .dotnet (10.0.401, downloaded once per worktree, about 300 MB). Scratch probes must be run as `dotnet <probe>.dll` with that repo-local dotnet, not through the apphost. A whole-C:\\ scan takes about 400-465 s in the shipped exe, close to the tool's 10-minute cap. Start it detached with Start-Process and use eng/read-window.ps1 -TimeoutSec 900-1200.",
+    "evidence": "Validate: the first probe launch through the framework-dependent apphost failed, and an earlier whole-drive run under the tool's limit was stopped by validate itself. Build read C:\\ in 404.5 s and validate's exe run took 464 s."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "A strict set-equality assertion of the store against independent walks of the live system drive is red by construction. About three transient files (a Chrome cache entry, a OneDrive log, a harness output file) appear in neither walk, and the probe's own strict RESULT line said FAIL. A slice that compares a whole-drive scan to walks must define the tolerance up front: an entry present in neither walk, or created between the two walks, is churn. The stable facts on this machine are 20,464 links with no children, and 663 unreadable folders (633 error 5, 28 error 363, 2 error 1920) identical across the scanner and both walks.",
+    "evidence": "Validate whole-drive probe: 4,438,929 entries seen by both walks, all in the store with matching kind, but 3 store entries were in neither walk and forced the strict line to FAIL. The same 663 folders with the same codes failed in the scanner and both walks."
+   },
+   {
+    "kind": "risk",
+    "lesson": "The Get-Volume bracket test is only reliable with two protections together: the VolumeUsageTests class in [Collection(nameof(VolumeFigure))] with DisableParallelization, and up to three G1/figure/G2 attempts that print every triple. Do not collapse either. HardlinkTests writes and deletes exactly 64 MiB, which equals the bracket slack. Under an adversarial 256-300 MiB write-then-delete loop the precondition broke once on a first attempt and the retry absorbed it.",
+    "evidence": "M3 (accepted), then O-014: 25 quiet Release runs bracketed on attempt 1. Validate ran a 300 MiB and a 256 MiB write/delete loop, 10 runs each, 20 of 20 passed, and one first attempt fell outside the bracket."
+   },
+   {
+    "kind": "design",
+    "lesson": "V-001 gets a fast drive-root scan only by using a SUBST letter over a small temp tree, and IsDriveRoot accepting SUBST is exactly the limitation m3 deferred. Fixing m3 (QueryDosDevice) will break V-001 until it has another vehicle. Neither V-001 nor StallRig can produce a genuinely stalled volume read, because StallRig serves a UNC share with no drive letter. So the pending branch of ShowVolumeInUse has never run against a real stall.",
+    "evidence": "Code-review m2, O-025 and validate 'not reached': V-001 reads in 0.0 s so the figure has already landed and only the synchronous branch runs. m3 deferral: 'V-001 relies on exactly that'."
+   },
+   {
+    "kind": "estimate",
+    "lesson": "When a survey says 'mostly built, N residuals', size the slice by the residual that crosses a Core-to-App seam or contradicts a recorded decision (here O-031), not by the residual count. On this scanner, the classifier predicate and test-only criteria cost little and passed without contest. The seam residual cost the critique, the critique-review, a 25-run stability check, four twinned rules and two window cases.",
+    "evidence": "All three majors (M1, M2, M3) and both critique-review additions (M-add-1, M-add-2) are about the volume figure. Criteria 1, 4 and 5 produced no major finding, and validate re-measured them clean on 4.4M real entries."
+   },
+   {
+    "kind": "process",
+    "lesson": "The 'rework' line for this slice (build-check, risk-spike, critique, critique-review and code-review each ran twice) is the halt-then-resume mechanic, not a redo. Each first run ended with findings 'waiting on you' and each second run passed once a model disposed them. No gate was re-run because its first answer was wrong, and no person disposed any of the 22 findings, so all count as untriaged in gate precision. Do not read the 2x counts as evidence about gate quality. The real miss signal is the findings that reached build or code-review, which are the `missed` entries on this record.",
+    "evidence": "critique #1 halted / #2 pass ('10 answered by a model, and counted as untriaged'), critique-review #1/#2, code-review #1/#2 ('2 answered by a model'). Nothing in the run history shows a stage redone."
+   }
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "what": "The design asserted that eng/rules-parity.ps1 'fails on a rule present in only one copy' and built a component ('Architecture rules, both twin forms') on it. Parity actually compares only the twinned entries above the first '# settled by' marker. Nobody read the script. The design's 'the three rules must land in both forms' reasoning rested on tool behaviour that was not true.",
+    "dimension": "unfounded-assumptions",
+    "severity": "minor",
+    "caught_by": "build (recorded as a deviation)"
+   },
+   {
+    "gate": "critique",
+    "what": "The critique did not ask what else reads .taad/fitness.yaml's twinned block once four entries are added to it. tests/rules/RuleCases.ps1 hard-codes the parity counts (lines about 204, 267, 288, 370, 587, 595, and the C-005 8/9 Facts fixture), and C-003's deletion regex (lookahead '# settled by SL-') now also deletes the four new entries. C-004, C-005 and part of C-003 went red.",
+    "dimension": "cross-cutting-conformance",
+    "severity": "minor",
+    "caught_by": "code-review, by running the script at base c99123688 and at HEAD. The build had wrongly called it stale."
+   },
+   {
+    "gate": "critique",
+    "what": "The critique accepted the fix that shows ShowOutcome at once and applies the figure later, but never asked what report mode's EndingShown signal and Stopped endings do when the figure lands after the ending. The build had to change EndingShown to fire after the volume line settles, otherwise report mode would hang to its timeout on a slow volume. It also found that a Stopped whole-drive ending now shows the 'not in this partial scan' volume line, which had never been live. The design's contract 'WindowCases.ps1 need no change' did not survive.",
+    "dimension": "missing-edge-cases",
+    "severity": "minor",
+    "caught_by": "build (deviations 'EndingShown now fires...' and 'Visible behaviour change the design did not call out')"
+   },
+   {
+    "gate": "critique",
+    "what": "The design specified a test, 'scan cancelled right after the figure lands' with the store read mid-scan, that the Scanner API cannot support. The store is unreachable from outside a running scan. The critique reviewed the test's bracket arithmetic (M3) but not whether the test could hold the store.",
+    "dimension": "contract-gaps",
+    "severity": "minor",
+    "caught_by": "build (deviation: the test wraps the real reader to signal when it returns)"
+   },
+   {
+    "gate": "critique-review",
+    "what": "The critique-review added M-add-2 (nothing checks that the App shows the figure) and the disposition specified a SUBST drive over a small tree as the vehicle. It did not notice that the local read lands before ShowOutcome on a 24-entry tree, so the case can only exercise the synchronous branch. The pending branch is the one M1's fix exists for, and it stayed unexercised through code review and validate.",
+    "dimension": "test-coverage",
+    "severity": "minor",
+    "caught_by": "code-review (m2 / O-025); validate then recorded it as not reached"
+   }
+  ],
+  "what_went_wrong": [
+   "This slice broke the project's own guard-proving script and it reached validate. tests/rules/RuleCases.ps1 C-004, C-005 and part of C-003 went red. The build never ran that script (only rules-parity.ps1) and dismissed the state as 'already stale'. Code review caught it, and validate recorded O-024 as still failing and still passed the slice. Two build-slice fixes (O-024, O-025) were owed when the slice reached reflect.",
+   "The design's App-consumer contract was false against the code it did not open. 'Keeps whatever blocking structure it has now' and 'never blocks the next scan' contradicted MainWindow.xaml.cs:185-217, where the volume query is awaited inside the try before the finally that re-enables the pickers. It took the critique (M1) and a critique-review addition (M-add-1) to expose it. M1, M-add-1, m5 and the 'pending forever' contract are all one root.",
+   "The design stated tool and API behaviour without checking it. It said rules-parity fails on a one-sided rule (it does not), and it specified a test needing mid-scan access to a store the Scanner does not expose. The build fixed both as deviations.",
+   "The pending-figure branch of ShowVolumeInUse still has no test that reaches it. The disposition that added the window case (V-001) chose a vehicle that cannot stall. O-025 makes the same code path run, but no real stalled drive-letter read exists anywhere in the rig.",
+   "Validate lost time to environment. The first whole-C:\\ probe run hit the tool's 10-minute cap and was stopped by hand. The first probe launch through the framework-dependent apphost failed because the machine has no .NET 10. The strict whole-drive result line printed FAIL because of 3 transient files, so someone had to read past it.",
+   "The build's first targeted test run failed 2 of 80 because TempTree.File does not create parent folders. It was caught immediately, but it is a test-helper assumption new tests keep hitting.",
+   "Nothing here was decided by a person. All 22 findings across critique, critique-review and code-review were disposed by a model, so none of these gates' findings counts as triaged in precision. The five 'ran twice' gates are halt-then-resume counts and say nothing about first-pass quality."
+  ],
+  "unknowns": [
+   "Does a Windows client listing of a DFS namespace share actually carry tag 0x8000000A, and does descending it follow the referral into a target server with FileIds from a different volume mixed into one table? No DFS is reachable on this PC, so the DFS consequence of criterion 4 has never been measured. This must be settled before any slice that scans shares.",
+   "Does the non-elevation assertion (Assert.False(Environment.IsPrivilegedProcess)) go red, and not skip, when Core.Tests runs in an elevated session or the Windows Sandbox? It is meant to. Only a person-run elevated session can show it, and any future slice that runs the Core suite there would fail criterion 1's test on purpose.",
+   "Does the pending branch of MainWindow.ShowVolumeInUse behave correctly in the shipped exe when a mapped drive letter stalls? StallRig serves a UNC share with no drive letter, so nothing here can produce it.",
+   "Does a whole-drive scan of an empty removable drive raise the 'insert a disk' dialog from the scanner's own root open or SizeProbe? Only the new volume read is guarded with SEM_FAILCRITICALERRORS."
+  ],
+  "candidates": [
+   {
+    "title": "Make tests/rules/RuleCases.ps1 derive the parity counts instead of hard-coding them",
+    "urgency": "soon",
+    "why": "SL-039, SL-042 and SL-043 each raised the twinned or settled counts and left the script's hard-coded 'AGREE N facts <- M twinned entries, P patterns; S settled' strings (about six places plus the C-005 fixture) stale or red. O-024 refreshes the numbers once. The next slice that declares a twinned rule breaks it again, so the structural fix is to read the numbers from the parity output. Also narrow C-003's lookahead to `(?=^  - name:|^  # settled by SL-)`."
+   },
+   {
+    "title": "Run the network-tagged tests and window cases N-001..N-004 against the new classifier",
+    "urgency": "soon",
+    "why": "The Network=SMB-LOOPBACK and TEST-NET-1 tests are excluded by the default filter, and window cases N-001..N-004 were not run in build (build ran 28 cases, N-001..N-004 need -IncludeNetwork) or validate. The classifier now descends DFS and every non-surrogate reparse directory, and treats every surrogate tag as a link. Shares are where that change bites, and no stage of this slice exercised a share."
+   },
+   {
+    "title": "Add plant rows for the four new twinned architecture rules to eng/rules-harness/plants.json",
+    "urgency": "someday",
+    "why": "SL-040 added F17-F19 for its rule, but the four twinned entries SL-043 added have no plant rows. Plant outcomes must come from recorded harness runs with the TAAD engine (--engine-root), which the build could not do. Until then the new rules are unmeasured as guards."
+   },
+   {
+    "title": "Decide whether DFS entries (tag 0x8000000A) stay descended",
+    "urgency": "someday",
+    "why": "Criterion 4's surrogate-bit rule descends DFS, but through an SMB share the client follows the referral into another server. That contradicts the slice goal 'without ever following a link'. It is accepted and documented (O-018) but unmeasured, and the fitness rule 'the classifier does not list link tags' forbids 0x8000000A in EntryClassifier.cs. Reversing it means changing that rule, criterion 4's wording and the two flipped EntryClassifierTests rows."
+   },
+   {
+    "title": "Guard the scanner's own root open and SizeProbe with SEM_FAILCRITICALERRORS",
+    "urgency": "someday",
+    "why": "Only Kernel32.TryGetVolumeUsed sets the error mode (m2 fix). A whole-drive scan of an empty removable drive can still raise the 'insert a disk' box from the scan thread through the scanner's root open. It predates the slice and was scoped out. Now that one guard exists, the fix is to centralise it, and validate could not reach an empty removable drive."
+   },
+   {
+    "title": "Reject SUBST letters and share-subfolder mappings in VolumeSpace.IsDriveRoot, after giving V-001 a new vehicle",
+    "urgency": "someday",
+    "why": "m3 was deferred: a SUBST letter or a letter mapped to a share subfolder passes IsDriveRoot and shows the host volume's used space against a tree covering only a folder, so the coverage line is wrong with no error. V-001 currently depends on exactly that behaviour, so the fix (QueryDosDevice target beginning with \\??\\) has to replace V-001's SUBST vehicle in the same change."
+   },
+   {
+    "title": "Keep the two-walk whole-drive comparison as a repo tool with an explicit churn tolerance",
+    "urgency": "someday",
+    "why": "Validate wrote a scratch probe in %TEMP% (public Core API plus two independent FindFirstFileExW walks) that compared 4.4M live entries and then deleted it. Its strict line reports FAIL on transient files. Later scanner slices would rebuild it, so a checked-in eng/ tool with a rule for entries in neither walk would make whole-drive validation repeatable."
+   }
+  ]
+ }
+}

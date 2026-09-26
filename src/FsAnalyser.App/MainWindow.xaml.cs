@@ -397,15 +397,11 @@ public partial class MainWindow : Window
     // folder or a share, or no answer within the read's bound) adds no line. What waits for the figure holds
     // the window, this scan's generation and the texts, never the result or its store, so a read stuck on a
     // dead drive keeps no scan the window has moved on from in memory (M1). A figure that lands after another
-    // scan started is dropped.
-    private void ShowVolumeInUse(Task<long?> figure, int generation, OutcomeDetailText detail)
-    {
-        if (figure.IsCompleted)
-            AddVolumeInUse(figure, generation, detail);
-        else
-            figure.ContinueWith(landed => Dispatcher.InvokeAsync(() => AddVolumeInUse(landed, generation, detail)),
-                CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
-    }
+    // scan started is dropped. A figure that has already landed takes the same way, one dispatcher turn later,
+    // so every case that reaches this reaches the path a slow volume takes (SL-043, m2).
+    private void ShowVolumeInUse(Task<long?> figure, int generation, OutcomeDetailText detail) =>
+        figure.ContinueWith(landed => Dispatcher.InvokeAsync(() => AddVolumeInUse(landed, generation, detail)),
+            CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
 
     // On the UI thread, with the figure's task completed: nothing here blocks.
     private void AddVolumeInUse(Task<long?> landed, int generation, OutcomeDetailText detail)
