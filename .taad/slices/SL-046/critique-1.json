@@ -1,0 +1,139 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-046",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-09-26T14:11:31.110Z",
+ "head": "a68ae955d4ffb2843483251dc3f49337f20101bc",
+ "run_id": 1349,
+ "summary": "The design is mostly sound, and it takes the spike verdicts as given. The reconcile go is used by relying on the store's own charging. The installers and extension-map no-gos each became a design change. The ban on a string per record is enforced by an allocation Fact, which a regression cannot get past. The citations I checked hold up. Microsoft Learn documents FrozenDictionary.GetAlternateLookup for net-9.0 and net-10.0. The runtime PRs #102907 and #103191 show that StringComparer singletons implement IAlternateEqualityComparer<ReadOnlySpan<char>, string>, and that Frozen collections support it. FolderSizes' File Types report \"classifies files by type based on file extension\", and its File Categories report groups extensions into categories, so it is extension-first as the design says.\n\nThe weak point is the second must-verify precondition: no writer while the pass runs. The spike's condition covered a \"finished or cancelled\" scan. The design widened that to \"completed, cancelled or stopped\" and did not check it. This project has dedicated machinery for scans whose worker stays blocked in synchronous I/O after a cancel (StoppingWait, the re-sent-cancel tests, StallRig). The precondition is held only by one call site's discipline and a Debug.Assert, and Debug.Assert is compiled out of the Release exe that every window case runs.\n\nOther problems:\n- The 4,096 cap on unmapped extensions was never measured. It makes Other's itemization depend on walk order, and that itemization is the design's answer to the extension-map no-go.\n- Two tests the design names cannot run as described: the end-to-end rescan-clears-kinds assertion needs a hook mode the recorded driver lacks, and no test covers the cancelled or stopped reconcile case.\n\nNo blockers, but four majors should be fixed before build.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The design is mostly sound, and it takes the spike verdicts as given. The reconcile go is used by relying on the store's own charging. The installers and extension-map no-gos each became a design change. The ban on a string per record is enforced by an allocation Fact, which a regression cannot get past. The citations I checked hold up. Microsoft Learn documents FrozenDictionary.GetAlternateLookup for net-9.0 and net-10.0. The runtime PRs #102907 and #103191 show that StringComparer singletons implement IAlternateEqualityComparer<ReadOnlySpan<char>, string>, and that Frozen collections support it. FolderSizes' File Types report \"classifies files by type based on file extension\", and its File Categories report groups extensions into categories, so it is extension-first as the design says.\n\nThe weak point is the second must-verify precondition: no writer while the pass runs. The spike's condition covered a \"finished or cancelled\" scan. The design widened that to \"completed, cancelled or stopped\" and did not check it. This project has dedicated machinery for scans whose worker stays blocked in synchronous I/O after a cancel (StoppingWait, the re-sent-cancel tests, StallRig). The precondition is held only by one call site's discipline and a Debug.Assert, and Debug.Assert is compiled out of the Release exe that every window case runs.\n\nOther problems:\n- The 4,096 cap on unmapped extensions was never measured. It makes Other's itemization depend on walk order, and that itemization is the design's answer to the extension-map no-go.\n- Two tests the design names cannot run as described: the end-to-end rescan-clears-kinds assertion needs a hook mode the recorded driver lacks, and no test covers the cancelled or stopped reconcile case.\n\nNo blockers, but four majors should be fixed before build.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "claim": "The design treats 'stopped' as a store with no writer, but nothing established that. The cost spike's constraint reads 'The pass must run on a finished or cancelled scan'. The design widened it to 'completed, cancelled or stopped' in the Completion wiring component, in the Compute contract and in the cases. This project has code built specifically for workers that stay blocked in synchronous I/O after a cancel: StoppingWait.cs in the App, SynchronousIoCancelTests.CancelIsResentWhileACallBlocksAgainAfterACancel, the StallRig console, FSA_HOOK_MODE=stop and SMB-loopback stalls. Suppose 'stopped' is the state the App enters when it stops waiting for a stuck worker, rather than after Scanner.Scan has returned. Then the worker can append when its blocked call returns, while Compute is walking 0..Count. The result would be torn reads, per-kind sums that fail to reconcile only sometimes, and possibly an IndexOutOfRange, which contradicts the contract's 'never throws'. This is the design's own must-verify precondition 'no postings arrive after the books are closed', and the one state most likely to break it was added without evidence.",
+    "evidence": "Spike breakdown-pass-cost-at-5m-records constraint 2: 'must run on a finished or cancelled scan… Nothing here tests a pass concurrent with a live scan.' Design: 'Called only on a finished, cancelled or stopped store'. Coherence check: 'Not verified here and left to build: that the largest-files list is produced at the scan-end point'. Survey App file list includes StoppingWait.",
+    "fix": "Define the trigger as 'Scanner.Scan has returned its ScanResult' (that is, the writer thread has exited), not as a UI state. State what happens when the App abandons a stuck worker: either compute no kinds (the panel says so and the report omits 'kinds'), or the scanner seals the store on abandon so a late append cannot land. To settle it: read StoppingWait.cs and the scan-end handler in MainWindow.xaml.cs to see whether the 'stopped' end state can be raised before Scan returns. Then run a window case where StallRig holds one enumeration blocked past the stop wait, and assert that kinds either reconcile with the root or are absent."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "under-engineering",
+    "claim": "Only discipline keeps the 'no writer' rule: KindBreakdown.Compute(ScanStore) accepts any store, live or finished. The only guard is 'Debug.Assert on a completion flag if the store exposes one'. That assert is conditional, and it is compiled out of the Release self-contained exe that every window case and validate run, so no test that matters can trip it. The design calls this 'structural', but one call site plus an assert that does not ship is discipline. The first later slice that wants a live kinds panel during a scan can call Compute on a live store, and nothing will fail.",
+    "evidence": "Selection rationale: 'Both are structural in the design: … a single compute call at scan end.' Component KindBreakdown: 'Debug.Assert on a completion flag if the store exposes one.' SL-044 commit 3f4a263: the tree 'reads the finished ScanResult.Store'.",
+    "fix": "Make it impossible to write the wrong call. Have Compute take the finished ScanResult, which exists only once Scanner.Scan has returned and which SL-044 already consumes, instead of a bare ScanStore. Alternatively, the scanner sets an internal sealed flag on return and Compute throws InvalidOperationException on an unsealed store. That changes the 'never throws' contract to 'throws only on misuse' and needs one Fact that proves it. Either version also closes M1 if Scan returns only after the writer exits."
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "missing-edge-cases",
+    "claim": "The cap of 4,096 distinct unmapped extensions was picked without measurement, and when it is hit Other's itemization depends on walk order and quietly misleads. Any unmapped extension first seen after the 4,096th distinct key goes into an overflow slot that is 'never listed as an extension'. That extension can be the biggest in Other, for example game .pak files scanned late, while Other's top 3 show smaller ones. Nothing tells the reader how much of Other the listed extensions leave out. A Windows C: drive with 3.6M files can plausibly have thousands of distinct suffixes (numbered rotations, hash- or GUID-suffixed cache files). The extension-map spike already grouped C: by extension, so it had this count and did not record it. Itemizing Other is the design's whole answer to the map no-go ('Itemizing Other answers what is in there on any drive'), so an order-dependent hole in it defeats that answer on exactly the drive that was measured. Totals still reconcile, so the reconcile tests will not catch it.",
+    "evidence": "KindBreakdown: 'after 4,096 distinct unmapped extensions any new one shares a single overflow slot folded into Other. The overflow slot is never listed as an extension.' Key decision: 'The cap bounds allocation on trees with many odd suffixes.' The allocation budget from the spike is 64 MiB. 4,096 keys is only about 0.3 MiB.",
+    "fix": "Re-run the extension-map spike's C: grouping and record two figures: the number of distinct extensions, and the on-disk share of extensions first seen after the 4,096th. Size the cap from that figure with headroom, for example 65,536 keys, still a few MiB and far under 64 MiB. Whatever the cap, show any row whose listed extensions do not cover its total with a remainder ('+ N other extensions, X GB'). Then add a case to the overflow Fact: an overflow extension bigger than every listed one is visible in the remainder."
+   },
+   {
+    "id": "M4",
+    "severity": "major",
+    "dimension": "test-coverage",
+    "claim": "Two of the window case's assertions cannot be driven by the recorded test driver. The case asserts that 'kinds' is absent in a report written before the scan ends and absent again after a rescan starts. The recorded FsaWindowHook is steered by FSA_HOOK_MODE (stop|throw|close) and has no mode that starts a second scan or writes a report mid-scan. The design lists no change to tests/window/FsaWindowHook among its components. The build will either extend a test driver it was not told to touch, or drop the assertion. The only end-to-end check on 'a rescan never shows the previous scan's kinds' is therefore unplanned. Core cannot test it because the holder lives in MainWindow.xaml.cs.",
+    "evidence": "Stack: 'FsaWindowHook, loaded by DOTNET_STARTUP_HOOKS and steered by FSA_HOOK_MODE (stop|throw|close)'. Component 'Window case: kinds reconcile end to end': 'asserts that kinds is absent in any report written before the scan ends and again after a rescan starts'.",
+    "fix": "Name the hook change as a component: a rescan mode, plus a way to emit a report while a scan is running. Say what it asserts. Or make the stale-kinds case structural (see m1) and cut the end-to-end rescan assertion down to what the existing modes can drive."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "under-engineering",
+    "claim": "Every scan-start path has to remember to clear the result holder. The design keeps it in one MainWindow field 'cleared when a new scan starts', so each place that starts a scan (drive button, folder picker, any later 'scan again') must clear it. If one path forgets, the panel and --report show the previous scan's kinds during the new scan, and per M4 nothing end-to-end checks that.",
+    "evidence": "Completion wiring component: 'stores the KindBreakdownResult in one field… The field is cleared when a new scan starts'. The App already has a per-scan object (FolderTreeSession, and the ScanResult the tree reads).",
+    "fix": "Hang the KindBreakdownResult off the per-scan object that is created when a scan starts and replaced when the next one starts, the one that already holds the ScanResult. A new scan then cannot see the old breakdown, and there is nothing left to clear."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "Nothing tests the cancel/stop case. The design's own case says a cancelled or stopped scan's breakdown 'must equal the partial root totals', but none of the five KindBreakdownTests scans a cancelled tree, and the window case covers only a completed small tree. The spike reconciled only a completed scan. Whether the store's rollup (RolledSize/RolledOnDisk/FilesBelow) is even finalised on a cancelled store has not been checked.",
+    "evidence": "Case 'show the breakdown after a stop or cancel': 'Its sums must equal the partial root totals'. KindBreakdownTests items (1)-(5) are all completed or synthetic stores.",
+    "fix": "Add one Core Fact that scans a temp tree with a token cancelled after N entries (through Scans.cs or ScanProgress) and asserts that the kind sums equal FilesBelow(0), RolledSize(0) and RolledOnDisk(0) of that partial store."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "claim": "The design does not say what happens when a scan ends by exception. It covers completed, cancelled and stopped only, yet the recorded window driver has a throw mode. It does not say whether Compute runs on a store whose writer died mid-append, what the panel shows, or whether the report carries 'kinds'. Compute also runs inline in the scan-end handler beside the tree swap. A defect in the new pass (its 'never throws' is a claim, not a proof) would take down the path that shows the tree the user waited minutes for.",
+    "evidence": "Compute contract: 'Must be called only when … the scan is completed, cancelled or stopped.' Stack: FSA_HOOK_MODE (stop|throw|close).",
+    "fix": "State that a faulted scan computes no kinds: the panel shows the existing error state and the report omits 'kinds'. Add that assertion to the existing throw window case. Catch around the Compute call so a failure blanks only the kinds panel."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "The UI-thread cost was accepted in isolation, against a budget this project already enforces. The kinds pass alone measured 144-187 ms at 5M records in a Release console. The design runs it synchronously in the scan-end handler, next to the largest-files pass (a second full pass) and the SL-044 tree swap. SL-044 set a UI-thread responsiveness bar of p95 < 200 ms. That leaves 13-56 ms for everything else, and the window cases use small trees, so no test will see the combined stall on a real C: scan (4.5M entries).",
+    "evidence": "Commit 3dbaedf: 'the hook now probes the UI thread every 10 ms … and T-005 checks p95 < 200 ms'. Taste disagreement: 'Compute once synchronously on the UI thread at scan end … About 150-190 ms at 5M records was accepted.'",
+    "fix": "Once the store is finished (M1/M2), the pass reads immutable data, so run Compute with Task.Run and post the result to the holder. The design already calls this 'a small change'. Or measure the whole scan-end UI block at 5M before accepting it."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "The breakdown writes its own inclusion rule ('every EntryKind.File entry') and asserts that it equals the rollup's rule, when it could reuse the rollup's. The reconcile spike proved the two match only on a tree with a junction and a directory symlink. The design adds a file symlink and asserts 'Links are Link entries and must be skipped' without evidence. C: also holds reparse-point files such as AppExecLink aliases in WindowsApps. If the store records a file symlink or an app-exec alias as a File, or FilesBelow counts something Kind==File excludes, the reconcile fails. The design names no response.",
+    "evidence": "Key decision: 'Every File entry counts toward its kind's file count … Link entries are excluded.' Case: 'a junction, a directory symlink and a file symlink'. Spike tree: 'junction jn and directory symlink sym'. No file symlink was in it.",
+    "fix": "Have KindBreakdown use the same predicate the rollup uses to decide a counted file (expose it internally from ScanStore.Rollup.cs), rather than restating it as Kind == File. The two cannot drift then, and the file-symlink Fact tests one rule instead of two."
+   },
+   {
+    "id": "m6",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "claim": "Two contract details are missing. (a) The no-extension row has exactly one extension key, the empty one, so its 'Biggest extensions' cell would render as ' 12 GB' with no label. The design does not say what to show there, or how to show a dotfile key such as '.gitignore' in Other. (b) Validate 'sums the array and compares it with the report's root totals', but nobody checked that schema-1's root carries a file count. If it has only size and on-disk, the end-to-end count reconcile has nothing to compare against.",
+    "evidence": "KindTotal.TopExtensions(<=3), with ExtensionTotal.Ext described as 'lowercase, with dot'. Report kinds section: 'Validate sums the array and compares it with the report's root totals.'",
+    "fix": "State that TopExtensions is empty for NoExtension and the panel shows '—' there. Have the build confirm that the schema-1 root has a files field, and if it does not, add it in the same additive change."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M1 (stopped = no writer, widened from the spike's 'finished or cancelled') and m5 (the file-symlink and reparse-point inclusion rule is restated, not reused). Both must-verify preconditions were attacked. (1) Total classification holds by construction: empty maps to NoExtension, unmapped to Other, and each slot folds once, so double-posting cannot happen. It could break only if the slot dictionary and FileKinds used different comparers, and the MOVIE.MP4 theory and the reconcile Fact would catch that. (2) The no-writer precondition is the real exposure, covered in M1 and M2. The 23.6% residual arithmetic leaves out that dropping .ts moves bytes into Other. The design says it does not depend on that figure, so it is not raised."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "M3 (the unmeasured 4,096 cap makes Other's top-3 depend on walk order, and the overflow is invisible). Also noted, not raised: a file with two hardlink names that differ in extension is charged to whichever name the store charged, so its kind depends on walk order. That is consistent with the tree's rule, and totals still reconcile. The case list covers case folding, trailing-dot, dotfile, empty-store and zero-on-disk cases."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "M2 (the no-writer rule rests on one call site plus a Debug.Assert compiled out of Release) and m1 (a holder that every scan-start path must remember to clear). The ban on a string per record IS enforced: the 200k allocation Fact runs through Compute, so a Substring or ToLowerInvariant regression, or an allocating Name(i), breaches 256 KiB and fails."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none: the ten fixed kinds, the internal table with public result types, and the overflow cap are each justified. A cap is needed for pathological trees; only its size is unjustified (M3). In rule 2, '\\bFileKinds\\b' is redundant because FileKinds is internal and the App would fail to compile anyway, but it is harmless. The ban on Path.GetExtension in the App may later block a legitimate display use; that is not raised."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "m6: the no-extension row's TopExtensions rendering, and whether the schema-1 root carries a file count for validate's count reconcile. The FileKinds.Of dot convention ('with dot' in the contract, bare extensions in the table listing) is also ambiguous, but the classification theory catches a mismatch."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "m3: a scan that faults (FSA_HOOK_MODE=throw) has no stated kinds behaviour, and a failure in Compute is not contained at scan end. M1 also concerns an error path: abandoning a stuck worker."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "Against the spikes: the only drift is 'stopped' added to the cost spike's 'finished or cancelled' condition (M1). Against Q-016: complies; the report carries per-kind totals only and topExtensions was removed. Against Q-010: appends to the existing rules file. Against Q-001: adds a file symlink and skips no link kind. The narrowed Installers row is pending an open question the design lists, has a cheap-to-reverse default, and is not raised again."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "m4: the synchronous scan-end pass was accepted without adding in the other scan-end work on the UI thread, against SL-044's p95 < 200 ms bar. Otherwise it conforms: the formatter is reused, the partial-scan label is reused, the report property style follows WindowReport, and the architecture-rule regexes do not match EntryKind.File or FileKind.Of (the lookbehind '(?<![\\w.])' excludes 'EntryKind.File'). Rule 1 also applies to the existing Analysis/LargestFiles.cs; the rules harness must be run on the current tree to confirm it has no hit there."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "M4 (the rescan and mid-scan report assertions need a hook mode that does not exist) and m2 (no reconcile test for a cancelled or stopped store). Strong coverage otherwise: a real NTFS reconcile Fact with both link kinds, compression, sparse files and long paths; an allocation Fact; an overflow Fact; and the cloud-only zero-denominator case on a synthetic store."
+   },
+   {
+    "dimension": "security",
+    "result": "none: Analysis is barred from filesystem access by rule 1, so classification cannot open or hydrate online-only files. The report adds only per-kind totals (no names, paths or extension strings), which is within Q-016. The feature adds no input, network or elevation surface."
+   }
+  ]
+ }
+}

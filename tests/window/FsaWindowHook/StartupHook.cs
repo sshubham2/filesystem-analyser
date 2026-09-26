@@ -18,12 +18,12 @@ using System.Windows.Threading;
 /// </summary>
 /// <remarks>
 /// <code>
-///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|watch|measure|rescan|expand|size|tree
+///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|watch|measure|rescan|expand|kinds|size|tree
 ///   FSA_HOOK_LOG=&lt;file&gt;  [FSA_HOOK_ARMED=&lt;marker file&gt;  FSA_HOOK_CANCEL_DELAY_MS=&lt;n&gt;  FSA_HOOK_CLOSE_DELAY_MS=&lt;n&gt;]
 ///   [FSA_HOOK_SLOW_REFRESH_MS=&lt;n&gt;]  (watch and measure only)
 ///   [FSA_HOOK_MISSING=&lt;the root folder, under %TEMP%&gt;]  (rescan only)
-///   [FSA_HOOK_EXPAND=1]  (watch only; a folder's path for tree)  [FSA_HOOK_MINSIZE=1]  (watch and expand only)
-///   [FSA_HOOK_DRIVES=&lt;n&gt;]  (watch, expand and size only)
+///   [FSA_HOOK_EXPAND=1]  (watch only; a folder's path for tree)  [FSA_HOOK_MINSIZE=1]  (watch, expand and kinds only)
+///   [FSA_HOOK_DRIVES=&lt;n&gt;]  (watch, expand, kinds and size only)
 ///   [FSA_HOOK_WALK, FSA_HOOK_RECYCLE, FSA_HOOK_MULTIPLY, FSA_HOOK_SELECT, FSA_HOOK_RELEASE, FSA_HOOK_GAP, FSA_HOOK_HEIGHT]  (tree only)
 /// </code>
 /// tree (SL-044) reads and drives the folder tree a completed scan shows, and logs JSON lines; TreeMode.cs has
@@ -65,6 +65,13 @@ using System.Windows.Threading;
 /// beside a closed, pressable list of unreadable folders, opens that list as a click on its header would
 /// (IsExpanded, which the header's toggle sets). The layout that follows runs ahead of the report, so the
 /// report reads the window with the list open. It is not armed and takes no FSA_HOOK_MISSING.
+///
+/// kinds (SL-046) watches the same way and, once the first ending shows the list of largest files, chooses the files
+/// by kind on the results cell's header line as a click would (ShowKindsButton's IsChecked, which a click sets), if a
+/// person could. The layout that follows runs ahead of the report, so the report reads the window with the kinds shown.
+/// It logs "watching" and "listed" as expand does, then "acted mode=kinds rows=n ms=n" and "kinds=b STATE" straight
+/// after it chose them. It is not armed and takes no FSA_HOOK_MISSING; FSA_HOOK_MINSIZE and FSA_HOOK_DRIVES size the
+/// window and add drive buttons ahead of it, as they do for expand.
 ///
 /// size (SL-040, O-027 and the window-size rework) sets the window's Width and Height to its own MinWidth and
 /// MinHeight in a Loaded class handler, which runs before the window's own Loaded handler starts the scan, and
@@ -173,21 +180,21 @@ internal class StartupHook
         try
         {
             Log($"loaded mode={mode} pid={Environment.ProcessId}");
-            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "size" or "tree"))
+            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "kinds" or "size" or "tree"))
             {
                 Log($"refused mode={mode} reason=unknown mode");
                 return;
             }
             string? minSize = Environment.GetEnvironmentVariable("FSA_HOOK_MINSIZE");
             bool sizeFirst = !string.IsNullOrEmpty(minSize);
-            if (sizeFirst && (minSize != "1" || mode is not ("watch" or "expand")))
+            if (sizeFirst && (minSize != "1" || mode is not ("watch" or "expand" or "kinds")))
             {
-                Log($"refused mode={mode} reason=FSA_HOOK_MINSIZE is 1, and for watch and expand only (size mode sizes by itself)");
+                Log($"refused mode={mode} reason=FSA_HOOK_MINSIZE is 1, and for watch, expand and kinds only (size mode sizes by itself)");
                 return;
             }
-            if (!Delay("FSA_HOOK_DRIVES", out int? extraDrives) || (extraDrives is not null && mode is not ("watch" or "expand" or "size")))
+            if (!Delay("FSA_HOOK_DRIVES", out int? extraDrives) || (extraDrives is not null && mode is not ("watch" or "expand" or "kinds" or "size")))
             {
-                Log($"refused mode={mode} reason=FSA_HOOK_DRIVES is a whole number, and for watch, expand and size only");
+                Log($"refused mode={mode} reason=FSA_HOOK_DRIVES is a whole number, and for watch, expand, kinds and size only");
                 return;
             }
             // Size to the minimum, add drive buttons, or both, before the window loads.
@@ -240,13 +247,13 @@ internal class StartupHook
                     PrepareWindow(mode, true, extraDrives ?? 0);
                 return;
             }
-            if (mode is "rescan" or "expand")
+            if (mode is "rescan" or "expand" or "kinds")
             {
                 string? missing = Environment.GetEnvironmentVariable("FSA_HOOK_MISSING") is { Length: > 0 } folder ? folder : null;
                 if (!string.IsNullOrEmpty(marker))
                     Log($"refused mode={mode} reason={mode} mode is not armed");
-                else if (mode == "expand" && missing is not null)
-                    Log("refused mode=expand reason=FSA_HOOK_MISSING is for rescan only");
+                else if (mode != "rescan" && missing is not null)
+                    Log($"refused mode={mode} reason=FSA_HOOK_MISSING is for rescan only");
                 else if (!prepare || PrepareWindow(mode, sizeFirst, extraDrives ?? 0))
                     DriveAfterList(mode, missing);
                 return;
@@ -528,6 +535,11 @@ internal class StartupHook
                 Expand(app, window, rows);
                 return;
             }
+            if (mode == "kinds")
+            {
+                ChooseKinds(app, window, rows);
+                return;
+            }
             var chooser = window.FindName("ChooseFolderButton") as FrameworkElement;
             if (rows == 0 || Shown(window, "ScanningPanel") || chooser is null || !Pressable(chooser))
             {
@@ -559,6 +571,21 @@ internal class StartupHook
         Log($"acted mode=expand rows={rows} unreadable={unreadable} ms={Clock.ElapsedMilliseconds}");
         Pressing(app, "expand", () => expander.IsExpanded = true); // what its header's toggle sets when clicked
         Log($"expanded={expander.IsExpanded} {State(window)}");
+    }
+
+    // kinds (SL-046): chooses the files by kind on the results cell's header line as a click would, once the ending is
+    // on screen. Its layout runs at Render, still ahead of the report, so the report reads the kinds shown.
+    private static void ChooseKinds(Application app, Window window, int rows)
+    {
+        var choice = window.FindName("ShowKindsButton") as ToggleButton;
+        if (choice is null || !Pressable(choice) || choice.IsChecked == true)
+        {
+            Log($"refused mode=kinds reason=no pressable, unchosen choice of the files by kind (pressable={choice is not null && Pressable(choice)} checked={choice?.IsChecked})");
+            return;
+        }
+        Log($"acted mode=kinds rows={rows} ms={Clock.ElapsedMilliseconds}");
+        Pressing(app, "kinds", () => choice.IsChecked = true); // what a click on it sets
+        Log($"kinds={choice.IsChecked} {State(window)}");
     }
 
     private static void StartSecondScan(Application app, Window window, string? missing, int rows)

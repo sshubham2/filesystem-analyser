@@ -1,0 +1,364 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-046",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-26T13:58:23.793Z",
+ "head": "a68ae955d4ffb2843483251dc3f49337f20101bc",
+ "run_id": 1345,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "One proposal (practice), taken as its core and checked against the survey and the four spikes. The survey found nothing of SL-046, and the nearest neighbour is Core/Analysis/LargestFiles.cs (a one-pass read over the finished store). The proposal's KindBreakdown.Compute follows that shape, so it matches how the code is already laid out. The spikes shaped it. (1) Reconcile was a go: grouping File entries by extension and summing ChargedSize/ChargedOnDisk equals the root exactly (9 files, 1,081,084,958 B, 3,743,856 B on disk). The design therefore reuses the store's charging and never recomputes the hardlink or link rules. (2) Installers was a no-go: a name rule matched 6.5% of Downloads installer bytes (2 of 8 files). Installers therefore means package formats only, and every .exe goes to 'Programs & system files'. (3) The extension map was a no-go: Other was 50.2% of C: on-disk bytes, no-extension 17.6%, .aax 9.0%. The design does not tune the map until one drive passes. It gives no-extension its own row, adds aax/aa/m4b to Audio, and itemizes the biggest extensions inside every row, Other included. The 23.6% left after those changes is arithmetic on measured figures, not a measurement, and the design does not depend on it. (4) The cost spike was conditional. The pass must not build a string per record (510 MiB per pass against 400 B for span lookup), and it must run only on a store with no writer. Both are structural in the design: span lookup with no new per-record field, so the U-001 memory layout is untouched, and a single compute call at scan end. One piece of the proposal was changed. Its report 'kinds' entries carried topExtensions, which are file-name fragments, in a diagnostic file that Q-016 limits to 'totals and the root, never a listing'. The reconcile proof needs only per-kind sums, so the report now carries per-kind totals only. Extensions are shown in the panel and tested in Core.",
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal. Taken whole except that the report's per-kind entries drop topExtensions (name fragments, outside Q-016's 'totals and the root, never a listing'). The design also adds a single result holder in MainWindow.xaml.cs, cleared when a scan starts, and two architecture rules. The proposal text was clipped at 20000 chars, so its tail (the risks section and the rest of the cross-domain invariants) was not seen and was not composed from."
+   }
+  ],
+  "components": [
+   {
+    "name": "FileKinds (fixed extension-to-kind table)",
+    "responsibility": "Defines the public FileKind enum with a stable string id and label for each of ten kinds: videos, images, audio, documents, archives, disk-images, installers, programs ('Programs & system files'), no-extension, other. The table is an internal static FrozenDictionary<string, FileKind> keyed by extension with StringComparer.OrdinalIgnoreCase and looked up through GetAlternateLookup<ReadOnlySpan<char>>(). It is internal so the App cannot classify on its own. Table: videos = mp4 m4v mkv avi mov wmv webm flv mpg mpeg m2ts mts 3gp. images = jpg jpeg png gif bmp webp heic heif tif tiff svg ico psd raw cr2 cr3 nef arw dng avif. audio = mp3 flac wav aac m4a ogg opus wma aiff aax aa m4b. documents = pdf doc docx xls xlsx ppt pptx odt ods odp rtf txt md csv epub. archives = zip 7z rar tar gz tgz bz2 xz zst cab. disk-images = iso img vhd vhdx vmdk qcow2 wim esd. installers = msi msp msu msix msixbundle appx appxbundle. programs = exe dll sys ocx drv mui. Empty extension maps to no-extension, anything else to other. This is the spike's measured map with three changes: aax/aa/m4b added to audio (.aax alone was 9.0% of C:), ts removed from videos (TypeScript files would inflate the count), and the programs label names system files so pagefile.sys and hiberfil.sys are not presented as programs.",
+    "lives_at": "src/FsAnalyser.Core/Analysis/FileKinds.cs",
+    "key_interactions": "Of(ReadOnlySpan<char>) is total and never throws. KindBreakdown pre-seeds its slot dictionary from this table. It is not called once per record."
+   },
+   {
+    "name": "KindBreakdown (one-pass aggregate over a finished store)",
+    "responsibility": "Compute(ScanStore) walks entries 0..Count once and skips every entry that is not EntryKind.File, so folders and links are excluded. For each file it takes Path.GetExtension over the name span (no allocation), looks it up through the span alternate lookup in a Dictionary<string,int>(OrdinalIgnoreCase) that maps to a slot holding {Files, Size, OnDisk}, and adds 1, ChargedSize(i) and ChargedOnDisk(i). The dictionary is pre-seeded with every mapped extension plus the empty extension. A new unmapped extension allocates its lowercased key once, and after 4,096 distinct unmapped extensions any new one shares a single overflow slot folded into Other. The overflow slot is never listed as an extension. After the pass each slot is folded into its kind, and each kind keeps its top 3 extensions by on-disk size (ties by size, then ordinal). It returns only kinds with at least one file, sorted by on-disk size descending (ties by size, then FileKind ordinal), plus grand totals. Hardlink second names count as files and add 0 bytes: that is the store's own rule and is not recomputed here. Result types are public: KindBreakdownResult{Kinds, Files, Size, OnDisk}, KindTotal{Kind, Id, Label, Files, Size, OnDisk, TopExtensions(<=3)}, ExtensionTotal{Ext (lowercase, with dot), Files, Size, OnDisk}.",
+    "lives_at": "src/FsAnalyser.Core/Analysis/KindBreakdown.cs",
+    "key_interactions": "Reads only ScanStore (Name/NameSpan, Kind, ChargedSize, ChargedOnDisk) and never touches the filesystem. Called only on a finished, cancelled or stopped store, because the ScanStore contract does not cover reads during appends. Debug.Assert on a completion flag if the store exposes one."
+   },
+   {
+    "name": "Name span accessor (only if Name(i) allocates)",
+    "responsibility": "The build first checks whether ScanStore.Name(i) (ScanStore.cs:80) builds a new string. If it does, it adds `internal ReadOnlySpan<char> NameSpan(int i)` beside it, reading the pooled UTF-16 name in place. This adds an accessor and changes no layout, and it adds no per-record field, which keeps U-001's memory result (peak 699 MiB) valid. If a span cannot be exposed without a layout change, that is a stop-and-redesign signal, not something to work around with a per-record string.",
+    "lives_at": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "key_interactions": "Used by KindBreakdown only. Core.Tests already reaches internals; the App does not need it."
+   },
+   {
+    "name": "Completion wiring and single result holder",
+    "responsibility": "At the point where the scan ends (completed, cancelled or stopped), on the same thread that already produces the largest-files list, MainWindow.xaml.cs calls KindBreakdown.Compute once and stores the KindBreakdownResult in one field. The panel and the report writer both read that field, so they can never disagree. The field is cleared when a new scan starts, so a rescan never shows the previous scan's kinds.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "key_interactions": "Feeds the File kinds panel and WindowReport. No live update during a scan. Moving the call to Task.Run later is a small change: measured cost is 144-187 ms at 5M records."
+   },
+   {
+    "name": "File kinds panel",
+    "responsibility": "A small, non-virtualized ListView/GridView following the LargestFilesPanel pattern (MainWindow.xaml:272-289). Columns: Kind | Files | Size | On disk | Share of on-disk | Biggest extensions (for example '.mp4 40.1 GB · .mkv 6.2 GB'). At most 10 rows, sorted as Compute returns them. Before the scan ends it shows 'Shown when the scan finishes'. After a cancel or stop it shows the partial breakdown with the tree's partial-scan label. With no files it shows 'No files'. When the on-disk total is 0 the share column shows '—'. The Installers and Programs rows carry a tooltip: 'Installers are .msi/.msix/.appx packages. Setup programs that ship as .exe are counted under Programs.' Size text reuses the formatter used by the largest-files list and TopLevelRowText. Row text is formatted in the App and no classification happens there.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml",
+    "key_interactions": "Bound from the single result holder. It has no drill-down to individual files in this slice."
+   },
+   {
+    "name": "Report kinds section",
+    "responsibility": "Adds a 'kinds' array to the existing schema-1 `--report` JSON. Each element has id, label, files, size, onDisk, and nothing else. There are no extension strings, names or paths, which keeps it inside Q-016's 'totals and the root, never a listing'. Property naming follows WindowReport's existing style. The array is omitted until the breakdown has been computed, and omitted again after a rescan starts. The schema number stays 1 because the change only adds a field.",
+    "lives_at": "src/FsAnalyser.App/WindowReport.cs",
+    "key_interactions": "Read by eng/read-window.ps1 (build must confirm it tolerates the extra property). Validate sums the array and compares it with the report's root totals."
+   },
+   {
+    "name": "KindBreakdownTests",
+    "responsibility": "(1) A theory over FileKinds: MOVIE.MP4 -> videos, x.aax -> audio, a.tar.gz -> archives, noext -> no-extension, 'trailingdot.' -> no-extension, .gitignore -> other, setup.exe and Hermes-Setup.exe -> programs (pins the installer no-go), foo.msi -> installers, x.ts -> other. (2) A reconcile Fact on a real %TEMP% NTFS tree, ported from the spike's scratch Fact, built with TempTree's Hardlink, Junction, DirectorySymlink, a file symlink (Q-001: neither link kind may be skipped), Compress, SparseFile, a 359-character-path .jpg and TextFile. It asserts that summed files, size and on-disk equal the root's FilesBelow(0), RolledSize(0) and RolledOnDisk(0) exactly; that outside.zip behind the links is absent; that the hardlinked mp4 adds its bytes once; and that the long-path .jpg counts under images. (3) An allocation Fact on a synthetic store shaped like ScanStoreBudgetTests (ScanStoreTests.cs:126), 200k files over about 50 mixed-case extensions, where after a warm-up the GC.GetAllocatedBytesForCurrentThread delta stays under 256 KiB. (4) An overflow Fact: more than 4,096 distinct unmapped extensions, then a .mp4. Totals still reconcile and the .mp4 still counts as videos. (5) Synthetic-store Facts: an empty store, and files whose on-disk is 0 but whose size is not (cloud-only shape).",
+    "lives_at": "tests/FsAnalyser.Core.Tests/KindBreakdownTests.cs",
+    "key_interactions": "Reuses TempTree.cs, Scans.cs, TestNative.cs and RollupOracle.cs. Nothing is skipped, and a symlink-creation failure fails the test."
+   },
+   {
+    "name": "Window case: kinds reconcile end to end",
+    "responsibility": "One extra case in the existing window cases. It runs the exe with `--report` on a small temp tree, reads 'kinds' through eng/read-window.ps1, and asserts that the summed files/size/onDisk equal the report's root totals. It also asserts that 'kinds' is absent in any report written before the scan ends and again after a rescan starts.",
+    "lives_at": "tests/window",
+    "key_interactions": "Uses the existing schema-1 report path and the FsaWindowHook driver through WindowCases.ps1. No new test framework or project."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "KindBreakdown.Compute(ScanStore store) -> KindBreakdownResult",
+    "kind": "function",
+    "auth_model": "In-process; no auth.",
+    "error_cases": "Must be called only when no writer is active (the scan is completed, cancelled or stopped). The cost spike measured it only on a store with no writer, and the ScanStore remarks do not cover reads during appends. An empty store, or one with no files, returns an empty Kinds list and zero totals. There is no CancellationToken: the measured worst case is 144-187 ms at 5M records. The function does not throw on odd names (empty, very long or non-ASCII suffixes fall to Other).",
+    "notes": "Invariant: the sum over Kinds equals the grand totals, which equal the root's FilesBelow/RolledSize/RolledOnDisk. File entries only, and hardlink second names contribute a file and 0 bytes."
+   },
+   {
+    "name": "FileKinds.Of(ReadOnlySpan<char> extension) -> FileKind (internal)",
+    "kind": "function",
+    "auth_model": "n/a",
+    "error_cases": "Total: empty maps to NoExtension and any unmapped value maps to Other. It never throws.",
+    "notes": "Case-insensitive. The extension is the result of Path.GetExtension over the name span, including the dot. A multi-part name classifies by its last part (a.tar.gz -> .gz -> archives). Path.GetExtension returns the whole name for a leading-dot name (.gitignore -> Other) and empty for a trailing dot (no-extension)."
+   },
+   {
+    "name": "--report <file> 'kinds' section (schema 1, additive)",
+    "kind": "cli",
+    "auth_model": "Local file written only when `--report` is passed (Q-016).",
+    "error_cases": "Omitted until the breakdown exists and after a rescan starts. eng/read-window.ps1 must be confirmed to tolerate an added property.",
+    "notes": "Elements are {id,label,files,size,onDisk} only, with no extension strings, names or paths. Stays at schema 1."
+   },
+   {
+    "name": "File kinds panel",
+    "kind": "ui",
+    "auth_model": "n/a",
+    "error_cases": "During a scan: placeholder. After cancel or stop: partial breakdown with the tree's partial label. No files: 'No files'. On-disk total 0: share column shows '—'.",
+    "notes": "At most 10 rows, sorted by on-disk descending. Share is the percentage of the on-disk total. No drill-down in this slice."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Classify by file extension only, from a fixed table in code. No content sniffing (magic bytes, PE resources) and no rules based on path or location.",
+    "reversibility": "cheap",
+    "rationale": "Scan Analysis never touches the filesystem. Reading contents would pull OneDrive online-only files down and break the on-disk counting rule. The table is one file, and cited prior art (FolderSizes File Types and File Categories reports, the 7scribes and gizza tools) is extension-first."
+   },
+   {
+    "decision": "Installers means package formats only (msi, msp, msu, msix, msixbundle, appx, appxbundle). Every .exe goes under 'Programs & system files', and a tooltip says so.",
+    "reversibility": "cheap",
+    "rationale": "The installers spike is a no-go: a name rule matched 6.5% of Downloads installer bytes (2 of 8 files), and audacity-win-3.7.7-64bit.exe carries no telling word. Shipping that rule would mislabel most installers while looking authoritative. A 'Downloads .exe = installer' location rule needs an ancestor walk per file and only restates the spike's approximate ground truth. Whether the person accepts this is in open_questions."
+   },
+   {
+    "decision": "Sum by extension first, then fold each distinct extension into a kind and keep each kind's top 3 extensions, so Other is itemized. No-extension is its own row. Add aax/aa/m4b to Audio and drop ts from Videos.",
+    "reversibility": "cheap",
+    "rationale": "The extension-map spike is a no-go: Other was 50.2% of C: on-disk, with no-extension 17.6% and .aax 9.0%. Growing the map until one drive passes is tuning to one drive. Itemizing Other answers 'what is in there' on any drive, and the kind lookup then runs once per distinct extension. The 23.6% left after these changes is arithmetic on measured figures, not a measurement. The design does not depend on it, and validate should report the real C: figure as evidence, not as a gate."
+   },
+   {
+    "decision": "Every File entry counts toward its kind's file count, bytes come from ChargedSize/ChargedOnDisk, and Link entries are excluded. The breakdown never recomputes hardlink or link rules.",
+    "reversibility": "cheap",
+    "rationale": "The reconcile spike is a go with exactly this rule (9 files, 1,081,084,958 B, 3,743,856 B on disk, equal to the root). One source of truth for the counting rules is what lets the reconcile test be a real check."
+   },
+   {
+    "decision": "Compute once, synchronously, when the scan ends (completed, cancelled or stopped), on the thread that already produces the largest-files list. Keep the result in one field that the panel and the report both read, and clear it when a new scan starts.",
+    "reversibility": "cheap",
+    "rationale": "The cost spike's conditional go held only on a store with no writer, and the ScanStore contract does not cover reads during appends. 144-187 ms at 5M records is acceptable once per scan. One holder means the panel and the report cannot disagree and a rescan cannot show stale kinds."
+   },
+   {
+    "decision": "No string per record and no new per-record field. The pass reads the name as a span, the slot dictionary is pre-seeded with mapped extensions, and unmapped extensions are capped at 4,096 distinct keys with overflow folded into Other.",
+    "reversibility": "cheap",
+    "rationale": "The cost spike's condition: a string per record allocated 510 MiB per pass against a 64 MiB limit, while span lookup allocated 400 B. A stored per-record extension id also measured cheap but changes the layout U-001 measured (peak 699 MiB), and peak with the pass was 717 MiB. The cap bounds allocation on trees with many odd suffixes."
+   },
+   {
+    "decision": "The schema-1 `--report` gains an additive 'kinds' array of per-kind totals only (id, label, files, size, onDisk). It has no extension strings, and the schema number is not bumped.",
+    "reversibility": "cheap",
+    "rationale": "The recorded testing constraint verifies window state through this report, and the array lets validate prove the kinds sum to the root. Extension strings are name fragments, which Q-016's 'totals and the root, never a listing' does not cover. The reconcile proof needs only sums, so the proposal's topExtensions in the report was cut."
+   },
+   {
+    "decision": "Show both size and on-disk size for each kind. Sort by on-disk descending, then size, then FileKind ordinal. Share is the percentage of the on-disk total, shown as '—' when that total is 0.",
+    "reversibility": "cheap",
+    "rationale": "The counting constraint requires both measures. On-disk answers 'what is using my drive', and showing size too keeps online-only and sparse files visible rather than as zero. A zero denominator is reachable with all-cloud-only files."
+   },
+   {
+    "decision": "The extension-to-kind table is internal to Core, and only the result types (FileKind, KindBreakdownResult, KindTotal, ExtensionTotal) are public. The App formats and never classifies.",
+    "reversibility": "cheap",
+    "rationale": "Two classifiers would drift, and the panel and the report would then disagree. The reconcile proof in validate checks a single table."
+   },
+   {
+    "decision": "Two architecture rules are appended to the existing rules file on trunk, and the file is not created again.",
+    "reversibility": "cheap",
+    "rationale": "Q-010 decided that SL-022 creates the file and later slices append. If this branch was cut before SL-022 merged and adds the file itself, rebase onto trunk first rather than leave an add/add conflict for commit-slice."
+   }
+  ],
+  "architecture_rules": [
+   {
+    "name": "the breakdown reads the finished scan store and never the filesystem",
+    "files": "src/FsAnalyser.Core/Analysis/**",
+    "must_not_match": [
+     "(?<![\\w.])(?:File|Directory)\\s*\\.\\s*[A-Z]\\w*\\s*\\(",
+     "\\bSystem\\.IO\\.(?:File|Directory)\\b",
+     "\\b(?:FileInfo|DirectoryInfo|FileStream|SafeFileHandle|NtCreateFile|CreateFile\\w*)\\b"
+    ],
+    "because": "Analysis is a pure function of the finished store. Opening a file to sniff its type would pull OneDrive online-only files down and break the on-disk counting rule, and it would make the reconcile against the root rollup meaningless."
+   },
+   {
+    "name": "only Core classifies files into kinds; the App formats what Core returns",
+    "files": "src/FsAnalyser.App/**",
+    "must_not_match": [
+     "Path\\s*\\.\\s*GetExtension",
+     "\\bFileKinds\\b"
+    ],
+    "because": "A second classifier in the App would drift from Core's table, so the panel and the --report kinds section would disagree and the end-to-end reconcile would be comparing against a different table."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "classify a file by its name",
+    "shape": "upper-case or mixed-case extension, or a multi-part name (MOVIE.MP4, a.tar.gz)",
+    "why": "The table is keyed OrdinalIgnoreCase through a span alternate lookup. A case-sensitive or culture comparer sends real-world names to Other, and a.tar.gz must classify by its last part (.gz -> archives)."
+   },
+   {
+    "behaviour": "classify a file by its name",
+    "shape": "no extension at all, or a trailing dot ('noext', 'trailingdot.')",
+    "why": "Path.GetExtension returns empty for both. They must land in the no-extension row (17.6% of C: on-disk) and not be dropped or sent to Other."
+   },
+   {
+    "behaviour": "classify a file by its name",
+    "shape": "a dotfile (.gitignore)",
+    "why": "Path.GetExtension returns the whole name for a leading-dot name. It becomes an unmapped extension in Other, not no-extension, and the test pins that so it does not change silently."
+   },
+   {
+    "behaviour": "classify an installer",
+    "shape": "an .exe named like a setup program (Hermes-Setup.exe, setup.exe) next to a .msi",
+    "why": "The installers spike is a no-go: .exe cannot be told apart by name. Pin .exe to Programs and .msi to Installers so nobody re-adds the failed name rule."
+   },
+   {
+    "behaviour": "sum a kind's count and bytes",
+    "shape": "a file with a second hardlink name",
+    "why": "The store charges the second name 0 bytes but counts it as a file. The hardlinked mp4 must add its bytes once, and the file counts must still equal the root's FilesBelow."
+   },
+   {
+    "behaviour": "sum a kind's count and bytes",
+    "shape": "a junction, a directory symlink and a file symlink pointing outside the tree at a .zip",
+    "why": "Links are Link entries and must be skipped. If the pass counted them or followed them, outside.zip would appear in Archives and the totals would exceed the root's."
+   },
+   {
+    "behaviour": "sum a kind's size and on-disk size",
+    "shape": "an NTFS-compressed file and a sparse file (1 GiB logical, 64 KiB written)",
+    "why": "Size and on-disk size diverge. Both are summed from ChargedSize and ChargedOnDisk and both must reconcile to the root. A sparse .iso sorts low by on-disk but high by size."
+   },
+   {
+    "behaviour": "show a kind's share of the on-disk total",
+    "shape": "files exist but every one has on-disk 0 (cloud-only shape, size > 0)",
+    "why": "The files and size totals are non-zero while the on-disk denominator is 0. The share column must not divide by zero and the rows must still be listed. Cloud-only files cannot be made in a temp tree, so this runs on a synthetic store."
+   },
+   {
+    "behaviour": "compute the breakdown",
+    "shape": "an empty store, or a store holding only folders",
+    "why": "The result must be an empty Kinds list with zero totals, and the panel must show 'No files' rather than empty rows or an exception."
+   },
+   {
+    "behaviour": "compute the breakdown",
+    "shape": "more than 4,096 distinct unmapped extensions, followed by a .mp4",
+    "why": "The overflow branch folds later unmapped keys into one slot. Totals must still reconcile, the pre-seeded .mp4 must still count as videos, and the overflow slot must never appear as a listed extension."
+   },
+   {
+    "behaviour": "compute the breakdown",
+    "shape": "200,000 files over about 50 mixed-case extensions on a synthetic store",
+    "why": "The cost spike's condition is that the pass allocates no string per record. A regression to Substring or ToLowerInvariant allocates hundreds of MiB at 5M records, and only an allocation assertion catches it."
+   },
+   {
+    "behaviour": "show the breakdown after a stop or cancel",
+    "shape": "a scan cancelled or stopped part-way through",
+    "why": "The store is partial but has no writer, so the breakdown is computed and labelled partial. Its sums must equal the partial root totals, and it must not be skipped just because the scan did not complete."
+   },
+   {
+    "behaviour": "show the breakdown across scans",
+    "shape": "a second scan started after the first finished",
+    "why": "The result holder must be cleared at scan start. Otherwise the panel and the --report 'kinds' array show the previous scan's kinds while the new scan runs."
+   },
+   {
+    "behaviour": "read files at a 359-character path, or inside unreadable folders",
+    "shape": "a long-path .jpg, or folders the scan could not read",
+    "material": false,
+    "why": "The scanner's own counting-rule tests own these rules. The breakdown reads only the finished store, never a path, and cannot see an unreadable folder's files. The reconcile Fact includes the long-path .jpg incidentally and compares against a root that already excludes the unreadable folders."
+   }
+  ],
+  "channeled_experts": [],
+  "coherence_check": "One proposal, so there is no composition across proposals to check. Nothing here has yet survived a disagreement, and the first things to argue with are: (1) Installers means package formats only, so the setup .exe files the person probably thinks of as installers land under Programs; (2) the 23.6% residual Other on C: is arithmetic on spike figures, not a measurement; (3) whether ScanStore.Name(i) allocates and whether a span accessor can be added without a layout change was not opened; (4) the proposal text was clipped at 20000 chars, so its risks section and the rest of its cross-domain invariants were not seen. I checked the proposal's own pieces against each other and against the record. Consistency model: every piece assumes one finished, no-writer store. Compute runs once at scan end, the panel and the report read the same result holder, and the holder is cleared at scan start, so the two consumers cannot see different states. Error contract: Compute and FileKinds.Of are total and never throw, the panel shows a placeholder when the report omits 'kinds', and 'No files' or '—' cover the empty and zero-denominator cases. Ownership: the table is internal to Core and the App formats only. That is also enforced by rule 2, and the App has no Path.GetExtension today. Two edits were made at seams. First, the proposal's report carried topExtensions, which are name fragments, against Q-016's 'totals and the root, never a listing'. It now carries per-kind totals only, which is all the reconcile proof needs. Second, the proposal left 'where the result lives' implicit. It is now one holder in MainWindow.xaml.cs cleared on scan start. Spike verdicts were treated as settled and not reopened: the reconcile go, the installers no-go and the extension-map no-go are each absorbed as a design change, and the cost spike's two constraints (no string per record, finished store only) are structural. The two no-gos do not block the slice, so no obligation is raised against the risk-spike stage. Q-010: the architecture rules go into the existing rules file on trunk and do not create it again. stack_chosen is empty because nothing new at project scope was chosen: C#, .NET 10, WPF and xUnit already cover it, and FrozenDictionary and the span alternate lookup are BCL in .NET 9+. Not verified here and left to build: that the largest-files list is produced at the scan-end point in MainWindow.xaml.cs, that TempTree has an unreadable-folder helper, and that eng/read-window.ps1 tolerates an added property. The rules-harness plant rows may need one plant per rule.",
+  "cross_domain_transfer": {
+   "source_domain": "Double-entry bookkeeping: trial balance against control totals, with an itemized suspense account",
+   "pattern": "Every file is posted to exactly one account (kind). The ledger is closed before the balance is struck (the scan has ended). The kind totals must sum to an independently kept control total (the root rollup) to the byte. The catch-all account (Other) is never left as one opaque figure: its largest items (extensions) are listed so a reader can tell what is in it.",
+   "transfer_found": true,
+   "rationale": "The reconcile test and the itemized Other come from this. The extension-map no-go says the suspense account is too big, and the bookkeeping answer is to itemize what is in it, not to rename accounts until one ledger balances. The transfer is used for those two things only, not as a structure for the code.",
+   "invariants": [
+    {
+     "precondition": "There is an independent control total that the breakdown did not compute itself.",
+     "status": "holds",
+     "evidence": "Reconcile spike (go): the root's RolledSize(0), RolledOnDisk(0) and FilesBelow come from the store's rollup, and the extension grouping matched them exactly (9 files, 1,081,084,958 B, 3,743,856 B on disk)."
+    },
+    {
+     "precondition": "Every file is posted to exactly one kind: the classification is total, with no gaps and no double posting.",
+     "status": "must-verify",
+     "evidence": "Total by construction (empty maps to no-extension, anything unmapped to other, overflow folds into Other). Proved by the classification theory and by the reconcile Fact and the overflow Fact asserting equality with the root."
+    },
+    {
+     "precondition": "No postings arrive after the books are closed: the store has no writer while the pass runs.",
+     "status": "must-verify",
+     "evidence": "The cost spike measured the pass only on a store with no writer, and the ScanStore contract does not cover reads during appends. The design calls Compute only at scan end and Debug.Assert-s a completion flag if one exists. Nothing tests a pass concurrent with a live scan."
+    }
+   ]
+  },
+  "decidable_disagreements": [],
+  "taste_disagreements": [
+   "Installers as package formats only (msi/msix/appx) with every .exe under Programs, against a location heuristic (.exe in Downloads) or a broader name rule. Measured evidence favours the narrow row, but the label is a product choice.",
+   "No-extension as its own row, against folding it into Other. A dotfile such as .gitignore falls into Other under the current rule, not no-extension.",
+   "Dropping ts from Videos (avoids TypeScript inflation on a dev machine) against keeping it (MPEG transport streams on a media machine).",
+   "Ten fixed kinds, with sys folded into 'Programs & system files', against separate Programs and System rows.",
+   "Top 3 extensions inline per row, against a drill-down list or a per-extension table like FolderSizes' File Types report. This slice ships no drill-down.",
+   "Compute once synchronously on the UI thread at scan end, against Task.Run. About 150-190 ms at 5M records was accepted.",
+   "The report carries per-kind totals only. Extension detail in the report would help debugging but puts name fragments in a diagnostic file.",
+   "Where the kind table and enum live: Core/Analysis beside LargestFiles, against a separate Core/Kinds folder."
+  ],
+  "open_questions": [
+   "PS-005 names 'installers' as a kind, but a name rule found only 6.5% of Downloads installer bytes. Does the person accept an Installers row limited to package formats (.msi, .msp, .msu, .msix, .appx and bundles), with setup programs shipped as .exe counted under 'Programs & system files' and a tooltip saying so? Default in this design: yes. The alternative is a location rule (for example, any .exe under Downloads is an installer), which needs an ancestor lookup per file."
+  ],
+  "prior_art": [
+   {
+    "pattern": "The File Types report groups files by extension and shows size, size on disk (allocated size) and count for each type. A separate File Categories report groups types into user-configurable categories, and a double-click drills down to the matching files.",
+    "where": "https://www.foldersizes.com/screens/file-types",
+    "authority": "official",
+    "basis": "cited"
+   },
+   {
+    "pattern": "A File Type Analyzer table with columns Extension | Category | Count | Total Size | % of Total: the category is attached to each extension, not replacing it.",
+    "where": "https://tools.7scribes.com/folder-visualizer/",
+    "authority": "community",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Adds each line's size to its file extension or to a broad category, sorted biggest first, with size, share of total and file count for each type.",
+    "where": "https://gizza.ai/tools/disk-usage-by-filetype/",
+    "authority": "community",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Detects type from magic bytes instead of the extension. Rejected here because it reads file contents, which would pull OneDrive online-only files down and break the rule that Scan Analysis never touches the filesystem.",
+    "where": "https://abacktools.com/tools/file/forensics/file-type-distribution-analyzer",
+    "authority": "community",
+    "basis": "cited"
+   },
+   {
+    "pattern": "A category breakdown with space per category, plus scanning inside ZIP archives. The ZIP part is rejected because it would count bytes that do not take separate space on disk.",
+    "where": "https://github.com/shashwat4543/FileAnalyzer",
+    "authority": "oss",
+    "basis": "cited"
+   },
+   {
+    "pattern": "The WinDirStat extension list and WizTree's File Types view rank extensions by bytes over the whole scan. Extension-first aggregation is the norm in Windows disk analysers.",
+    "where": "WinDirStat / WizTree",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Span lookups into string-keyed dictionaries: Dictionary/FrozenDictionary.GetAlternateLookup<ReadOnlySpan<char>>() with StringComparer.OrdinalIgnoreCase (.NET 9+), which avoids a string per lookup. Its cost here was measured by this project's spike (400 B per pass); the API details are from memory.",
+    "where": ".NET 9+ BCL (System.Collections.Frozen, System.Collections.Generic)",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Analytics tools fold high-cardinality values into an '(other)' row once a limit is reached, so memory stays bounded. The known failure is an '(other)' row that grows until the report means nothing, which is why this design pre-seeds mapped keys and itemizes Other.",
+    "where": "Google Analytics 4 '(other)' row",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Windows UAC installer detection guesses from name keywords such as 'setup' and 'install'. It is known to be unreliable, which matches this project's measured 6.5% hit rate.",
+    "where": "Windows UAC Installer Detection",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "whats_reused": [
+   "Core/Analysis/LargestFiles.cs (SL-040): the one-pass read over the finished store, which KindBreakdown follows",
+   "ScanStore accessors Kind, Name, ChargedSize and ChargedOnDisk (Store/ScanStore.cs:80, :108 onward), where bytes are already counted once with hardlinks charged 0 and links not followed, and EntryKind.File as the filter",
+   "The store's own rollup (FilesBelow, RolledSize, RolledOnDisk) as the independent control total",
+   "LargestFilesPanel/LargestFilesList pattern in MainWindow.xaml:272-289 and the existing size formatter (also used by TopLevelRowText)",
+   "The existing completion point in MainWindow.xaml.cs, on the same thread as the largest-files call",
+   "WindowReport schema-1 --report JSON, eng/read-window.ps1, WindowCases.ps1 and the FsaWindowHook driver",
+   "Test fixtures TempTree.cs, Scans.cs, TestNative.cs and RollupOracle.cs, and the ScanStoreBudgetTests shape (ScanStoreTests.cs:126) for the synthetic-store Facts",
+   "The architecture rules file created by SL-022 (Q-010): rules are appended, not re-created"
+  ],
+  "whats_new": [
+   "FileKinds: the ten-kind enum and the fixed extension-to-kind table (Core/Analysis, internal)",
+   "KindBreakdown.Compute and its public result types (KindBreakdownResult, KindTotal, ExtensionTotal)",
+   "An internal NameSpan accessor on ScanStore, only if Name(i) allocates",
+   "The File kinds panel in MainWindow.xaml, with the Installers/Programs tooltip and a placeholder, partial and 'No files' states",
+   "A single result holder in MainWindow.xaml.cs, cleared at scan start and read by the panel and the report",
+   "An additive 'kinds' array in the schema-1 --report JSON (id, label, files, size, onDisk)",
+   "KindBreakdownTests: classification theory, real-NTFS reconcile Fact, allocation Fact, overflow Fact, synthetic-store Facts",
+   "One window case proving kinds reconcile to the root end to end and that 'kinds' is absent before scan end and after a rescan starts",
+   "Two architecture rules appended to the existing rules file (Analysis never touches the filesystem; the App never classifies)"
+  ],
+  "stack_chosen": []
+ }
+}

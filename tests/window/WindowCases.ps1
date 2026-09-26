@@ -62,12 +62,19 @@
 # first scan's store is collectable. T-005 samples the UI thread through a scan, the hand-off to the tree and a
 # second scan over an open large folder. T-006 is the endings that show no tree. C-002, L-003, B-003, B-007 and
 # M-001 read the tree where they read the results list after a completed scan.
+#
+# K-001 to K-003 (SL-046) are the files by kind, a view of the results cell chosen beside its header: the report's
+# "kinds" (per kind its id, label and totals, never an extension or a name) against a planted tree of seven kinds, and
+# the view on screen once the hook's kinds mode has chosen it, at the default and the minimum size, and against a tree
+# with no file (K-001); added up against the root after Stop (K-002, the hook's stop mode); and gone from the report and
+# the list as a second scan starts and at its Could not read ending (K-003, the hook's rescan mode, as B-006). B-001 and
+# C-012 check the endings with no scan behind them carry no kinds.
 
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
         'L-001', 'L-002', 'L-003', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'N-001', 'N-002', 'N-003', 'N-004',
-        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006')]
+        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003')]
     [string] $Case,
     [switch] $IncludeNetwork
 )
@@ -85,7 +92,7 @@ $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_H
     'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND', 'FSA_HOOK_MINSIZE', 'FSA_HOOK_DRIVES',
     'FSA_HOOK_WALK', 'FSA_HOOK_RECYCLE', 'FSA_HOOK_MULTIPLY', 'FSA_HOOK_SELECT', 'FSA_HOOK_RELEASE', 'FSA_HOOK_GAP', 'FSA_HOOK_HEIGHT'
 $HookedCases = 'C-002', 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
-    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006'
+    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004'
 $RigOnlyCases = 'N-003', 'N-004'
 $KiB64 = 64KB
@@ -1021,20 +1028,21 @@ function Test-C011 {
 
 # C-012: an unhandled exception on the UI thread mid-scan (criterion 12). The app's own handler must end
 # the run: exit 70 and nothing at the report path. A stale report is planted there first, so an absent
-# file is the app's doing. Without the handler the runtime ends the process with 0xE0434352 instead.
+# file is the app's doing. Without the handler the runtime ends the process with 0xE0434352 instead. The stale
+# report carries kinds (SL-046, review m3): a faulted run computes none, so none may be left behind.
 function Test-C012 {
     $case = New-CaseFolder
     try {
         $root = Join-Path $case 'large'
         [void](New-LargeTree $root)
         $report = Join-Path $case 'report.json'
-        Set-Content -LiteralPath $report -Value '{"schema":1,"stale":true}'
+        Set-Content -LiteralPath $report -Value '{"schema":1,"stale":true,"kinds":[{"id":"other","label":"Other","files":1,"size":65536,"onDisk":65536}]}'
         $run = Invoke-HookedRun 'throw' $root $report
         $before = $script:Failures.Count
         CheckActed $run 'throw'
         if ($script:Failures.Count -gt $before) { return }
         Check ($run.Exit -eq '70') "exit code is the app's 70 (actual $(Show-Exit $run.Exit))"
-        Check (-not (Test-Path -LiteralPath $report)) 'the stale report is gone'
+        Check (-not (Test-Path -LiteralPath $report)) 'the stale report, with its kinds, is gone'
         Check (-not (Test-Path -LiteralPath "$report.tmp")) 'no .tmp left'
     }
     finally { Remove-CaseFolder $case }
@@ -1465,6 +1473,7 @@ function Test-B001 {
         CheckEqual $null $read.Report.largestFileOnDisk 'missing root: largestFileOnDisk'
         CheckEqual $null $read.Report.largestFilesMs 'missing root: largestFilesMs'
         CheckEqual $false $read.Report.window.LargestFilesPanel.visible 'missing root: LargestFilesPanel is hidden'
+        CheckNoKinds $read.Report '' 'missing root (SL-046)'
     }
     finally { Remove-CaseFolder $case }
 }
@@ -2632,9 +2641,221 @@ function Test-T006 {
     finally { Remove-CaseFolder $case }
 }
 
+# ---- The files by kind (SL-046) ----
+
+# Whether the report carries "kinds" at all: absent and an empty array are two different endings.
+function Has-Kinds($report) { $report.PSObject.Properties.Name -contains 'kinds' }
+
+# The report's "kinds" against the case's own oracle, row by row in the list's order, and added up against the root's
+# totals as the window's core section has them (the only exact figure for a stopped scan). KindsList holds a row for
+# each, whichever view the results cell shows, and nothing in the report names an extension the tree planted (Q-016).
+function CheckKinds($read, $expected, [string] $caption) {
+    $report = $read.Report
+    Check (Has-Kinds $report) 'the report carries kinds'
+    if (-not (Has-Kinds $report)) { return }
+    $kinds = @($report.kinds)
+    $shown = ($kinds | ForEach-Object { "$($_.id) $($_.files) $($_.size) $($_.onDisk)" }) -join '; '
+    if ($null -ne $expected) {
+        $wanted = ($expected | ForEach-Object { "$($_.Id) $($_.Files) $($_.Size) $($_.OnDisk)" }) -join '; '
+        CheckEqual $wanted $shown 'kinds against the tree, in order (id files size onDisk)'
+    }
+    else {
+        Write-Output "        kinds: $shown"
+    }
+    $files = ($kinds | Measure-Object -Property files -Sum).Sum
+    $size = ($kinds | Measure-Object -Property size -Sum).Sum
+    $onDisk = ($kinds | Measure-Object -Property onDisk -Sum).Sum
+    CheckEqual "$($report.core.files) $($report.core.bytes) $($report.core.bytesOnDisk)" "$([long]$files) $([long]$size) $([long]$onDisk)" 'the kinds add up to the root (core files, bytes, bytesOnDisk)'
+    Check (@($kinds | Where-Object { -not $_.id -or -not $_.label }).Count -eq 0) 'every kind has an id and a label'
+    CheckEqual $kinds.Count $report.window.KindsList.rows 'KindsList holds a row for each kind'
+    CheckEqual $caption $report.window.KindsCaption 'KindsCaption'
+    CheckEqual $true $report.window.ShowKindsButton.visible 'the choice of the files by kind is on screen'
+    Check (-not $read.Text.Contains($Planted)) "the report holds no planted name or extension ('$Planted')"
+}
+
+# The results cell as the kinds view shows it, chosen by the hook's kinds mode: the view on screen in the folders' place,
+# with all $full rows built and wholly inside the list's viewport or, for 0, at least one row there (the list
+# virtualizes, as a ListBox does, so at the minimum size it builds only what is near the viewport).
+function CheckKindsShown($report, [int] $full) {
+    $window = $report.window
+    $rows = [int]$window.KindsList.rows
+    CheckEqual $true $window.ShowKindsButton.isChecked 'the files by kind are chosen'
+    CheckEqual $true $window.KindsView.visible 'KindsView is on screen'
+    CheckEqual $false $window.FolderTree.visible 'in the folders'' place: FolderTree is not on screen'
+    CheckEqual $true $window.KindsList.inView "KindsList is inside the window ($($window.KindsList.actualHeight) px)"
+    if ($full -gt 0) {
+        CheckEqual $rows $window.KindsList.realizedRows 'every row of KindsList was built'
+        CheckEqual $full $window.KindsList.fullRows "all $full rows are in view without scrolling"
+    }
+    else {
+        Check ($window.KindsList.fullRows -ge 1) "KindsList shows at least one full row ($($window.KindsList.fullRows) of $rows in $($window.KindsList.actualHeight) px)"
+    }
+}
+
+# What the report says when an ending has no kinds to show, or none yet.
+function CheckNoKinds($report, [string] $caption, [string] $when) {
+    Check (-not (Has-Kinds $report)) "$($when): no kinds in the report"
+    CheckEqual 0 $report.window.KindsList.rows "$($when): KindsList holds no rows"
+    CheckEqual $false $report.window.KindsView.visible "$($when): KindsView is not on screen"
+    CheckEqual $caption $report.window.KindsCaption "$($when): KindsCaption"
+}
+
+# K-001 (SL-046): a completed scan of a planted tree, one file or more of each of seven kinds, every size a multiple of
+# 64 KiB or empty, so the space on disk is the size. The report's kinds must be the tree's, in the list's order (by space
+# on disk, then size, then kind), and add up to the root. Rows that tie keep the kind order: Videos before Programs,
+# Images before No extension. The extension no table names (.plantedname-ext) is Other's, and never in the report.
+# Read three ways: as the ending shows it, the folder tree in the results cell and the choice of the kinds beside its
+# header; with the kinds chosen (the hook's kinds mode), every row in view at the default size; and so again at the
+# window's minimum size with 26 drive buttons added, at least one full row in view. Then a tree with folders and no
+# file: an empty array, and the caption says so.
+function Test-K001 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'tree'
+        New-File (Join-Path $root "clips\$Planted-a.mp4") (3 * $KiB64)
+        New-File (Join-Path $root "clips\$Planted-b.MKV") (2 * $KiB64)
+        New-File (Join-Path $root "$Planted-photo.jpg") $KiB64
+        New-File (Join-Path $root "pkg\$Planted.msi") (4 * $KiB64)
+        New-File (Join-Path $root "pkg\$Planted-setup.exe") (5 * $KiB64)
+        New-File (Join-Path $root "$Planted-noext") $KiB64
+        New-File (Join-Path $root "deep\er\$Planted.$Planted-ext") (6 * $KiB64)
+        New-File (Join-Path $root "$Planted-empty.txt") 0
+        $manifest = [pscustomobject]@{ Files = 8; Folders = 4; Links = 0; Bytes = 22 * $KiB64 }
+        $expected = @(
+            [pscustomobject]@{ Id = 'other'; Files = 1; Size = 6 * $KiB64; OnDisk = 6 * $KiB64 }
+            [pscustomobject]@{ Id = 'videos'; Files = 2; Size = 5 * $KiB64; OnDisk = 5 * $KiB64 }
+            [pscustomobject]@{ Id = 'programs'; Files = 1; Size = 5 * $KiB64; OnDisk = 5 * $KiB64 }
+            [pscustomobject]@{ Id = 'installers'; Files = 1; Size = 4 * $KiB64; OnDisk = 4 * $KiB64 }
+            [pscustomobject]@{ Id = 'images'; Files = 1; Size = $KiB64; OnDisk = $KiB64 }
+            [pscustomobject]@{ Id = 'no-extension'; Files = 1; Size = $KiB64; OnDisk = $KiB64 }
+            [pscustomobject]@{ Id = 'documents'; Files = 1; Size = 0; OnDisk = 0 }
+        )
+
+        $caption = '8 files scanned, sorted by extension.'
+
+        Write-Output '  Completed, seven kinds, as the ending shows them'
+        $read = Read-Window $root
+        CheckFinished $read $root $root $manifest
+        if ($null -ne $read.Report) {
+            CheckKinds $read $expected $caption
+            $labels = @($read.Report.kinds | ForEach-Object label) -join ', '
+            CheckEqual 'Other, Videos, Programs & system files, Installers, Images, No extension, Documents' $labels 'the kinds'' labels, as the list shows them'
+            CheckEqual $false $read.Report.window.ShowKindsButton.isChecked 'the ending shows the folders: the kinds are not chosen'
+            CheckEqual $false $read.Report.window.KindsView.visible 'KindsView is not on screen'
+            CheckEqual $true $read.Report.window.FolderTree.inView 'FolderTree is'
+        }
+
+        foreach ($smallest in $false, $true) {
+            Write-Output "  Completed, seven kinds, the kinds chosen, $(if ($smallest) { "at the window's minimum size with $ExtraDrives drive buttons added" } else { 'at the default size' })"
+            $variables = if ($smallest) { @{ FSA_HOOK_MINSIZE = '1'; FSA_HOOK_DRIVES = "$ExtraDrives" } } else { @{} }
+            $run = Invoke-WithHook 'kinds' $HookDll { Read-Window $root } $variables
+            $before = $script:Failures.Count
+            CheckActed $run 'kinds'
+            if ($smallest) {
+                CheckSized $run.Log
+                CheckDrives $run.Log $ExtraDrives
+            }
+            if ($script:Failures.Count -gt $before) { continue }
+            $read = $run.Result
+            CheckEqual 'EXIT 0' $read.Exit 'exit code'
+            Check ($null -ne $read.Report) 'a report was written'
+            if ($null -eq $read.Report) { continue }
+            CheckKinds $read $expected $caption
+            CheckKindsShown $read.Report $(if ($smallest) { 0 } else { $expected.Count })
+        }
+
+        Write-Output '  Completed, folders and no file'
+        $empty = Join-Path $case 'folders'
+        [void][System.IO.Directory]::CreateDirectory((Join-Path $empty 'a\b'))
+        [void][System.IO.Directory]::CreateDirectory((Join-Path $empty 'c'))
+        $read = Read-Window $empty
+        CheckFinished $read $empty $empty ([pscustomobject]@{ Files = 0; Folders = 3; Links = 0; Bytes = 0 })
+        if ($null -ne $read.Report) {
+            CheckKinds $read @() 'No files.'
+            CheckEqual 0 @($read.Report.kinds).Count 'kinds is an empty array'
+        }
+    }
+    finally { Remove-CaseFolder $case }
+}
+
+# K-002 (SL-046, review m2): Stop pressed mid-scan (the hook, as C-006). The kinds of a stopped scan are computed like a
+# completed one's, from what was read, and add up to what the ending says was read (core, the only exact figure for a
+# partial scan); the caption says they are of the part read. New-LargeTree's files are data.bin (64 KiB) and empty
+# .txt files, so the kinds are Other and Documents, whichever were reached.
+function Test-K002 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'large'
+        [void](New-LargeTree $root)
+        $run = Invoke-HookedRun 'stop' $root (Join-Path $case 'report.json')
+        $before = $script:Failures.Count
+        CheckActed $run 'stop'
+        if ($script:Failures.Count -gt $before) { return }
+        CheckEqual '0' $run.Exit 'exit code'
+        Check ($null -ne $run.Report) 'a report was written'
+        if ($null -eq $run.Report) { return }
+        CheckEqual 'Cancelled' $run.Report.core.status 'core.status'
+        $files = [long]$run.Report.core.files
+        Write-Output "        stopped with $files files read"
+        $caption = if ($files -eq 0) { 'No files in the part read before the scan stopped.' }
+            else { "$(Format-Count $files 'file') scanned in the part read before the scan stopped, sorted by extension." }
+        $read = [pscustomobject]@{ Report = $run.Report; Text = $run.Text }
+        CheckKinds $read $null $caption
+        $ids = @($run.Report.kinds | ForEach-Object id)
+        Check (@($ids | Where-Object { $_ -notin 'other', 'documents' }).Count -eq 0) "only Other and Documents: the tree holds .bin and .txt files ($(Show ($ids -join ', ')))"
+    }
+    finally { Remove-CaseFolder $case }
+}
+
+# K-003 (SL-046): a second scan after the first has shown its ending (the hook's rescan mode, as B-006). The report is of
+# the window at the second scan's start, or at its failure ending when the root was moved aside first: in neither may the
+# first scan's kinds show, in the list or in the report. At the start the section says when they come.
+function Test-K003 {
+    $shapes = @(
+        [pscustomobject]@{ Name = 'the second scan has begun and not finished'; Missing = $false }
+        [pscustomobject]@{ Name = 'the second scan fails before any entry (its root is gone)'; Missing = $true }
+    )
+    foreach ($shape in $shapes) {
+        Write-Output "  $($shape.Name)"
+        $case = New-CaseFolder
+        try {
+            if ($shape.Missing) {
+                $root = Join-Path $case 'small'
+                [void](New-SmallTree $root)
+                $armed = @{ FSA_HOOK_MISSING = $root }
+            }
+            else {
+                $root = Join-Path $case 'large'
+                [void](New-LargeTree $root)
+                $armed = @{}
+            }
+            $run = Invoke-WithHook 'rescan' $HookDll { Read-Window $root } $armed
+            $before = $script:Failures.Count
+            CheckActed $run 'rescan'
+            if ($script:Failures.Count -gt $before) { continue }
+            $listed = @($run.Log | Where-Object { $_.StartsWith('listed ') })[0]
+            CheckEqual 'True' (Field $listed 'largest') 'the first ending was on screen before the second scan (hook: listed largest=True)'
+
+            $read = $run.Result
+            CheckEqual 'EXIT 0' $read.Exit 'exit code'
+            Check ($null -ne $read.Report) 'a report was written'
+            if ($null -eq $read.Report) { continue }
+            if ($shape.Missing) {
+                CheckEqual 'RootUnreadable' $read.Report.core.status 'the report is of the second scan''s failure (core.status)'
+                CheckNoKinds $read.Report '' 'at the Could not read ending'
+            }
+            else {
+                Check ($read.Text -match '"core":\s*null') 'the report is of the running second scan (core is null)'
+                CheckNoKinds $read.Report 'Shown when the scan finishes.' 'as the second scan runs'
+            }
+        }
+        finally { Remove-CaseFolder $case }
+    }
+}
+
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006') + $NetworkCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003') + $NetworkCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })

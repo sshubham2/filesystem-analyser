@@ -530,6 +530,8 @@ rules:
     - src/FsAnalyser.Core/Scanning/ScanResult.cs
     - src/FsAnalyser.Core/TopLevelTracker.cs
     - src/FsAnalyser.Core/Analysis/LargestFiles.cs
+    # SL-046: the file-kind breakdown reads a returned store, as LargestFiles does.
+    - src/FsAnalyser.Core/Analysis/KindBreakdown.cs
   - name: the window does not sort the folder tree in its XAML either
     files: src/FsAnalyser.App/*.xaml
     must_not_match:
@@ -547,3 +549,22 @@ rules:
     because: The same rule for the window's code, where FolderTree.Items.SortDescriptions would
       be the easy way to break it (SL-044 review m6). One entry per file type, because files
       takes one glob.
+
+  # settled by SL-046
+  - name: the breakdown reads the finished scan store and never the filesystem
+    files: src/FsAnalyser.Core/Analysis/**
+    must_not_match:
+    - (?<![\w.])(?:File|Directory)\s*\.\s*[A-Z]\w*\s*\(
+    - \bSystem\.IO\.(?:File|Directory)\b
+    - \b(?:FileInfo|DirectoryInfo|FileStream|SafeFileHandle|NtCreateFile|CreateFile\w*)\b
+    because: Analysis is a pure function of the finished store. Opening a file to sniff its
+      type would pull OneDrive online-only files down and break the on-disk counting rule, and
+      it would make the reconcile against the root rollup meaningless.
+  - name: only Core classifies files into kinds; the App formats what Core returns
+    files: src/FsAnalyser.App/**
+    must_not_match:
+    - Path\s*\.\s*GetExtension
+    - \bFileKinds\b
+    because: A second classifier in the App would drift from Core's table, so the panel and
+      the --report kinds section would disagree and the end-to-end reconcile would be comparing
+      against a different table.
