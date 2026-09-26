@@ -1,0 +1,205 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-046",
+ "stage": "validate-slice",
+ "attempt": 1,
+ "at": "2026-09-26T15:43:47.453Z",
+ "head": "d572fc8080a692c9ae42adcd99a0bba179626d30",
+ "run_id": 1360,
+ "summary": "SL-046 delivers a breakdown by kind of file, with a file count, size and on-disk size for each kind. All 14 design criteria and both obligations owed to this stage (O-001, O-002) are met.\n\n**Real contact:** I republished the single-file Release exe and ran it, unelevated, on this PC's real drives.\n- **C:** Completed. The ten kinds add up exactly to the core totals: 3,614,900 files, 1,056,263,349,929 B, 764,238,218,008 B on disk. KindsList shows 10 rows, and the caption says files in 674 unreadable folders are not included.\n- **D:** Completed. Eight kinds add up exactly to 527,495 files, 133,801,209,473 B, 133,829,414,272 B on disk.\n- Neither report contains an extension string, so Q-016 holds.\n\n**Code runs:**\n- Build: 0 warnings.\n- Core suite: 260/260 passed.\n- KindBreakdownTests: 20/20. One pass over 200,000 files allocated 32,928 B.\n- Fitness: all 45 rules hold, including the two SL-046 architecture rules.\n- Window cases: 37/37 passed, including K-001..K-003. N-001..N-004 were not run because they change SMB mappings.\n\n**O-001 (every file lands in exactly one kind):** I wrote my own fuzz in a scratch project under %TEMP% against the built Core. It covered:\n- every UTF-16 code unit as an extension, in three case orders;\n- every mapped extension with each letter swapped for a look-alike that lowers onto it (U+212A, U+017F);\n- 3,000 random stores of up to 400 files;\n- a store past the 65,536 cap.\n\nThat was 199,663 checks with 0 failures: no throw, kinds sum to the root, and each kind's count equals what FileKinds.Of gives for the same names. When I pointed it at a weaker oracle (the table looked up ignoring case only, with no lowered second lookup), it reported 14 disagreements, all on the Kelvin-sign shape, so the check can fail. I deleted the scratch folder afterwards.\n\n**O-002 (nothing writes the store while the pass runs):** I verified this by reading the code, not by a test.\n- Scanner.Scan writes the store only on its own thread, inside Run.Execute. The other threads touch a TaskCompletionSource (volume-used) or only cancel I/O (scan-cancel); neither writes entries.\n- StartScan waits for that task, and only then calls ShowOutcome → ShowKinds → KindBreakdown.Compute, the only call site in src.\n- OnCancel only signals and never abandons the scan. So a worker stuck in I/O delays the ending; it cannot overlap the pass.\n- K-002 (Stop) and AStoppedScanAddsUpToWhatItRead exercise the stopped path.\n\nThe index shows no loop: attempt 2 was sent back by code-review and did change src.",
+ "payload": {
+  "status": "complete",
+  "verdict": "passes",
+  "contact": "real",
+  "summary": "SL-046 delivers a breakdown by kind of file, with a file count, size and on-disk size for each kind. All 14 design criteria and both obligations owed to this stage (O-001, O-002) are met.\n\n**Real contact:** I republished the single-file Release exe and ran it, unelevated, on this PC's real drives.\n- **C:** Completed. The ten kinds add up exactly to the core totals: 3,614,900 files, 1,056,263,349,929 B, 764,238,218,008 B on disk. KindsList shows 10 rows, and the caption says files in 674 unreadable folders are not included.\n- **D:** Completed. Eight kinds add up exactly to 527,495 files, 133,801,209,473 B, 133,829,414,272 B on disk.\n- Neither report contains an extension string, so Q-016 holds.\n\n**Code runs:**\n- Build: 0 warnings.\n- Core suite: 260/260 passed.\n- KindBreakdownTests: 20/20. One pass over 200,000 files allocated 32,928 B.\n- Fitness: all 45 rules hold, including the two SL-046 architecture rules.\n- Window cases: 37/37 passed, including K-001..K-003. N-001..N-004 were not run because they change SMB mappings.\n\n**O-001 (every file lands in exactly one kind):** I wrote my own fuzz in a scratch project under %TEMP% against the built Core. It covered:\n- every UTF-16 code unit as an extension, in three case orders;\n- every mapped extension with each letter swapped for a look-alike that lowers onto it (U+212A, U+017F);\n- 3,000 random stores of up to 400 files;\n- a store past the 65,536 cap.\n\nThat was 199,663 checks with 0 failures: no throw, kinds sum to the root, and each kind's count equals what FileKinds.Of gives for the same names. When I pointed it at a weaker oracle (the table looked up ignoring case only, with no lowered second lookup), it reported 14 disagreements, all on the Kelvin-sign shape, so the check can fail. I deleted the scratch folder afterwards.\n\n**O-002 (nothing writes the store while the pass runs):** I verified this by reading the code, not by a test.\n- Scanner.Scan writes the store only on its own thread, inside Run.Execute. The other threads touch a TaskCompletionSource (volume-used) or only cancel I/O (scan-cancel); neither writes entries.\n- StartScan waits for that task, and only then calls ShowOutcome → ShowKinds → KindBreakdown.Compute, the only call site in src.\n- OnCancel only signals and never abandons the scan. So a worker stuck in I/O delays the ending; it cannot overlap the pass.\n- K-002 (Stop) and AStoppedScanAddsUpToWhatItRead exercise the stopped path.\n\nThe index shows no loop: attempt 2 was sent back by code-review and did change src.",
+  "checks": [
+   {
+    "what": "Solution builds",
+    "outcome": "passed",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build FsAnalyser.slnx -nologo -v q",
+    "evidence": "Build succeeded. 0 Warning(s), 0 Error(s)."
+   },
+   {
+    "what": "Full Core test suite",
+    "outcome": "passed",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx -nologo",
+    "evidence": "Passed! Failed: 0, Passed: 260, Skipped: 0, Total: 260 (19 s). SynchronousIoCancelTests did not flake this run."
+   },
+   {
+    "what": "KindBreakdownTests with test output",
+    "outcome": "passed",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx -nologo --no-build --filter \"FullyQualifiedName~KindBreakdownTests\" --logger \"console;verbosity=detailed\"",
+    "evidence": "20/20 passed.\n- Real tree: 9 files, 1,081,148,992 B, 3,805,792 B on disk. Videos: 3 files, 3,146,728 B. Documents: 4 MiB, 524,288 B on disk (compressed). Disk images: 1 GiB, 65,536 B on disk (sparse).\n- '200,000 files over 50 extensions: one pass allocated 32,928 bytes'."
+   },
+   {
+    "what": "Declared architecture rules, including the two SL-046 rules",
+    "outcome": "passed",
+    "command": "mcp__taad3__Fitness op=check",
+    "evidence": "45 rules checked against 78 files: 'Every declared rule holds.'"
+   },
+   {
+    "what": "Real single-file self-contained publish",
+    "outcome": "passed",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o artifacts/publish -nologo -v q",
+    "evidence": "Exit 0. FsAnalyser.App.exe is 139,861,656 bytes, written at 21:26:44, after the last source edit at 20:54:59. src is clean in git."
+   },
+   {
+    "what": "All non-network window cases, driving the published exe through the hook and the schema-1 report",
+    "outcome": "passed",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case All",
+    "evidence": "EXIT=0. PASSED: C-001..C-014, O-016, L-001..L-003, B-001..B-008, V-001, P-001, T-001..T-006, K-001, K-002, K-003 (37).\n- K-003: at the second scan's start, no kinds in the report, KindsList 0 rows, caption 'Shown when the scan finishes.'\n- K-003: at the second scan's Could not read ending, no kinds and 0 rows.\n- K-002: kinds only other/documents, and the report holds no planted extension."
+   },
+   {
+    "what": "Network window cases N-001..N-004",
+    "outcome": "not-run",
+    "command": "tests/window/WindowCases.ps1 -IncludeNetwork",
+    "evidence": "Not run: they change this machine's SMB client mappings. They do not exercise the kinds breakdown."
+   },
+   {
+    "what": "Shipped exe on the real C: drive, unelevated: kinds reconcile to core",
+    "outcome": "passed",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/read-window.ps1 -Root C:\\ -TimeoutSec 590",
+    "evidence": "EXIT 0, Completed, scan 215,569 ms.\n- Core: 3,614,900 files, 1,056,263,349,929 B, 764,238,218,008 B on disk. The kinds sum to exactly the same three figures.\n- On-disk shares: programs 26.84%, other 22.99%, no-extension 17.67%, disk-images 11.10%, audio 10.49%, videos 6.05%, images 2.29%, installers 1.51%, archives 0.87%, documents 0.20%.\n- KindsList rows=10. Caption: 'files scanned, sorted by extension. Files in 674 unreadable folders are not included.'"
+   },
+   {
+    "what": "Shipped exe on the real D: drive, unelevated: kinds reconcile to core",
+    "outcome": "passed",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/read-window.ps1 -Root D:\\ -TimeoutSec 590",
+    "evidence": "EXIT 0, Completed.\n- Core: 527,495 files, 133,801,209,473 B, 133,829,414,272 B on disk. The kinds sum to exactly the same.\n- Eight kinds, with Other at 523,114 files and 61.8 GB. KindsList rows=8, and the caption notes 2 unreadable folders."
+   },
+   {
+    "what": "The report carries no extension, name or path in 'kinds' (Q-016)",
+    "outcome": "passed",
+    "command": "regex '\"\\.[A-Za-z0-9]{1,6}\"' over the C: and D: report JSON; property names of kinds[0]",
+    "evidence": "No match in either report. The kinds entries have only the keys id, label, files, size and onDisk."
+   },
+   {
+    "what": "Independent totality and agreement fuzz for O-001 (scratch console under %TEMP%, assembly named FsAnalyser.Core.Tests, referencing the built Core DLL)",
+    "outcome": "passed",
+    "command": "%TEMP%\\sl046-validate-fuzz: .dotnet\\dotnet.exe run -c Release",
+    "evidence": "'1,99,663 checks, 0 failures' (en-IN grouping; 199,663).\n- Inputs: every UTF-16 unit as an extension in three orders; every mapped extension with look-alike letters (U+017F->s, U+212A->k); 3,000 random stores; 70,000 unmapped extensions past the cap plus look-alikes.\n- Asserted: no throw, totals equal the root, kinds sum to the totals, each kind's count and size equal the grouping by FileKinds.Of, extensions plus remainder equal the row, and every listed extension is of its row's kind.\n- Scratch folder deleted afterwards."
+   },
+   {
+    "what": "Sensitivity of the fuzz: same harness against a weaker oracle (table looked up ignoring case only, no lowered second lookup)",
+    "outcome": "failed",
+    "command": "FUZZ_ORACLE=ignorecase-only .dotnet\\dotnet.exe run -c Release",
+    "evidence": "Deliberate: '14 failures', all on Kelvin-sign variants (for example 'vmdk variant first: 2 kinds by Of, 1 by Compute', and 'past the cap: Videos Compute 14/30 vs Of 13/26'). This shows the fuzz can detect exactly the O-020 shape. It is not a defect in the slice."
+   },
+   {
+    "what": "O-002: no store writer while Compute runs (by reading the code)",
+    "outcome": "passed",
+    "command": "read src/FsAnalyser.Core/Scanning/Scanner.cs, src/FsAnalyser.App/MainWindow.xaml.cs; grep KindBreakdown.Compute",
+    "evidence": "- Scanner.cs:12 and Run.Execute: every _store write is on the scan thread. VolumeSpace gets only VolumeUsedSource (a TCS), and the scan-cancel thread only cancels I/O.\n- MainWindow.xaml.cs:228 waits for Task.Factory.StartNew(Scanner.Scan). ShowOutcome (line 263) → ShowKinds (line 491) → Compute (line 576) is the only call site in src.\n- OnCancel (line 269) only signals the token, and the scan is waited on. The _scanning guard (line 198) cannot let a new scan start before ShowOutcome runs in the same continuation."
+   },
+   {
+    "what": "End-to-end window case for the 'Scan failed' ending (Scanner.Scan throws)",
+    "outcome": "not-run",
+    "evidence": "No hook mode exists for it, and the gap is declared in the WindowCases header by build attempt 2. By reading the code, ShowProblem calls HideKinds (MainWindow.xaml.cs:633), and B-001 and K-003 exercise that path."
+   },
+   {
+    "what": "Visual inspection of the kinds view on screen (extensions column text, the Installers/Programs tooltip)",
+    "outcome": "not-run",
+    "evidence": "I may not drive another program's window. The report proves row count, order and figures only. The extensions text and tooltip are covered by the Core tests of KindRowText, not by looking at the screen."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "Slice goal (PS-005): a breakdown by kind of file (videos, images, archives, installers and so on), with a count and total size for each kind",
+    "met": "yes",
+    "how": "The shipped exe on the real C: shows 10 rows with files, size and on-disk size per kind, summing exactly to core; D: shows 8 rows, likewise. K-001 checks labels, order and figures against a planted tree."
+   },
+   {
+    "criterion": "1. Classify by name: upper- or mixed-case extension, or a multi-part name (MOVIE.MP4, a.tar.gz)",
+    "met": "yes",
+    "how": "MixedCaseAndMultiPartNamesClassifyByTheirLastExtension passed: MOVIE.MP4, Holiday.Mkv, a.tar.gz, Backup.TAR.GZ, IMG_0001.JPEG, Book.AAX and Level3.PAK. My fuzz over random case mixes of every mapped extension found 0 disagreements."
+   },
+   {
+    "criterion": "2. Classify by name: no extension, or a trailing dot ('noext', 'trailingdot.')",
+    "met": "yes",
+    "how": "ANameWithNoExtensionOrATrailingDotIsTheNoExtensionRow passed (noext, trailingdot., Makefile, archive.tar.). The fuzz covered 'trail<k>.' and 'noext<k>' names with 0 failures."
+   },
+   {
+    "criterion": "3. Classify by name: a dotfile (.gitignore)",
+    "met": "yes",
+    "how": "ADotfileIsOtherUnderItsWholeNameNotNoExtension passed. The real-tree test lists '.gitignore' under Other."
+   },
+   {
+    "criterion": "4. Classify an installer: an .exe named like a setup program (Hermes-Setup.exe, setup.exe) next to a .msi",
+    "met": "yes",
+    "how": "ASetupProgramIsAProgramAndOnlyPackagesAreInstallers passed: the .exe files go to Programs; .msi, .msu and .msix to Installers; both rows carry the tooltip. K-001 shows a -setup.exe under Programs and a .msi under Installers in the shipped exe."
+   },
+   {
+    "criterion": "5. Sum a kind's count and bytes: a file with a second hardlink name",
+    "met": "yes",
+    "how": "AddsUpToTheRootOnARealTreeUnderEveryCountingRule on a real NTFS tree: Videos has 3 files and 3,146,728 B (the hardlinked bytes counted once), and the totals equal the root."
+   },
+   {
+    "criterion": "6. Sum a kind's count and bytes: a junction, a directory symlink and a file symlink pointing outside the tree at a .zip",
+    "met": "yes",
+    "how": "Same real-tree test: all three are Link entries, Archives holds only a.tar.gz (300 B), and the totals equal the root."
+   },
+   {
+    "criterion": "7. Sum a kind's size and on-disk size: an NTFS-compressed file and a sparse file (1 GiB logical, 64 KiB written)",
+    "met": "yes",
+    "how": "Same real-tree test output: documents 4,194,304 B size, 524,288 B on disk; disk-images 1,073,741,824 B size, 65,536 B on disk, ranked below Videos."
+   },
+   {
+    "criterion": "8. Show a kind's share of the on-disk total: files exist but every one has on-disk 0 (cloud-only shape, size > 0)",
+    "met": "yes",
+    "how": "FilesWithNothingOnDiskAreListedAndTheirShareIsADash passed: 3 rows are listed by size, every share is '—', and KindRowText.Share(0,0) is '—'. This is a synthetic store; no real cloud-only-only drive was scanned."
+   },
+   {
+    "criterion": "9. Compute the breakdown: an empty store, or a store holding only folders",
+    "met": "yes",
+    "how": "AStoreWithNoFilesHasNoKindsAndZeroTotals passed (root-only, folders plus a link, and a real scan of empty folders). K-001's folders-only tree gives an empty kinds array and the caption 'No files.'"
+   },
+   {
+    "criterion": "10. Compute the breakdown: more than 4,096 distinct unmapped extensions, followed by a .mp4",
+    "met": "yes",
+    "how": "ExtensionsPastTheCapAreNeverListedButAlwaysCounted passed (65,536 extensions plus 50 more past the cap, then clip.MP4). My fuzz case with 70,000 unmapped extensions followed by mapped ones and look-alikes gave 0 failures."
+   },
+   {
+    "criterion": "11. Compute the breakdown: 200,000 files over about 50 mixed-case extensions on a synthetic store",
+    "met": "yes",
+    "how": "APassBuildsNoStringPerFile passed: one pass allocated 32,928 B (limit 256 KiB), totals reconcile, and each extension is counted once whatever its case."
+   },
+   {
+    "criterion": "12. Show the breakdown after a stop or cancel: a scan cancelled or stopped part-way through",
+    "met": "yes",
+    "how": "AStoppedScanAddsUpToWhatItRead passed (Cancelled, 6 of 30 files, kinds equal the partial totals). Window case K-002 (Stop pressed in the shipped exe) passed: the kinds sum to core, and the caption says 'in the part read before the scan stopped'."
+   },
+   {
+    "criterion": "13. Show the breakdown across scans: a second scan started after the first finished",
+    "met": "yes",
+    "how": "K-003 passed. At the second scan's start the report has no 'kinds', KindsList has 0 rows and the caption reads 'Shown when the scan finishes.'; at its Could not read ending there are no kinds and 0 rows. By reading the code, ShowKinds recomputes from each new result, but no case asserts that the second completed scan's kinds are its own."
+   },
+   {
+    "criterion": "14. Read files at a 359-character path, or inside unreadable folders",
+    "met": "yes",
+    "how": "Real-tree test: photo.jpg at a 359-character path is in Images (1 file, 65,536 B), and hidden.mkv inside a denied folder is in no kind, as it is in no total. On the real C: (674 unreadable folders) and D: (2), the kinds equal core exactly and the caption says those folders' files are not included."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "verified": "yes",
+    "evidence": "FileKinds.Of returns a kind for every span. Compute posts each File entry to exactly one slot, each slot has one kind, and the cap overflow folds into Other.\n- Independent fuzz: 199,663 checks, 0 failures. Covered every UTF-16 unit, case-mapping look-alikes of every mapped extension, 3,000 random stores and a past-cap store. Checked no throw, sums equal the root, and per-kind counts equal the grouping by FileKinds.Of.\n- The same harness flagged 14 disagreements against the pre-O-020 ignore-case-only oracle, so it can fail.\n- The real C: and D: runs of the shipped exe reconcile to the byte.\n- 260/260 Core tests pass, with AssertAddsUp in every KindBreakdown test."
+   },
+   {
+    "key": "O-002",
+    "verified": "yes",
+    "evidence": "Verified by reading the code, which is structural, plus the stop runs. Scanner.Scan writes the store only on its own thread inside Run.Execute; VolumeSpace receives only a TaskCompletionSource, and the cancel thread only cancels I/O. MainWindow.StartScan waits for that task (MainWindow.xaml.cs:228) before ShowOutcome → ShowKinds → KindBreakdown.Compute (lines 263, 491, 576), which is the only call site in src. OnCancel only signals and never abandons the scan, so a worker blocked in I/O delays the ending rather than overlapping the pass. K-002 (Stop in the shipped exe) and AStoppedScanAddsUpToWhatItRead pass. There is no runtime assertion; the design's Debug.Assert 'if a flag exists' was not added, and none is needed given this structure."
+   }
+  ],
+  "not_reached": [
+   "No person looked at the kinds view on screen. The report proves rows, order and figures, but the extensions column text ('.mp4 40.1 GB · … + N more'), trimming and the Installers/Programs tooltip were checked only through KindRowText unit tests. On D:, Other holds 46% of on-disk bytes, and whether its on-screen itemization is informative there was not seen.",
+   "How long Compute takes inside the app at scan end on the real C: (3.6M files). The report does not carry it, and I did not time it. The spike (144-187 ms at 5M) and build's 118 ms figure are the only numbers.",
+   "What the 674 unreadable folders on C: hold. It is not needed for any criterion, because the breakdown correctly excludes them and says so. read-denied-folders would only size the gap, so I did not ask for it.",
+   "An end-to-end 'Scan failed' ending (Scanner.Scan throwing). No hook mode exists; it is a declared gap, and the path is shared with Could not read through ShowProblem → HideKinds.",
+   "Network cases N-001..N-004 (SMB loopback), which were not run and do not touch the kinds breakdown.",
+   "A real drive whose files are all cloud-only (on disk 0). Criterion 8 was checked only on a synthetic store.",
+   "Open product choices recorded by design and build: installers limited to package formats, KELVIN-sign extensions counted under their ASCII lowering, ts not a video, and no-extension as its own row. These are a person's to decide, not something validation can settle."
+  ],
+  "planned": []
+ }
+}

@@ -1,0 +1,139 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-046",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-09-26T16:07:08.189Z",
+ "head": "d572fc8080a692c9ae42adcd99a0bba179626d30",
+ "run_id": 1361,
+ "summary": "SL-046 added a breakdown of the scan by kind of file: a fixed extension table (FileKinds), a single-pass KindBreakdown.Compute over the finished store, a ten-row kinds panel, and an additive per-kind-totals `kinds` array in the schema-1 report. It needed two builds. Code review 1 found that Compute threw on compatibility-letter extensions such as the Kelvin sign, which the design's OrdinalIgnoreCase-plus-ToLowerInvariant pairing allowed. Validate reconciled the kinds to the core totals exactly on real C: and D:, and ran a 199,663-check fuzz with 0 failures. No person looked at the panel on screen, and every finding and design question was disposed of by a model.",
+ "payload": {
+  "status": "complete",
+  "reason": "Nothing blocks the reflection. The on-screen check of the kinds panel and the product choices on Installers, Kelvin-sign extensions, ts and no-extension have no answer from a person, and they are listed as unknowns and candidates rather than treated as settled.",
+  "summary": "SL-046 added a breakdown of the scan by kind of file: a fixed extension table (FileKinds), a single-pass KindBreakdown.Compute over the finished store, a ten-row kinds panel, and an additive per-kind-totals `kinds` array in the schema-1 report. It needed two builds. Code review 1 found that Compute threw on compatibility-letter extensions such as the Kelvin sign, which the design's OrdinalIgnoreCase-plus-ToLowerInvariant pairing allowed. Validate reconciled the kinds to the core totals exactly on real C: and D:, and ran a 199,663-check fuzz with 0 failures. No person looked at the panel on screen, and every finding and design question was disposed of by a model.",
+  "estimate_error": "The medium size held: one aggregate, one panel, one report section and 20 tests, and the second build was a three-item fix. The risk was aimed at the wrong precondition. The design imported two must-verify preconditions, totality (O-001) and no writer during the pass (O-002). The critique filed two majors (M1, M2) on O-002, and the code already excludes it: the store is private to Scanner.Run and Cancel waits for Scan to return. Totality is the one that broke, and it was found by code review after build 1 was already green. Medium was enough for tier. A slice that classifies real file names on a real drive should have had a totality or fuzz case in its design cases list. The 14 example-based shapes did not include a name whose case-insensitive miss lowers onto an existing key.",
+  "learned": [
+   {
+    "kind": "risk",
+    "lesson": "In this slice the must-verify precondition that failed was totality over real file names. The one the critique attacked, no writer during the pass, was already structurally excluded. Next time a slice classifies or keys on file-name text, make the design's cases list include a fuzz or look-alike-character case for the totality claim, and don't spend critique majors on writer concurrency in Core analysis passes.",
+    "evidence": "O-020: clip.m<U+212A>v threw ArgumentException from Dictionary.Add, found only by code review 1. Critique M1 and M2 (no writer) were overridden on Scanner.cs:66/312 and MainWindow.xaml.cs:257. Validate's independent fuzz then covered every UTF-16 unit as an extension."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "Never pair an OrdinalIgnoreCase dictionary with keys made by ToLowerInvariant. Equality under the comparer is not identity under lowering. On the pinned .NET 10.0.12 the real collisions are U+212A→k, U+212B→å, U+2126→ω and U+1E9E→ß. Also probe on the runtime before writing a test from a reviewer's example: the review's U+01C5/U+01C6 digraph does not collide.",
+    "evidence": "Build 2 probe: OrdinalIgnoreCase says False for the four real pairs and True for U+01C6/U+01C5. Mutation check: with the lowered lookup disabled, the new Fact fails with 'An item with the same key has already been added. Key: .mkv'."
+   },
+   {
+    "kind": "process",
+    "lesson": "The critique's claims about App lifecycle and test tooling were mostly wrong, because the recorded stack line lags the code (it lists FSA_HOOK_MODE as stop|throw|close, but rescan has existed since SL-040). Six of the ten findings were overridden after someone read code the critique had not opened. Before any design or critique that touches scan-end behaviour, give it the actual hook-mode list in StartupHook.cs, the scan-end handler in MainWindow.xaml.cs, and the real definition of T-005.",
+    "evidence": "M1, M2, M4, m1, m4 and m5 were overridden citing MainWindow.xaml.cs:257 and :442-446, Scanner.cs:66/312, StartupHook.cs:51-59, ScanStore.Rollup.cs:42-47 and WindowCases.ps1:2536-2576. M4 claimed no hook mode can write a report mid-scan or start a rescan, and rescan does exactly that."
+   },
+   {
+    "kind": "process",
+    "lesson": "A critique's fix text turns into build work verbatim. Before a fix names an assertion in an existing window case, check that the case reaches that path. C-012's throw mode deletes the report in StartReportMode before the window exists, so a 'no kinds' assertion there can never fail.",
+    "evidence": "Build 1 discharged O-018 on a C-012 plant that proved nothing about kinds (App.xaml.cs:66 File.Delete, exit 70 at :84-89). Code review 1 m1 caught it, and build 2 restored C-012 and moved coverage to B-001 and K-003 through ShowProblem."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "Any new App column that formats a number must call the shared formatter, not restate it. ShareText.Percent (src/FsAnalyser.App/ShareText.cs) is now the only percentage formatter and is linked into Core.Tests. WPF-free App text classes get unit-tested by linking them into Core.Tests.csproj, not by a window case. A design should name the formatter for every new column, not only the size one.",
+    "evidence": "O-022: build 1 copied SL-044's review-m2 rounding rule (AwayFromZero, F1, ' %') into KindRowText. The design's 'reuses the size formatter' line said nothing about the percent rule."
+   },
+   {
+    "kind": "design",
+    "lesson": "Real-drive numbers to design from. C: has 3,021 distinct extensions (2,958 unmapped, none first seen past 4,096, and the cap is now 65,536). After the map changes, Other is 23.17% of on-disk bytes on C:, close to the design's 23.6% arithmetic, and no-extension is 17.63%. On D:, Other is 46%. The map does not fit every drive, so don't re-open the 25% threshold from the spike. The design chose to itemize Other instead of tuning the map, and this slice did not settle whether that is enough.",
+    "evidence": "O-016 measurement; build-2 C: run (Programs 26.78%, Other 23.17%, No extension 17.63%); validate D: run (Other 46%)."
+   },
+   {
+    "kind": "process",
+    "lesson": "Drive totals move between runs, so reconcile kinds only against the core totals of the same scan, never against a figure quoted by an earlier stage.",
+    "evidence": "C: file counts were 3,642,758 (spike), 3,630,383 (build 2) and 3,614,900 (validate). Each run's ten kinds still summed exactly to that run's core totals."
+   },
+   {
+    "kind": "process",
+    "lesson": "The loop has no gate that looks at a screen. Every finding (10 critique, 3 code review) and the one open design question were settled by a model, and validate's 'not reached' list is where the on-screen check landed. For a slice whose deliverable is text a person reads (PS-005, 'See what kinds of files are in there'), plan a person's look or a screenshot artifact in advance instead of leaving it to validate to report as not reached.",
+    "evidence": "Validate: extensions-column text, trimming and the Installers/Programs tooltip were checked only through KindRowText unit tests. On D:, whether Other's itemization is informative was never seen. The design halted on one question (installers) and a model accepted the default while the owner was away."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "SynchronousIoCancelTests.CancelIsResentWhileACallBlocksAgainAfterACancel is intermittently red under load ('call still blocked 2 s after Cancel'). Rerun that class before treating a red there as a regression from the slice at hand.",
+    "evidence": "It failed once in the build-check baseline (239/240). The class then passed 25/25 on rerun, and it passed in build 2's 260/260 and in validate."
+   }
+  ],
+  "what_went_wrong": [
+   "The design paired an OrdinalIgnoreCase dictionary with lowercased keys ('allocates its lowercased key once') and promised Compute never throws on odd names. Build 1 shipped a crash: 'clip.m<U+212A>v' threw from Dictionary.Add, exiting 70 in report mode and killing the process interactively, which loses a scan that took minutes. All of build 1's tests were green because the mixed-case matrix (C-001) fed ASCII case only. Code review 1 caught it, and that cost build 2 and a third review round.",
+   "The critique aimed its two strongest majors (M1, M2) at the no-writer precondition, which the code already excludes, and none at totality, which the same design listed as must-verify and which then failed. Six of its ten findings were overridden after someone read code the critique had not opened, including M4's claim that no hook mode can start a rescan.",
+   "Critique m3's fix, 'add that assertion to the existing throw window case', was carried out as written. Build 1 discharged O-018 on a C-012 plant that the harness deletes before any kinds code runs, so the check could not fail. Code review 1 found it, and the fix was rework.",
+   "Build 1 copied the SL-044 percentage-rounding rule into KindRowText instead of reusing it. The design named the size formatter but not the percent formatter, so the drift went unnoticed until code review.",
+   "Code review 1's own example was wrong. U+01C5 and U+01C6 do not collide under OrdinalIgnoreCase, and build 2 had to probe the runtime to correct the record. Only the four other code points were real collisions.",
+   "The build-check halted on 'partial' when nothing existed, which is the expected verdict for a new feature, and it changed no scope. The design's Installers question was resolved by a model taking the default. No person triaged any critique or code-review finding, and none saw the panel on screen.",
+   "Validate's broad totality fuzz lived in a scratch folder under %TEMP% that was deleted afterwards. The repo keeps only the single-shape Fact for the Kelvin-sign case, so the 199,663-check evidence cannot be re-run."
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "dimension": "missing-edge-cases",
+    "severity": "major",
+    "what": "The design specified a Dictionary<string,int>(OrdinalIgnoreCase) whose new unmapped keys are added as lowercased strings, and it did not ask whether a name that misses under OrdinalIgnoreCase can lower onto a key already present. KELVIN SIGN U+212A lowers to 'k', so 'clip.m<U+212A>v' misses '.mkv' but lowers to '.mkv', and Dictionary.Add throws. That contradicts the Compute contract ('does not throw on odd names') and the must-verify totality precondition. The design's case list held only ASCII case variants and a trailing-dot or dotfile shape. Check to write: for every comparer-plus-key-transform pair in a design, enumerate non-ASCII characters that the transform maps into the comparer's equivalence class.",
+    "caught_by": "code-review attempt 1 (M1), fixed in build attempt 2 with FindLowered and a stack-buffer lowered lookup"
+   },
+   {
+    "gate": "critique",
+    "dimension": "test-coverage",
+    "severity": "minor",
+    "what": "Critique m3 prescribed 'add that assertion to the existing throw window case', which asserts that a faulted run leaves no kinds. The throw mode exits 70 after StartReportMode deletes the report path at App.xaml.cs:66, before the window exists, so the assertion cannot fail on anything to do with kinds. The critique did not check that the target case reaches the code under test.",
+    "caught_by": "code-review attempt 1 (m1), after build 1 had already discharged O-018 on it"
+   },
+   {
+    "gate": "critique",
+    "dimension": "cross-cutting-conformance",
+    "severity": "minor",
+    "what": "The design said the panel's size text reuses the existing formatter but said nothing about the new Share column's percentage rule. SL-044 review m2 had already fixed that rule (one decimal, MidpointRounding.AwayFromZero, ' %'), so build 1 re-implemented it in KindRowText, leaving two copies. Check to write: for each new column in a design, name the existing formatter it must call.",
+    "caught_by": "code-review attempt 1 (m2), consolidated into ShareText.Percent in build attempt 2"
+   }
+  ],
+  "unknowns": [
+   "Is an Installers row limited to package formats (.msi/.msix/.appx and similar), with setup .exe files counted under Programs, what the person wants for PS-005? Only a name rule (6.5% of Downloads installer bytes) and a model's default have answered it.",
+   "Does the top-3-plus-remainder itemization make Other informative on screen? On D:, Other holds 46% of on-disk bytes. Nobody looked at the extensions column or the Installers/Programs tooltip in the running window.",
+   "How long does the whole scan-end UI block (tree swap, largest-files pass and kinds pass) take in the app on a real 3.6M-file C: scan? Only the 144-187 ms spike figure and build's 118 ms figure exist, and T-005 samples small trees.",
+   "What should the interactive app do when a post-scan pass throws? Code review 1 states that App.OnStartup installs no DispatcherUnhandledException handler outside report mode, while the m3 disposition relied on 'the App routes bugs to its failure handler'. Which is true was not settled.",
+   "Should a file whose extension uses a compatibility letter (KELVIN SIGN in 'clip.m<U+212A>v') count under the ASCII kind it lowers to, as it does now, or under Other? NTFS and the shell treat it as a different extension."
+  ],
+  "candidates": [
+   {
+    "title": "Promote the O-001 totality fuzz into Core.Tests",
+    "urgency": "soon",
+    "why": "Validate's fuzz (every UTF-16 unit as an extension in three case orders, look-alike letters for every mapped extension, 3,000 random stores, a store past the cap) was the only broad evidence that Compute and FileKinds.Of are total. It ran from a deleted %TEMP% scratch project, and the repo keeps only the single-shape Kelvin Fact. Include the weakened-oracle check that produced 14 disagreements."
+   },
+   {
+    "title": "A person looks at the kinds panel on real C: and D: and rules on the open product choices",
+    "urgency": "soon",
+    "why": "The visual check was not reached. The choices settled by model defaults are Installers as package formats only, Kelvin-sign extensions counted as ASCII, ts not a video, no-extension as its own row, and dotfiles in Other. D: Other at 46% on-disk is the case to look at."
+   },
+   {
+    "title": "Decide what interactive mode does when a post-scan pass throws",
+    "urgency": "soon",
+    "why": "The Kelvin crash showed that a throw in ShowKinds (or in any scan-end pass) kills the process and loses a finished scan, because no DispatcherUnhandledException handler is installed outside report mode. The m3 disposition ruled out a catch on the reasoning that the App routes bugs to its failure handler. Reconcile the two."
+   },
+   {
+    "title": "Per-extension drill-down or full extension table for a kind, starting with Other",
+    "urgency": "someday",
+    "why": "This slice deliberately ships no drill-down, only the top 3 extensions plus a remainder. On D:, Other is 46% of on-disk bytes and the design's answer to that is unseen on screen. Rank it after the visual review says whether the itemization is enough."
+   },
+   {
+    "title": "Measure the whole scan-end UI block on a real 3.6M-file C: scan",
+    "urgency": "someday",
+    "why": "Critique m4 (kinds pass on the UI thread) was overridden by reading T-005's definition, not by measuring. Validate did not time Compute inside the app, and the report carries no duration, so the combined tree swap, largest-files and kinds stall at real scale is unmeasured."
+   },
+   {
+    "title": "Add a hook mode that makes Scanner.Scan throw, for an end-to-end 'Scan failed' window case",
+    "urgency": "someday",
+    "why": "The Scan failed ending (Scan throws, then ShowProblem, then HideKinds) is driven by no case. It is covered only through the shared ShowProblem path via B-001 and K-003, and the gap is declared in the WindowCases header."
+   },
+   {
+    "title": "Deflake SynchronousIoCancelTests.CancelIsResentWhileACallBlocksAgainAfterACancel",
+    "urgency": "someday",
+    "why": "It failed once in the build-check baseline ('call still blocked 2 s after Cancel') and passed on every rerun. It guards the cancel path this project depends on most, and an intermittent red there invites someone to dismiss a real regression."
+   }
+  ]
+ }
+}

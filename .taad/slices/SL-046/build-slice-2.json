@@ -1,0 +1,207 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-046",
+ "stage": "build-slice",
+ "attempt": 2,
+ "at": "2026-09-26T15:19:41.527Z",
+ "head": "d572fc8080a692c9ae42adcd99a0bba179626d30",
+ "run_id": 1357,
+ "summary": "Closed the three obligations sent back to this build and changed nothing else. O-020: after a miss under OrdinalIgnoreCase, KindBreakdown's extension table now lowers the extension into a stack buffer and looks up that lowered key. It adds a key only when that lookup also misses, so a name like 'clip.m<KELVIN SIGN>v' is counted under '.mkv' instead of making Dictionary.Add throw. FileKinds.Of does the same lookup, so the two give the same answer for a name. O-021: C-012 no longer plants 'kinds' in its stale report, and the WindowCases header now credits B-001 (through ShowProblem) for the no-kinds check. The Scan failed ending is still not driven by any case, and the header says so. O-022: a new WPF-free ShareText.Percent is the only percentage formatter. FolderTreeRowText.Share and KindRowText.Share both call it, and it is linked into Core.Tests. Checks: the full Core suite passes (260), all 37 non-network window cases pass, the shipped exe runs on the crash shape with exit 0, and the exe's kinds on the real C: drive add up to the core totals to the byte.",
+ "payload": {
+  "status": "complete",
+  "summary": "Closed the three obligations sent back to this build and changed nothing else. O-020: after a miss under OrdinalIgnoreCase, KindBreakdown's extension table now lowers the extension into a stack buffer and looks up that lowered key. It adds a key only when that lookup also misses, so a name like 'clip.m<KELVIN SIGN>v' is counted under '.mkv' instead of making Dictionary.Add throw. FileKinds.Of does the same lookup, so the two give the same answer for a name. O-021: C-012 no longer plants 'kinds' in its stale report, and the WindowCases header now credits B-001 (through ShowProblem) for the no-kinds check. The Scan failed ending is still not driven by any case, and the header says so. O-022: a new WPF-free ShareText.Percent is the only percentage formatter. FolderTreeRowText.Share and KindRowText.Share both call it, and it is linked into Core.Tests. Checks: the full Core suite passes (260), all 37 non-network window cases pass, the shipped exe runs on the crash shape with exit 0, and the exe's kinds on the real C: drive add up to the core totals to the byte.",
+  "files": [
+   {
+    "path": "src/FsAnalyser.Core/Analysis/KindBreakdown.cs",
+    "change": "modified",
+    "why": "O-020. ExtensionTable.Find moves its miss path into a new FindLowered. That method lowers the extension on the stack (heap only past 256 chars), looks up the lowered key, and only on a second miss adds it (up to the cap) or sends the file to the past-cap slot. The unused Lowered helper is gone and a StackLimit const is added."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Analysis/FileKinds.cs",
+    "change": "modified",
+    "why": "O-020 follow-through. Of() does the same lowered second lookup, so it gives the same kind as Compute for a name like '.m<KELVIN SIGN>v' (Videos) and cannot become a second classifier that disagrees."
+   },
+   {
+    "path": "src/FsAnalyser.App/ShareText.cs",
+    "change": "added",
+    "why": "O-022. The one percentage formatter: Percent(double share), one decimal, rounded AwayFromZero, 'F1' in CurrentCulture, then ' %'. It has no WPF dependency."
+   },
+   {
+    "path": "src/FsAnalyser.App/FolderTreeRowText.cs",
+    "change": "modified",
+    "why": "O-022. Share(double) now calls ShareText.Percent. The now-unused System.Globalization using is removed."
+   },
+   {
+    "path": "src/FsAnalyser.App/KindRowText.cs",
+    "change": "modified",
+    "why": "O-022. Share(onDisk,total) returns '—' when total is 0 and otherwise ShareText.Percent(onDisk/(double)total)."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+    "change": "modified",
+    "why": "O-022. Links ShareText.cs next to KindRowText.cs so the kinds text still compiles into Core.Tests."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/KindBreakdownTests.cs",
+    "change": "modified",
+    "why": "O-020: new Fact AnExtensionThatLowersOntoOneAlreadyCountedIsCountedWithIt, run over a synthetic store and a real %TEMP% scan. O-022: added Share assertions for an exact midpoint (4 KiB of 64 KiB gives 6.3 %) and for KindRowText.Share equalling ShareText.Percent."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "change": "modified",
+    "why": "O-021. C-012's stale report is back to its pre-SL-046 form ({\"schema\":1,\"stale\":true}), and its check and comment no longer mention kinds. The header now credits B-001 for the no-kinds ending and names the Scan failed ending as a gap no case drives."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-020",
+    "done": true,
+    "how": "Built the accepted fix. On a miss under OrdinalIgnoreCase, FindLowered lowers the extension with ToLowerInvariant into a stack buffer and looks up that lowered key through the same span alternate lookup. It calls Add(new string(lowered)) only when that also misses. Add uses the same comparer as the lookup that just missed, so it can no longer throw. I used a stack buffer instead of a heap string for each sighting (the review allowed either), so extensions seen again this way, and past-cap extensions, still build no string. The allocation Fact still passes. Consequence of the accepted fix: 'clip.m<U+212A>v' counts as Videos under '.mkv'. FileKinds.Of now returns the same answer (see deviations). New Fact KindBreakdownTests.AnExtensionThatLowersOntoOneAlreadyCountedIsCountedWithIt feeds 'clip.m<U+212A>v', 'a.k' then 'b.<U+212A>', å then U+212B, ω then U+2126, ß then U+1E9E, 'x.ǆ' then 'y.ǅ', and U+212A+'r' then 'kr' (reverse order). It asserts that Compute does not throw, that AssertAddsUp holds, where each file lands, and that FileKinds.Of agrees. It runs on a synthetic store and on the same names on a real %TEMP% NTFS tree through Scanner.Scan. Mutation check: with the lowered lookup disabled, the Fact fails with the reported 'ArgumentException: An item with the same key has already been added. Key: .mkv'. Measured on .NET 10.0.12: OrdinalIgnoreCase already equates U+01C5 and U+01C6, so the review's digraph pair never reached the throw. It is still fed, as asked. End to end, the published exe on a tree holding these names exited 0 (attempt 1's exe exited 70 per the review), and its kinds summed to core."
+   },
+   {
+    "key": "O-021",
+    "done": true,
+    "how": "Test-C012 plants '{\"schema\":1,\"stale\":true}' again, as before SL-046. Its check reads 'the stale report is gone', and its SL-046 comment is removed. In the header, 'B-001 and C-012 check the endings with no scan behind them carry no kinds' now reads: B-001 checks a missing root's Could not read ending carries no kinds; the Scan failed ending takes the same ShowProblem path; no case drives it because no hook mode makes the scan fail. That makes B-001 and K-003 (both through ShowProblem to HideKinds) the evidence for O-018, and C-012 no longer counts. C-012, B-001 and K-003 all passed in the full window run. I added no new hook mode."
+   },
+   {
+    "key": "O-022",
+    "done": true,
+    "how": "Added src/FsAnalyser.App/ShareText.cs with internal Percent(double share), the SL-044 m2 rounding rule, now kept in one place. FolderTreeRowText.Share(double) calls it. KindRowText.Share(onDisk,total) returns '—' when total is 0 and otherwise calls it with onDisk/(double)total. ShareText.cs is linked into Core.Tests next to KindRowText.cs. FilesWithNothingOnDiskAreListedAndTheirShareIsADash now also checks that an exact binary midpoint (4 KiB of 64 KiB) reads 6.3 in the current culture and that KindRowText.Share(1,16) equals ShareText.Percent(1/16.0). The folder tree's share text is covered by T-001, which passed."
+   },
+   {
+    "key": "O-001",
+    "done": false,
+    "how": "Owed to validate-slice, not this stage. Evidence it can use: FileKinds.Of and Compute stay total. The new Fact covers the one input shape that broke totality (O-020). AssertAddsUp runs in every KindBreakdownTests Fact. On the real C: drive, the shipped exe's kinds summed exactly to core: 3,630,383 files, 1,058,068,505,475 B, 766,044,535,560 B on disk."
+   },
+   {
+    "key": "O-002",
+    "done": false,
+    "how": "Owed to validate-slice. Unchanged by this attempt. Compute is still called only in ShowOutcome, after Scanner.Scan has returned its ScanResult. K-002 (Stop) passed and so did AStoppedScanAddsUpToWhatItRead."
+   }
+  ],
+  "deviations": [
+   "FileKinds.Of now also does the lowered second lookup. The review's fix named only ExtensionTable.Find, but with that fix alone Compute would count 'clip.m<KELVIN SIGN>v' as Videos while Of said Other. That is two classifiers disagreeing over one name, which the design's 'only Core classifies, one table' decision rules out. Of now returns Videos for it too, and the new Fact asserts they agree.",
+   "Lowering goes into a stack buffer (a heap array only past 256 chars), not into Lowered(ext) as a new string for every sighting. That is the review's 'alternatively' route. It keeps the cost spike's no-string-per-record condition on the repeat-miss paths too (past-cap extensions, compatibility letters), and a string is built only when a key is added."
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build FsAnalyser.slnx -nologo -v q",
+    "outcome": "passed",
+    "note": "0 warnings, 0 errors."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx -nologo --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.KindBreakdownTests\"",
+    "outcome": "passed",
+    "note": "20 of 20 passed, including the new Fact and the extended share assertions."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx -nologo --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.KindBreakdownTests.AnExtensionThatLowersOntoOneAlreadyCountedIsCountedWithIt\"",
+    "outcome": "failed",
+    "note": "Deliberate mutation check, since reverted: with the lowered lookup disabled the new Fact fails with 'ArgumentException: An item with the same key has already been added. Key: .mkv' from ExtensionTable.Add, which is the reported defect. After the revert the Fact passes (see the runs above and below)."
+   },
+   {
+    "command": "pwsh -NoProfile -Command \"[string]::Equals([string][char]0x01C6, [string][char]0x01C5, [StringComparison]::OrdinalIgnoreCase)\"",
+    "outcome": "passed",
+    "note": "Probe on .NET 10.0.12, not a test. OrdinalIgnoreCase says False for k/U+212A, å/U+212B, ω/U+2126 and ß/U+1E9E, which lower onto each other and are the real collisions. It says True for U+01C6/U+01C5, so the review's digraph example never collided."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx -nologo",
+    "outcome": "passed",
+    "note": "260 of 260 passed, against 259 before this attempt: the one new Fact. That includes ArchitectureRulesTests and RuleCopiesAgreeTests. SynchronousIoCancelTests, which flaked in the build-check baseline, passed this time."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case All",
+    "outcome": "passed",
+    "note": "Exit 0. It republished the Release single-file exe first. PASSED: C-001..C-014, O-016, L-001..L-003, B-001..B-008, V-001, P-001, T-001..T-006, K-001..K-003 (37). N-001..N-004 NOT RUN, since they need -IncludeNetwork. C-012 passes with the restored plant, and B-001 and K-003 pass their no-kinds checks."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/read-window.ps1 -Root %TEMP%\\sl046-b2-kelvin",
+    "outcome": "passed",
+    "note": "Shipped exe on a real NTFS temp tree of 11 files named with the crash shapes ('clip.m<U+212A>v', 'a.k', 'b.<U+212A>', å/U+212B, ω/U+2126, ß/U+1E9E, movie.mp4, notes.txt). EXIT 0, Completed. Kinds: other 8, videos 2 (movie.mp4 and the Kelvin mkv), documents 1. They sum to core: 11 files, 720,896 B, 720,896 B on disk. KindsList shows 3 rows. The tree was deleted afterwards."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/read-window.ps1 -Root C:\\ -TimeoutSec 590",
+    "outcome": "passed",
+    "note": "Shipped exe on the real C: drive, unelevated. EXIT 0, Completed, 674 unreadable folders. The ten kinds sum exactly to core: 3,630,383 files, 1,058,068,505,475 B, 766,044,535,560 B on disk. Share of on-disk: Programs 26.78%, Other 23.17%, No extension 17.63%, Disk images 11.07%, Audio 10.47%, Videos 6.03%, Images 2.28%, Installers 1.51%, Archives 0.87%, Documents 0.20%. KindsList shows 10 rows."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "test_name": "FsAnalyser.Core.Tests.KindBreakdownTests.MixedCaseAndMultiPartNamesClassifyByTheirLastExtension",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.KindBreakdownTests.MixedCaseAndMultiPartNamesClassifyByTheirLastExtension\""
+   },
+   {
+    "key": "C-002",
+    "test_name": "FsAnalyser.Core.Tests.KindBreakdownTests.ANameWithNoExtensionOrATrailingDotIsTheNoExtensionRow",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.KindBreakdownTests.ANameWithNoExtensionOrATrailingDotIsTheNoExtensionRow\""
+   },
+   {
+    "key": "C-003",
+    "test_name": "FsAnalyser.Core.Tests.KindBreakdownTests.ADotfileIsOtherUnderItsWholeNameNotNoExtension",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.KindBreakdownTests.ADotfileIsOtherUnderItsWholeNameNotNoExtension\""
+   },
+   {
+    "key": "C-004",
+    "test_name": "FsAnalyser.Core.Tests.KindBreakdownTests.ASetupProgramIsAProgramAndOnlyPackagesAreInstallers",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.KindBreakdownTests.ASetupProgramIsAProgramAndOnlyPackagesAreInstallers\""
+   },
+   {
+    "key": "C-005",
+    "test_name": "FsAnalyser.Core.Tests.KindBreakdownTests.AddsUpToTheRootOnARealTreeUnderEveryCountingRule",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.KindBreakdownTests.AddsUpToTheRootOnARealTreeUnderEveryCountingRule\""
+   },
+   {
+    "key": "C-006",
+    "test_name": "FsAnalyser.Core.Tests.KindBreakdownTests.AddsUpToTheRootOnARealTreeUnderEveryCountingRule",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.KindBreakdownTests.AddsUpToTheRootOnARealTreeUnderEveryCountingRule\""
+   },
+   {
+    "key": "C-007",
+    "test_name": "FsAnalyser.Core.Tests.KindBreakdownTests.AddsUpToTheRootOnARealTreeUnderEveryCountingRule",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.KindBreakdownTests.AddsUpToTheRootOnARealTreeUnderEveryCountingRule\""
+   },
+   {
+    "key": "C-008",
+    "test_name": "FsAnalyser.Core.Tests.KindBreakdownTests.FilesWithNothingOnDiskAreListedAndTheirShareIsADash",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.KindBreakdownTests.FilesWithNothingOnDiskAreListedAndTheirShareIsADash\""
+   },
+   {
+    "key": "C-009",
+    "test_name": "FsAnalyser.Core.Tests.KindBreakdownTests.AStoreWithNoFilesHasNoKindsAndZeroTotals",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.KindBreakdownTests.AStoreWithNoFilesHasNoKindsAndZeroTotals\""
+   },
+   {
+    "key": "C-010",
+    "test_name": "FsAnalyser.Core.Tests.KindBreakdownTests.ExtensionsPastTheCapAreNeverListedButAlwaysCounted",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.KindBreakdownTests.ExtensionsPastTheCapAreNeverListedButAlwaysCounted\""
+   },
+   {
+    "key": "C-011",
+    "test_name": "FsAnalyser.Core.Tests.KindBreakdownTests.APassBuildsNoStringPerFile",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.KindBreakdownTests.APassBuildsNoStringPerFile\""
+   },
+   {
+    "key": "C-012",
+    "test_name": "FsAnalyser.Core.Tests.KindBreakdownTests.AStoppedScanAddsUpToWhatItRead",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.KindBreakdownTests.AStoppedScanAddsUpToWhatItRead\""
+   },
+   {
+    "key": "C-013",
+    "test_name": "tests/window/WindowCases.ps1 K-003 (FSA_HOOK_MODE=rescan)",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case K-003"
+   },
+   {
+    "key": "C-014",
+    "test_name": "FsAnalyser.Core.Tests.KindBreakdownTests.AddsUpToTheRootOnARealTreeUnderEveryCountingRule",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.KindBreakdownTests.AddsUpToTheRootOnARealTreeUnderEveryCountingRule\""
+   }
+  ],
+  "not_built": [
+   "An end-to-end window case for the Scan failed ending (Scanner.Scan throws). The O-021 disposition removed C-012's stand-in and said no new hook mode is needed for this slice. The gap is declared in the WindowCases header, and the shared ShowProblem path is exercised by B-001 and K-003."
+  ],
+  "follow_ups": [
+   "Product question the accepted O-020 fix settles implicitly: a file whose extension uses a compatibility letter (KELVIN SIGN U+212A in 'clip.m<U+212A>v') is now counted under the ASCII extension it lowers to ('.mkv', Videos). NTFS and the shell treat it as a different extension. If a person would rather see it in Other, the change is to FindLowered and FileKinds.Of together, and the new Fact pins the current choice."
+  ]
+ }
+}

@@ -327,76 +327,143 @@
                  minimum (84) holds for any name: the header and one list row, or the header, the tree's headings and
                  one tree row. -->
             <DockPanel x:Name="TopLevelPanel" Grid.Row="1" Visibility="Collapsed" Margin="0,16,0,0">
-                <TextBlock x:Name="TopLevelHeader" DockPanel.Dock="Top" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,0,0,6"
-                           ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
-                <!-- The folder tree's headings, shown with it: the same widths, docked to the same right edge as its
-                     rows, less the tree's border, padding and its vertical scroll bar, which is always shown. -->
-                <DockPanel x:Name="FolderTreeHeadings" DockPanel.Dock="Top" Visibility="Collapsed" Margin="0,0,2,2">
-                    <Border DockPanel.Dock="Right" Width="{DynamicResource {x:Static SystemParameters.VerticalScrollBarWidthKey}}" />
-                    <TextBlock DockPanel.Dock="Right" Width="80" Margin="8,0,0,0" Text="Size" TextAlignment="Right" Foreground="Gray" />
-                    <TextBlock DockPanel.Dock="Right" Width="80" Margin="8,0,0,0" Text="On disk" TextAlignment="Right" Foreground="Gray" />
-                    <TextBlock DockPanel.Dock="Right" Width="116" Margin="12,0,0,0" Text="Share of folder, on disk" TextTrimming="CharacterEllipsis"
-                               Foreground="Gray" ToolTip="Each row's share of the space its folder takes on disk" />
-                    <TextBlock Margin="22,0,0,0" Text="Name" Foreground="Gray" />
+                <!-- The header, one line, and at its right the choice between the folders and the files by kind (SL-046),
+                     on the same line, so the choice takes no height: every minimum above holds as measured. -->
+                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                    <StackPanel x:Name="ViewPicker" DockPanel.Dock="Right" Orientation="Horizontal" Margin="12,0,0,0">
+                        <RadioButton x:Name="ShowFoldersButton" Content="Folders" GroupName="ResultsView" IsChecked="True" />
+                        <RadioButton x:Name="ShowKindsButton" Content="File kinds" GroupName="ResultsView" Margin="12,0,0,0"
+                                     Checked="OnResultsViewChanged" Unchecked="OnResultsViewChanged"
+                                     ToolTip="Every file scanned, by kind: videos, images, archives, installers and so on" />
+                    </StackPanel>
+                    <TextBlock x:Name="TopLevelHeader" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                               ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                 </DockPanel>
-                <!-- One cell, one of the two shown: the results list while a scan runs and after a stop or a failure
-                     (SL-039), the folder tree once a scan completes (SL-044). -->
+                <!-- One cell, one of the two views shown, as the choice above says: the folders, or the files by kind. -->
                 <Grid>
-                    <ListBox x:Name="TopLevelList" HorizontalContentAlignment="Stretch" ScrollViewer.CanContentScroll="True"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                             VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel Margin="0,2">
-                                    <TextBlock Text="{Binding Converter={StaticResource RowTitle}}" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Text="{Binding Converter={StaticResource RowFigures}}" Foreground="Gray" TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
+                    <DockPanel x:Name="FoldersView">
+                    <!-- The folder tree's headings, shown with it: the same widths, docked to the same right edge as its
+                         rows, less the tree's border, padding and its vertical scroll bar, which is always shown. -->
+                    <DockPanel x:Name="FolderTreeHeadings" DockPanel.Dock="Top" Visibility="Collapsed" Margin="0,0,2,2">
+                        <Border DockPanel.Dock="Right" Width="{DynamicResource {x:Static SystemParameters.VerticalScrollBarWidthKey}}" />
+                        <TextBlock DockPanel.Dock="Right" Width="80" Margin="8,0,0,0" Text="Size" TextAlignment="Right" Foreground="Gray" />
+                        <TextBlock DockPanel.Dock="Right" Width="80" Margin="8,0,0,0" Text="On disk" TextAlignment="Right" Foreground="Gray" />
+                        <TextBlock DockPanel.Dock="Right" Width="116" Margin="12,0,0,0" Text="Share of folder, on disk" TextTrimming="CharacterEllipsis"
+                                   Foreground="Gray" ToolTip="Each row's share of the space its folder takes on disk" />
+                        <TextBlock Margin="22,0,0,0" Text="Name" Foreground="Gray" />
+                    </DockPanel>
+                    <!-- One cell, one of the two shown: the results list while a scan runs and after a stop or a failure
+                         (SL-039), the folder tree once a scan completes (SL-044). -->
+                    <Grid>
+                        <ListBox x:Name="TopLevelList" HorizontalContentAlignment="Stretch" ScrollViewer.CanContentScroll="True"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="0,2">
+                                        <TextBlock Text="{Binding Converter={StaticResource RowTitle}}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Converter={StaticResource RowFigures}}" Foreground="Gray" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
 
-                    <!-- The folder tree (SL-044): a completed scan's store, largest first by space on disk, each row's
-                         share of its folder beside it, one folder opened at a time. Virtualized as it was measured
-                         (spike tree-layer-fits-under-1gib-with-built-store-at-5m, U-001): in this bounded cell only the
-                         rows on screen get containers, recycled, scrolled by pixel, every row the same height. The rows
-                         come in Core's order (ChildrenLargestFirst) and nothing here sorts them. Text is TextBlocks
-                         bound to the row, never a Label or a ContentPresenter over a string, so '_' and '&' in a name
-                         show as written. -->
-                    <TreeView x:Name="FolderTree" Visibility="Collapsed"
-                              ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Visible"
-                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
-                              VirtualizingPanel.ScrollUnit="Pixel"
-                              TreeViewItem.Expanded="OnFolderExpanded" PreviewKeyDown="OnFolderTreeKeyDown">
-                        <TreeView.ItemContainerStyle>
-                            <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
-                                <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
-                                <Setter Property="Template" Value="{StaticResource FolderTreeItem}" />
-                            </Style>
-                        </TreeView.ItemContainerStyle>
-                        <TreeView.ItemTemplate>
-                            <HierarchicalDataTemplate ItemsSource="{Binding Children, Mode=OneWay}">
-                                <DockPanel Height="20" Background="Transparent">
-                                    <TextBlock x:Name="SizeText" DockPanel.Dock="Right" Width="80" Margin="8,0,0,0" VerticalAlignment="Center"
-                                               Text="{Binding SizeText, Mode=OneTime}" TextAlignment="Right" Foreground="Gray" />
-                                    <TextBlock x:Name="OnDiskText" DockPanel.Dock="Right" Width="80" Margin="8,0,0,0" VerticalAlignment="Center"
-                                               Text="{Binding OnDiskText, Mode=OneTime}" TextAlignment="Right" />
-                                    <Grid DockPanel.Dock="Right" Width="116" Margin="12,0,0,0">
-                                        <Border x:Name="ShareTrack" Width="60" Height="10" HorizontalAlignment="Left" VerticalAlignment="Center"
-                                                Background="#FFE4E4E4" Visibility="{Binding ShareShown, Mode=OneTime}">
-                                            <Rectangle x:Name="ShareBar" HorizontalAlignment="Left" Fill="#FF5E9E4A"
-                                                       Width="{Binding BarWidth, Mode=OneTime}" />
-                                        </Border>
-                                        <TextBlock x:Name="ShareText" HorizontalAlignment="Right" VerticalAlignment="Center"
-                                                   Text="{Binding ShareText, Mode=OneTime}" TextAlignment="Right" />
+                        <!-- The folder tree (SL-044): a completed scan's store, largest first by space on disk, each row's
+                             share of its folder beside it, one folder opened at a time. Virtualized as it was measured
+                             (spike tree-layer-fits-under-1gib-with-built-store-at-5m, U-001): in this bounded cell only the
+                             rows on screen get containers, recycled, scrolled by pixel, every row the same height. The rows
+                             come in Core's order (ChildrenLargestFirst) and nothing here sorts them. Text is TextBlocks
+                             bound to the row, never a Label or a ContentPresenter over a string, so '_' and '&' in a name
+                             show as written. -->
+                        <TreeView x:Name="FolderTree" Visibility="Collapsed"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Visible"
+                                  VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                                  VirtualizingPanel.ScrollUnit="Pixel"
+                                  TreeViewItem.Expanded="OnFolderExpanded" PreviewKeyDown="OnFolderTreeKeyDown">
+                            <TreeView.ItemContainerStyle>
+                                <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+                                    <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                                    <Setter Property="Template" Value="{StaticResource FolderTreeItem}" />
+                                </Style>
+                            </TreeView.ItemContainerStyle>
+                            <TreeView.ItemTemplate>
+                                <HierarchicalDataTemplate ItemsSource="{Binding Children, Mode=OneWay}">
+                                    <DockPanel Height="20" Background="Transparent">
+                                        <TextBlock x:Name="SizeText" DockPanel.Dock="Right" Width="80" Margin="8,0,0,0" VerticalAlignment="Center"
+                                                   Text="{Binding SizeText, Mode=OneTime}" TextAlignment="Right" Foreground="Gray" />
+                                        <TextBlock x:Name="OnDiskText" DockPanel.Dock="Right" Width="80" Margin="8,0,0,0" VerticalAlignment="Center"
+                                                   Text="{Binding OnDiskText, Mode=OneTime}" TextAlignment="Right" />
+                                        <Grid DockPanel.Dock="Right" Width="116" Margin="12,0,0,0">
+                                            <Border x:Name="ShareTrack" Width="60" Height="10" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                    Background="#FFE4E4E4" Visibility="{Binding ShareShown, Mode=OneTime}">
+                                                <Rectangle x:Name="ShareBar" HorizontalAlignment="Left" Fill="#FF5E9E4A"
+                                                           Width="{Binding BarWidth, Mode=OneTime}" />
+                                            </Border>
+                                            <TextBlock x:Name="ShareText" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                       Text="{Binding ShareText, Mode=OneTime}" TextAlignment="Right" />
+                                        </Grid>
+                                        <TextBlock x:Name="NoteText" DockPanel.Dock="Right" Margin="8,0,0,0" VerticalAlignment="Center"
+                                                   Text="{Binding Note, Mode=OneTime}" Foreground="Gray" />
+                                        <TextBlock x:Name="NameText" VerticalAlignment="Center" Text="{Binding Name, Mode=OneTime}"
+                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Name, Mode=OneTime}" />
+                                    </DockPanel>
+                                </HierarchicalDataTemplate>
+                            </TreeView.ItemTemplate>
+                        </TreeView>
+                    </Grid>
+                    </DockPanel>
+
+                    <!-- The files by kind (SL-046): at most ten rows, in Core's order, largest on disk first; never a list of
+                         files. The caption is one line, trimmed, with the whole of it as its tooltip, so the view keeps a full
+                         row in the cell's minimum as the results list does. Which kind a file is, and every figure, is Core's;
+                         the rows are only its words (KindRowText). The extensions column gets what the fixed columns leave,
+                         trimmed, with the whole of it as its tooltip; the Installers and Programs rows say, when pointed at,
+                         that a setup program is counted as a program. -->
+                    <DockPanel x:Name="KindsView" Visibility="Collapsed">
+                        <TextBlock x:Name="KindsCaption" DockPanel.Dock="Top" Foreground="Gray" TextTrimming="CharacterEllipsis" Margin="0,0,0,4"
+                                   ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                        <Grid x:Name="KindsHeadings" DockPanel.Dock="Top" Visibility="Collapsed" Margin="5,0,0,2">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="150" />
+                                <ColumnDefinition Width="70" />
+                                <ColumnDefinition Width="80" />
+                                <ColumnDefinition Width="80" />
+                                <ColumnDefinition Width="60" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Kind" Foreground="Gray" />
+                            <TextBlock Grid.Column="1" Text="Files" TextAlignment="Right" Margin="0,0,12,0" Foreground="Gray" />
+                            <TextBlock Grid.Column="2" Text="Size" TextAlignment="Right" Margin="0,0,12,0" Foreground="Gray" />
+                            <TextBlock Grid.Column="3" Text="On disk" TextAlignment="Right" Margin="0,0,12,0" Foreground="Gray" />
+                            <TextBlock Grid.Column="4" Text="Share" TextAlignment="Right" Margin="0,0,12,0" Foreground="Gray"
+                                       ToolTip="Each kind's share of the space all the files take on disk" />
+                            <TextBlock Grid.Column="5" Text="Biggest extensions, on disk" Foreground="Gray" TextTrimming="CharacterEllipsis" />
+                        </Grid>
+                        <ListBox x:Name="KindsList" Visibility="Collapsed" HorizontalContentAlignment="Stretch"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Background="Transparent" ToolTip="{Binding Tip, Mode=OneTime}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="70" />
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="60" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Label, Mode=OneTime}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="1" Text="{Binding Files, Mode=OneTime}" TextAlignment="Right" Margin="0,0,12,0" />
+                                        <TextBlock Grid.Column="2" Text="{Binding Size, Mode=OneTime}" TextAlignment="Right" Margin="0,0,12,0" Foreground="Gray" />
+                                        <TextBlock Grid.Column="3" Text="{Binding OnDisk, Mode=OneTime}" TextAlignment="Right" Margin="0,0,12,0" />
+                                        <TextBlock Grid.Column="4" Text="{Binding Share, Mode=OneTime}" TextAlignment="Right" Margin="0,0,12,0" />
+                                        <TextBlock Grid.Column="5" Text="{Binding Extensions, Mode=OneTime}" TextTrimming="CharacterEllipsis"
+                                                   ToolTip="{Binding Extensions, Mode=OneTime}" Foreground="Gray" />
                                     </Grid>
-                                    <TextBlock x:Name="NoteText" DockPanel.Dock="Right" Margin="8,0,0,0" VerticalAlignment="Center"
-                                               Text="{Binding Note, Mode=OneTime}" Foreground="Gray" />
-                                    <TextBlock x:Name="NameText" VerticalAlignment="Center" Text="{Binding Name, Mode=OneTime}"
-                                               TextTrimming="CharacterEllipsis" ToolTip="{Binding Name, Mode=OneTime}" />
-                                </DockPanel>
-                            </HierarchicalDataTemplate>
-                        </TreeView.ItemTemplate>
-                    </TreeView>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </DockPanel>
                 </Grid>
             </DockPanel>
         </Grid>

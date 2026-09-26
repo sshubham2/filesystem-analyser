@@ -19,7 +19,8 @@ namespace FsAnalyser.App;
 /// the scanner's counters every 250 ms; there is one scan at a time. The results list below them fills in
 /// from the scanner's published snapshots of the root's direct children (SL-039), and keeps the last one
 /// after a stop. A scan that completes shows the folder tree in its place instead (SL-044), read from the
-/// store the scan returned, which nothing writes any more.
+/// store the scan returned, which nothing writes any more. The same cell shows the files by kind instead when a
+/// person chooses them on its header line (SL-046), computed once from that store at the ending.
 /// </summary>
 public partial class MainWindow : Window
 {
@@ -82,6 +83,13 @@ public partial class MainWindow : Window
 
     /// <summary>How long ranking the largest files took for the list on screen; null when no list was made.</summary>
     internal double? LargestFilesMs { get; private set; }
+
+    /// <summary>
+    /// The files by kind behind the list on screen (SL-046): computed once from the store of a scan that returned,
+    /// Completed or Cancelled; null before that, from the moment the next scan starts, and after an ending with no
+    /// scan behind it (Could not read, Scan failed). What the list shows is written from this and nothing else.
+    /// </summary>
+    internal KindBreakdownResult? Kinds { get; private set; }
 
     /// <summary>The snapshot the results list shows, its rows sorted into the list; null when it shows none.</summary>
     internal TopLevelSnapshot? ShownTopLevel => _shownTopLevel;
@@ -195,6 +203,7 @@ public partial class MainWindow : Window
         LastResult = null;
         UnreadableList.ItemsSource = null;
         HideLargestFiles(); // the last scan's list is never shown as this one's
+        AwaitKinds(); // nor its kinds
         OutcomePanel.Visibility = Visibility.Collapsed;
         ClearFolderTree(); // and its store with it, before this scan builds another
         ClearTopLevel();
@@ -479,6 +488,7 @@ public partial class MainWindow : Window
         ShowLargestFiles(result);
         if (finished)
             ShowFolderTree(result); // a stopped scan keeps its list: a share would be of an incomplete whole
+        ShowKinds(result); // after the tree, which a failure here cannot take away; a stopped scan's kinds too
         OutcomePanel.Visibility = Visibility.Visible;
         ShowVolumeInUse(result.Store.VolumeUsed, _scanGeneration, detail); // and then EndingShown
     }
@@ -545,6 +555,59 @@ public partial class MainWindow : Window
         LargestFilesMs = null;
     }
 
+    // ---- The files by kind (SL-046) ----
+
+    // The results cell shows one of two views, as the choice on its header line says: the folders (the results list
+    // while a scan runs and after a stop, the folder tree once a scan completes), or the files by kind. The choice is the
+    // person's and outlasts a scan; the kinds view says, while a scan runs, when its rows come.
+    private void OnResultsViewChanged(object sender, RoutedEventArgs e)
+    {
+        bool kinds = ShowKindsButton.IsChecked == true;
+        FoldersView.Visibility = kinds ? Visibility.Collapsed : Visibility.Visible;
+        KindsView.Visibility = kinds ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // Every file of the store of a scan that has returned, so nothing writes it any more, Completed or Cancelled: one
+    // pass on the UI thread (118 ms over the 3.6 million files of this PC's C:\), once per scan. Which kind a file is,
+    // and every figure, is Core's; the rows only put them into words. The caption says when the kinds cannot be the
+    // whole tree, as the largest files' does.
+    private void ShowKinds(ScanResult result)
+    {
+        KindBreakdownResult kinds = KindBreakdown.Compute(result.Store);
+        Kinds = kinds;
+
+        string part = result.Status == ScanStatus.Completed ? "" : " in the part read before the scan stopped";
+        string caption = kinds.Files == 0
+            ? $"No files{part}."
+            : $"{Count(kinds.Files, "file")} scanned{part}, sorted by extension.";
+        if (result.Unreadable.Count > 0)
+            caption += $" Files in {Count(result.Unreadable.Count, "unreadable folder")} are not included.";
+        KindsCaption.Text = caption;
+
+        KindRow[] rows = KindRowText.Rows(kinds, FormatSize);
+        KindsList.ItemsSource = rows;
+        Visibility shown = rows.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        KindsHeadings.Visibility = shown;
+        KindsList.Visibility = shown;
+    }
+
+    // As a scan starts: the last scan's kinds go, and until this one's ending the view says when they come.
+    private void AwaitKinds()
+    {
+        HideKinds();
+        KindsCaption.Text = "Shown when the scan finishes.";
+    }
+
+    // An ending with no scan behind it (Could not read, Scan failed) has no kinds to show.
+    private void HideKinds()
+    {
+        Kinds = null;
+        KindsList.ItemsSource = null;
+        KindsList.Visibility = Visibility.Collapsed;
+        KindsHeadings.Visibility = Visibility.Collapsed;
+        KindsCaption.Text = "";
+    }
+
     // What the scan saw against what the volume says is in use. The gap is not explained here yet:
     // metafiles, unreadable folders and the rest belong to the coverage panel of a later slice.
     private static string Coverage(bool finished, long seenOnDisk, long volumeInUse)
@@ -567,6 +630,7 @@ public partial class MainWindow : Window
         OutcomeNotes.Visibility = Visibility.Collapsed;
         UnreadableExpander.Visibility = Visibility.Collapsed;
         HideLargestFiles();
+        HideKinds();
         OutcomePanel.Visibility = Visibility.Visible;
         EndingShown?.Invoke(this, EventArgs.Empty);
     }

@@ -1,0 +1,224 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-046",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-09-26T15:07:09.068Z",
+ "head": "f8b2f4af1dbca15c4c9c92a1aa05ad0d0f5afc9e",
+ "run_id": 1352,
+ "summary": "The build matches the design's structure. There is one internal extension table in Core, one pass over the returned store with span lookup and no string per file, a single holder in MainWindow that is cleared at scan start and at the problem endings, an additive report array of per-kind totals only, and both architecture rules hold. I re-ran the build (0 warnings), the full Core suite (259/259) and window cases K-001, K-002 and K-003 (all passed). Every case-matrix test really feeds its shape in: real hardlink, junction, directory symlink and file symlink, compressed and sparse files, a 359-character path, a denied folder, a real cancel, 65,536+ unmapped extensions, and 200k mixed-case files under an allocation assertion. One real defect was found and reproduced; the matrix does not name its shape. ExtensionTable.Find lowers an unknown extension with ToLowerInvariant and Dictionary.Add-s it under an OrdinalIgnoreCase comparer, and the two disagree for compatibility characters such as the Kelvin sign U+212A. A single real file named 'clip.mKv' makes Compute throw ArgumentException (duplicate key .mkv). With that file in a two-file tree the shipped exe exits 70 with no report; the same tree without it exits 0. In the interactive window no DispatcherUnhandledException handler is installed, so the process dies after the scan. This breaks the Compute contract ('does not throw on odd names') and the O-001 precondition that classification is total. Two minor findings: the C-012 edit that O-018 cites proves nothing about kinds, and KindRowText.Share copies the tree's share formatter.\n\nSecond round: Nothing new this round. I walked the changed code again looking for inputs that break it.\n\n- **Casing probe (a throwaway console, since deleted):**\n  - ToLowerInvariant and OrdinalIgnoreCase agree for Turkish İ (U+0130), dotless ı (U+0131), Deseret surrogate pairs, final sigma and the title-case digraph U+01C5. None of these can hit the duplicate-key throw.\n  - The Kelvin sign U+212A still disagrees, so round one's M1 stands with its reproduction and its fix.\n  - Correction to M1: U+01C5 is not a trigger. Drop the 'x.ǆ' / 'y.ǅ' pair from M1's suggested Fact and keep the Kelvin-sign inputs.\n- **Other empty, odd or partial inputs:** none of these fail.\n  - A name that is empty, ends in a dot, is a bare dotfile, or contains a separator falls to No extension or Other.\n  - A cancel before the root is listed leaves 0 files, and the kinds view is simply unreachable.\n  - A cloud-only store gives an on-disk total of 0 and a '—' share.\n  - A kind with only past-cap extensions cannot occur, because the cap is only reached through named slots.\n  - A RadioButton event cannot fire during XAML load, since only Folders starts checked and it has no handler.\n  - An empty kinds array sums to 0 in the PowerShell checks, and Format-Count uses the same culture as the app.\n- **Architecture-rule regexes:** they have gaps (Path.Exists, DriveInfo, P/Invoke file APIs, `using static System.IO.Path`). They are the design's patterns, copied verbatim, and nothing in the tree breaks them today, so no finding.\n\nRound one's findings still stand: M1 (Compute throws on a Kelvin-sign extension, and the shipped exe exits 70), m1 (the C-012 edit is inert) and m2 (the share formatter is duplicated).",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The build matches the design's structure. There is one internal extension table in Core, one pass over the returned store with span lookup and no string per file, a single holder in MainWindow that is cleared at scan start and at the problem endings, an additive report array of per-kind totals only, and both architecture rules hold. I re-ran the build (0 warnings), the full Core suite (259/259) and window cases K-001, K-002 and K-003 (all passed). Every case-matrix test really feeds its shape in: real hardlink, junction, directory symlink and file symlink, compressed and sparse files, a 359-character path, a denied folder, a real cancel, 65,536+ unmapped extensions, and 200k mixed-case files under an allocation assertion. One real defect was found and reproduced; the matrix does not name its shape. ExtensionTable.Find lowers an unknown extension with ToLowerInvariant and Dictionary.Add-s it under an OrdinalIgnoreCase comparer, and the two disagree for compatibility characters such as the Kelvin sign U+212A. A single real file named 'clip.mKv' makes Compute throw ArgumentException (duplicate key .mkv). With that file in a two-file tree the shipped exe exits 70 with no report; the same tree without it exits 0. In the interactive window no DispatcherUnhandledException handler is installed, so the process dies after the scan. This breaks the Compute contract ('does not throw on odd names') and the O-001 precondition that classification is total. Two minor findings: the C-012 edit that O-018 cites proves nothing about kinds, and KindRowText.Share copies the tree's share formatter.\n\nSecond round: Nothing new this round. I walked the changed code again looking for inputs that break it.\n\n- **Casing probe (a throwaway console, since deleted):**\n  - ToLowerInvariant and OrdinalIgnoreCase agree for Turkish İ (U+0130), dotless ı (U+0131), Deseret surrogate pairs, final sigma and the title-case digraph U+01C5. None of these can hit the duplicate-key throw.\n  - The Kelvin sign U+212A still disagrees, so round one's M1 stands with its reproduction and its fix.\n  - Correction to M1: U+01C5 is not a trigger. Drop the 'x.ǆ' / 'y.ǅ' pair from M1's suggested Fact and keep the Kelvin-sign inputs.\n- **Other empty, odd or partial inputs:** none of these fail.\n  - A name that is empty, ends in a dot, is a bare dotfile, or contains a separator falls to No extension or Other.\n  - A cancel before the root is listed leaves 0 files, and the kinds view is simply unreachable.\n  - A cloud-only store gives an on-disk total of 0 and a '—' share.\n  - A kind with only past-cap extensions cannot occur, because the cap is only reached through named slots.\n  - A RadioButton event cannot fire during XAML load, since only Folders starts checked and it has no handler.\n  - An empty kinds array sums to 0 in the PowerShell checks, and Format-Count uses the same culture as the app.\n- **Architecture-rule regexes:** they have gaps (Path.Exists, DriveInfo, P/Invoke file APIs, `using static System.IO.Path`). They are the design's patterns, copied verbatim, and nothing in the tree breaks them today, so no finding.\n\nRound one's findings still stand: M1 (Compute throws on a Kelvin-sign extension, and the shipped exe exits 70), m1 (the C-012 edit is inert) and m2 (the share formatter is duplicated).",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "missing-edge-cases",
+    "claim": "KindBreakdown.Compute throws on a real file name, and the app then ends after the scan. Find looks the extension up with OrdinalIgnoreCase, fails, then Add(Lowered(ext)) inserts ToLowerInvariant(ext). For compatibility code points, ToLowerInvariant lands on a key that OrdinalIgnoreCase does not equate. Examples: KELVIN SIGN U+212A -> 'k', ANGSTROM SIGN U+212B -> 'å', OHM SIGN U+2126 -> 'ω', U+1E9E -> 'ß', the title-case digraph U+01C5 -> U+01C6. Dictionary.Add then throws 'An item with the same key has already been added'. A single file named 'clip.mKv' is enough, because '.mkv' is pre-seeded. The pair 'a.k' followed by 'b.K' also triggers it. ShowKinds runs inside ShowOutcome on the UI thread. In report mode the handler exits 70 with no report. In interactive mode App.OnStartup installs no DispatcherUnhandledException handler, so the process crashes and the finished scan is lost. This contradicts the Compute contract ('The function does not throw on odd names (empty, very long or non-ASCII suffixes fall to Other)') and the O-001 precondition that the classification is total. The matrix row for mixed-case names (C-001) feeds ASCII case only.",
+    "evidence": "src/FsAnalyser.Core/Analysis/KindBreakdown.cs:122-128 (TryGetValue under OrdinalIgnoreCase, then Add(Lowered(ext), ...)) and :211 (_index.Add). App.xaml.cs:19-28 installs no handler outside report mode. Reproduced twice. (1) A scratch console calling the real Scanner.Scan on a %TEMP% folder holding 'clip.mKv' printed 'ToLowerInvariant == .mkv: True', 'OrdinalIgnoreCase equal: False' and 'Compute THREW ArgumentException: An item with the same key has already been added. Key: .mkv'. (2) eng/read-window.ps1 against the shipped artifacts/publish/FsAnalyser.App.exe (published 20:26, after KindBreakdown.cs was last written at 20:17) on a tree of that file plus photo.jpg printed 'EXIT 70 / NO REPORT'. The control tree with clip.mkv plus photo.jpg printed 'EXIT 0' with a kinds array.",
+    "fix": "In ExtensionTable.Find's unmapped branch, lower the extension first and look the lowered key up before adding: `string key = Lowered(ext); if (!_index.TryGetValue(key, out at)) at = Add(key, FileKind.Other);`. Alternatively use CollectionsMarshal.GetValueRefOrAddDefault on the lowered key. Such names then allocate one string per sighting, which is negligible. Add a Fact that feeds 'clip.mKv', then 'a.k' and 'b.K', then 'x.ǆ' and 'y.ǅ'. It should assert that Compute does not throw and that AssertAddsUp holds."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "The C-012 change cited as evidence for O-018 (a faulted run leaves no kinds) cannot fail on anything to do with kinds. The stale report now carries a 'kinds' array, but the throw mode ends the run with exit 70 and StartReportMode deletes the report path before the window exists. 'The stale report, with its kinds, is gone' is therefore the same assertion C-012 made before this slice, and it would pass even if HideKinds did not exist. The Scan-failed ending (Scanner.Scan throws, then ShowProblem, then HideKinds) is not driven by any case. It is covered only because it shares ShowProblem with Could not read, which B-001 and K-003 exercise. The builder declared that gap, but O-018's discharge text still counts C-012 as coverage.",
+    "evidence": "tests/window/WindowCases.ps1 Test-C012 (plants '{\"schema\":1,\"stale\":true,\"kinds\":[...]}' and asserts that the file is absent). src/FsAnalyser.App/App.xaml.cs:66-67 (File.Delete(report) at startup) and :84-89 (throw leads to Discard and exit 70).",
+    "fix": "Remove the kinds planting from C-012 and drop it from O-018's evidence, so that coverage rests on B-001 and K-003 through ShowProblem. Alternatively add a hook mode that makes the scan task fault, if a real Scan-failed case is wanted."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "over-engineering",
+    "claim": "KindRowText.Share re-implements the folder tree's percentage format: one decimal, MidpointRounding.AwayFromZero, 'F1' in CurrentCulture, then ' %'. That rounding rule was the fix for SL-044 review m2, and it now lives in two places. A later change to how shares are written will land in only one of them, and the tree and the kinds view will then disagree on the same number format. The builder copied it because FolderTreeRowText calls MainWindow.FormatSize, so it cannot be linked into Core.Tests.",
+    "evidence": "src/FsAnalyser.App/KindRowText.cs:35-37 against src/FsAnalyser.App/FolderTreeRowText.cs:22-23. KindRowText's doc comment says 'as the folder tree writes its shares'.",
+    "fix": "Keep one pure formatter. Move the percentage formatting into KindRowText, or into a small WPF-free file that is already linked into Core.Tests, as a `Percent(double share)` method. Have FolderTreeRowText.Share delegate to it, and have KindRowText.Share call it with onDisk/(double)total when total != 0."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "no",
+    "evidence": "FileKinds.Of is total (FileKinds.cs:68-71). KindBreakdown.Compute is not: ExtensionTable.Find (KindBreakdown.cs:122-128, 211) throws ArgumentException on a real file named 'clip.mKv'. This was reproduced with the real scanner and with the shipped exe (exit 70, no report). Not every file reaches a kind; the pass fails instead (finding M1)."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "KindBreakdown.Compute has one caller, MainWindow.ShowKinds (MainWindow.xaml.cs:576). It is reached only from ShowOutcome (line 491), which StartScan calls after `await Task.Factory.StartNew(() => Scanner.Scan(...))` has returned (lines 228, 263). The store reaches the App only as ScanResult.Store. The only other Core threads are the scan-cancel thread (SynchronousIoCancel.cs:274) and the volume-used thread (VolumeSpace.cs:64); neither appends to the store. K-002 and AStoppedScanAddsUpToWhatItRead run Compute on a Cancelled store."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "KindBreakdownTests.MixedCaseAndMultiPartNamesClassifyByTheirLastExtension feeds MOVIE.MP4, Holiday.Mkv, a.tar.gz, Backup.TAR.GZ and others through FileKinds.Of and through a store beside the lower-case twin, and asserts one kind and one lower-case extension. It covers ASCII case only; see M1 for the non-ASCII shape."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "ANameWithNoExtensionOrATrailingDotIsTheNoExtensionRow feeds noext, trailingdot., Makefile and archive.tar. It asserts the NoExtension row, empty TopExtensions, a default Remainder and the '—' cell."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "ADotfileIsOtherUnderItsWholeNameNotNoExtension feeds .gitignore, .GITIGNORE and .editorconfig and asserts the Other row lists '.gitignore' (2 files) and '.editorconfig'."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "ASetupProgramIsAProgramAndOnlyPackagesAreInstallers: Hermes-Setup.exe, setup.exe and audacity...exe go to Programs; .msi, .msix and .msu go to Installers. Both rows carry InstallersTip, and Videos and Other carry none."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "AddsUpToTheRootOnARealTreeUnderEveryCountingRule creates a real TempTree.Hardlink and asserts EntryFlags.HardlinkDuplicate on the second name. It asserts Videos Files=3 and Size=3 MiB+1000, and that the totals equal FilesBelow, RolledSize and RolledOnDisk of the root."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "The same Fact creates a Junction, a DirectorySymlink and a FileSymlink('link.zip') to an outside folder and outside.zip. It asserts that all three are EntryKind.Link and that Archives holds only a.tar.gz (300 B)."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "The same Fact compresses notes.txt (TempTree.Compress) and asserts Documents OnDisk in 1..Size/2. It writes a sparse 1 GiB disk.iso with 64 KiB written and asserts OnDisk in 64 KiB..1 MiB, ranked below Videos."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "FilesWithNothingOnDiskAreListedAndTheirShareIsADash uses a synthetic store with size > 0 and on-disk 0. Three rows are ordered by size, every Share is '—', and KindRowText.Share(0,0) is '—'."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "AStoreWithNoFilesHasNoKindsAndZeroTotals covers a root-only store, a store of folders and a link, and a real scan of empty folders, and asserts empty Kinds and zero totals. K-001's folders-only tree gives an empty kinds array and the caption 'No files.' (K-001 re-run: PASSED)."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "ExtensionsPastTheCapAreNeverListedButAlwaysCounted feeds 65,536 unmapped extensions, a case variant, a 1 GiB extension past the cap, 50 more past the cap and clip.MP4. It asserts the reconcile, the .mp4 in Videos, that .pastcap is not listed, and a remainder with MoreUncounted that is larger than any listed extension."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "APassBuildsNoStringPerFile: 200,000 files over 50 extensions in three cases, measured after a warm-up with GC.GetAllocatedBytesForCurrentThread against a 256 KiB limit. Passed in my full-suite run."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "AStoppedScanAddsUpToWhatItRead cancels through ScanOptions.AfterFolder, asserts Cancelled and 6 files, and reconciles against the partial root. My re-run of K-002: stopped with 60 files, kinds 'other 2; documents 58' summing to core, PASSED."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "K-003 (re-run, PASSED) uses the rescan hook. At the running second scan the report has no 'kinds', KindsList has 0 rows and the caption reads 'Shown when the scan finishes.'. At the second scan's Could not read ending there are no kinds and an empty caption. The code path is AwaitKinds in StartScan (MainWindow.xaml.cs:206)."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "UnmappedExtensionCap = 65_536 (KindBreakdown.cs:68), with the C: measurement recorded in its remarks. ExtensionRemainder is carried per KindTotal, and KindRowText.Extensions renders '+ N more, X' or '+ more than N others, X'. The overflow Fact asserts that the past-cap 1 GiB extension shows in the remainder."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "KindBreakdownTests.AStoppedScanAddsUpToWhatItRead asserts that the kind sums equal FilesBelow(0), RolledSize(0), RolledOnDisk(0) and Totals of a Cancelled store, and runs Scans.AssertChargedBytesAreTheTotals."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "The code is there. ShowProblem calls HideKinds (MainWindow.xaml.cs:633), which nulls Kinds, so WindowReport omits 'kinds' (WindowReport.cs:208-216). ShowKinds runs after ShowFolderTree (line 491) with no swallowing catch. B-001 and K-003 assert no kinds at Could not read. The cited C-012 change is inert (finding m1), and the Scan-failed ending is not driven."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "(a) KindBreakdown.Total gives NoExtension an empty TopExtensions and a default Remainder (lines 181, 201-203). KindRowText.Extensions returns '—' (line 46-47), and a dotfile is listed as '.gitignore'; both are tested. (b) The WindowReport 'core' object carries files, bytes and bytesOnDisk, and K-001 and K-002 CheckKinds compare against it."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "KindBreakdownTests.MixedCaseAndMultiPartNamesClassifyByTheirLastExtension: MOVIE.MP4, Holiday.Mkv, a.tar.gz, Backup.TAR.GZ, IMG_0001.JPEG, Book.AAX and Level3.PAK, each through FileKinds.Of and through a synthetic store beside its lower-case twin. ASCII only; the non-ASCII case-mapping shape that crashes (M1) is not on the matrix."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "ANameWithNoExtensionOrATrailingDotIsTheNoExtensionRow: noext, trailingdot., Makefile and archive.tar., each in a store, asserting the NoExtension row and the '—' cell."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "ADotfileIsOtherUnderItsWholeNameNotNoExtension: .gitignore, .GITIGNORE and .editorconfig land in Other, listed by their whole lower-case names."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "ASetupProgramIsAProgramAndOnlyPackagesAreInstallers: Hermes-Setup.exe, setup.exe and audacity-win-3.7.7-64bit.exe beside .msi, .Msix and .msu. It asserts Programs has 3 .exe and Installers has .msi, .msu and .msix."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "AddsUpToTheRootOnARealTreeUnderEveryCountingRule: a real NTFS hardlink (TempTree.Hardlink) with the HardlinkDuplicate flag asserted on the second name. Videos Size = 3 MiB + 1000, so the bytes are counted once."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "Same Fact: a real Junction, a DirectorySymlink and a FileSymlink('link.zip') to outside.zip, each asserted to be EntryKind.Link. Archives holds only a.tar.gz."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "Same Fact: notes.txt is compressed with TempTree.Compress, with OnDisk asserted at most half of Size. disk.iso is a sparse file of 1 GiB with 64 KiB written, with OnDisk asserted in 64 KiB..1 MiB and a lower rank than Videos."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "FilesWithNothingOnDiskAreListedAndTheirShareIsADash: a synthetic store with size > 0 and on-disk 0. Three rows are listed by size, and Share is '—' for all of them."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "AStoreWithNoFilesHasNoKindsAndZeroTotals: a root-only synthetic store, a hand-built store of folders and a Link, and a real scan of empty folders. K-001 checks the folders-only tree end to end."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "ExtensionsPastTheCapAreNeverListedButAlwaysCounted: 65,536 (more than 4,096) distinct unmapped extensions, then a case variant, a 1 GiB past-cap extension, 50 more past the cap, then clip.MP4."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "APassBuildsNoStringPerFile: 200,000 File entries over 50 extensions in lower, UPPER and Title case, with the allocation delta asserted under 256 KiB after a warm-up."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "AStoppedScanAddsUpToWhatItRead: a real scan cancelled after 3 folders through ScanOptions.AfterFolder, Status Cancelled asserted, 6 of 30 files read, reconciled to the partial root. Window K-002 presses Stop through the hook (re-run: 60 files, PASSED)."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "K-003 with FSA_HOOK_MODE=rescan: the report is taken while the second scan runs (core null) and at its Could not read ending. Both have no 'kinds' and 0 KindsList rows (re-run PASSED)."
+   },
+   {
+    "key": "C-014",
+    "exercised": "yes",
+    "evidence": "The reconcile Fact writes photo.jpg at a 359-character path (length asserted) and a denied folder holding hidden.mkv (asserted as the single Unreadable entry). Images has 1 file and Videos excludes hidden.mkv."
+   }
+  ],
+  "matches_design": true,
+  "drift": [
+   "KindsList is a ListBox with a Grid item template, which virtualizes by default. The design specified 'a small, non-virtualized ListView/GridView'. K-001's minimum-size check relies on that virtualization ('builds only what is near the viewport'). This was not declared, and at 10 rows or fewer it makes no functional difference.",
+   ".taad/fitness.yaml adds src/FsAnalyser.Core/Analysis/KindBreakdown.cs to the except_files of SL-044's rule 'Core does not publish a live ScanStore before the scan ends'. The design said only that two new rules are appended. The change is mentioned in the build's file list but not among its departures. It is justified in the file, following LargestFiles.cs.",
+   "The kinds caption adds wording the design's panel contract did not specify: 'N files scanned, sorted by extension.' and 'Files in N unreadable folders are not included.'. 'sorted by extension' is inaccurate because the rows are ordered by on-disk size.",
+   "The declared placement departure stands: the breakdown is a second view of the results cell, chosen by a RadioButton, not a panel on screen by default. The report carries 'kinds' either way."
+  ],
+  "unreviewed": [
+   ".taad/slices/SL-046/critique-1.json, critique-review-1.json, design-slice-1.json, index.json, build-slice-1.json: engine records and other stages' own accounts, left unopened on purpose; the design and dispositions were read from the brief."
+  ],
+  "second_round": {
+   "run_id": 1353,
+   "filed": 0
+  }
+ }
+}

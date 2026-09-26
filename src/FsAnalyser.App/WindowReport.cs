@@ -43,13 +43,25 @@ namespace FsAnalyser.App;
 ///                 "UnreadableList": { "actualHeight": number, "inView": bool, "fullRows": number },
 ///                 "TopLevelPanel": { "visible": bool, "actualHeight": number },
 ///                 "TopLevelList": { "actualHeight": number, "inView": bool, "realizedRows": number, "fullRows": number },
-///                 "FolderTree": { "visible": bool, "actualHeight": number, "inView": bool, "realizedRows": number, "fullRows": number } },
+///                 "FolderTree": { "visible": bool, "actualHeight": number, "inView": bool, "realizedRows": number, "fullRows": number },
+///                 "ShowKindsButton": { "visible": bool, "isChecked": bool },
+///                 "KindsView": { "visible": bool, "actualHeight": number }, "KindsCaption": Text,
+///                 "KindsList": { "rows": number, "actualHeight": number, "inView": bool, "realizedRows": number, "fullRows": number } },
 ///     "largestFilesShown": rows bound to LargestFilesList, "largestFileOnDisk": the first row's on-disk
 ///         bytes or null, "largestFilesMs": how long ranking them took or null (SL-040),
 ///     "core": { "status", "rootError", "files", "folders", "links", "bytes", "bytesOnDisk", "elapsedMs" } or null,
 ///     "topLevel": { "rows", "reading", "notRead", "stoppedPartway", "unreadable", "bytes", "onDisk", "files",
-///                   "final" } }   (SL-039; absent when the results list shows nothing)
+///                   "final" },   (SL-039; absent when the results list shows nothing)
+///     "kinds": [ { "id", "label", "files", "size", "onDisk" } ] }   (SL-046; absent when no kinds were computed)
 /// </code>
+/// "kinds" is the files by kind that KindsList (SL-046) is written from, in its order, largest on disk first: each
+/// kind's stable id ("disk-images"), its label as the list shows it, and its files, bytes and bytes on disk as Core
+/// added them up. Its sums are the root's, so they are "core"'s files, bytes and bytesOnDisk, after a stop too. It
+/// holds no extension, name or path (Q-016); the extensions are on screen only. It is absent from the moment a scan
+/// starts until that scan's ending has computed it, and after an ending with no scan behind it (Could not read, Scan
+/// failed); an empty array is a scan with no files. The kinds are one of the two views of the results cell, chosen on
+/// its header line: ShowKindsButton is that choice, checked when the kinds are shown, and KindsView the view. KindsList
+/// "rows" is how many rows it holds whether or not its view is shown; the rest reads it as the other lists are read.
 /// "topLevel" counts the rows the results list (TopLevelList) holds: how many, how many in each unfinished
 /// or unreadable state, and their bytes, on-disk bytes and files added up, with whether the snapshot they
 /// came from is the scan's final one. It carries no name and no path, so the report stays a matter of
@@ -148,6 +160,17 @@ internal static class WindowReport
                     realizedRows = TreeRows(window.FolderTree).Count,
                     fullRows = FullRows(window.FolderTree),
                 },
+                ShowKindsButton = new { visible = window.ShowKindsButton.IsVisible, isChecked = window.ShowKindsButton.IsChecked == true },
+                KindsView = new { visible = window.KindsView.IsVisible, actualHeight = window.KindsView.ActualHeight },
+                KindsCaption = window.KindsCaption.Text,
+                KindsList = new
+                {
+                    rows = window.KindsList.Items.Count,
+                    actualHeight = window.KindsList.ActualHeight,
+                    inView = InView(window.KindsList),
+                    realizedRows = Enumerable.Range(0, window.KindsList.Items.Count).Count(i => window.KindsList.ItemContainerGenerator.ContainerFromIndex(i) is not null),
+                    fullRows = FullRows(window.KindsList),
+                },
             },
             ["largestFilesShown"] = largest.Count,
             ["largestFileOnDisk"] = largest.Count > 0 ? largest[0].OnDisk : (long?)null,
@@ -181,6 +204,15 @@ internal static class WindowReport
                 files = rows.Sum(r => r.Files),
                 final = shown.Final,
             };
+        }
+        // The files by kind the list is written from, as Core computed them (SL-046): per kind its id, label and totals,
+        // never an extension, a name or a path (Q-016). Absent until an ending has computed them, and again from the
+        // moment the next scan starts.
+        if (window.Kinds is { } kinds)
+        {
+            report["kinds"] = kinds.Kinds
+                .Select(k => new { id = k.Id, label = k.Label, files = k.Files, size = k.Size, onDisk = k.OnDisk })
+                .ToArray();
         }
 
         // The default encoder escapes everything outside ASCII, so Windows PowerShell 5.1 and pwsh read
