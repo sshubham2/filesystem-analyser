@@ -30,7 +30,8 @@ using System.Windows.Threading;
 /// on logs {"kind":"error","reason":...} and the window is closed. FSA_HOOK_HEIGHT makes the window that tall (at
 /// most the work area) as it loads, before the scan: a "sized" line.
 /// <list type="bullet">
-/// <item>ending: how the scan ended and whether the tree is what is shown.</item>
+/// <item>ending: how the scan ended and whether the tree is what is shown, the tree's viewport, and where the
+/// window is against the work area.</item>
 /// <item>WALK: every row breadth-first down to that depth, opening each folder with 1 to 1,000 children on the
 /// way. For each row, the row is brought into view through its parent's items panel
 /// (VirtualizingPanel.BringIndexIntoViewPublic), a Loaded-priority pass lets layout run, and then its container
@@ -52,10 +53,13 @@ using System.Windows.Threading;
 /// a scan of the second root through the window's own StartScan (what a drive button and Choose folder call),
 /// and after a ContextIdle pass collects garbage and logs whether the first store is gone ("store-released"),
 /// and again after the second ending, with the second tree's root ("second-ending") (review M2).</item>
-/// <item>GAP: an Input-priority probe every 50 ms from the hook's start, the window moved and resized every
+/// <item>GAP: an Input-priority probe every 10 ms from the hook's start, the window moved and resized every
 /// 50 ms while a scan runs; after the ending, 1 s of hand-off, that folder opened once, then a second scan of
 /// the same root over the open tree, to its ending and 1 s beyond. One "gap" line a phase (scan, handoff, open,
-/// rescan) with the probes' p95 and max wait (review m7).</item>
+/// rescan, rescan-handoff) with how many probes it had, their p95 and max wait and when the longest was posted
+/// (review m7); a "rescan-started" line with how long the window's StartScan held the UI thread; and on each
+/// ending line, when the first move came and the longest a move took. Every 10 ms, so that a phase of a second
+/// has enough probes for its p95 to be something other than its longest wait (the code review's M1).</item>
 /// </list>
 /// </remarks>
 internal static class TreeMode
@@ -166,6 +170,8 @@ internal static class TreeMode
         var since = Stopwatch.StartNew();
         var moved = Stopwatch.StartNew();
         int moves = 0;
+        long? firstMoveAt = null;
+        double longestMoveMs = 0;
         while (true)
         {
             (bool scanning, bool outcome) = Ui(() => (Shown(window, "ScanningPanel"), Shown(window, "OutcomePanel")));
@@ -176,6 +182,8 @@ internal static class TreeMode
             if (probe is not null && scanning && moved.ElapsedMilliseconds >= 50)
             {
                 int step = moves++ % 2 == 0 ? 1 : -1;
+                firstMoveAt ??= StartupHook.Clock.ElapsedMilliseconds;
+                var moving = Stopwatch.StartNew();
                 Ui(() =>
                 {
                     window.Left += 12 * step;
@@ -184,6 +192,7 @@ internal static class TreeMode
                     window.Height += 16 * step;
                     return true;
                 });
+                longestMoveMs = Math.Max(longestMoveMs, moving.Elapsed.TotalMilliseconds);
                 moved.Restart();
             }
             Thread.Sleep(probe is null ? Poll : TimeSpan.FromMilliseconds(10));
@@ -204,6 +213,13 @@ internal static class TreeMode
                 ["list"] = Shown(window, "TopLevelList"),
                 ["listItems"] = (window.FindName("TopLevelList") as ItemsControl)?.Items.Count,
                 ["moves"] = moves,
+                ["firstMoveAt"] = firstMoveAt,
+                ["longestMoveMs"] = longestMoveMs, // the longest a move and resize held the hook, on the UI thread
+                ["viewportHeight"] = Find<ScrollViewer>(tree)?.ViewportHeight,
+                ["windowTop"] = window.Top,
+                ["windowHeight"] = window.ActualHeight,
+                ["workAreaTop"] = SystemParameters.WorkArea.Top,
+                ["workAreaHeight"] = SystemParameters.WorkArea.Height,
                 ["ms"] = StartupHook.Clock.ElapsedMilliseconds,
             };
         }));
@@ -521,13 +537,16 @@ internal static class TreeMode
         SetExpanded(window, indexes, true);
         probe.Phase("open", TimeSpan.FromMilliseconds(500));
         string root = Ui(() => (string?)Prop(Tree(window).Items[0], "Name")) ?? throw new Refusal("no root row");
-        Ui(() =>
+        double startMs = Ui(() =>
         {
             if (window.FindName("ChooseFolderButton") is not FrameworkElement chooser || !StartupHook.Pressable(chooser))
                 throw new Refusal("no new scan could be started: Choose folder is not pressable");
+            var clock = Stopwatch.StartNew();
             StartScan(window, root);
-            return true;
+            return clock.Elapsed.TotalMilliseconds;
         });
+        // How long the window's own start held the UI thread, the tree's release included.
+        Emit("rescan-started", new() { ["startScanMs"] = startMs, ["ms"] = StartupHook.Clock.ElapsedMilliseconds });
         WaitForEnding(window, "second-ending", probe, first: false);
         probe.Phase("rescan-handoff", TimeSpan.FromSeconds(1));
         foreach (Dictionary<string, object?> phase in probe.Report())
@@ -535,12 +554,14 @@ internal static class TreeMode
     }
 
     /// <summary>
-    /// An Input-priority no-op posted to the UI thread every 50 ms from a thread of its own, and how long each
+    /// An Input-priority no-op posted to the UI thread every 10 ms from a thread of its own, and how long each
     /// waited: the UI thread's gaps. Each probe belongs to the phase open when it was posted.
     /// </summary>
     private sealed class Probe
     {
-        private readonly List<(string Phase, double Waited)> _waits = [];
+        private static readonly TimeSpan Every = TimeSpan.FromMilliseconds(10);
+
+        private readonly List<(string Phase, double Waited, long At)> _waits = [];
         private readonly ManualResetEventSlim _stop = new();
         private string _phase = "scan";
         private Thread? _thread;
@@ -555,6 +576,7 @@ internal static class TreeMode
                     string phase;
                     lock (probe._waits)
                         phase = probe._phase;
+                    long at = StartupHook.Clock.ElapsedMilliseconds;
                     var waited = Stopwatch.StartNew();
                     try
                     {
@@ -565,8 +587,8 @@ internal static class TreeMode
                         return;
                     }
                     lock (probe._waits)
-                        probe._waits.Add((phase, waited.Elapsed.TotalMilliseconds));
-                    probe._stop.Wait(50);
+                        probe._waits.Add((phase, waited.Elapsed.TotalMilliseconds, at));
+                    probe._stop.Wait(Every);
                 }
             }) { IsBackground = true, Name = "FsaWindowHook-gap" };
             probe._thread.Start();
@@ -593,18 +615,19 @@ internal static class TreeMode
 
         public IEnumerable<Dictionary<string, object?>> Report()
         {
-            List<(string Phase, double Waited)> waits;
+            List<(string Phase, double Waited, long At)> waits;
             lock (_waits)
                 waits = [.. _waits];
             foreach (string phase in new[] { "scan", "handoff", "open", "rescan", "rescan-handoff" })
             {
-                double[] ms = [.. waits.Where(w => w.Phase == phase).Select(w => w.Waited).Order()];
+                (string Phase, double Waited, long At)[] mine = [.. waits.Where(w => w.Phase == phase).OrderBy(w => w.Waited)];
                 yield return new Dictionary<string, object?>
                 {
                     ["phase"] = phase,
-                    ["probes"] = ms.Length,
-                    ["p95"] = ms.Length == 0 ? null : ms[(int)Math.Ceiling(0.95 * ms.Length) - 1],
-                    ["max"] = ms.Length == 0 ? null : ms[^1],
+                    ["probes"] = mine.Length,
+                    ["p95"] = mine.Length == 0 ? null : mine[(int)Math.Ceiling(0.95 * mine.Length) - 1].Waited,
+                    ["max"] = mine.Length == 0 ? null : mine[^1].Waited,
+                    ["maxAt"] = mine.Length == 0 ? null : mine[^1].At, // the hook's clock when the longest was posted
                 };
             }
         }

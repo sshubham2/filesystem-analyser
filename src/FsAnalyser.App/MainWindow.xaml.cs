@@ -57,6 +57,9 @@ public partial class MainWindow : Window
     public MainWindow(string? launchPath)
     {
         InitializeComponent();
+        // Tall enough by default for the folder tree to show a screenful, but never taller than the work area; the
+        // window keeps its MinHeight whatever the screen (SL-044, review M2).
+        Height = Math.Min(Height, SystemParameters.WorkArea.Height);
         _launchPath = launchPath;
         _timer.Tick += (_, _) =>
         {
@@ -97,6 +100,17 @@ public partial class MainWindow : Window
 
     /// <summary>How long the last folder opened in the tree took to build their rows, in ms; null before any.</summary>
     internal double? LastFolderBuildMs => _treeSession?.LastBuildMs;
+
+    // Windows places each new window a step lower than the last, which put the foot of one this tall, where the
+    // folder tree is, up to 62 px below the work area (measured at SL-044's build over 10 launches): it is moved up
+    // so that the whole of it is on screen.
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        Rect area = SystemParameters.WorkArea;
+        if (Top + Height > area.Bottom)
+            Top = Math.Max(area.Top, area.Bottom - Height);
+    }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {

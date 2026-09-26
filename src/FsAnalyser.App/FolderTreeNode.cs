@@ -59,11 +59,15 @@ internal sealed class FolderTreeNode : INotifyPropertyChanged
 
     public EntryKind? Kind => _session.Store?.Kind(_entry);
 
-    /// <summary>Why a row has no children to open, when the name alone does not say.</summary>
+    /// <summary>
+    /// Why a row has no children to open, or fewer than it holds, when the name alone does not say. A folder whose
+    /// listing failed partway keeps what was listed, so it was opened and has rows; it was not read in full.
+    /// </summary>
     public string Note => _session.Store is not { } store ? ""
         : store.Kind(_entry) == EntryKind.Link ? "link, not followed"
-        : (store.Flags(_entry) & EntryFlags.Unreadable) != 0 ? "could not be opened"
-        : "";
+        : (store.Flags(_entry) & EntryFlags.Unreadable) == 0 ? ""
+        : store.ChildCount(_entry) > 0 ? "could not be read in full"
+        : "could not be opened";
 
     /// <summary>What the row ranks by: its charged on-disk bytes, everything below it for a folder.</summary>
     public long OnDisk { get; }

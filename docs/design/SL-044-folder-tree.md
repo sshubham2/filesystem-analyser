@@ -51,12 +51,21 @@ the build measured. Where it and the slice's design disagree, this file is right
 
 - `FolderTree`, a stock WPF `TreeView` in the same cell as `TopLevelList`, in the configuration the memory spike
   and U-001 measured: `VirtualizingPanel.IsVirtualizing`, `VirtualizationMode=Recycling`, `ScrollUnit=Pixel`,
-  every row 20 px, inside the star row that bounds its height (SL-040's split, 3 to 1 beside the outcome). One
-  of the two is shown: the list while scanning and after a stop, the tree after a completed scan. The header
-  reads "Largest at the top of <root>, by space on disk", or "<root> is empty."
+  every row 20 px, inside the star row that bounds its height. One of the two is shown: the list while scanning
+  and after a stop, the tree after a completed scan. The header reads "Largest at the top of <root>, by space on
+  disk", or "<root> is empty."
+- **The tree's room** (code review M2). Beside the outcome, the results row and the outcome's row keep SL-040's
+  3 to 1 for the outcome after a stop or a failure; while the tree is shown it is the other way round, 1 to 3
+  for the tree, each row still at least its own minimum (292 and 84), so at the window's minimum size nothing
+  changes. The window is 860 px tall by default instead of 620 (its minimum stays 620), or the work area's height
+  where that is less, and as it opens it is moved up if Windows placed its foot below the work area: Windows
+  places each new window a step lower than the last, which put an 860 px window's foot up to 62 px below a
+  1,032 px work area on 3 of 10 launches here; moved up, none was. At the default size the tree has a 284 px
+  viewport, 14 rows, where it had 39 px, about two.
 - **The row template.** A DockPanel: Size, On disk and the share (bar and percentage) docked right at fixed
-  widths, a note ("link, not followed", "could not be opened"), and the name filling the rest, trimmed with the
-  whole name as its tooltip. Every text is a TextBlock bound to the row, so '_' and '&' show as written. The
+  widths, a note ("link, not followed"; "could not be opened" for a folder the scan could not open, which has no
+  rows; "could not be read in full" for one whose listing failed partway, which keeps the rows that were listed,
+  code review m1), and the name filling the rest, trimmed with the whole name as its tooltip. Every text is a TextBlock bound to the row, so '_' and '&' show as written. The
   item container keeps the stock TreeViewItem's parts and triggers (`PART_Header`, `ItemsHost`, the expander)
   with one change: its header runs to the right edge of the tree instead of being sized to its content, which
   is what lets the columns line up under their headings at every depth. The headings sit above the tree with the
@@ -87,17 +96,25 @@ each is read (review M3). In `tests/window/WindowCases.ps1`:
 - T-002 (row 2): a folder of 60 folders, one opened near the end, the tree scrolled to its end and back twice, the
   folder closed and reopened: only that row open, by the rows' state and as drawn, order and figures unchanged.
 - T-003 (row 5, M1): 100,000 files in `big`, a child of the root (review m7), opened five times at the default
-  window size and five times in a window 1,000 px tall; then every folder closed and `*` sent to the selected
-  root row.
+  window size and five times in a window as tall as the work area; then every folder closed and `*` sent to the
+  selected root row.
 - T-004 (rows 1 and 6, M2): a second scan started with `big` open and a row three levels deep selected; a weak
   reference to the first store, taken in a method that is not inlined, is dead after a forced collection while
   the second scan runs and again after it ends, and the tree then shows the new root alone.
-- T-005 (row 6, m7): an Input-priority probe every 50 ms through a scan of 100,000 files and 20,000 folders while
-  the window is moved and resized every 50 ms,
-  the hand-off to the tree, one open of `big` and a second scan over the open tree. This is a hook-driven gap
-  measurement in a case of its own: StallRig is an SMB stall server and drives neither step.
+- T-005 (row 6, m7): an Input-priority probe every 10 ms through a scan of 100,000 files and 20,000 folders while
+  the window is moved and resized every 50 ms, the hand-off to the tree, one open of `big` and a second scan over
+  the open tree. This is a hook-driven gap measurement in a case of its own: StallRig is an SMB stall server and
+  drives neither step. In every phase but the open (T-003's), no probe may wait a second; the p95 must be under
+  200 ms only where the phase has at least 20 probes (code review M1). At 50 ms a phase had 11 to 20 probes,
+  where the 95th percentile is the longest wait itself, so one stall that was there before this slice (below)
+  failed the phase on the p95 while it passed the one-second bar; at 10 ms every asserted phase had 54 to 130.
 - T-006 (row 1): Stop mid-scan, a fault on the UI thread mid-scan (the hook logs the tree's state as the app
   shuts down) and a missing root: no tree.
+- B-007 (code review m1, M2) reads New-TopsTree's completed scan through tree mode as well: each of the 12
+  folders the scan could not open draws no expander, 0 bytes, "0.0 %" and "could not be opened"; the other 24
+  folders can be opened and have no note; and at the default size the window is 860 px tall (or the work area),
+  inside the work area, with at least 12 of the tree's rows in view. The folder whose listing failed partway is
+  not in any case: a real listing cannot be made to fail partway as an ordinary user.
 - C-002, L-003, B-003, B-007 and M-001 read the tree, or the report's `FolderTree`, where they read the results
   list after a completed scan.
 
@@ -107,13 +124,18 @@ On this PC (Ryzen 9 8945H, 16 threads, 1920x1080 at 100%, shared with other work
 the published single-file exe, the hook's timing (from setting `IsExpanded` on the row's container to the first
 ContextIdle pass with its first child's row built).
 
-- Row 5, 100,000 files, default window (a 39 px viewport, 4 rows built), two runs: open 1 (cold) **64.6 and
-  72.4 ms**, of which Core's sort 45.2 and 46.6 ms, the row build 12.0 and 8.6 ms, and the rest (the reset,
-  container generation, layout) 6.6 and 16.3 ms; opens 2 to 5 took 0.9 to 2.0 ms. In a 1,000 px window (a
-  134 px viewport, 14 rows built), two runs: open 1 **106.9 and 106.4 ms** (sort 44.7 and 45.0, rows 16.6 and
-  17.3, the rest 44.0 and 43.3), opens 2 to 5 1.2 to 3.7 ms.
-- Row 6: through a scan of about a second with the window moved and resized 23 times, the hand-off, one open of
-  `big` and a second scan over it, no probe waited more than 47 ms (p95 per phase 0.5 to 30 ms).
+- Row 5, 100,000 files, at the default window of 860 px (a 284 px viewport, 29 rows built): open 1 (cold)
+  **97.9 ms**, of which Core's sort 47.5 ms, the row build 12.2 ms, and the rest (the reset, container
+  generation, layout) 37.3 ms; opens 2 to 5 took 1.6 to 2.7 ms. As tall as the work area (1,032 px, a 456 px
+  viewport, 46 rows built): open 1 **141.9 ms** (sort 44.0, rows 14.9, the rest 81.9), opens 2 to 5 1.9 to
+  9.1 ms. At the first build's 620 px default (a 39 px viewport, 4 rows built) open 1 had taken 64.6 and 72.4 ms,
+  and in a 1,000 px window (134 px, 14 rows) 106.9 and 106.4 ms: the rest grows with the rows on screen.
+- Row 6: the first build recorded no wait over 47 ms; the code review could not reproduce that (a rescan p95 of
+  680 to 774 ms over 11 to 20 probes, 3 of 3 runs failed). With a probe every 10 ms, in the display state of the
+  last run, a scan of about 1.7 s with the window moved and resized 24 times, the hand-off, one open of `big` and a
+  second scan over it: 64 to 143 probes a phase, no wait over 68 ms outside the open (85 ms), p95 per phase 0.4
+  to 11.5 ms. In the other display state, three runs of T-005 passed with a longest wait of 857 ms and a p95 of
+  at most 71 ms over 54 to 73 probes (see below).
 - The first store was collectable while the second scan ran, with a row three levels deep selected and a
   3,000-row folder open, and again after it ended.
 - Without the `*` handler (a scratch copy of the app with `PreviewKeyDown` unwired), the key opened all 9 rows
@@ -137,11 +159,19 @@ ContextIdle pass with its first child's row built).
   data first, the entry was current and the scan charged 64 KiB. `SizeProbe` trusts the listing for sparse
   files ("sparse files really can have nothing allocated"), so such a file is charged at a stale 0. That is a
   counting-rule question for the scanner, outside this slice; T-001 writes its sparse file data first.
-- **At the default 880 by 620 window the tree shows about two rows** (a 39 px viewport, T-002; 43 px at the
-  window's minimum size, B-007), and in a 1,000 px window about seven, because it keeps SL-040's quarter of the
-  height beside the outcome. A person
-  has to make the window large to work down a big tree. The split and the default size were SL-040's decisions
-  and are left alone here.
+- **A resize while a scan starts can hold the UI thread for most of a second, depending on the display.** In
+  T-005's shape, on this PC, two batches of the same runs came out two ways. In one (and in the code review's
+  runs), the first scan's longest wait was 361 to 467 ms and the second scan's 378 to 857 ms, and every
+  hand-off peaked at 105 to 136 ms. In the other, minutes later, no wait in any phase passed 98 ms (a scan's
+  longest 17 to 76 ms, a move and resize at most 27 ms), whether the folder left open before the second scan
+  held 100,000 rows or one. There, the window's own `StartScan`, the open tree's release included, held the UI
+  thread 2.8 to 7.4 ms (it was not timed in the first batch). The code review measured the stall in the exe from before this slice too (419 to 511 ms, de51999)
+  and none without the moves, so it is how WPF and the display answer a resize while a scan starts, not the
+  tree; T-005 now holds such a phase to its one-second bar (above), and its log says when the longest wait was
+  posted and how long each move took, for whoever takes it up. Left to SL-039's and SL-040's window.
+- At the default size of before (880 by 620) the tree showed about two rows, beside SL-040's 3 to 1 split; the
+  code review's M2 changed both (above). At the window's minimum size it still shows one full row and a part
+  (B-007), as SL-040's minimums allow.
 - The person's network pass (N-001 to N-004, StalledShareTests) is stale: this slice changes MainWindow.xaml(.cs),
   the hook and WindowCases.ps1, all on the staleness list (SL-020-scanner.md).
 
