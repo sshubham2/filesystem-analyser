@@ -44,6 +44,7 @@ public sealed partial class ScanStore
     private int _namePage = -1;
     private int _nameUsed = NamePageChars;
     private readonly FileIdIndex _fileIds;
+    private readonly TaskCompletionSource<long?> _volumeUsed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public ScanStore()
     {
@@ -52,6 +53,25 @@ public sealed partial class ScanStore
 
     /// <summary>The number of entries, including the root.</summary>
     public int Count => Volatile.Read(ref _count);
+
+    /// <summary>
+    /// For a scan of a whole drive (<c>C:\</c>), the bytes the volume reports in use, read once as the scan
+    /// starts: what the tree is set against to show how much of the drive the scan could not see. Null for a
+    /// scan of a folder or a share, and when the volume did not answer within the read's bound (SL-043).
+    /// </summary>
+    /// <remarks>
+    /// Never null itself, completed at most once and never faulted. Readable while the scan runs and after it
+    /// ends, cancelled or not. Pending means the volume has not answered yet: the read runs on a thread of
+    /// its own, and nothing in Core waits for it (O-031). A reader must not block a UI thread on it either; it
+    /// completes, with null at the latest, once the read's bound has passed.
+    /// </remarks>
+    public Task<long?> VolumeUsed => _volumeUsed.Task;
+
+    /// <summary>
+    /// The completion source behind <see cref="VolumeUsed"/>, which the scan hands to the volume read. Named
+    /// after it, so that the rule that nothing in Core waits on the figure matches a wait on this too (M2).
+    /// </summary>
+    internal TaskCompletionSource<long?> VolumeUsedSource => _volumeUsed;
 
     /// <summary>The containing folder's index, or -1 for the root.</summary>
     public int Parent(int index) => At(index, out int i).Parent[i];

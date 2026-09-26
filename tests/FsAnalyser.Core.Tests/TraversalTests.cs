@@ -56,6 +56,80 @@ public class TraversalTests
         AssertChildrenAreContiguous(store);
     }
 
+    /// <summary>
+    /// Criterion 1 of SL-043, as an ordinary user: a nested tree whose folders and files cross 260
+    /// characters, the deepest over 400, holding a hidden file and a hidden folder and no link. The store
+    /// must hold every entry once, at the path its parent chain gives, and exactly what a listing built
+    /// another way finds: the BCL's own recursion over the \\?\ root, told to skip nothing (its defaults skip
+    /// Hidden and System, and would agree with a scanner that dropped them).
+    /// </summary>
+    [Fact]
+    public void AgreesWithAnIndependentListingOfADeepTreeAsAnOrdinaryUser()
+    {
+        // On Windows this reads the token's elevation (TokenElevation), not group membership: a filtered
+        // administrator is not elevated. An elevated run would read what an ordinary user cannot, so it fails.
+        Assert.False(Environment.IsPrivilegedProcess, "the test process is elevated; criterion 1 is about an ordinary user");
+
+        using var tree = new TempTree();
+        string ext = tree.ExtendedRoot;
+        string path = "";
+        for (int level = 1; level <= 9; level++)
+        {
+            path += $@"\level{level}-{new string('d', 33)}"; // 41 characters a level, separator included
+            Directory.CreateDirectory(ext + path);
+            for (int k = 1; k <= 2; k++)
+                File.WriteAllBytes($@"{ext}{path}\file{k}-{new string('f', 30)}.bin", new byte[100 * level + k]);
+            Directory.CreateDirectory($@"{ext}{path}\side-{level}");
+            File.WriteAllBytes($@"{ext}{path}\side-{level}\note.txt", new byte[level]);
+            if (level == 6)
+            {
+                string hiddenFile = $@"{ext}{path}\hidden-file.txt";
+                File.WriteAllBytes(hiddenFile, new byte[6]);
+                TempTree.AddAttributes(hiddenFile, FileAttributes.Hidden);
+            }
+            if (level == 7)
+            {
+                string hiddenFolder = $@"{ext}{path}\hidden-folder";
+                Directory.CreateDirectory(hiddenFolder);
+                File.WriteAllBytes($@"{hiddenFolder}\inside.bin", new byte[7]);
+                TempTree.AddAttributes(hiddenFolder, FileAttributes.Hidden);
+            }
+        }
+
+        var listing = Directory.EnumerateFileSystemEntries(ext, "*", new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                AttributesToSkip = 0,
+                IgnoreInaccessible = false,
+                MatchType = MatchType.Simple,
+                ReturnSpecialDirectories = false,
+            })
+            .Select(p => p[@"\\?\".Length..])
+            .ToList();
+
+        ScanResult result = Scans.Run(tree.Root);
+
+        Assert.Equal(ScanStatus.Completed, result.Status);
+        Assert.Empty(result.Unreadable);
+        Assert.Equal(0, result.Totals.Links);
+        ScanStore store = result.Store;
+        var scanned = Enumerable.Range(1, store.Count - 1).Select(store.GetPath).ToList();
+        Assert.Equal(scanned.Count, scanned.Distinct(StringComparer.Ordinal).Count()); // each entry once
+        Assert.Equal(listing.Count, scanned.Count);
+        Assert.Equal(listing.Order(StringComparer.Ordinal), scanned.Order(StringComparer.Ordinal));
+        AssertChildrenAreContiguous(store);
+
+        // The shape was fed: folders and files past 260 characters, the deepest past 400, hidden entries.
+        int Longest(bool folders) => listing.Where(p => Directory.Exists(@"\\?\" + p) == folders).Max(p => p.Length);
+        Assert.True(Longest(folders: true) > 260, $"the longest folder path is {Longest(folders: true)} characters");
+        Assert.True(Longest(folders: false) > 400, $"the longest file path is {Longest(folders: false)} characters");
+        string hidden6 = listing.Single(p => p.EndsWith(@"\hidden-file.txt", StringComparison.Ordinal));
+        string hidden7 = listing.Single(p => p.EndsWith(@"\hidden-folder", StringComparison.Ordinal));
+        Assert.True(store.Attributes(Scans.Find(result, hidden6)).HasFlag(FileAttributes.Hidden));
+        Assert.True(store.Attributes(Scans.Find(result, hidden7)).HasFlag(FileAttributes.Hidden));
+        Assert.Equal(1, store.ChildCount(Scans.Find(result, hidden7)));
+    }
+
     [Fact]
     public void ListsAFolderThatSpansSeveralBuffers()
     {

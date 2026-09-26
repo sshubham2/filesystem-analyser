@@ -251,6 +251,12 @@ public class SynchronousIoCancelTests
     [InlineData(5, false, "Unreadable")]
     [InlineData(0, true, "Read")]
     [InlineData(0, false, "Read")]
+    // What a descended non-surrogate reparse folder answers (SL-043; seen 28 and 2 times on C: by the
+    // spike): recorded with its code, never dropped, cancel or not.
+    [InlineData(363, true, "Unreadable")]  // ERROR_CLOUD_FILE_METADATA_CORRUPT: a cloud folder
+    [InlineData(363, false, "Unreadable")]
+    [InlineData(1920, true, "Unreadable")] // ERROR_CANT_ACCESS_FILE: a reparse tag no filter handles
+    [InlineData(1920, false, "Unreadable")]
     public void OnlyARequestedCancelMakesAnAbortedCallACancellation(int error, bool cancelRequested, string outcome)
     {
         Assert.Equal(Enum.Parse<Scanner.ReadOutcome>(outcome), Scanner.ClassifyReadError(error, cancelRequested));

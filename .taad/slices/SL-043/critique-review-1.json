@@ -1,0 +1,88 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-043",
+ "stage": "critique-review",
+ "attempt": 1,
+ "at": "2026-09-26T02:23:41.522Z",
+ "head": "c99123688f228a7a2ce1439518200fd43d3a0470",
+ "run_id": 1243,
+ "summary": "Nine of the ten findings are valid at the severity they were filed. M2 is over-rated. Nothing this slice builds places a wait on the figure, and the rule already matches the public name store.VolumeUsed. What M2 describes is a gap in a regression guard against a future edit, and the build can close it by naming the accessor, so it should be minor.\n\nTwo findings were missed.\n\n- **The volume read has no time limit (minor).** The design accepts \"pending forever\" as a legitimate third state of VolumeUsed. That is the root of both M1 and m5. One timeout that completes the source with null, and captures only the source, makes \"pending means no figure\" true for any App structure. It is a cheaper fix for M1 than the reviewer's dispatcher-and-generation rewrite.\n- **Nothing tests that the App shows the figure (minor).** The App is the only reader of the relocated figure. It is checked only by a grep, because --report schema 1 does not carry the figure. This is the \"settle with no reader\" shape this project keeps shipping.\n\nThe overall approach is sound. The obvious simpler alternative, keeping the read in the App and rewording criterion 6, was considered and recorded as left open. Criterion 4 mandates the classifier change, and the risk spike measured it on 829K directories.",
+ "payload": {
+  "status": "complete",
+  "verdict": "extend",
+  "summary": "Nine of the ten findings are valid at the severity they were filed. M2 is over-rated. Nothing this slice builds places a wait on the figure, and the rule already matches the public name store.VolumeUsed. What M2 describes is a gap in a regression guard against a future edit, and the build can close it by naming the accessor, so it should be minor.\n\nTwo findings were missed.\n\n- **The volume read has no time limit (minor).** The design accepts \"pending forever\" as a legitimate third state of VolumeUsed. That is the root of both M1 and m5. One timeout that completes the source with null, and captures only the source, makes \"pending means no figure\" true for any App structure. It is a cheaper fix for M1 than the reviewer's dispatcher-and-generation rewrite.\n- **Nothing tests that the App shows the figure (minor).** The App is the only reader of the relocated figure. It is checked only by a grep, because --report schema 1 does not carry the figure. This is the \"settle with no reader\" shape this project keeps shipping.\n\nThe overall approach is sound. The obvious simpler alternative, keeping the read in the App and rewording criterion 6, was considered and recorded as left open. Criterion 4 mandates the classifier change, and the risk spike measured it on 829K directories.",
+  "assessments": [
+   {
+    "finding": "M1",
+    "classification": "valid",
+    "note": "Right, and major is the right severity. The design's headline repair (the volume thread captures only the completion source) can be undone at the one consumer. The consumer is specified only as \"keeps whatever blocking structure it has now\". The contract line \"treats null and pending as 'show no figure'\" has no mechanism: with a blocking wait, pending means ShowOutcome never runs, not that it runs without the figure. Mitigating context the reviewer did not state: the old App path (DriveInfo on the post-scan thread) had the same pin and hang, so this is a claim the design makes and does not keep, not a regression. The trigger is also narrow, since the drive has to stall inside GetDiskFreeSpaceExW while the root open succeeds. Rule 3 is also name-based in a second way: Start takes a reader delegate supplied by Scanner, and a lambda that closes over the store pins it without VolumeSpace.cs ever naming ScanStore. M1's proposed WeakReference/GC test would catch both routes. See the missed error-paths finding for a cheaper fix that removes the permanent-pending state."
+   },
+   {
+    "finding": "M2",
+    "classification": "severity-wrong",
+    "corrected_severity": "minor",
+    "note": "The two observations are correct. Test 5 exercises only the cancel path, and the name of the accessor that hands out the completion source is never fixed, so `source.Task.Wait()` gets past rule 2. But nothing this slice builds places a wait on the figure. The rule does match `store.VolumeUsed.(Wait|Result|GetAwaiter)`, which is the public surface. The only escape is a future edit that waits on a Completed-only branch or goes through the unnamed accessor. A premortem of this slice as shipped finds no failure from it. It is a gap in a regression guard, and the fix is a naming choice at build time (VolumeUsedSource, so the existing regex matches `.Task.Result`). That does not justify a design lap."
+   },
+   {
+    "finding": "M3",
+    "classification": "valid",
+    "note": "The mechanism is concrete. HardlinkTests writes and deletes exactly the 64 MiB slack, and xUnit v2 runs test classes in parallel by default. The window is wider than the reviewer implies. G1 and G2 are each a fresh powershell.exe spawn, and the spike measured about 0.88 s of CIM warm-up per first Get-Volume call, so the G1-to-figure-to-G2 window lasts seconds. A flaky validate test on a high-risk slice costs laps in this loop, and the fix is small, so major holds. Two caveats for whoever acts on it. First, the reviewer could only search the web and did not check whether Core.Tests already disables parallelization (xunit.runner.json or an assembly-level CollectionBehavior); check that first. Second, the loop is back to one slice at a time (00cf7df), which shrinks the 'other worktrees' source, but the HardlinkTests source remains."
+   },
+   {
+    "finding": "m1",
+    "classification": "valid",
+    "note": "Right, and minor is right. Criterion 4 forces DFS 0x8000000A directories to be descended, and the goal says 'without ever following a link'. Over SMB, descent chases the referral and does not fail into the unreadable record, so the design's 'never silent' rationale is wrong there. This only bites on DFS namespaces, which this user's machine does not have. The criterion was agreed by a model, not a person, so recording the conflict between the criterion and the goal for a person is the right disposition."
+   },
+   {
+    "finding": "m2",
+    "classification": "valid",
+    "note": "The reviewer's own fetched extract showed the guard only on DriveFormat. However, DriveInfo.Windows.cs also wraps the free-space getters in SetThreadErrorMode(SEM_FAILCRITICALERRORS), so the claim holds: the raw P/Invoke drops a guard DriveInfo applied. Its reach is limited if the App's drive list offers only ready drives, so minor is right."
+   },
+   {
+    "finding": "m3",
+    "classification": "valid",
+    "note": "This is behaviour moved from the App, not introduced. But the IsDriveRoot case text claims a protection (no whole-volume figure on something that is not a real drive) that SUBST letters and letters mapped to a share subfolder get around. Minor, and a known-limitation line is an acceptable fix."
+   },
+   {
+    "finding": "m4",
+    "classification": "valid",
+    "note": "On Windows, Environment.IsPrivilegedProcess opens the process token, reads TokenElevation, and throws on failure. That is the same semantics as the proposed TokenElevation.cs helper, so the new file duplicates a BCL API. It is a test-only helper, so minor."
+   },
+   {
+    "finding": "m5",
+    "classification": "valid",
+    "note": "The contract promises 'completes at most once' but not 'completed, or owned by a read thread, whenever the scan method exits'. If Start runs first, or a finally block completes the source with null, this closes. Minor."
+   },
+   {
+    "finding": "m6",
+    "classification": "valid",
+    "note": "'One source' is checked only by a one-time grep for the old name. A later recomputation under another name would leave Core's figure unread again, which the design itself calls this project's commonest defect. Minor is right. The reviewer already flagged that the proposed App rule must not collide with a drive list that shows free space."
+   },
+   {
+    "finding": "m7",
+    "classification": "valid",
+    "note": "The example is weak: the new P/Invoke's plain 'X:\\\\' root is 3 characters and can never cross MAX_PATH. The real point stands, though. Once testhost is long-path-aware, the \\\\?\\ invariant rests on discipline at each call site and on a single validate-time check. Adding longPathAware=true to the App manifest is a one-line structural fix that makes testhost evidence apply to the exe. Minor."
+   }
+  ],
+  "missed": [
+   {
+    "dimension": "error-paths",
+    "severity": "minor",
+    "route": "re-derivation",
+    "claim": "The volume read has no time limit, and the contract turns that into a permanent third state. 'A read that never returns leaves it pending forever' is accepted as a legitimate state of VolumeUsed. That single decision causes M1 (the consumer pins the store and never shows the outcome) and most of m5 (pending with no reader). It also parks one dedicated thread per stalled scan for the life of the process, and those accumulate across rescans. A design derived from the brief would put a deadline on the read. The completion source's only job is to report the figure, so completing it with null after a timeout loses nothing criterion 6 needs.",
+    "evidence": "ScanStore.VolumeUsed contract: \"A read that never returns leaves it pending forever, so callers must not block a UI thread on it.\" VolumeSpace component: \"a stalled redirector parks one thread and no pool worker\". App component: \"keeps whatever blocking structure it has now\". The design's rationale for a Task is to let the figure appear late on slow shares, which a bound of tens of seconds still allows.",
+    "fix": "In VolumeSpace.Start, also arm a timeout, such as `Task.Delay(bound).ContinueWith(_ => source.TrySetResult(null))`, whose closure captures only the source. Once the bound expires, VolumeUsed is always either a value or null. The App's existing blocking wait then ends, ShowOutcome runs without the figure, and anything the waiter held is released, so M1's pin and hang go away without restructuring the App. Test 5 becomes: the scan ends Cancelled while VolumeUsed is pending, and VolumeUsed is null after the bound. Keep M1's WeakReference test as the behavioural check."
+   },
+   {
+    "dimension": "test-coverage",
+    "severity": "minor",
+    "route": "premortem",
+    "claim": "Premortem: after this slice ships, the App no longer shows the used-space and coverage line for a drive-root scan, and nothing notices. MainWindow is the only reader of the relocated figure, and it is checked only by a grep that VolumeInUse is gone and that the outcome code names store.VolumeUsed. The recorded way to verify App window state is --report, and the design keeps schema 1 unchanged, so it carries totals and the root but never the figure. The design already concedes this ('if --report cannot show the figure, it says so'). A mistake in the consumer's await, thread or condition, the shape M1 describes, would pass build and every automated case.",
+    "evidence": "Case 'show the used figure for a drive-root scan in the App': \"Build greps that VolumeInUse is gone and the outcome reads the store's figure ... if --report cannot show the figure, it says so.\" App component: \"--report schema 1 is unchanged.\" Q-016: the report holds \"the schema-1 totals and the root, never a listing\", and the testing constraint names --report as how App window state is verified.",
+    "fix": "Choose one and record it. (a) Add the figure, or the coverage line, to the --report output as an additive field, and assert it in an App window case on a drive-root scan. This is a launch-contract change to note against Q-016. (b) Make it an explicit validate case that drives the App on C:\\\\ and reads the displayed figure. Either way, the only reader of the figure gets a behavioural check rather than a check on the text."
+   }
+  ],
+  "frame_challenged": false,
+  "notes": "The first reviewer was well grounded on this slice. Nine of ten findings hold at their filed severity, and each cites the design text it attacks. Where the reviewer over-rated, it was treating a future-regression guard as major. M2 describes what a later edit could get past, not something that fails this slice as shipped. The reviewer found the consequences of the permanent-pending state (M1, m5) but not the decision that causes them. As a result it proposed a heavier App restructure where a one-line bound would do. Its evidence comes from web search only: m2's own extract was weaker than its claim, and M3 never checked the project's xUnit parallelization config. Both claims still hold, but the build should confirm them before acting."
+ }
+}

@@ -43,6 +43,7 @@ public partial class MainWindow : Window
     private ScanProgress? _progress;
     private ScanResult? _result;
     private bool _scanning;
+    private int _scanGeneration; // one more at every scan's start: a volume figure of an earlier scan is dropped
     private Stopwatch? _stoppingClock; // from Cancel until the scan returns; null otherwise
     private TopLevelSnapshot? _shownTopLevel; // what the results list shows, compared by reference
     private readonly Stopwatch _refreshClock = new();
@@ -63,7 +64,9 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Raised after every ending (Finished, Stopped, Could not read, Scan failed) has been put on the
-    /// screen, once per scan. The window does nothing else for whoever listens.
+    /// screen, once per scan. A Finished or Stopped ending is whole once its volume line is settled too:
+    /// for a whole drive, when the scan's figure has landed or been given up (SL-043); an ending that another
+    /// scan replaced before then raises nothing. The window does nothing else for whoever listens.
     /// </summary>
     internal event EventHandler? EndingShown;
 
@@ -163,6 +166,7 @@ public partial class MainWindow : Window
         if (_scanning)
             return;
         _scanning = true;
+        _scanGeneration++;
         _result = null; // let the previous scan's store be collected
         LastResult = null;
         UnreadableList.ItemsSource = null;
@@ -183,15 +187,12 @@ public partial class MainWindow : Window
         _timer.Start();
 
         ScanResult? result = null;
-        long? volumeInUse = null;
         string? rejected = null;
         Exception? failure = null;
         try
         {
             result = await Task.Factory.StartNew(() => Scanner.Scan(path, progress, token),
                 CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-            ScanResult scan = result;
-            volumeInUse = await UnlessCancelled(() => VolumeInUse(scan), token);
         }
         catch (ArgumentException e) when (e.ParamName == "root")
         {
@@ -225,49 +226,7 @@ public partial class MainWindow : Window
         else if (result is null)
             ShowProblem($"Could not read {path}", rejected!);
         else
-            ShowOutcome(result, volumeInUse);
-    }
-
-    // The volume query goes to the volume like the scan did, outside the scanner's cancel guard: on a
-    // mapped drive whose server stopped answering it can wait as long as the SMB client does (21 to 66 s
-    // measured). So it is never started once Cancel was requested, and a Cancel during it ends the wait,
-    // not the query, which finishes unobserved on its own thread. The ending then omits the volume line.
-    private static async Task<long?> UnlessCancelled(Func<long?> query, CancellationToken token)
-    {
-        if (token.IsCancellationRequested)
-            return null;
-        Task<long?> running = Task.Factory.StartNew(query, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-        try
-        {
-            return await running.WaitAsync(token);
-        }
-        catch (OperationCanceledException) when (token.IsCancellationRequested)
-        {
-            return null;
-        }
-    }
-
-    // For a scan of a whole drive, the volume's own count of bytes in use, so the outcome can say how
-    // much of the drive the scan could not see.
-    private static long? VolumeInUse(ScanResult scan)
-    {
-        string root = scan.Root;
-        bool driveRoot = root.Length == 3 && char.IsAsciiLetter(root[0]) && root[1] == ':' && root[2] == '\\';
-        if (!driveRoot || scan.Status == ScanStatus.RootUnreadable)
-            return null;
-        try
-        {
-            var drive = new DriveInfo(root);
-            return drive.TotalSize - drive.TotalFreeSpace;
-        }
-        catch (IOException)
-        {
-            return null;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return null;
-        }
+            ShowOutcome(result);
     }
 
     // Cancel does not abandon the scan: the window waits for it to return, however long the drive takes
@@ -380,7 +339,7 @@ public partial class MainWindow : Window
 
     // ---- Outcomes ----
 
-    private void ShowOutcome(ScanResult result, long? volumeInUse)
+    private void ShowOutcome(ScanResult result)
     {
         LastResult = result;
         if (result.Status == ScanStatus.RootUnreadable)
@@ -397,11 +356,12 @@ public partial class MainWindow : Window
             : $"Stopped: {result.Root}. This is only what was read before the stop, not the whole folder.";
 
         ScanTotals t = result.Totals;
-        OutcomeDetail.Text =
+        var detail = new OutcomeDetailText(
             $"{Count(t.Files, "file")} and {Count(t.Folders, "folder")}; {Count(t.Links, "link")} not followed\n" +
-            $"{FormatSize(t.Bytes)} in files, taking {FormatSize(t.BytesOnDisk)} on disk\n" +
-            (volumeInUse is long used ? Coverage(finished, t.BytesOnDisk, used) + "\n" : "") +
-            $"Read in {result.Elapsed.TotalSeconds:N1} s";
+            $"{FormatSize(t.Bytes)} in files, taking {FormatSize(t.BytesOnDisk)} on disk\n",
+            $"Read in {result.Elapsed.TotalSeconds:N1} s",
+            finished, t.BytesOnDisk);
+        OutcomeDetail.Text = detail.Counted + detail.Elapsed;
 
         var notes = new List<string>();
         if (!result.FileIdsAvailable)
@@ -428,6 +388,32 @@ public partial class MainWindow : Window
         // Last, so that a failure here cannot take away what is already filled in above.
         ShowLargestFiles(result);
         OutcomePanel.Visibility = Visibility.Visible;
+        ShowVolumeInUse(result.Store.VolumeUsed, _scanGeneration, detail); // and then EndingShown
+    }
+
+    // The volume line comes from the scan's own read of the volume, which may still be running when the
+    // scan returns (SL-043). The ending is on screen without it and never waits for it; the line goes in when
+    // the figure lands, and EndingShown is raised then, so whoever listens reads the whole ending. Null (a
+    // folder or a share, or no answer within the read's bound) adds no line. What waits for the figure holds
+    // the window, this scan's generation and the texts, never the result or its store, so a read stuck on a
+    // dead drive keeps no scan the window has moved on from in memory (M1). A figure that lands after another
+    // scan started is dropped.
+    private void ShowVolumeInUse(Task<long?> figure, int generation, OutcomeDetailText detail)
+    {
+        if (figure.IsCompleted)
+            AddVolumeInUse(figure, generation, detail);
+        else
+            figure.ContinueWith(landed => Dispatcher.InvokeAsync(() => AddVolumeInUse(landed, generation, detail)),
+                CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+    }
+
+    // On the UI thread, with the figure's task completed: nothing here blocks.
+    private void AddVolumeInUse(Task<long?> landed, int generation, OutcomeDetailText detail)
+    {
+        if (generation != _scanGeneration)
+            return;
+        if (landed.IsCompletedSuccessfully && landed.Result is long used)
+            OutcomeDetail.Text = detail.Counted + Coverage(detail.Finished, detail.SeenOnDisk, used) + "\n" + detail.Elapsed;
         EndingShown?.Invoke(this, EventArgs.Empty);
     }
 
@@ -528,6 +514,9 @@ public partial class MainWindow : Window
     }
 
     private sealed record DriveChoice(string Root, string Label);
+
+    /// <summary>The outcome's detail around the volume line: its first two lines, its last, and what the line needs.</summary>
+    private sealed record OutcomeDetailText(string Counted, string Elapsed, bool Finished, long SeenOnDisk);
 
     /// <summary>One row of the largest-files list: the texts it shows, and the on-disk bytes it was ranked by.</summary>
     internal sealed record LargestFileRow(long OnDisk, string OnDiskText, string SizeText, string Path);
