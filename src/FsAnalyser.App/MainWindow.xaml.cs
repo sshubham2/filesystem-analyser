@@ -704,16 +704,44 @@ public partial class MainWindow : Window
         _ => string.Empty
     };
 
+    private void OnRowContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (e.OriginalSource is FrameworkElement fe)
+        {
+            FrameworkElement? current = fe;
+            while (current != null && current.ContextMenu == null && ContextMenuService.GetContextMenu(current) == null)
+            {
+                current = VisualTreeHelper.GetParent(current) as FrameworkElement;
+            }
+            if (current != null)
+            {
+                ContextMenu? menu = current.ContextMenu ?? ContextMenuService.GetContextMenu(current) as ContextMenu;
+                if (menu != null && current.DataContext != null && current.DataContext.GetType().Name != "DisconnectedItem")
+                {
+                    menu.Tag = current.DataContext;
+                }
+            }
+        }
+    }
+
+    private void OnRowContextMenuOpened(object sender, RoutedEventArgs e)
+    {
+        if (sender is ContextMenu menu && menu.PlacementTarget is FrameworkElement target && target.DataContext != null && target.DataContext.GetType().Name != "DisconnectedItem")
+        {
+            menu.Tag = target.DataContext;
+        }
+    }
+
     private void OnCanOpenInExplorer(object sender, CanExecuteRoutedEventArgs e)
     {
-        object? row = e.Parameter ?? (e.OriginalSource as FrameworkElement)?.DataContext;
+        object? row = e.Parameter ?? (Keyboard.FocusedElement as FrameworkElement)?.DataContext ?? (e.OriginalSource as FrameworkElement)?.DataContext;
         e.CanExecute = !string.IsNullOrEmpty(PathOf(row));
         e.Handled = true;
     }
 
     private async void OnOpenInExplorer(object sender, ExecutedRoutedEventArgs e)
     {
-        object? row = e.Parameter ?? (e.OriginalSource as FrameworkElement)?.DataContext;
+        object? row = e.Parameter ?? (Keyboard.FocusedElement as FrameworkElement)?.DataContext ?? (e.OriginalSource as FrameworkElement)?.DataContext;
         string path = PathOf(row);
         if (string.IsNullOrEmpty(path))
             return;

@@ -454,6 +454,13 @@ internal class StartupHook
         if (status.Text != loading)
         {
             AddDrives(drives, extra);
+            string? hookStatus = Environment.GetEnvironmentVariable("FSA_HOOK_STATUS");
+            if (!string.IsNullOrEmpty(hookStatus) && app.MainWindow?.FindName("RevealStatus") is TextBlock revealTb)
+            {
+                revealTb.Text = hookStatus;
+                revealTb.Visibility = Visibility.Visible;
+                revealTb.UpdateLayout();
+            }
             Log($"drives in ms={Clock.ElapsedMilliseconds} held={since.ElapsedMilliseconds} added={extra} buttons={drives.Children.Count}");
             return;
         }

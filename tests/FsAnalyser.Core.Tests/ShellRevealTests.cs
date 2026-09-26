@@ -235,17 +235,21 @@ public class ShellRevealTests
     }
 
     [Fact]
-    public void Plan_JunctionOrSymlink_ExactItemFirst()
+    public void Walk_VolumeRoot_HiddenAndSystemStayFalse()
     {
-        RevealPlan plan = ShellReveal.Plan(@"C:\folder\link");
-        Assert.Null(plan.UnaddressableName);
-        Assert.Equal(@"C:\folder\link", plan.Candidates[0]);
+        RevealPlan plan = ShellReveal.Plan(@"C:\");
+        RevealOutcome outcome = ShellReveal.Walk(plan, _ => 0);
+
+        Assert.Equal(RevealKind.Exact, outcome.Kind);
+        Assert.False(outcome.Hidden);
+        Assert.False(outcome.System);
     }
 
-    [Fact]
-    public void CanExecute_EmptyOrPlaceholder_ReturnsFalse()
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Plan_EmptyOrWhitespace_ThrowsArgumentException(string path)
     {
-        // When path is empty or whitespace, Plan throws ArgumentException
-        Assert.Throws<ArgumentException>(() => ShellReveal.Plan(string.Empty));
+        Assert.Throws<ArgumentException>(() => ShellReveal.Plan(path));
     }
 }

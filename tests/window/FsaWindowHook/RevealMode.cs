@@ -31,7 +31,7 @@ internal static class RevealMode
                 return;
             }
 
-            string[] targets = System.Text.RegularExpressions.Regex.Split(revealEnv, @",(?=(?:largest|tree|top|unreadable):)");
+            string[] targets = System.Text.RegularExpressions.Regex.Split(revealEnv, @",(?=(?:largest|tree|top|unreadable|gesture|tree-competing|placeholder):)");
             window = WaitForWindow();
 
             bool hasTopTarget = targets.Any(t => t.Trim().StartsWith("top:", StringComparison.OrdinalIgnoreCase));
@@ -85,7 +85,36 @@ internal static class RevealMode
 
     private static void ProcessTarget(Window window, string surface, string name)
     {
-        FrameworkElement? container = Ui(() => FindContainer(window, surface, name));
+        if (surface.Equals("placeholder", StringComparison.OrdinalIgnoreCase))
+        {
+            ProcessPlaceholder(window, name);
+            return;
+        }
+
+        string via = "menu";
+        FrameworkElement? container = null;
+
+        if (surface.Equals("gesture", StringComparison.OrdinalIgnoreCase))
+        {
+            via = "gesture";
+            container = Ui(() => FindContainer(window, "tree", name) ?? FindContainer(window, "largest", name) ?? FindContainer(window, "top", name));
+        }
+        else if (surface.Equals("tree-competing", StringComparison.OrdinalIgnoreCase))
+        {
+            container = Ui(() =>
+            {
+                if (window.FindName("FolderTree") is TreeView tree && tree.ItemContainerGenerator.ContainerFromIndex(0) is TreeViewItem rootItem)
+                {
+                    rootItem.IsSelected = true;
+                    rootItem.UpdateLayout();
+                }
+                return FindTreeContainer(window, name);
+            });
+        }
+        else
+        {
+            container = Ui(() => FindContainer(window, surface, name));
+        }
 
         if (container == null)
         {
@@ -100,59 +129,69 @@ internal static class RevealMode
 
         object? initialOutcome = Ui(() => GetLastOutcome(window));
 
-        bool clicked = Ui(() =>
+        bool executed = Ui(() =>
         {
-            ContextMenu? menu = container.ContextMenu ?? ContextMenuService.GetContextMenu(container) as ContextMenu;
-            if (menu == null)
-                return false;
-
-            menu.PlacementTarget = container;
-            menu.IsOpen = true;
-            container.UpdateLayout();
-
-            MenuItem? menuItem = menu.Items.OfType<MenuItem>().FirstOrDefault(m =>
-                (m.Header as string) == "Open in Explorer" ||
-                (m.Command as RoutedUICommand)?.Name == "OpenInExplorer");
-
-            if (menuItem == null)
+            if (via == "gesture")
             {
-                menu.IsOpen = false;
-                return false;
-            }
+                container.Focus();
+                Keyboard.Focus(container);
 
-            // Click the menu item exercising Command and CommandParameter binding
-            var onClick = typeof(MenuItem).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-            if (onClick != null)
-            {
-                onClick.Invoke(menuItem, null);
+                var cmd = window.GetType().GetField("OpenInExplorer", BindingFlags.Static | BindingFlags.Public)?.GetValue(null) as RoutedUICommand;
+                if (cmd == null)
+                    return false;
+
+                bool hasGesture = cmd.InputGestures.OfType<KeyGesture>().Any(g => g.Key == Key.Enter && g.Modifiers == ModifierKeys.Control);
+                if (!hasGesture)
+                    return false;
+
+                if (!cmd.CanExecute(null, window))
+                    return false;
+
+                cmd.Execute(null, window);
+                return true;
             }
             else
             {
-                menuItem.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
-            }
+                ContextMenu? menu = container.ContextMenu ?? ContextMenuService.GetContextMenu(container) as ContextMenu;
+                if (menu == null)
+                    return false;
 
-            var tb = window.FindName("RevealStatus") as TextBlock;
-            if (tb?.Text != "Opening in Explorer\u2026" && GetLastOutcome(window) == initialOutcome)
-            {
-                if (menuItem.Command is RoutedCommand routed)
+                menu.PlacementTarget = container;
+                menu.Tag = container.DataContext;
+                menu.IsOpen = true;
+                container.UpdateLayout();
+
+                MenuItem? menuItem = menu.Items.OfType<MenuItem>().FirstOrDefault(m =>
+                    (m.Header as string) == "Open in Explorer" ||
+                    (m.Command as RoutedUICommand)?.Name == "OpenInExplorer");
+
+                if (menuItem == null)
                 {
-                    IInputElement target = menuItem.CommandTarget ?? container;
-                    if (routed.CanExecute(menuItem.CommandParameter, target))
-                    {
-                        routed.Execute(menuItem.CommandParameter, target);
-                    }
+                    menu.IsOpen = false;
+                    return false;
                 }
-            }
 
-            return true;
+                var onClick = typeof(MenuItem).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                if (onClick != null)
+                {
+                    onClick.Invoke(menuItem, null);
+                }
+                else
+                {
+                    menuItem.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                }
+
+                return true;
+            }
         });
 
-        if (!clicked)
+        if (!executed)
         {
             StartupHook.Log(JsonSerializer.Serialize(new Dictionary<string, object?>
             {
                 ["surface"] = surface,
                 ["name"] = name,
+                ["via"] = via,
                 ["error"] = "click-failed"
             }));
             return;
@@ -215,10 +254,67 @@ internal static class RevealMode
             ["shown"] = shown,
             ["reason"] = reason,
             ["hresult"] = hresult,
-            ["status"] = statusText
+            ["status"] = statusText,
+            ["via"] = via
         };
 
         StartupHook.Log(JsonSerializer.Serialize(entry));
+    }
+
+    private static void ProcessPlaceholder(Window window, string name)
+    {
+        bool disabled = Ui(() =>
+        {
+            var cmd = window.GetType().GetField("OpenInExplorer", BindingFlags.Static | BindingFlags.Public)?.GetValue(null) as RoutedUICommand;
+            if (cmd == null)
+                return false;
+
+            object? placeholderNode = null;
+            if (window.FindName("FolderTree") is TreeView tree && tree.Items.Count > 0)
+            {
+                object rootNode = tree.Items[0];
+                var children = rootNode.GetType().GetProperty("Children")?.GetValue(rootNode) as IEnumerable<object>;
+                if (children != null)
+                {
+                    foreach (object child in children)
+                    {
+                        var childChildren = child.GetType().GetProperty("Children")?.GetValue(child) as IEnumerable<object>;
+                        if (childChildren != null)
+                        {
+                            object? first = childChildren.FirstOrDefault();
+                            if (first != null && (first.GetType().GetProperty("FullPath")?.GetValue(first) as string == ""))
+                            {
+                                placeholderNode = first;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            var menu = new ContextMenu();
+            var mi = new MenuItem
+            {
+                Header = "Open in Explorer",
+                Command = cmd,
+                CommandParameter = placeholderNode
+            };
+            menu.Items.Add(mi);
+            menu.PlacementTarget = window;
+            menu.IsOpen = true;
+            window.UpdateLayout();
+            bool isEnabled = mi.IsEnabled;
+            menu.IsOpen = false;
+            return !isEnabled;
+        });
+
+        StartupHook.Log(JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["surface"] = "placeholder",
+            ["name"] = name,
+            ["disabled"] = disabled,
+            ["enabled"] = !disabled
+        }));
     }
 
     private static FrameworkElement? FindContainer(Window window, string surface, string name)
@@ -318,15 +414,20 @@ internal static class RevealMode
             rootContainer.UpdateLayout();
         }
 
-        if (rootName == name || rootPath == name || (rootPath != null && rootPath.EndsWith(name, StringComparison.OrdinalIgnoreCase)))
+        if (name == "root" || rootName == name || rootPath == name || (rootPath != null && rootPath.EndsWith(name, StringComparison.OrdinalIgnoreCase)))
             return rootContainer;
 
-        // Ensure children are generated
-        rootNode.GetType().GetMethod("EnsureChildren", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)?.Invoke(rootNode, null);
-        rootContainer?.UpdateLayout();
+        if (rootContainer == null)
+            return null;
 
-        var children = rootNode.GetType().GetProperty("Children")?.GetValue(rootNode) as IEnumerable<object>;
-        if (children == null || rootContainer == null)
+        return FindInTreeItem(rootContainer, rootNode, name);
+    }
+
+    private static FrameworkElement? FindInTreeItem(TreeViewItem parentContainer, object parentNode, string name)
+    {
+        parentNode.GetType().GetMethod("EnsureChildren", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)?.Invoke(parentNode, null);
+        var children = parentNode.GetType().GetProperty("Children")?.GetValue(parentNode) as IEnumerable<object>;
+        if (children == null)
             return null;
 
         int index = 0;
@@ -337,35 +438,20 @@ internal static class RevealMode
 
             if (childName == name || childPath == name || (childPath != null && childPath.EndsWith(name, StringComparison.OrdinalIgnoreCase)))
             {
-                return Realize(rootContainer, index);
+                return Realize(parentContainer, index);
             }
 
-            // Check if nested child matches
-            child.GetType().GetMethod("EnsureChildren", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)?.Invoke(child, null);
-            var nestedContainer = Realize(rootContainer, index);
-            if (nestedContainer != null)
+            var childContainer = Realize(parentContainer, index);
+            if (childContainer != null)
             {
-                nestedContainer.IsExpanded = true;
-                nestedContainer.UpdateLayout();
-                var grandchildren = child.GetType().GetProperty("Children")?.GetValue(child) as IEnumerable<object>;
-                if (grandchildren != null)
-                {
-                    int gIndex = 0;
-                    foreach (object gc in grandchildren)
-                    {
-                        string? gcName = gc.GetType().GetProperty("Name")?.GetValue(gc) as string;
-                        string? gcPath = gc.GetType().GetProperty("FullPath")?.GetValue(gc) as string;
-                        if (gcName == name || gcPath == name || (gcPath != null && gcPath.EndsWith(name, StringComparison.OrdinalIgnoreCase)))
-                        {
-                            return Realize(nestedContainer, gIndex);
-                        }
-                        gIndex++;
-                    }
-                }
+                childContainer.IsExpanded = true;
+                childContainer.UpdateLayout();
+                var found = FindInTreeItem(childContainer, child, name);
+                if (found != null)
+                    return found;
             }
             index++;
         }
-
         return null;
     }
 
@@ -455,10 +541,13 @@ internal static class RevealMode
         var since = Stopwatch.StartNew();
         while (since.Elapsed < EndingDeadline)
         {
-            bool scanning = Ui(() => (window.FindName("ScanningPanel") as UIElement)?.Visibility == Visibility.Visible);
-            if (scanning)
+            (bool scanning, bool stoppedOrDone) = Ui(() => (
+                (window.FindName("ScanningPanel") as UIElement)?.Visibility == Visibility.Visible,
+                (window.FindName("OutcomePanel") as UIElement)?.Visibility == Visibility.Visible
+            ));
+            if (scanning || stoppedOrDone)
                 return;
-            Thread.Sleep(Poll);
+            Thread.Sleep(10);
         }
     }
 
@@ -466,7 +555,7 @@ internal static class RevealMode
     {
         Ui(() =>
         {
-            if (window.FindName("CancelButton") is Button button && button.IsEnabled)
+            if (window.FindName("CancelButton") is Button button && button.IsEnabled && (window.FindName("ScanningPanel") as UIElement)?.Visibility == Visibility.Visible)
             {
                 button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             }

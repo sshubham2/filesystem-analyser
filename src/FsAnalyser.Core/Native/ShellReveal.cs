@@ -68,14 +68,7 @@ public static partial class ShellReveal
         if (string.IsNullOrWhiteSpace(path))
             throw new ArgumentException("A path is required.", nameof(path));
 
-        string display;
-        if (path.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
-            display = @"\\" + path[@"\\?\UNC\".Length..];
-        else if (path.StartsWith(@"\\?\", StringComparison.Ordinal))
-            display = path[@"\\?\".Length..];
-        else
-            display = path;
-
+        string display = LongPath.ToDisplay(path);
         if (display.Length == 2 && char.IsAsciiLetter(display[0]) && display[1] == ':')
             display += '\\';
 
@@ -257,7 +250,7 @@ public static partial class ShellReveal
 
                 bool isHidden = false;
                 bool isSystem = false;
-                if (isExact)
+                if (isExact && plan.Candidates.Count > 1)
                 {
                     try
                     {
