@@ -1,0 +1,70 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-042",
+ "stage": "build-slice",
+ "attempt": 2,
+ "at": "2026-09-26T00:45:24.152Z",
+ "head": "a3d3860b11a3e6f3846ee455bb5197b9d115779f",
+ "run_id": 1218,
+ "summary": "I finished resolving the in-progress merge of uat (2e089a1, which brings in SL-040) into slice/SL-042 in the working tree. The only textual conflict was the class remarks in ScanStore.cs. The resolution keeps SL-040's paragraph (raw Size and OnDisk made internal) and follows it with SL-042's paragraph on the rollups. The reflect step's 'imminent defect' was real. SL-040's LargestFilesScaleTests built a hardlink duplicate by passing HardlinkDuplicate to Append. The merged store clears that flag, so those names were charged 1 TB and took the top of the list, and the test failed exactly that way when I put the original line back. It now builds the duplicate as a later name of the preceding file, with the same ID and in the same folder. LargestFiles itself needed no change, because it reads only ChargedSize and ChargedOnDisk of Files. All 199 Core.Tests pass on the merged tree in Release, including the counting-rule tests on real temp trees, the rollup timing test and SL-040's tests. The merged app scans C:\\Windows correctly through --report. Per the engine's rules I did not stage or commit. MERGE_HEAD is still set and the index still marks ScanStore.cs unmerged (UU), so the commit step must add it, which concludes the merge.",
+ "payload": {
+  "status": "complete",
+  "summary": "I finished resolving the in-progress merge of uat (2e089a1, which brings in SL-040) into slice/SL-042 in the working tree. The only textual conflict was the class remarks in ScanStore.cs. The resolution keeps SL-040's paragraph (raw Size and OnDisk made internal) and follows it with SL-042's paragraph on the rollups. The reflect step's 'imminent defect' was real. SL-040's LargestFilesScaleTests built a hardlink duplicate by passing HardlinkDuplicate to Append. The merged store clears that flag, so those names were charged 1 TB and took the top of the list, and the test failed exactly that way when I put the original line back. It now builds the duplicate as a later name of the preceding file, with the same ID and in the same folder. LargestFiles itself needed no change, because it reads only ChargedSize and ChargedOnDisk of Files. All 199 Core.Tests pass on the merged tree in Release, including the counting-rule tests on real temp trees, the rollup timing test and SL-040's tests. The merged app scans C:\\Windows correctly through --report. Per the engine's rules I did not stage or commit. MERGE_HEAD is still set and the index still marks ScanStore.cs unmerged (UU), so the commit step must add it, which concludes the merge.",
+  "files": [
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "change": "modified",
+    "why": "Merge resolution: the class remarks keep SL-040's paragraph (raw sizes internal, M2) and SL-042's paragraph on the rollups. SL-040's internal Size and OnDisk and all SL-042 code are as merged."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/LargestFilesTests.cs",
+    "change": "modified",
+    "why": "Semantic merge fix (m8 merge note, reflect candidate). The scale test's 1 TB duplicate is built through a repeated ID (a later name of the i%1000==8 file in the same folder), not by passing HardlinkDuplicate, which the merged store clears."
+   },
+   {
+    "path": "docs/design/SL-042-folder-totals.md",
+    "change": "modified",
+    "why": "Added an 'As merged' paragraph to the SL-040 merge section: the conflict found, the duplicate fixed, and the test that failed without the fix."
+   }
+  ],
+  "obligations": [],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build FsAnalyser.slnx -c Release",
+    "outcome": "passed",
+    "note": "Merged tree (conflict resolved): 0 warnings, 0 errors."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests -c Release --no-build",
+    "outcome": "passed",
+    "note": "Merged tree with the LargestFilesTests fix: 199 passed, 0 failed, 0 skipped. That is SL-042's 188, plus SL-040's 10 LargestFiles tests and its TheAnalysisReadsOnlyChargedSizesAndOnlyFromTheStore Fact. Includes the counting-rule tests on real temp trees, the rollup and timing tests, and RuleCopiesAgreeTests. I ran the suite twice, before and after the check below; both passed 199."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests -c Release --no-build --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.LargestFilesScaleTests\"",
+    "outcome": "failed",
+    "note": "Deliberate check of the reflect's defect. With SL-040's original line put back (Append with EntryFlags.HardlinkDuplicate and ID 0), the test fails: expected the planted [3, 44003, 88003, …], got [9, 1009, 2009, …], the 1 TB names the merged store now charges. The fix was restored with Edit, so the file got a new timestamp, then rebuilt; the full run after it passed 199."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests -c Release --no-build --filter \"FullyQualifiedName~ScanStoreBudgetTests|FullyQualifiedName~ScanStoreRollupTimingTests|FullyQualifiedName~LargestFilesScaleTests\" --logger \"console;verbosity=detailed\"",
+    "outcome": "passed",
+    "note": "Merged tree. 5M entries: retained 652.1 MiB, peak 658.6 MiB (budget 800). Ordered read of 100,000 children: 33.8–37.0 ms (budget 250). SL-040 Top(100) over 4,417,469 entries: 21.7 ms, 26,400 bytes allocated."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o artifacts/publish",
+    "outcome": "passed",
+    "note": "Merged app, single-file exe."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/read-window.ps1 -Root C:\\Windows -TimeoutSec 400",
+    "outcome": "passed",
+    "note": "Real entry point on the merged build. EXIT 0, Completed: 188,526 files, 157,747 folders, 42,362,829,972 bytes, 40,979,734,288 on disk. The 126 top-level rows add up to the totals. SL-040's largest-files list shows 100 entries, the largest at 777,908,224 bytes on disk, built in 7.0 ms. The file count differs from yesterday's 188,532 by 6 live changes under C:\\Windows."
+   }
+  ],
+  "deviations": [
+   "I did not commit and did not run `git add`. The sending-back asked the builder to finish the merge and commit, but this stage's standing rules forbid commits and version-control changes. The conflict is resolved in the working tree and no markers remain, but the index still records src/FsAnalyser.Core/Store/ScanStore.cs as unmerged (UU) and MERGE_HEAD is 2e089a1. The commit step must stage it (git add of that path, or add -A); committing then concludes the merge with both parents."
+  ],
+  "follow_ups": [
+   "plants.json row F17, added by SL-040, notes that its planted text was 'copied from Scanner.cs:267'. SL-042 removed that line from Scanner.cs. The plant inserts into LargestFiles.cs and does not depend on Scanner.cs, so the harness is unaffected, but the note now points at a line that no longer exists."
+  ]
+ }
+}
