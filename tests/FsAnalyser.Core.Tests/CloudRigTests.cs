@@ -36,8 +36,10 @@ public class CloudRigTests
     }
 
     /// <summary>
-    /// A root left by a crashed run, next to names that look like it and a live run's root: the sweep unregisters
-    /// and deletes that one root, with what is in it, and touches nothing else.
+    /// A root left by a crashed run, next to names that look like it, a live run's root, and a junction that
+    /// carries a dead run's root name: the sweep unregisters and deletes that one root, with what is in it, and
+    /// touches nothing else. Above all it neither unregisters nor deletes through the junction, whose target lies
+    /// outside the folder being swept (SL-049 review m2).
     /// </summary>
     [Fact]
     public void TheSweepRemovesOnlyTheRootOfARunThatIsGone()
@@ -66,6 +68,9 @@ public class CloudRigTests
             tree.File($@"{name}\keep.txt", 10);
         }
         string fileWithARootsName = tree.File(CloudRig.RootName(gone, Guid.NewGuid()), 10);
+        string target = tree.Outside("target");
+        string targetFile = TempTree.WriteFile(Path.Combine(target, "not-ours.txt"), 10);
+        string junction = tree.Junction(CloudRig.RootName(gone, Guid.NewGuid()), target);
         var unregistered = new List<string>();
         var log = new List<string>();
 
@@ -81,6 +86,10 @@ public class CloudRigTests
         foreach (string name in lookalikes)
             Assert.True(File.Exists(tree.PathOf($@"{name}\keep.txt")), $"the sweep touched {name}");
         Assert.True(File.Exists(fileWithARootsName));
+        Assert.DoesNotContain(Path.GetFileName(junction), swept);
+        Assert.DoesNotContain(junction, unregistered);
+        Assert.True(Directory.Exists(junction), "the sweep removed the junction named like a dead run's root");
+        Assert.True(File.Exists(targetFile), "the sweep deleted a file through a junction named like a dead run's root");
         Assert.True(took < TimeSpan.FromSeconds(10), $"the sweep took {took.TotalSeconds:F1} s");
     }
 

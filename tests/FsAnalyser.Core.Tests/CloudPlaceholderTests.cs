@@ -19,8 +19,11 @@ namespace FsAnalyser.Core.Tests;
 /// <para>The stall and tree Facts register a real sync root under %TEMP% (fsa-cf-&lt;pid&gt;-&lt;guid&gt;),
 /// served unelevated by tests/CfProvider in a process of its own, and remove it: every run kills the provider,
 /// unregisters the root from this process and deletes its folder, the path SL-049's spike 4 measured after a
-/// killed provider. A run that crashed leaves a root the next run sweeps, once the process that made it is
-/// gone. The two AProviderThatCannotStart Facts register nothing.</para>
+/// killed provider. The stall Fact kills it with a second listing of stall held blocked on it, so a request of
+/// this process is pending at the kill, and every teardown writes a <c>teardown shape:</c> line saying whether
+/// one was: that line, in each passing run, is what shows the killed-provider case was fed. A run that crashed
+/// leaves a root the next run sweeps, once the process that made it is gone. The two AProviderThatCannotStart
+/// Facts register nothing.</para>
 /// <para>Whether a sync root may be registered on a given PC is a person's decision (SL-049, open question 1).
 /// Where it is declined, the shipped guard on a real cloud folder stays unproven (not reached), SL-049's spike
 /// is the only contact, and the run is never counted as a pass. Where it is allowed, validate runs the filter
@@ -114,6 +117,17 @@ public class CloudPlaceholderTests(ITestOutputHelper output)
         Assert.Equal(EntryKind.Folder, result.Store.Kind(stalled));
         Assert.Equal(0, result.Store.ChildCount(stalled));
         Assert.DoesNotContain(result.Unreadable, u => u.Entry == stalled);
+
+        // C-006, the teardown after a killed provider with stall's request pending (SL-049 review m1). Cancel
+        // withdrew the scan's own request (the provider reports CANCEL_FETCH_PLACEHOLDERS), so the test lists stall
+        // again and leaves that listing blocked on the provider. Dispose then kills the provider with it pending,
+        // the path spike 4's kill arm measured, and fails this Fact if the kill does not free it within 10 s. Whether
+        // the second listing raised a fresh request is written to the output, not asserted: no SL-049 spike listed a
+        // folder again after a cancelled listing of it.
+        bool pending = rig.HoldListing("stall", TimeSpan.FromSeconds(10));
+        output.WriteLine(pending
+            ? "a second listing of stall is blocked on a fresh FETCH_PLACEHOLDERS from this process; the provider is killed with it pending"
+            : "a second listing of stall raised no fresh FETCH_PLACEHOLDERS from this process within 10 s, or did not stay blocked; nothing of this process is known to be pending at the kill");
         rig.Passed();
     }
 
@@ -242,6 +256,10 @@ public class CloudPlaceholderTests(ITestOutputHelper output)
     /// then deletes its folder. Each step is caught, bounded to 10 s and written to the test output; teardown
     /// throws only when the Fact called <see cref="Passed"/>, so it never replaces the Fact's own failure (m8).
     /// What it could not remove is left to the next run's sweep.
+    /// <para>Before the kill it writes which shape it is tearing down (review m1): a line starting
+    /// <c>teardown shape:</c> that says whether a request of this process was pending, the counts of this
+    /// process's FETCH_PLACEHOLDERS and CANCEL_FETCH_PLACEHOLDERS, and all the provider printed. A listing held by
+    /// <see cref="HoldListing"/> must be freed by the kill within 10 s, and is waited for before the unregister.</para>
     /// </remarks>
     private sealed class SyncRootRig : IDisposable
     {
@@ -253,6 +271,7 @@ public class CloudPlaceholderTests(ITestOutputHelper output)
         private readonly List<string> _stdout = [];
         private readonly List<string> _stderr = [];
         private Process? _provider;
+        private HeldListing? _held;
         private bool _stdoutClosed;
         private bool _passed;
         private bool _disposed;
@@ -367,9 +386,42 @@ public class CloudPlaceholderTests(ITestOutputHelper output)
 
         /// <summary>Waits for a callback of <paramref name="type"/> raised by this process on a path ending <paramref name="pathEnd"/>.</summary>
         public bool WaitForCallback(string type, string pathEnd, TimeSpan timeout) =>
-            WaitForLine(line => CloudRig.TryParseCallback(line, out CloudRig.ProviderCallback callback)
-                && callback.Pid == Environment.ProcessId && callback.Type == type
-                && callback.Path.EndsWith(pathEnd, StringComparison.OrdinalIgnoreCase), timeout) is not null;
+            WaitForLine(line => IsOwnCallback(line, type, pathEnd), timeout) is not null;
+
+        /// <summary>
+        /// Lists <paramref name="relative"/> on a thread of its own, through the same DirectoryReader the scan
+        /// uses, and waits up to <paramref name="timeout"/> for this process's fresh FETCH_PLACEHOLDERS on it. The
+        /// provider never answers, so the listing stays blocked until Dispose kills the provider with that request
+        /// pending, and Dispose fails the Fact if the kill does not free it (C-006). One per rig.
+        /// </summary>
+        /// <returns>Whether a fresh request of this process was seen and the listing is still blocked on it.</returns>
+        public bool HoldListing(string relative, TimeSpan timeout)
+        {
+            if (_held is not null)
+                throw new InvalidOperationException("A rig holds one listing at most.");
+            string folder = PathOf(relative);
+            string pathEnd = $@"\{RootName}\{relative}";
+            int from;
+            lock (_gate)
+                from = _stdout.Count;
+            var held = new HeldListing(relative);
+            held.Thread = new Thread(() =>
+            {
+                try
+                {
+                    held.Outcome = $"it listed {Scans.Listing(folder).Count} names";
+                }
+                catch (Exception e)
+                {
+                    held.Outcome = e.Message;
+                }
+            }) { IsBackground = true, Name = "rig-held-listing" };
+            _held = held;
+            held.Thread.Start();
+            held.Pending = WaitForLine(line => IsOwnCallback(line, "FETCH_PLACEHOLDERS", pathEnd), timeout, from, stop: () => !held.IsRunning) is not null
+                && held.IsRunning;
+            return held.Pending;
+        }
 
         /// <summary>The callbacks of <paramref name="type"/> raised by this process, and by no other.</summary>
         public List<CloudRig.ProviderCallback> Callbacks(string type)
@@ -410,12 +462,24 @@ public class CloudPlaceholderTests(ITestOutputHelper output)
 
             var failures = new List<string>();
             var clock = Stopwatch.StartNew();
+            _output.WriteLine(ShapeAtKill());
+            _output.WriteLine("before the kill, " + Captured());
+            Thread? listing = _held?.Thread is { IsAlive: true } running ? running : null;
             Step(failures, "kill the provider", () =>
             {
                 KillProvider();
                 if (_provider is { HasExited: false })
                     throw new InvalidOperationException("it was still running after Kill");
             });
+            TimeSpan killed = clock.Elapsed;
+            // The held listing keeps a handle on its folder, so it must be gone before the folder can be deleted.
+            if (listing is not null)
+            {
+                if (listing.Join(TeardownStep))
+                    _output.WriteLine($"the held listing of {_held!.Relative} returned {(clock.Elapsed - killed).TotalMilliseconds:F0} ms after the provider was gone: {_held.Outcome}");
+                else
+                    failures.Add($"could not free the held listing of {_held!.Relative}: still blocked {TeardownStep.TotalSeconds:F0} s after the provider was killed");
+            }
             if (Registered)
                 Step(failures, $"unregister {Root}", () => Unregister(Root));
             Step(failures, $"delete {Root}", () =>
@@ -481,13 +545,19 @@ public class CloudPlaceholderTests(ITestOutputHelper output)
             }
         }
 
-        // The first stdout line that matches, or null once the timeout passes or stdout has ended without one.
-        private string? WaitForLine(Func<string, bool> match, TimeSpan timeout)
+        private static bool IsOwnCallback(string line, string type, string pathEnd) =>
+            CloudRig.TryParseCallback(line, out CloudRig.ProviderCallback callback)
+            && callback.Pid == Environment.ProcessId && callback.Type == type
+            && callback.Path.EndsWith(pathEnd, StringComparison.OrdinalIgnoreCase);
+
+        // The first stdout line from line `from` on that matches, or null once the timeout passes, stdout has ended
+        // or `stop` says so, without one.
+        private string? WaitForLine(Func<string, bool> match, TimeSpan timeout, int from = 0, Func<bool>? stop = null)
         {
             var clock = Stopwatch.StartNew();
             lock (_gate)
             {
-                for (int seen = 0; ; )
+                for (int seen = from; ; )
                 {
                     for (; seen < _stdout.Count; seen++)
                     {
@@ -495,11 +565,57 @@ public class CloudPlaceholderTests(ITestOutputHelper output)
                             return _stdout[seen];
                     }
                     TimeSpan left = timeout - clock.Elapsed;
-                    if (_stdoutClosed || left <= TimeSpan.Zero)
+                    if (_stdoutClosed || left <= TimeSpan.Zero || stop?.Invoke() == true)
                         return null;
-                    Monitor.Wait(_gate, left);
+                    Monitor.Wait(_gate, stop is null || left < StopPoll ? left : StopPoll);
                 }
             }
+        }
+
+        private static readonly TimeSpan StopPoll = TimeSpan.FromMilliseconds(100);
+
+        // What the rig says about teardown, taken just before the kill: whether a request of this process is
+        // pending, and the counts that show it either way.
+        private string ShapeAtKill()
+        {
+            int fetches = Callbacks("FETCH_PLACEHOLDERS").Count;
+            int cancels = Callbacks("CANCEL_FETCH_PLACEHOLDERS").Count;
+            bool pending = _held is { Pending: true, IsRunning: true };
+            string provider = _provider switch
+            {
+                null => "no provider was started",
+                { HasExited: true } exited => $"the provider had already exited ({exited.ExitCode})",
+                _ => "the provider is killed now",
+            };
+            string held = _held switch
+            {
+                null => "the test held no listing",
+                { IsRunning: true, Pending: true } h => $"the test's listing of {h.Relative} has been blocked {h.Clock.Elapsed.TotalSeconds:F1} s on a FETCH_PLACEHOLDERS of its own",
+                { IsRunning: true } h => $"the test's listing of {h.Relative} is still running after {h.Clock.Elapsed.TotalSeconds:F1} s, with no FETCH_PLACEHOLDERS seen for it",
+                { } h => $"the test's listing of {h.Relative} ended before the kill: {h.Outcome}",
+            };
+            string shape = pending
+                ? $"PENDING, a FETCH_PLACEHOLDERS of this process on {_held!.Relative} is pending at the kill"
+                : "none pending, no request of this process is known to be pending at the kill";
+            return $"teardown shape: {shape}; {provider}; this process raised {fetches} FETCH_PLACEHOLDERS and {cancels} " +
+                $"CANCEL_FETCH_PLACEHOLDERS; {held}";
+        }
+
+        /// <summary>A listing the test left blocked on the provider, for teardown to kill under.</summary>
+        private sealed class HeldListing(string relative)
+        {
+            public string Relative { get; } = relative;
+
+            public Thread? Thread { get; set; }
+
+            public Stopwatch Clock { get; } = Stopwatch.StartNew();
+
+            /// <summary>What the listing returned; written by its thread, read after it ended.</summary>
+            public string? Outcome { get; set; }
+
+            public bool Pending { get; set; }
+
+            public bool IsRunning => Thread is { IsAlive: true };
         }
     }
 
