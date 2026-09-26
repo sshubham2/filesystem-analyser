@@ -1,0 +1,216 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-042",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-09-26T00:14:36.270Z",
+ "head": "b5c2b62d828e19ec7183ba7fc08ab5dd6c4ee806",
+ "run_id": 1212,
+ "summary": "The slice commit b5c2b62 does what the design and the accepted findings asked for. ScanStore.Append (src/FsAnalyser.Core/Store/ScanStore.cs:190-230) checks the parent before writing: only the root may pass -1, and a later -1 or an index not yet in the store throws ArgumentOutOfRangeException. A File, Link or Unreadable parent throws InvalidOperationException. Append clears a HardlinkDuplicate flag passed in, and only a File runs the first-seen ID check through the private TryAddFileId. HasFileId rejects 0, all-ones and the 64-bit all-ones widened. Each file posts Posted(size, onDisk, 1), or (0,0,1) for a duplicate, up the Parent chain in a while loop. CorrectSizes posts the change in the charge up the corrected row's own chain. Charges() is true only for a non-duplicate File. In Scanner.cs the old charge rules are gone: every change to the totals goes through Credit, and the probe trigger reads the firstHolder that Append returns.\n\nI rebuilt from scratch in Release (--no-incremental) and got 0 warnings. The full Core.Tests suite passed 188/188 with 0 skipped. The timing test and the budget test both ran; the trx shows them passing. Budget: retained 652.1 MiB and peak 678.4 MiB, against 800 MiB. The ordered read took 8.9–10.8 ms in the full suite and 24.8–37.0 ms when the timing test ran alone. Fitness check: all 31 rules hold.\n\nI read each case test and checked that it builds the shape it names:\n- the chain really is 10,000 folders deep with one file at every level\n- the wide folder has 100,000 children, 1,000 of them subfolders, across three page boundaries\n- the mixed trees assert that every shape is present\n- HardlinkTests (2,1) and (3,2) make the charged first name the stale one, so the correction lands on an entry appended earlier in another folder\n- the ordering test has 67 children, so the sort is not the stable insertion sort\n- the zero-share cases include a folder of only duplicates and online-only files\n- a File, a Link and an Unreadable folder each return an empty array.\n\nI also re-checked the reason the real-NTFS half of C-008 was dropped (the m7 disposition). With FindFirstFileW, a temp folder holding 1,500 files with names of about 185 characters is listed in its parent at 0 bytes. So is every folder listed in C:\\Windows (89), System32 (190) and C:\\ (25). Those counts match the builder's probe exactly, so a real-tree test could not fail before the change.\n\nThe graph lists 66 changed nodes that no test reaches; that is the parser not linking the tests. The trx shows the new tests exercising every one of them.\n\nI found no undeclared departure and nothing that should stop the slice.\n\nOne thing about the slice's history: design-slice attempts 2 to 29 are 28 attempts in a row with no caused_by and nothing changed, each hitting the provider's session limit. That was a retry loop, not progress; the builder also flagged it.",
+ "payload": {
+  "status": "complete",
+  "verdict": "clean",
+  "summary": "The slice commit b5c2b62 does what the design and the accepted findings asked for. ScanStore.Append (src/FsAnalyser.Core/Store/ScanStore.cs:190-230) checks the parent before writing: only the root may pass -1, and a later -1 or an index not yet in the store throws ArgumentOutOfRangeException. A File, Link or Unreadable parent throws InvalidOperationException. Append clears a HardlinkDuplicate flag passed in, and only a File runs the first-seen ID check through the private TryAddFileId. HasFileId rejects 0, all-ones and the 64-bit all-ones widened. Each file posts Posted(size, onDisk, 1), or (0,0,1) for a duplicate, up the Parent chain in a while loop. CorrectSizes posts the change in the charge up the corrected row's own chain. Charges() is true only for a non-duplicate File. In Scanner.cs the old charge rules are gone: every change to the totals goes through Credit, and the probe trigger reads the firstHolder that Append returns.\n\nI rebuilt from scratch in Release (--no-incremental) and got 0 warnings. The full Core.Tests suite passed 188/188 with 0 skipped. The timing test and the budget test both ran; the trx shows them passing. Budget: retained 652.1 MiB and peak 678.4 MiB, against 800 MiB. The ordered read took 8.9–10.8 ms in the full suite and 24.8–37.0 ms when the timing test ran alone. Fitness check: all 31 rules hold.\n\nI read each case test and checked that it builds the shape it names:\n- the chain really is 10,000 folders deep with one file at every level\n- the wide folder has 100,000 children, 1,000 of them subfolders, across three page boundaries\n- the mixed trees assert that every shape is present\n- HardlinkTests (2,1) and (3,2) make the charged first name the stale one, so the correction lands on an entry appended earlier in another folder\n- the ordering test has 67 children, so the sort is not the stable insertion sort\n- the zero-share cases include a folder of only duplicates and online-only files\n- a File, a Link and an Unreadable folder each return an empty array.\n\nI also re-checked the reason the real-NTFS half of C-008 was dropped (the m7 disposition). With FindFirstFileW, a temp folder holding 1,500 files with names of about 185 characters is listed in its parent at 0 bytes. So is every folder listed in C:\\Windows (89), System32 (190) and C:\\ (25). Those counts match the builder's probe exactly, so a real-tree test could not fail before the change.\n\nThe graph lists 66 changed nodes that no test reaches; that is the parser not linking the tests. The trx shows the new tests exercising every one of them.\n\nI found no undeclared departure and nothing that should stop the slice.\n\nOne thing about the slice's history: design-slice attempts 2 to 29 are 28 attempts in a row with no caused_by and nothing changed, each hitting the provider's session limit. That was a retry loop, not progress; the builder also flagged it.",
+  "findings": [],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "tests/FsAnalyser.Core.Tests/ScanStoreRollupTests.cs:17-42 builds a 10,000-folder chain with a file at each level and checks Expected, CheckStructure and the hand-computed totals at every depth. Store Post (ScanStore.cs:311-324) is a loop, and both oracles (RollupOracle.cs) use no recursion. Passed in 0.40 s in my run."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "ScanStoreRollupTests.cs:45-79: 100,000 children of which 1,000 are subfolders (k%100==37), each holding 100 files. It asserts that the stream crosses more than 3 pages, and both oracles run."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "ScanStoreRollupTests.cs:85-128 has four rows: an empty root; empty and nested empty folders (b holds b1 and b2, b1 holds b1a); a 400-entry MixedTree checked by both oracles after every append through Feed's afterEach; and a 50,000-entry tree. AssertHasEveryShape confirms reused IDs, links, Unreadable folders with stated sizes, 0-byte files and zero IDs are present."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "ScanStoreRollupTests.cs:133-168: one ID under x, y and z in three folders, appended in a fixed order. Asserts the first holder is x for all three, each Posted value, the flags the store set, that only folder a carries bytes, that each folder has Files=1, and that top and root hold one copy with Files=3."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "ScanStoreRollupTests.cs:171-193: a/x with a/b/y share an ancestor and give (300, 4K, 2) at a; p and q are two names in folder d. Root is (800, 6K, 4), and the test also checks against Expected."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "ScanStoreRollupTests.cs:201-225: two files each with ID 0, UInt128.MaxValue and (0, ulong.MaxValue), plus (1,5) and (2,5), which share the low half and differ in the high half. All are charged, none is flagged, and HasFileId is asserted directly. ScanStore.cs:147-150 holds the predicate."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "ScanStoreRollupTests.cs:246-282: a link (5000/8192) and an Unreadable folder (4096/4096) beside a 100/K file. Parent and root equal the file alone. Both leaves have no children, no charge and zero rollups. Appending under the File, the Link or the Unreadable folder throws InvalidOperationException (CheckParent, ScanStore.cs:278-295), and Count is unchanged afterwards."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "Synthetic half: ScanStoreRollupTests.cs:330-347 has a 4096/4096 folder with a file and one without, and ChargedSize of the folder is 0. The Scanner's folder-bytes branch is deleted (Scanner.cs:228-230). The real-NTFS half was dropped per the m7 disposition. My own FindFirstFileW probe found a 1,500-file folder with names of about 185 characters, and every folder in C:\\Windows, System32 and C:\\, listed at 0, so the deferral reason holds."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "ScanStoreRollupTests.cs:358-389: 67 children. Entries 5 (a folder stating 1 MiB that holds 2K), 6 (a 2K file) and 9 (a folder holding 2K) tie; 60 files tie at K; duplicate 8 comes last. Three reads return the same order. The comparer is in ScanStore.Rollup.cs:84-88."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "ScanStoreRollupTests.cs:392-417: shares of exactly 0.75 and 0.25 where the logical sizes run the other way, three shares of 1/3 within 1e-12 that sum to 1, and root shares that sum to 1."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "ScanStoreRollupTests.cs:424-450: an empty folder gives []; a folder of only duplicates gives shares of 0.0; online-only files (5,000,010 logical bytes, 0 on disk) give shares of 0.0 and no NaN; a File, a Link and an Unreadable folder each give []. ScanStore.Rollup.cs:72 has the total==0 guard."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "tests/FsAnalyser.Core.Tests/ScanStoreRollupTimingTests.cs is in the MemoryBudget (non-parallel) collection and asserts all 10 reads. Run alone: 24.8–37.0 ms. In the full suite the first read is already JIT-warm (9.1 ms), so the cold read is measured only when the test runs alone."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "tests/FsAnalyser.Core.Tests/Scans.cs:26-52 runs CheckStructure, checks root Rolled against Totals and checks each TopLevelRow against its entry's rollup. It runs on every Scans.Run and on the cancellation, root and top-level scans (RootTests:45, CancelledFolderTests:117/273, TopLevelTests:464, SynchronousIoCancelTests:328). HardlinkTests.cs:63-71 checks per-folder totals when the first name is the stale one. LinkTests and UnreadableFolderTests check that the leaf adds nothing."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "ScanStoreTests.cs budget test: 5M entries with the three columns on every row, one 100,000-child folder read in order, root rollups asserted. My run: retained 652.1 MiB, peak 678.4 MiB, against 800 MiB."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "Append returns firstHolder (out) and Posted (ScanStore.cs:190-230). CorrectSizes is unconditional and posts up page.Parent[i] (ScanStore.cs:257-265). The probe trigger in Scanner.cs:237-248 reads charged != entry. HardlinkTests (2,1) and (3,2) put the stale name first, and TopLevelTests.AnInPlaceCorrection covers a correction that crosses top-level rows."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "ScanStore.HasFileId (ScanStore.cs:147-150) is used by the private TryAddFileId (ScanStore.cs:299-307) and at all three _settled sites in the Scanner (Scanner.cs:198, 205, 271). C-006 covers both sentinels."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "The timing test carries [Collection(nameof(MemoryBudget))]. The budget test keeps its 800 MiB GC-heap threshold and its entry, name, ID and duplicate counts; entries go through Append with depth at most 16. The measured peak is written to the test output (seen in my trx)."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "ScanStore.Rollup.cs:39-48: FilesBelow returns 1 for a File (a duplicate included) and 0 for a Link. RollupOracle.CheckStructure asserts that each folder equals the sum of its children, and it passes."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "Scanner.cs:288-295: Credit is the only place _files, _bytes and _bytesOnDisk are written. It is called from AddEntry (inPlace false) and from Correct (inPlace true, which calls TopLevelTracker.Moved). Every real-tree scan checks root == Totals and TopLevelRow == rollup."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "ScanStoreRollupTests.cs:290-306: a folder listed in part and then flagged Unreadable keeps (300, 4K, 2), ChildrenLargestFirst returns its children, and a later append under it throws. An Unreadable folder that listed nothing reads 0/0/0 and []."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "ScanStore.cs:278-287 accepts -1 only when index==0 and checks before anything is written. ScanStoreRollupTests.cs:310-325 covers -1, -2, 1, 2, 1000 and int.MaxValue after the root, a non-root first append, and a second AppendRoot."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "docs/design/SL-042-folder-totals.md:100-118 records the probe output. I reproduced it independently in a temp folder with FindFirstFileW: big=0 and small=0; C:\\Windows had 89 folders with 0 non-zero, System32 190/0, C:\\ 25/0."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "docs/design/SL-042-folder-totals.md:128-142 covers the text and meaning touchpoints: Append clears a passed-in HardlinkDuplicate, AddFlags throws on it, TryAddFileId is private, and parent rules apply. It asks whoever merges second to grep for TryAddFileId and HardlinkDuplicate."
+   },
+   {
+    "key": "O-024",
+    "discharged": "yes",
+    "evidence": "docs/design/SL-042-folder-totals.md:120-126 has the revised line. The engine's own architecture record is outside this worktree and still waits on the open sort-on-read question, as the m9 disposition makes it conditional on that answer."
+   }
+  ],
+  "matches_design": true,
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "ScanStoreRollupTests.AChainTenThousandFoldersDeepRollsEveryFileUpToEveryAncestor: each level appends FolderAt(parent) and FileAt(parent), so the chain is 10,000 folders deep with a file at every level plus one at the bottom. Hand-computed totals are checked at every depth."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "ScanStoreRollupTests.AFolderWithAHundredThousandChildrenRollsUpAcrossPageBoundaries: 100,000 direct children of which 1,000 (k%100==37) are subfolders with 100 files each, 200,002 entries. It asserts that more than 3 pages are crossed."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "ScanStoreRollupTests.EmptyAndMixedTreesMatchTheOracleAtEveryCut: an empty root; empty and nested empty folders; a 400-entry MixedTree with Expected and CheckStructure run after every append; and a 50,000-entry MixedTree. AssertHasEveryShape confirms reused IDs, links, Unreadable folders with stated sizes, 0-byte files and empty folders."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "ScanStoreRollupTests.OneIdUnderThreeNamesInThreeFoldersIsChargedOnceToTheFirstNamesFolder: UInt128(7,42) under x, y and z in folders a, b and c. Only a carries bytes, each folder has Files=1, and root is one copy with Files=3."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "ScanStoreRollupTests.NamesThatShareAnAncestorOrAParentChargeTheBytesOnceAndCountEveryName: x in a and y in a/b share ID 1 (a gets the bytes once and 2 files); p and q in d share ID 2."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "ScanStoreRollupTests.IdsThatMustNotMatchAreEachCharged: two files each with 0, all-ones and (0, MaxValue), plus (1,5) and (2,5), which share the low half and differ in the high half. All are charged and none is flagged."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "ScanStoreRollupTests.ALinkAndAnUnreadableFolderAreLeavesThatAddNothing: a Link at 5000/8192 and an Unreadable folder at 4096/4096 beside a 100/4096 file. Appending under the File, the Link or the Unreadable folder throws, and the totals stay unchanged."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "ScanStoreRollupTests.AFolderThatStatesItsOwnSizeAddsNothingOfIt feeds the synthetic 4096/4096 folder, both with and without a file. The real-NTFS half is not exercised, per the m7 deferral. That reason still holds: my FindFirstFileW probe lists a 1,500-file folder, and every folder in C:\\Windows, System32 and C:\\, at 0 bytes."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "ScanStoreRollupTests.ChildrenAreReadLargestFirstWithEqualSizesInListingOrder: 67 children with a 2K tie across folder S (which states 1 MiB), file 6 and folder T. 60 files tie at K. Duplicate 8 ranks last at 0. Three reads are compared."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "ScanStoreRollupTests.EachChildsShareIsItsOnDiskBytesOverTheFolders: shares of 0.75 and 0.25 compared exactly, with logical sizes inverted. Three shares of 1/3 within 1e-12 sum to 1, and root shares sum to 1."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "ScanStoreRollupTests.AFolderWithNothingOnDiskGivesEveryChildAZeroShare: an empty folder; folder 3 holding only duplicates of entry 8; folder 4 holding CloudOnly files at 5,000,000/0 and 10/0. A File (6), a Link (5) and an Unreadable folder (7) passed in each return []."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "ScanStoreRollupTimingTests: 100,000 children with sizes drawn from 5 values, so ties are heavy, plus 1,000 subfolders. All 10 reads are asserted under 250 ms, and the configuration is logged. Run alone the first read is cold (37.0 ms, Release). In the full suite it is already JIT-warm (9.1 ms), because other tests have used the same sort."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "Scans.AssertChargedBytesAreTheTotals runs CheckStructure, checks root Rolled against Totals, and checks each TopLevelRow against its rollup on every real-tree scan. HardlinkTests (2,1) and (3,2) put the stale name first and assert that the first name's folder carries 64 MiB. LinkTests and UnreadableFolderTests assert the leaves add nothing. The full suite passed 188/188."
+   },
+   {
+    "key": "C-014",
+    "exercised": "yes",
+    "evidence": "ScanStoreBudgetTests.FiveMillionEntriesFitTheMemoryBudget: 5,000,000 entries with the columns on every row, and one 100,000-child folder at entry 2,000,000 read in order. My run: retained 652.1 MiB, peak 678.4 MiB, against 800 MiB."
+   }
+  ],
+  "drift": [
+   "No undeclared departure found. The eight declared deviations all match the code as written: HasFileId is internal static; AddFlags throws on HardlinkDuplicate; Credit takes (entry, posted, inPlace); a partly listed Unreadable folder returns its listed children; FilesBelow(file) is 1; the budget test was reshaped; the real-NTFS half of C-008 was not built; and the 8-argument Append overload was kept.",
+   "The m9 architecture-line revision exists only in docs/design/SL-042-folder-totals.md. The engine's own Scan Store line still says children are stored sorted largest first. That was declared, and it is conditional on the open sort-on-read question, but until someone edits the engine's record, anyone reading it is reading a line the code no longer follows."
+  ],
+  "unreviewed": []
+ }
+}
