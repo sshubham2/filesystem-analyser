@@ -28,13 +28,12 @@ internal static class KindRowText
             size(k.OnDisk), Share(k.OnDisk, kinds.OnDisk), Extensions(k, size), Tip(k.Kind))).ToArray();
 
     /// <summary>
-    /// The row's share of everything on disk, as a percentage to one decimal place, a midpoint rounded away from zero,
-    /// as the folder tree writes its shares. "—" when nothing takes space on disk (files that live only online): there
-    /// is no whole to take a share of, and the rows are still listed.
+    /// The row's share of everything on disk, written as the folder tree writes its shares (<see cref="ShareText.Percent"/>).
+    /// "—" when nothing takes space on disk (files that live only online): there is no whole to take a share of, and
+    /// the rows are still listed.
     /// </summary>
     internal static string Share(long onDisk, long total) =>
-        total == 0 ? "—"
-        : Math.Round(100.0 * onDisk / total, 1, MidpointRounding.AwayFromZero).ToString("F1", CultureInfo.CurrentCulture) + " %";
+        total == 0 ? "—" : ShareText.Percent(onDisk / (double)total);
 
     /// <summary>
     /// The kind's biggest extensions with their space on disk, then what they leave out, so that no bytes of the row go

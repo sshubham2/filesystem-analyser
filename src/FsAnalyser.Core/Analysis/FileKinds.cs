@@ -63,12 +63,19 @@ internal static class FileKinds
     /// <summary>
     /// The kind of a file with this extension, as <see cref="Path.GetExtension(ReadOnlySpan{char})"/> gives it
     /// from the name: empty is <see cref="FileKind.NoExtension"/>, and anything the table does not name is
-    /// <see cref="FileKind.Other"/>. Case is ignored. Never throws.
+    /// <see cref="FileKind.Other"/>. Case is ignored, and so is a character that only lowers onto one the table
+    /// names (KELVIN SIGN U+212A lowers to 'k'), as <see cref="KindBreakdown"/> counts it. Never throws.
     /// </summary>
-    internal static FileKind Of(ReadOnlySpan<char> extension) =>
-        extension.IsEmpty ? FileKind.NoExtension
-        : ByExtension.TryGetValue(extension, out FileKind kind) ? kind
-        : FileKind.Other;
+    internal static FileKind Of(ReadOnlySpan<char> extension)
+    {
+        if (extension.IsEmpty)
+            return FileKind.NoExtension;
+        if (ByExtension.TryGetValue(extension, out FileKind kind))
+            return kind;
+        Span<char> lowered = extension.Length <= 256 ? stackalloc char[extension.Length] : new char[extension.Length];
+        extension.ToLowerInvariant(lowered);
+        return ByExtension.TryGetValue(lowered, out kind) ? kind : FileKind.Other;
+    }
 
     /// <summary>The kind's stable id, as the window's report writes it.</summary>
     internal static string Id(FileKind kind) => kind switch

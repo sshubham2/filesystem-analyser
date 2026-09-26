@@ -83,6 +83,55 @@ public class KindBreakdownTests(ITestOutputHelper output)
         Assert.Equal(".gitignore 0 B · .editorconfig 0 B", KindRowText.Extensions(row, Bytes));
     }
 
+    /// <summary>
+    /// Extensions whose letters lower onto an extension ignoring case does not match (review M1): KELVIN SIGN U+212A
+    /// lowers to 'k', so "clip.mKv" onto the table's ".mkv", and ANGSTROM SIGN, OHM SIGN and CAPITAL SHARP S
+    /// onto the letters written before them here. (The title-case digraph U+01C5, which the review listed too, is one
+    /// ignoring case already matches with U+01C6.) The pass does not throw: each file is counted under the extension
+    /// it lowers to, whichever of a pair comes first, in a store and in a real scan.
+    /// </summary>
+    [Fact]
+    public void AnExtensionThatLowersOntoOneAlreadyCountedIsCountedWithIt()
+    {
+        string[] names =
+        [
+            "clip.mKv",        // onto ".mkv", which the table names
+            "a.k", "b.K",       // onto ".k", counted the file before
+            "c.å", "d.Å",  // å, then ANGSTROM SIGN
+            "e.ω", "f.Ω",  // ω, then OHM SIGN
+            "g.ß", "h.ẞ",  // ß, then CAPITAL SHARP S
+            "x.ǆ", "y.ǅ",  // dž, then its title case
+            "r.Kr", "s.kr",     // the other way round: the sign first, then the letter it lowers to
+        ];
+        ScanStore store = Synthetic([.. names.Select(n => (n, 4 * KiB, 4 * KiB))]);
+        KindBreakdownResult kinds = KindBreakdown.Compute(store);
+
+        AssertAddsUp(store, kinds);
+        Assert.Equal(names.Length, kinds.Files);
+        Assert.Equal([FileKind.Other, FileKind.Videos], kinds.Kinds.Select(k => k.Kind));
+        KindTotal videos = Row(kinds, FileKind.Videos);
+        Assert.Equal((".mkv", 1L), (Assert.Single(videos.TopExtensions).Ext, videos.Files));
+        Assert.Equal(FileKind.Videos, FileKinds.Of(Path.GetExtension(names[0].AsSpan()))); // one answer for the name
+
+        // Six extensions of two files each, the same size, so listed in ordinal order.
+        KindTotal other = Row(kinds, FileKind.Other);
+        Assert.Equal([(".k", 2L), (".kr", 2L), (".ß", 2L)], other.TopExtensions.Select(e => (e.Ext, e.Files)));
+        Assert.Equal((3, false, 6L), (other.Remainder.Extensions, other.Remainder.MoreUncounted, other.Remainder.Files));
+        Assert.All(names[1..], n => Assert.Equal(FileKind.Other, FileKinds.Of(Path.GetExtension(n.AsSpan()))));
+
+        // The same names on disk, through the scanner.
+        using var tree = new TempTree();
+        foreach (string name in names)
+            tree.File(name, 64 * KiB);
+        ScanResult result = Scans.Run(tree.Root);
+        KindBreakdownResult scanned = KindBreakdown.Compute(result.Store);
+
+        Assert.Equal(ScanStatus.Completed, result.Status);
+        AssertAddsUp(result.Store, scanned);
+        Assert.Equal((long)names.Length, scanned.Files);
+        Assert.Equal((1L, 12L), (Row(scanned, FileKind.Videos).Files, Row(scanned, FileKind.Other).Files));
+    }
+
     [Fact]
     public void ASetupProgramIsAProgramAndOnlyPackagesAreInstallers()
     {
@@ -249,8 +298,11 @@ public class KindBreakdownTests(ITestOutputHelper output)
         Assert.Equal([$"{4096 * MiB} B", $"{3 * MiB} B", $"{201 * KiB} B"], rows.Select(r => r.Size));
         Assert.Equal(".pdf 0 B", rows[2].Extensions); // on disk, as the rows are ranked
 
-        // With something on disk, a share is a percentage of it.
+        // With something on disk, a share is a percentage of it, written as the folder tree writes its shares (review
+        // m2): one formatter, whose exact midpoints (1/16 is 6.25) round away from zero.
         Assert.Equal(25.0.ToString("F1", CultureInfo.CurrentCulture) + " %", KindRowText.Share(1, 4));
+        Assert.Equal(6.3.ToString("F1", CultureInfo.CurrentCulture) + " %", KindRowText.Share(4 * KiB, 64 * KiB));
+        Assert.Equal(ShareText.Percent(1 / 16.0), KindRowText.Share(1, 16));
         Assert.Equal("—", KindRowText.Share(0, 0));
     }
 

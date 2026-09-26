@@ -67,8 +67,9 @@
 # "kinds" (per kind its id, label and totals, never an extension or a name) against a planted tree of seven kinds, and
 # the view on screen once the hook's kinds mode has chosen it, at the default and the minimum size, and against a tree
 # with no file (K-001); added up against the root after Stop (K-002, the hook's stop mode); and gone from the report and
-# the list as a second scan starts and at its Could not read ending (K-003, the hook's rescan mode, as B-006). B-001 and
-# C-012 check the endings with no scan behind them carry no kinds.
+# the list as a second scan starts and at its Could not read ending (K-003, the hook's rescan mode, as B-006). B-001
+# checks a missing root's Could not read ending carries no kinds. The Scan failed ending (Scanner.Scan throws) takes the
+# same path in the window, ShowProblem, and no case drives it: no hook mode makes the scan fail.
 
 param(
     [Parameter(Mandatory = $true)]
@@ -1028,21 +1029,20 @@ function Test-C011 {
 
 # C-012: an unhandled exception on the UI thread mid-scan (criterion 12). The app's own handler must end
 # the run: exit 70 and nothing at the report path. A stale report is planted there first, so an absent
-# file is the app's doing. Without the handler the runtime ends the process with 0xE0434352 instead. The stale
-# report carries kinds (SL-046, review m3): a faulted run computes none, so none may be left behind.
+# file is the app's doing. Without the handler the runtime ends the process with 0xE0434352 instead.
 function Test-C012 {
     $case = New-CaseFolder
     try {
         $root = Join-Path $case 'large'
         [void](New-LargeTree $root)
         $report = Join-Path $case 'report.json'
-        Set-Content -LiteralPath $report -Value '{"schema":1,"stale":true,"kinds":[{"id":"other","label":"Other","files":1,"size":65536,"onDisk":65536}]}'
+        Set-Content -LiteralPath $report -Value '{"schema":1,"stale":true}'
         $run = Invoke-HookedRun 'throw' $root $report
         $before = $script:Failures.Count
         CheckActed $run 'throw'
         if ($script:Failures.Count -gt $before) { return }
         Check ($run.Exit -eq '70') "exit code is the app's 70 (actual $(Show-Exit $run.Exit))"
-        Check (-not (Test-Path -LiteralPath $report)) 'the stale report, with its kinds, is gone'
+        Check (-not (Test-Path -LiteralPath $report)) 'the stale report is gone'
         Check (-not (Test-Path -LiteralPath "$report.tmp")) 'no .tmp left'
     }
     finally { Remove-CaseFolder $case }

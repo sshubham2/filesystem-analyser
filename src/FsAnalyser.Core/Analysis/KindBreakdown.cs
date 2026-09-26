@@ -69,6 +69,9 @@ public static class KindBreakdown
 
     private const int Listed = 3;
 
+    // The longest extension lowered on the stack: a name, a dotfile's included, is at most 255 characters on NTFS.
+    private const int StackLimit = 256;
+
     /// <summary>The breakdown of every file in <paramref name="store"/>.</summary>
     /// <exception cref="ArgumentNullException"><paramref name="store"/> is null.</exception>
     public static KindBreakdownResult Compute(ScanStore store)
@@ -120,24 +123,34 @@ public static class KindBreakdown
         public ref Slot Find(ReadOnlySpan<char> ext)
         {
             if (!_byExtension.TryGetValue(ext, out int at))
-            {
-                // Not named by the table, so Other, whatever case it is written in.
-                if (_unmapped < UnmappedExtensionCap)
-                {
-                    _unmapped++;
-                    at = Add(Lowered(ext), FileKind.Other);
-                }
-                else
-                {
-                    if (_pastCap < 0)
-                    {
-                        _pastCap = _slots.Count;
-                        _slots.Add(new Slot { Ext = null, Kind = FileKind.Other });
-                    }
-                    at = _pastCap;
-                }
-            }
+                at = FindLowered(ext);
             return ref CollectionsMarshal.AsSpan(_slots)[at];
+        }
+
+        // An extension not found as it is written. Every key is held in lower case, and lowering can land on a key that
+        // ignoring case does not reach (review M1: KELVIN SIGN U+212A lowers to 'k', so ".m" U+212A "v" to the table's
+        // ".mkv"; ANGSTROM SIGN, OHM SIGN and U+1E9E likewise), so the lowered extension is looked up before it is
+        // added, which would throw on a key already held. It is lowered on the stack: an extension seen again this
+        // way, or past the cap, builds no string.
+        private int FindLowered(ReadOnlySpan<char> ext)
+        {
+            Span<char> lowered = ext.Length <= StackLimit ? stackalloc char[ext.Length] : new char[ext.Length];
+            ext.ToLowerInvariant(lowered);
+            if (_byExtension.TryGetValue(lowered, out int at))
+                return at;
+
+            // Not named by the table, so Other, whatever case it is written in.
+            if (_unmapped < UnmappedExtensionCap)
+            {
+                _unmapped++;
+                return Add(new string(lowered), FileKind.Other);
+            }
+            if (_pastCap < 0)
+            {
+                _pastCap = _slots.Count;
+                _slots.Add(new Slot { Ext = null, Kind = FileKind.Other });
+            }
+            return _pastCap;
         }
 
         public KindBreakdownResult Fold()
@@ -212,8 +225,5 @@ public static class KindBreakdown
             _slots.Add(new Slot { Ext = ext, Kind = kind });
             return at;
         }
-
-        private static string Lowered(ReadOnlySpan<char> ext) =>
-            string.Create(ext.Length, ext, static (span, source) => source.ToLowerInvariant(span));
     }
 }

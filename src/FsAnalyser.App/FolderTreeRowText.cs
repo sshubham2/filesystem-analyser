@@ -1,5 +1,3 @@
-using System.Globalization;
-
 namespace FsAnalyser.App;
 
 /// <summary>
@@ -14,13 +12,11 @@ internal static class FolderTreeRowText
     internal static string Size(long bytes) => MainWindow.FormatSize(bytes);
 
     /// <summary>
-    /// The share as a percentage to one decimal place, a midpoint rounded away from zero (review m2: shares of
-    /// 4 KiB multiples such as 1/16 are exact binary midpoints, 6.25), in the culture the sizes are written in.
-    /// A share of 0, which is every child's when the parent takes nothing on disk, reads "0.0 %", and so does a
-    /// share too small to show at one decimal.
+    /// The share as a percentage, as the window writes every share (<see cref="ShareText.Percent"/>). A share of 0,
+    /// which is every child's when the parent takes nothing on disk, reads "0.0 %", and so does a share too small to
+    /// show at one decimal.
     /// </summary>
-    internal static string Share(double share) =>
-        Math.Round(share * 100, 1, MidpointRounding.AwayFromZero).ToString("F1", CultureInfo.CurrentCulture) + " %";
+    internal static string Share(double share) => ShareText.Percent(share);
 
     /// <summary>
     /// The bar: the share of the track. 0 draws nothing; any other share draws at least one pixel, so a row that
