@@ -1,0 +1,184 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-047",
+ "stage": "code-review",
+ "attempt": 3,
+ "at": "2026-09-26T18:47:50.511Z",
+ "head": "418cc8e4c127911a10fb740e899c0e83acaeb555",
+ "run_id": 1387,
+ "summary": "Nine of the ten fixes hold. The results-list fix (m1, O-016) does not: its context menu still greys out once a live refresh replaces the row.\n\nWhat I checked:\n- **Build and rules:** 0 warnings, 0 errors; 296 Core tests passed; all 47 fitness rules hold.\n- **Ctrl+Enter (M1):** fixed. In the published app, with a largest-files row or the tree root row focused, CanExecute(null, Window) is True.\n- **Status line and window budget (M2):** fixed. At 560x644 the one-line status is 21.96 px. With the folder tree shown (the case that clipped in round one), the tree keeps 50.3 px visible and its root row is fully in view, with short or long messages.\n- **Smaller fixes:** m5 (Plan uses LongPath.ToDisplay) is in. R2-m6 is in: Walk skips the attribute read for a volume root, and on this machine C:\\ is Hidden|System, so its new test would fail without the fix. The unit-test renames and the new R-001 shapes are present.\n\nStill broken, measured with a probe startup hook in the published app during a live scan, evaluating the command without clicking:\n- **Results-list menu during a scan (m1, O-016).** At open, the menu's Tag and CommandParameter hold row a1 and the item is enabled. From the first refresh on, the container is out of the tree and holds {DisconnectedItem}. The menu stays open and still holds a1, but the item is disabled: CanExecute is False when evaluated against the MenuItem's CommandTarget, which is still bound to the detached PlacementTarget. Against the Window it is True.\n\nNew test weaknesses:\n- The 'dup.' ancestor assertion in R-001 is satisfied by the window the earlier root-row step left open, so it cannot fail, and the decoy check still runs without a real wait.\n- The hook writes menu.Tag itself before opening, so R-001 cannot notice if the app's own row capture goes missing.\n- The placeholder step builds its own MenuItem and logs 'disabled' even when it found no placeholder.\n- The B-007/B-008 status variants never confirm the status line was shown.\n- R-001's 'top' step can still cancel before the root listing has committed. I reasoned this from the code; I did not measure it.\n\nI did not run R-001, because it opens Explorer windows and Quit()s any it did not see at its baseline. The temporary probe folders are removed and the worktree is unchanged.\n\nSecond round: Second pass over the fix round, trying to break it: two new findings, both measured.\n\n1. **The status line now hides the reason on the error paths.** The M2 fix made the status line a single trimmed line, but the Failed and \"no longer exists\" messages still put the full path before the part that says what happened. In the default WPF font (Segoe UI 12), a Failed message with a 95-character path is 899 px wide, and the path alone runs to 647 px. The \"no longer exists\" message reaches the end of its path at 504 px. The line has about 832 px at the default width and about 512 px at the minimum width. So the reason and error code are cut at the default width once a path passes about 130 characters, and at the minimum width almost any real path leaves only the path visible. The whole message is still in the tooltip.\n\n2. **The new DisconnectedItem guard can never fire.** OnRowContextMenuOpening and OnRowContextMenuOpened test `DataContext.GetType().Name != \"DisconnectedItem\"`. WPF's sentinel is `MS.Internal.NamedObject`; only its ToString() is \"{DisconnectedItem}\". So that test is always true and filters nothing.\n\nThings I tried that held up:\n- **Focus without activating the window:** the hook's gesture step can focus a tree row without calling Activate. In two launches from this shell the window was active and CanExecute(null, Window) was True.\n- **Plan's new ToDisplay call:** the prefix rules (`\\\\?\\`, `\\\\?\\UNC\\`, `\\\\.\\`) match the old inline copy exactly.\n- **Walk's `Candidates.Count > 1` test:** it matches exactly the volume-root and share-root plans.\n- **The hook's surface regex:** 'tree-competing:' still splits correctly, because the regex backtracks from 'tree' when the colon doesn't follow.\n\nThe only temporary folder I made is removed, and the worktree is unchanged.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "Nine of the ten fixes hold. The results-list fix (m1, O-016) does not: its context menu still greys out once a live refresh replaces the row.\n\nWhat I checked:\n- **Build and rules:** 0 warnings, 0 errors; 296 Core tests passed; all 47 fitness rules hold.\n- **Ctrl+Enter (M1):** fixed. In the published app, with a largest-files row or the tree root row focused, CanExecute(null, Window) is True.\n- **Status line and window budget (M2):** fixed. At 560x644 the one-line status is 21.96 px. With the folder tree shown (the case that clipped in round one), the tree keeps 50.3 px visible and its root row is fully in view, with short or long messages.\n- **Smaller fixes:** m5 (Plan uses LongPath.ToDisplay) is in. R2-m6 is in: Walk skips the attribute read for a volume root, and on this machine C:\\ is Hidden|System, so its new test would fail without the fix. The unit-test renames and the new R-001 shapes are present.\n\nStill broken, measured with a probe startup hook in the published app during a live scan, evaluating the command without clicking:\n- **Results-list menu during a scan (m1, O-016).** At open, the menu's Tag and CommandParameter hold row a1 and the item is enabled. From the first refresh on, the container is out of the tree and holds {DisconnectedItem}. The menu stays open and still holds a1, but the item is disabled: CanExecute is False when evaluated against the MenuItem's CommandTarget, which is still bound to the detached PlacementTarget. Against the Window it is True.\n\nNew test weaknesses:\n- The 'dup.' ancestor assertion in R-001 is satisfied by the window the earlier root-row step left open, so it cannot fail, and the decoy check still runs without a real wait.\n- The hook writes menu.Tag itself before opening, so R-001 cannot notice if the app's own row capture goes missing.\n- The placeholder step builds its own MenuItem and logs 'disabled' even when it found no placeholder.\n- The B-007/B-008 status variants never confirm the status line was shown.\n- R-001's 'top' step can still cancel before the root listing has committed. I reasoned this from the code; I did not measure it.\n\nI did not run R-001, because it opens Explorer windows and Quit()s any it did not see at its baseline. The temporary probe folders are removed and the worktree is unchanged.\n\nSecond round: Second pass over the fix round, trying to break it: two new findings, both measured.\n\n1. **The status line now hides the reason on the error paths.** The M2 fix made the status line a single trimmed line, but the Failed and \"no longer exists\" messages still put the full path before the part that says what happened. In the default WPF font (Segoe UI 12), a Failed message with a 95-character path is 899 px wide, and the path alone runs to 647 px. The \"no longer exists\" message reaches the end of its path at 504 px. The line has about 832 px at the default width and about 512 px at the minimum width. So the reason and error code are cut at the default width once a path passes about 130 characters, and at the minimum width almost any real path leaves only the path visible. The whole message is still in the tooltip.\n\n2. **The new DisconnectedItem guard can never fire.** OnRowContextMenuOpening and OnRowContextMenuOpened test `DataContext.GetType().Name != \"DisconnectedItem\"`. WPF's sentinel is `MS.Internal.NamedObject`; only its ToString() is \"{DisconnectedItem}\". So that test is always true and filters nothing.\n\nThings I tried that held up:\n- **Focus without activating the window:** the hook's gesture step can focus a tree row without calling Activate. In two launches from this shell the window was active and CanExecute(null, Window) was True.\n- **Plan's new ToDisplay call:** the prefix rules (`\\\\?\\`, `\\\\?\\UNC\\`, `\\\\.\\`) match the old inline copy exactly.\n- **Walk's `Candidates.Count > 1` test:** it matches exactly the volume-root and share-root plans.\n- **The hook's surface regex:** 'tree-competing:' still splits correctly, because the regex backtracks from 'tree' when the colon doesn't follow.\n\nThe only temporary folder I made is removed, and the worktree is unchanged.",
+  "matches_design": false,
+  "findings": [
+   {
+    "id": "B3-1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "The m1 fix copies the row into menu.Tag and binds CommandParameter to Tag, but it leaves CommandTarget bound to the live PlacementTarget (MainWindow.xaml:17). While a scan runs, each refresh replaces TopLevelList.ItemsSource and detaches the ListBoxItem the menu was opened on. The MenuItem then routes CanExecute from a container that is no longer in the Window's tree, so it never reaches the Window's CommandBinding. The entry greys out while the menu is still open and still holds the right row. Clicking it does nothing, so 'Open in Explorer' from the results list during a scan is exactly as broken as before, and O-016 is not discharged.",
+    "evidence": "Measured with a startup hook in the published exe (built after the fix sources), during a live scan of a 24-folder root with 30,000 subfolders. At open: row=TopLevelRow:a1 tag=a1 param=a1 targetIsContainer=True enabled=True canExecute=True. After 600, 1200 and 1800 ms: listRefreshed=True containerInTree=False containerDc={DisconnectedItem} menuOpen=True tag=a1 param=a1 enabled=False canExecute(param,target)=False canExecute(param,window)=True. No test covers this shape: R-001's 'top' step only reveals after a stop.",
+    "fix": "Stop routing through the detached container. In OnRowContextMenuOpened (MainWindow.xaml.cs), set the MenuItem's CommandTarget to the owning ItemsControl (ItemsControl.ItemsControlFromItemContainer(target)) or to the Window, and drop the PlacementTarget binding at MainWindow.xaml:17. Add a hook step that opens a TopLevelList row's menu mid-scan, waits past a refresh, and asserts the MenuItem is still enabled."
+   },
+   {
+    "id": "B3-2",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "R-001's new 'dup.' ancestor check cannot fail. Step 3 (tree:root) already opens the case folder with 'reveal-root' selected, and nothing closes that window between steps. Step 4's Wait-ExplorerSelection $case 'reveal-root' therefore matches the leftover window at once, whatever step 4 did. The decoy check then runs immediately, with no real wait for Explorer, which selects within roughly 0.4-1.2 s. Ancestor/NameUnaddressable come from Walk's candidate index, not from what TryReveal handed to the shell. So a regression that parsed the original 'dup.' path would still log the right kind and reason and could still pass. That is the silent-decoy no-go the design requires this case to catch.",
+    "evidence": "WindowCases.ps1 Test-R001: step 3 at the 'tree:root' block (Wait-ExplorerSelection (Split-Path -Parent $root) (Split-Path -Leaf $root)), then step 4's `$dupAncestorSel = Wait-ExplorerSelection $case (Split-Path -Leaf $root)`, followed at once by the single-pass decoy loop. Windows are Quit() only in the finally block (the $baselineHwnds loop, line ~3180).",
+    "fix": "Run the 'dup.' step before the root step, or Quit() the non-baseline windows before each step. After the 'dup.' run, poll the $root windows for about 2 s and assert 'dup' is never in their selection."
+   },
+   {
+    "id": "B3-3",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "The reveal hook supplies values it should be observing. (a) RevealMode.cs:160 sets `menu.Tag = container.DataContext` before opening the menu, and setting IsOpen never raises ContextMenuOpening. So if the app's row capture (OnRowContextMenuOpening/Opened) were deleted, every menu step in R-001, including the competing-selection case-11 step, would still pass. (b) ProcessPlaceholder (RevealMode.cs:264-318) builds its own ContextMenu and MenuItem instead of using the placeholder row's menu. If it finds no placeholder node it passes CommandParameter=null, which is disabled anyway, and still logs disabled=true. So R-001's 'placeholder MenuItem is disabled' check can pass without ever touching a placeholder.",
+    "evidence": "RevealMode.cs:159-161 (PlacementTarget, then Tag, then IsOpen). RevealMode.cs:272-306 (the placeholderNode search can leave it null, and the log at :311-317 does not record whether one was found). WindowCases.ps1 step 13 checks only $pRow.disabled.",
+    "fix": "Delete RevealMode.cs:160 so the app's Opened handler is the only thing that fills Tag. In ProcessPlaceholder, log found=true|false and have R-001 require found=true."
+   },
+   {
+    "id": "B3-4",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "The B-007/B-008 variants added to guard M2 never confirm their premise, that the status line was on screen. StartupHook.cs:457-463 sets RevealStatus silently. The 'drives in' log line does not mention it, and the schema-1 report has no RevealStatus field. If FSA_HOOK_STATUS did not arrive, the variant would run as a plain minimum-size run and pass. The variants also cover only the Cancelled ending, not the Completed one with the folder tree, which is where round one measured the clipping.",
+    "evidence": "WindowCases.ps1 Test-B007/Test-B008 each add one Invoke-StoppedEnding call with $statusMsg; Invoke-StoppedEnding's checks never look at the status. StartupHook.cs:464 logs 'drives in ...' without status. For reference, my own measurement at 560x644 with the status visible after a Completed ending: FolderTree 50.3 px visible, root row fully visible, so the layout does hold today.",
+    "fix": "Append `status=<visible> statusHeight=<px>` to the 'drives in' line when FSA_HOOK_STATUS is set, and assert it in Invoke-StoppedEnding when $statusMsg is given. Add the same status variant for the Completed ending in B-007."
+   },
+   {
+    "id": "B3-5",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "R-001's 'top' step still cancels as soon as ScanningPanel is visible, without waiting for results rows. If the Cancel lands before the root listing commits, the scan returns Cancelled with no top-level snapshot. Scanner.Execute checks the token before ListRoot, and a cancelled ListRoot returns Cancelled with rootEntry < 0. ShowFinalTopLevel then clears the list and the step logs row-not-found. The larger New-TopsTree tree fixed the other side of the race (the scan finishing first) but not this one. The 'watch' mode used by B-007/B-008 waits for a Folder row with bytes before stopping for exactly this reason. I reasoned this from the code and did not measure how often it happens.",
+    "evidence": "RevealMode.cs:39-45 (WaitForScanToStart then StopScan, with no row wait). Scanner.cs:84-95. StartupHook.cs:111 (watch mode's precondition: 'a Folder row with Bytes over 0 and another still NotRead').",
+    "fix": "In RevealMode, before StopScan, poll until TopLevelList has a row whose Name matches the 'top:' target, as watch mode does, then cancel."
+   },
+   {
+    "id": "R2-B4-1",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "claim": "RevealStatus is now one line with TextTrimming=CharacterEllipsis (MainWindow.xaml:139-142). But FormatRevealStatus (MainWindow.xaml.cs) still puts the full path before the part that says what happened: \"Couldn't open Explorer for '<requested>': <Win32 message> (0x<hr>).\" and \"'<requested>' no longer exists. Highlighting '<shown>', the nearest folder that does.\" The catch block in OnOpenInExplorer builds the same Failed text. The trim therefore removes the reason, the error code or the words 'no longer exists', and leaves the path. Someone whose reveal failed, or who landed on an ancestor because the item was deleted, sees a line that is only a path, with no sign that anything went wrong unless they hover for the tooltip.",
+    "evidence": "Measured with WPF FormattedText in the default font (Segoe UI, 12), using a 95-character path. The Failed message is 170 chars and 899 px wide, and its path ends at 647 px. The NoLongerExists message is 178 chars and 909 px wide, and its path ends at 504 px. The line is about 832 px wide at the default 880 px window (window minus about 16 px frame and the DockPanel's 2x16 margin), and about 512 px at the 560 px minimum. So at the minimum width the NoLongerExists line shows only the path, and at the default width the Failed reason is cut once the path passes about 130 characters. The NameUnaddressable and hidden messages already lead with what happened.",
+    "fix": "Put the outcome first and the path last, so trimming removes the path and the tooltip keeps the whole text. For example: \"Couldn't open Explorer: <Win32 message> (0x<hr>). '<requested>'\" and \"No longer exists, so highlighting '<shown>' instead: '<requested>'\". Apply the same order to the Failed text built in OnOpenInExplorer's catch block."
+   },
+   {
+    "id": "R2-B4-2",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "OnRowContextMenuOpening and OnRowContextMenuOpened (MainWindow.xaml.cs, the two new handlers) only copy a row into menu.Tag when `DataContext.GetType().Name != \"DisconnectedItem\"`. WPF's disconnected sentinel is an MS.Internal.NamedObject; only its ToString() is \"{DisconnectedItem}\". So the test is always true and the guard never filters the sentinel. If Opened runs after a live refresh has already detached the container, it overwrites the row captured at ContextMenuOpening with the sentinel. PathOf then returns \"\" and the entry is disabled. That is rare, because Popup opens at Input priority and the refresh timer runs at Background, but it is exactly the case this guard was written for, and the B3-1 fix will be editing these same lines.",
+    "evidence": "Measured: [System.Windows.Data.BindingOperations]::DisconnectedSource.GetType().Name = 'NamedObject', FullName 'MS.Internal.NamedObject', ToString '{DisconnectedItem}'. In round three the live-scan probe saw containers with exactly this sentinel as DataContext after a refresh.",
+    "fix": "Replace both name comparisons with `!ReferenceEquals(dc, BindingOperations.DisconnectedSource)`. Since Opened alone suffices, the Window-level ContextMenuOpening walk can also be dropped."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "MainWindow.xaml.cs OnCanOpenInExplorer/OnOpenInExplorer now resolve the row as `e.Parameter ?? (Keyboard.FocusedElement as FrameworkElement)?.DataContext ?? OriginalSource`. Measured in the published app: CanExecute(null, Window) is True with a focused ListBoxItem and with a focused TreeViewItem. Hook gesture step: RevealMode.cs:134-151; R-001 step 12 asserts via=gesture."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "MainWindow.xaml:5 (MinHeight 644, declared) and RevealStatus with NoWrap, CharacterEllipsis and a ToolTip. Measured at 560x644 after a Completed ending: status 21.96 px; FolderTree 50.3 px visible with its root row fully visible, for both a 148-char and a 355-char message. The B-007/B-008 variants exist but do not confirm the status was shown (B3-4)."
+   },
+   {
+    "key": "O-016",
+    "discharged": "no",
+    "evidence": "Tag capture is in place (MainWindow.xaml.cs OnRowContextMenuOpening/Opened; MainWindow.xaml:18 binds to Tag), but CommandTarget is still bound to PlacementTarget (MainWindow.xaml:17). Measured during a live scan: after the first refresh the menu stays open with Tag=a1, but enabled=False and CanExecute against the MenuItem's target is False (B3-1)."
+   },
+   {
+    "key": "O-017",
+    "discharged": "no",
+    "evidence": "The missing shapes are now fed in R-001: %TEMP%.txt, the emoji name, 'dup', the tree root, sym_dir, the >260-char long_file.bin, and tree-competing inner.bin. But the 'dup.' ancestor poll is satisfied by the window step 3 left open, and the decoy check runs with no real wait (B3-2). That is the part the decision called out as the no-go this slice exists to prevent."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "ShellRevealTests: Plan_JunctionOrSymlink_ExactItemFirst deleted; the empty-path test renamed to Plan_EmptyOrWhitespace_ThrowsArgumentException. RevealMode.ProcessPlaceholder checks CanExecute with the NotOpenedYet node; in R-001's tree, 'subfolder' is unopened, so a node is found. The check uses a synthetic MenuItem and would also pass with no node (B3-3)."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "RevealMode.cs: the direct-Execute fallback is gone; each entry logs via=menu|gesture; the gesture step checks InputGestures for Ctrl+Enter (:143). R-001 asserts via=menu on the largest and subfolder steps and via=gesture on step 12."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "ShellReveal.cs:71 `string display = LongPath.ToDisplay(path);`; only the bare-drive check remains (:72-73)."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "ShellReveal.cs:253 `if (isExact && plan.Candidates.Count > 1)`. ShellRevealTests.Walk_VolumeRoot_HiddenAndSystemStayFalse plans C:\\. On this machine C:\\ is Hidden|System (measured in round two), so the test fails without the fix. It passes in the 296."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "The Test-R001 top step builds New-TopsTree ('a1-$Planted' target), so the scan outlasts the stop. The early-cancel side of the race remains (B3-5)."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "Wait-ExplorerSelection and the decoy loop now collect both $_.Name and Split-Path -Leaf $_.Path, so extension hiding no longer causes a false failure."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "The R-001 'tree:root' step reveals the tree root row and asserts its path and selection in the parent; Walk_VolumeRoot_HiddenAndSystemStayFalse covers a drive root."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "R-001 creates long_file.bin under three 70-char folders (asserted >260 chars) and reveals it from the tree, asserting the path and selection."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "'dup.' with a decoy is fed and Ancestor/NameUnaddressable asserted. The Explorer-side ancestor assertion is vacuous because step 3's window satisfies it (B3-2)."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "R-001 now reveals '%TEMP%.txt', the emoji name, 'dup', 'a,b;c.txt' and ' lead', each with a selection assertion."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "Junction, file symlink and now sym_dir (a folder symlink) are revealed with selection asserted."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "tree-competing selects the root row, then opens nested inner.bin's menu. The hook pre-fills Tag itself, so a missing app-side capture would go unnoticed; a wrong capture would still be caught, because Opened overwrites Tag (B3-3)."
+   },
+   {
+    "key": "C-012",
+    "exercised": "no",
+    "evidence": "The unreadable row and a top row after a stop are fed. 'A top-level row on screen during a running scan' is still not fed, and measured, it does not work (B3-1)."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "ProcessPlaceholder evaluates the command with the NotOpenedYet node. It uses a synthetic MenuItem and does not log whether a node was found (B3-3)."
+   },
+   {
+    "key": "C-014",
+    "exercised": "no",
+    "evidence": "Still no test; the design assigns none. The sequence guard at MainWindow.xaml.cs is unchanged."
+   }
+  ],
+  "drift": [
+   "MainWindow.xaml:168-170 still says both minimums fit 'in the 396 px the window's minimum size leaves below them'. At the new 644 px minimum the space below the pickers is 420 px, or 398 px with the status line (measured gridSlot 420.2 and 398.3). The new bullet at :156-159 is right; this older sentence was only half updated.",
+   "docs/design/SL-039-live-results.md:74 ('every size the window allows (560 by 620 and up …)') and docs/design/SL-044-folder-tree.md:60 ('its minimum stays 620') now describe a minimum that SL-047 changed to 644. The change was declared in the build but not in those docs.",
+   "Two handlers now write the same Tag: the Window-level OnRowContextMenuOpening (a visual-tree walk) and the ContextMenu's OnRowContextMenuOpened. Opened alone is enough, and no test raises ContextMenuOpening, so the walk is untested duplicate code.",
+   "The placeholder check (case 13) tests a synthetic MenuItem whose CommandParameter is the placeholder node, not the placeholder row's own RowContextMenu entry that the fix text named. By the design's own tree logic, the placeholder row is replaced before it can be seen."
+  ],
+  "unreviewed": [],
+  "second_round": {
+   "run_id": 1388,
+   "filed": 2
+  }
+ }
+}

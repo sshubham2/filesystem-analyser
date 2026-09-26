@@ -1,0 +1,598 @@
+{
+ "schema": "slice-record@1",
+ "slice": "SL-047",
+ "title": "Open an item in Explorer",
+ "status": "active",
+ "branch": "slice/SL-047",
+ "opened_at": "2026-09-26T16:16:45.596Z",
+ "merge_commit": null,
+ "how_to_read": "Each attempt is one line and a `details` filename in this same directory. Open a detail file ONLY when this index points you at one -- the summaries are here so you do not have to. `caused_by` is what sent the stage back; `changed` is what the attempt then touched, counted by kind. Several attempts in a row that were caused by the same stage and changed no `src` is a loop, not progress.",
+ "open": [
+  {
+   "stage": "build-check",
+   "issue": "C1 (derived): from a FILE in the results, the person can jump to it in Explorer: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "C2 (derived): from a FOLDER in the results, the person can jump to it in Explorer: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "C3 (derived): 'act on it there' — the jump lands with the item selected or opened in an Explorer window: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "C4 (derived): 'any file or folder in the results' — every results surface offers it (largest files list, folder tree, results list, and the unreadable-folders list where it names a folder): missing"
+  },
+  {
+   "stage": "risk-spike",
+   "issue": "odd-names-selected-exactly-in-explorer: needs first: A reveal path that does not depend on SHParseDisplayName(full path) for names ending in '.' or ' ', reserved device names such as 'con', and anything inside a folder with such a name. Un…"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Does PS-007's 'jump to it in Explorer and act on it there' accept landing on the nearest addressable ancestor (with the item's name in the status line) for items whose names Explorer mis-parses: trailing '.' or ' ', reserved device names, and anything under such a folder? Or must those items be selected exactly? Exact selection needs the untested route the odd-names spike named (a child PIDL built through IShellFolder on the parent), which adds a component and changes Plan's contract."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "PathOf as a switch over four row types versus a shared IHasPath interface (or one common property name) on the rows. The switch was kept because it is four types and needs no new abstraction."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Fallback landing: highlight the nearest addressable ancestor in its own parent (measured call shape, one mechanism) versus open the ancestor's contents through ShellExecute (lands where the person wants, second mechanism, unmeasured for long paths)."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Gestures: context menu plus Ctrl+Enter only, with no double-click on the flat lists (largest files, top-level). Uniformity with the tree, where double-click expands, won over double-click on the lists."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Failure and fallback reporting through a single status line, rather than a dialog or a toast. Only the latest message is kept."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The two architecture rules cover the shell-API boundary and the UI-thread block. Someone may want a rule for the planner's purity, and the design judged that a testability concern, not a defect."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "Ctrl+Enter on a results-list row during a live scan: each refresh replaces the list's items, so the focused ListBoxItem goes away and Ctrl+Enter then finds no row. The entry is disabled, so it never acts on a wrong target, but it does nothing. Validation recorded this as not reached. It needs a design decision, such as keeping focus or selection across refreshes, which is SL-039 territory."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "docs/design/SL-039-live-results.md:74 ('560 by 620 and up') and docs/design/SL-044-folder-tree.md:60 ('its minimum stays 620') describe the minimum height before SL-047 raised it to 644. They are those slices' own design records, so I left them unedited. A note, or an SL-047 design doc recording the change, would close the drift code-review raised."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "The O-029 status wording is not asserted by any test. A Core-side formatter test would pin it, but FormatRevealStatus lives in the App, which has no unit-test project."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: R2-B4-2's fix said to keep the row when the sentinel is seen. Instead, when OnRowContextMenuOpened sees the disconnected sentinel or a null row, it stores a NoRow stand-in rather than leaving Tag alo…"
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: B3-1's fix allowed either the owning ItemsControl or the Window as CommandTarget. I chose the Window, because it holds the CommandBinding and no refresh can detach it."
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: The build's declared reason for storing NoRow says the RowContextMenu 'is one instance shared by that list's rows'. In the published exe, TopLevelList rows 0 and 1 have different ContextMenu instance…"
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: The XAML comment (MainWindow.xaml:155-158) and CheckStatusShown both treat RevealStatus as one line. A NoWrap TextBlock still breaks at explicit line breaks, and 423 of about 4,500 FACILITY_WIN32 mes…"
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: The design's contract text ('CommandParameter = PlacementTarget.DataContext'; the context menu's command targets the row) no longer describes the code. The row is captured into the menu's Tag when it…"
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Revealing a \\\\server\\share root, or any item on a reachable SMB share. There is no share I may use: the loopback rig creates SMB client mappings, and the person's mapped Z: was left alone. Only Plan's unit tests cover the UNC root."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: C:\\ from the window's own tree root row. That needs a full scan of C:. C:\\ was revealed through Core's RevealAsync, the call the window makes."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A physical mouse right-click and a physical Ctrl+Enter. Menus were opened as ContextMenuService opens them, and the key was delivered in-process (thread keyboard state plus a routed KeyDown), not through SendInput."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Ctrl+Enter on a results-list row during a live scan works only until the next refresh (≤250 ms). After that, focus is on the ListBox and the press does nothing. Measured, not a wrong target. It needs the design decision build-slice recorded."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Explorer at Windows' default hidden settings (Hidden=2, ShowSuperHidden=0). This machine is at Hidden=1, and registry settings are off-limits. Only the hidden note is checked, not whether hidden or system items get selected."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A literal E_ACCESSDENIED (0x80070005) from SHParseDisplayName or SHOpenFolderAndSelectItems. The real denial produced E_ABORT (0x80004004), and the real network failure was 0x80070043, not 0x80070035."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A real removable or network volume disappearing mid-session. This was simulated with a never-present drive letter, giving 0x8007000F rather than the 0x80070003 the unit test fakes."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A machine with LongPathsEnabled=0. The 633-character reveal was measured only here, with LongPathsEnabled=1 and 8.3 names on C:."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A folder, rather than a file, at depth 2 or more revealed from the tree. GetPath was checked at depth on files, and folder selection on folders at depth 1."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Display scaling other than 100% for the one-line status budget (24 px) and the 644 px minimum height."
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The design put Ctrl+Enter on a RoutedUICommand whose only CommandBinding is on MainWindow, and resolved the row as e.Parameter ?? OriginalSource.DataContext. A key gesture matched at the Window has a null parameter and the Window's null DataContext, so the gesture never had a row and did nothing on…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: RevealStatus was added as a docked, wrapping TextBlock carrying full paths, while MainWindow.xaml:142-167 already budgets the 560x620 minimum size (20 px spare, 'text that grows with a path or a count is bounded'). Nobody cross-read that comment against the new element, and the hidden-file note sta…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The design named TopLevelList as the only results surface during a scan and bound the menu to PlacementTarget.DataContext, but never crossed that with SL-039's ItemsSource replacement every ~250 ms. Menu entries and Ctrl+Enter on the only mid-scan results surface lose their row within ~150 ms. The …"
+  },
+  {
+   "stage": "reflect",
+   "issue": "code-review missed: The m1 fix it prescribed (copy the row into menu.Tag on ContextMenuOpening, bind CommandParameter to Tag) was never run against a detached container, so it left CommandTarget bound to the dead PlacementTarget. The entry still greyed out mid-scan, and the build discharged O-016 on that basis. The fo…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The design listed the drive root as a case and the Hidden-attribute status note as a case, but not their intersection. NTFS volume roots carry Hidden|System, so revealing the tree root row of a whole-drive scan would always show a false 'C:\\ is hidden' note. No test revealed a root row."
+  },
+  {
+   "stage": "reflect",
+   "issue": "code-review missed: It accepted NoWrap + CharacterEllipsis as making RevealStatus one line across three rounds. A NoWrap TextBlock still breaks at explicit line breaks, and code-review attempt 6 reports 423 of about 4,500 FACILITY_WIN32 messages contain them. A Failed status can therefore still exceed the 24 px budget…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does Explorer select hidden and hidden+system items at Windows defaults (Hidden=2, ShowSuperHidden=0)? The hidden-file status note's wording rests on a Hidden=1 machine where hidden+system never selected (0/6). pagefile.sys usually tops the largest-…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does reveal of a path over 260 characters work with LongPathsEnabled=0 (the Windows default) in an app with no longPathAware manifest? The go measured for 300/600 characters was taken only with LongPathsEnabled=1 and 8.3 names on C:."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: When Explorer is set to open folders in tabs, or a window already has several tabs, does SHOpenFolderAndSelectItems land in the right tab? No tab ever formed in the spike and validate never tried."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Can a child PIDL built through IShellFolder on the parent select 'dup.', 'sp ' or 'con' exactly? Answering it decides whether the ancestor fallback (which is what PS-007's 'jump to it' currently delivers for those names) is acceptable or needs an ex…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: What should keep focus and selection on TopLevelList across the SL-039 live refresh? The design decision build-slice recorded is still unmade; the entry is disabled rather than wrong."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Low risk tier removed critique and critique-review from a slice that already had a no-go spike and a new interaction surface on MainWindow. The first complete code review then filed 2 majors and 8 minors, several derivable from the design text (Ctrl…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Build 1 shipped Ctrl+Enter dead on every surface, and its hook neither pressed the key nor read InputGestures, which the design had named as the check. Obligations O-009 and O-013 were 'discharged' citing unit tests that never fed the shape they wer…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Round-2 fixes generated a new round: 6 of the 7 round-3 findings were defects in round-2 fixes or tests (Tag fix leaving CommandTarget live, a type-name guard that never matched, status text with the path before the outcome, R-001 checks that could …"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The first-pass reveal hook filled in the values it should have observed (menu.Tag, direct Execute fallback, its own placeholder menu). R-001 would have passed with the app's row-capture code deleted, which nothing flagged until code review."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The build cycled 4 times on infra (agent process gone twice, provider 429 spend cap twice) and code-review attempt 1 failed outright. No design work was lost, but it inflated the run count and calendar time."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Code review passed with B3-1 (a criterion-breaking defect) owed and labelled minor, so validate #1 spent a whole run rediscovering it as criterion 12. This forced a send-back to build."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Risk-spike run 1 halted with 2 of 4 experiments unfinished because it asked for registry writes and a manual Ctrl+T. The slice was built anyway while the owner was away. Tab landing and hidden-item behaviour at Windows defaults were never measured, …"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Some drift remains at close: multi-line Win32 messages can break the one-line status budget, the NoRow comment claims one shared menu instance while the exe has per-row instances, the design's CommandParameter contract no longer matches the code, an…"
+  }
+ ],
+ "stages": [
+  {
+   "stage": "repro",
+   "title": "Repro",
+   "order": 1,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "build-check",
+   "title": "Build check",
+   "order": 2,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "risk-spike",
+   "title": "Risk spike",
+   "order": 3,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "design-slice",
+   "title": "Design",
+   "order": 4,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-26T16:43:04.888Z",
+     "head": "1d53fba58b7fbc807ce594b6e4b693583647316e",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique",
+   "title": "Critique",
+   "order": 5,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-26T17:00:30.097Z",
+     "head": "1d53fba58b7fbc807ce594b6e4b693583647316e",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique-review",
+   "title": "Critique review",
+   "order": 6,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-26T17:00:30.192Z",
+     "head": "1d53fba58b7fbc807ce594b6e4b693583647316e",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-review-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "build-slice",
+   "title": "Build",
+   "order": 7,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-26T17:00:30.526Z",
+     "head": "2aa0a44d0b2ee9bc867194539118f0774894e460",
+     "summary": "Implemented open-in-Explorer jump capability from all results surfaces (largest files list, virtualized folder tree, top-level results list, and unreadable-folders list).",
+     "caused_by": null,
+     "changed": {
+      "src": 7,
+      "tests": 4,
+      "config": 1,
+      "listed": 12,
+      "measured_by_git": 16
+     },
+     "details": "build-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-26T18:15:22.326Z",
+     "head": "8c47eb73e4fb68116897c0d02933eafe54fa4e74",
+     "summary": "Fixed all 10 review findings: resolved keyboard gesture target from Keyboard.FocusedElement for Ctrl+Enter, bounded RevealStatus to one line with tooltip and reserved headroom in 644 px MinHeight, captured row DataContext in menu.Tag on opening, eliminated duplicate path normalisation via LongPath.ToDisplay, and prevented false hidden notes on volume roots.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "2 obligation(s) landed on this stage after it passed (O-014, O-015), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-014 (fix): M1 (major): Ctrl+Enter does nothing on every surface. The key gesture sits on the command (MainWindow.xaml.cs:28-32), and the binding is on the Window (MainWindow.xaml:7-11). WPF's CommandManager matches the gesture when KeyDown reaches the Window and raises CanExecute/Executed with the Window as target and a null parameter. The handlers take `e.Parameter ?? (e.OriginalSource as FrameworkElem…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-014",
+       "O-015",
+       "O-016",
+       "O-017",
+       "O-018",
+       "O-019",
+       "O-020",
+       "O-021",
+       "O-022",
+       "O-023"
+      ]
+     },
+     "changed": {
+      "src": 3,
+      "tests": 4,
+      "listed": 7,
+      "measured_by_git": 11
+     },
+     "details": "build-slice-2.json"
+    },
+    {
+     "n": 3,
+     "state": "passed",
+     "at": "2026-09-26T19:20:19.949Z",
+     "head": "418cc8e4c127911a10fb740e899c0e83acaeb555",
+     "summary": "process gone without reporting",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "validation fails this build: The validation is right and the defect is in the code, so this is a rebuild. It is not a redesign and it does not need a person. What I checked in the tree myself at HEAD 8c47eb7 (the only uncommitted changes are .taad records, and src is untouched since build attempt 2): - src/FsAnalyser.App/MainWindow.xaml:17 binds the MenuItem's CommandTarget to the ContextMenu's PlacementTarget. - MainWindow.xaml.cs:353 (ShowTopLevel) replaces TopLevelList.ItemsSource with a whole new array on every live refresh. The ListBoxItem the menu was opened on is therefore detached, an…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-024",
+       "O-025",
+       "O-026",
+       "O-027",
+       "O-028",
+       "O-029",
+       "O-030"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-3.json"
+    },
+    {
+     "n": 4,
+     "state": "unrecorded",
+     "at": "2026-09-26T19:26:11.409Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- google-ai-studio 429: over this key's quota or rate limit.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "validation fails this build: The validation is right and the defect is in the code, so this is a rebuild. It is not a redesign and it does not need a person. What I checked in the tree myself at HEAD 8c47eb7 (the only uncommitted changes are .taad records, and src is untouched since build attempt 2): - src/FsAnalyser.App/MainWindow.xaml:17 binds the MenuItem's CommandTarget to the ContextMenu's PlacementTarget. - MainWindow.xaml.cs:353 (ShowTopLevel) replaces TopLevelList.ItemsSource with a whole new array on every live refresh. The ListBoxItem the menu was opened on is therefore detached, an…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-024",
+       "O-025",
+       "O-026",
+       "O-027",
+       "O-028",
+       "O-029",
+       "O-030"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-4.json"
+    },
+    {
+     "n": 5,
+     "state": "unrecorded",
+     "at": "2026-09-26T19:31:15.256Z",
+     "head": "",
+     "summary": "the provider turned this away rather than running it -- google-ai-studio 429: over this key's quota or rate limit.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "validation fails this build: The validation is right and the defect is in the code, so this is a rebuild. It is not a redesign and it does not need a person. What I checked in the tree myself at HEAD 8c47eb7 (the only uncommitted changes are .taad records, and src is untouched since build attempt 2): - src/FsAnalyser.App/MainWindow.xaml:17 binds the MenuItem's CommandTarget to the ContextMenu's PlacementTarget. - MainWindow.xaml.cs:353 (ShowTopLevel) replaces TopLevelList.ItemsSource with a whole new array on every live refresh. The ListBoxItem the menu was opened on is therefore detached, an…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-024",
+       "O-025",
+       "O-026",
+       "O-027",
+       "O-028",
+       "O-029",
+       "O-030"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-5.json"
+    },
+    {
+     "n": 6,
+     "state": "unrecorded",
+     "at": "2026-09-26T19:36:18.699Z",
+     "head": "",
+     "summary": "process gone without reporting; its agent claude.exe (pid 30348) was still running and has been stopped",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "validation fails this build: The validation is right and the defect is in the code, so this is a rebuild. It is not a redesign and it does not need a person. What I checked in the tree myself at HEAD 8c47eb7 (the only uncommitted changes are .taad records, and src is untouched since build attempt 2): - src/FsAnalyser.App/MainWindow.xaml:17 binds the MenuItem's CommandTarget to the ContextMenu's PlacementTarget. - MainWindow.xaml.cs:353 (ShowTopLevel) replaces TopLevelList.ItemsSource with a whole new array on every live refresh. The ListBoxItem the menu was opened on is therefore detached, an…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-024",
+       "O-025",
+       "O-026",
+       "O-027",
+       "O-028",
+       "O-029",
+       "O-030"
+      ]
+     },
+     "changed": {},
+     "details": "build-slice-6.json"
+    },
+    {
+     "n": 7,
+     "state": "unrecorded",
+     "at": "2026-09-26T19:42:01.728Z",
+     "head": "418cc8e4c127911a10fb740e899c0e83acaeb555",
+     "summary": "I closed the seven obligations that validation and review sent back.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "validation fails this build: The validation is right and the defect is in the code, so this is a rebuild. It is not a redesign and it does not need a person. What I checked in the tree myself at HEAD 8c47eb7 (the only uncommitted changes are .taad records, and src is untouched since build attempt 2): - src/FsAnalyser.App/MainWindow.xaml:17 binds the MenuItem's CommandTarget to the ContextMenu's PlacementTarget. - MainWindow.xaml.cs:353 (ShowTopLevel) replaces TopLevelList.ItemsSource with a whole new array on every live refresh. The ListBoxItem the menu was opened on is therefore detached, an…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-024",
+       "O-025",
+       "O-026",
+       "O-027",
+       "O-028",
+       "O-029",
+       "O-030"
+      ]
+     },
+     "changed": {
+      "src": 2,
+      "tests": 3,
+      "listed": 5,
+      "measured_by_git": 14
+     },
+     "details": "build-slice-7.json"
+    }
+   ]
+  },
+  {
+   "stage": "code-review",
+   "title": "Code review",
+   "order": 8,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-26T17:42:41.607Z",
+     "head": "2aa0a44d0b2ee9bc867194539118f0774894e460",
+     "summary": "the harness did not have Lsp, which this agent declares and its prompt relies on.",
+     "caused_by": null,
+     "changed": {},
+     "details": "code-review-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-26T17:55:15.390Z",
+     "head": "8c47eb73e4fb68116897c0d02933eafe54fa4e74",
+     "summary": "The Explorer reveal works from the context menu.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "code-review passed on 2026-09-26T18:15:20.395Z, and build-slice has judged since (2026-09-26T18:47:21.747Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-2.json"
+    },
+    {
+     "n": 3,
+     "state": "passed",
+     "at": "2026-09-26T18:47:50.511Z",
+     "head": "418cc8e4c127911a10fb740e899c0e83acaeb555",
+     "summary": "Nine of the ten fixes hold.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "code-review passed on 2026-09-26T19:00:08.522Z, and build-slice has judged since (2026-09-26T19:56:59.054Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-3.json"
+    },
+    {
+     "n": 4,
+     "state": "unrecorded",
+     "at": "2026-09-26T19:56:59.537Z",
+     "head": "",
+     "summary": "All seven fixes owed from the last round (O-024 to O-030) are in the tree and hold, and I found nothing new worth a finding.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "code-review passed on 2026-09-26T19:00:08.522Z, and build-slice has judged since (2026-09-26T19:56:59.054Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-4.json"
+    }
+   ]
+  },
+  {
+   "stage": "validate-slice",
+   "title": "Validate",
+   "order": 9,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "failed",
+     "at": "2026-09-26T19:04:49.877Z",
+     "head": "8c47eb73e4fb68116897c0d02933eafe54fa4e74",
+     "summary": "13 of the 14 acceptance criteria hold against the real Windows Explorer on this desktop.",
+     "caused_by": null,
+     "changed": {},
+     "details": "validate-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-26T20:12:52.357Z",
+     "head": "418cc8e4c127911a10fb740e899c0e83acaeb555",
+     "summary": "At HEAD 418cc8e, every acceptance criterion I could reach holds against the real Windows Explorer on this desktop, and nothing I measured failed.",
+     "caused_by": null,
+     "changed": {},
+     "details": "validate-slice-2.json"
+    }
+   ]
+  },
+  {
+   "stage": "reflect",
+   "title": "Reflect",
+   "order": 10,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-26T20:35:43.015Z",
+     "head": "418cc8e4c127911a10fb740e899c0e83acaeb555",
+     "summary": "SL-047 added 'Open in Explorer' (context menu plus Ctrl+Enter) on the largest-files list, top-level results list, folder tree and unreadable list.",
+     "caused_by": null,
+     "changed": {},
+     "details": "reflect-1.json"
+    }
+   ]
+  }
+ ]
+}

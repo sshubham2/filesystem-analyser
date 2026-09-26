@@ -1,0 +1,263 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-047",
+ "stage": "validate-slice",
+ "attempt": 1,
+ "at": "2026-09-26T19:04:49.877Z",
+ "head": "8c47eb73e4fb68116897c0d02933eafe54fa4e74",
+ "run_id": 1390,
+ "summary": "13 of the 14 acceptance criteria hold against the real Windows Explorer on this desktop. One does not. Criterion 12 fails: during a running scan, the 'Open in Explorer' entry on a results-list (TopLevelList) row greys out once the list refreshes (about every 250 ms), and clicking it does nothing. This is O-024, and it is still in the tree at HEAD 8c47eb7. I measured it myself with a probe startup hook of my own that never writes menu.Tag: on the artifacts exe, and again on a fresh publish, miEnabled=False, CanExecute(CommandTarget)=False while CanExecute(Window)=True, the container holds {DisconnectedItem}, and clicked=False with no outcome while the scan was still running.\n\nWhat holds, all observed through Shell.Application in the real Explorer: R-001 passed every check (all 15 shapes). My own clean-baseline probes found:\n- 'dup.', 'con' and 'sp ' land on reveal-root selected in its parent. The decoy 'dup' was never selected in 12 s of 100 ms sampling.\n- An item deleted after the scan gives Ancestor/NoLongerExists, with the parent selected in the grandparent.\n- A second reveal fired 200 ms after one to an unreachable share (\\\\192.0.2.1) keeps its own status after the slow one returns. A direct call of the same API returned Failed 0x80070043 after 42 s without climbing, and the UI thread's round trip never went above 1 ms.\n- The placeholder row gives CanExecute=False, and KindsList has no menu.\n- C:\\ opens This PC with 'OS (C:)' selected, and a 609-character path is selected exactly (these two through Core's RevealAsync, not through the window).\n\nThe build has 0 warnings, 296 Core tests pass, all 47 fitness rules hold, and B-007 and B-008 pass. The seven obligations O-024 to O-030 are owed to build-slice and none is discharged; the tree has not changed since code-review-3 raised them. This is not a loop: both build attempts changed src, and build-slice simply has not run since the latest findings.",
+ "payload": {
+  "status": "complete",
+  "verdict": "fails",
+  "contact": "real",
+  "summary": "13 of the 14 acceptance criteria hold against the real Windows Explorer on this desktop. One does not. Criterion 12 fails: during a running scan, the 'Open in Explorer' entry on a results-list (TopLevelList) row greys out once the list refreshes (about every 250 ms), and clicking it does nothing. This is O-024, and it is still in the tree at HEAD 8c47eb7. I measured it myself with a probe startup hook of my own that never writes menu.Tag: on the artifacts exe, and again on a fresh publish, miEnabled=False, CanExecute(CommandTarget)=False while CanExecute(Window)=True, the container holds {DisconnectedItem}, and clicked=False with no outcome while the scan was still running.\n\nWhat holds, all observed through Shell.Application in the real Explorer: R-001 passed every check (all 15 shapes). My own clean-baseline probes found:\n- 'dup.', 'con' and 'sp ' land on reveal-root selected in its parent. The decoy 'dup' was never selected in 12 s of 100 ms sampling.\n- An item deleted after the scan gives Ancestor/NoLongerExists, with the parent selected in the grandparent.\n- A second reveal fired 200 ms after one to an unreachable share (\\\\192.0.2.1) keeps its own status after the slow one returns. A direct call of the same API returned Failed 0x80070043 after 42 s without climbing, and the UI thread's round trip never went above 1 ms.\n- The placeholder row gives CanExecute=False, and KindsList has no menu.\n- C:\\ opens This PC with 'OS (C:)' selected, and a 609-character path is selected exactly (these two through Core's RevealAsync, not through the window).\n\nThe build has 0 warnings, 296 Core tests pass, all 47 fitness rules hold, and B-007 and B-008 pass. The seven obligations O-024 to O-030 are owed to build-slice and none is discharged; the tree has not changed since code-review-3 raised them. This is not a loop: both build attempts changed src, and build-slice simply has not run since the latest findings.",
+  "checks": [
+   {
+    "what": "Solution build",
+    "outcome": "passed",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build FsAnalyser.slnx --nologo",
+    "evidence": "Build succeeded. 0 Warning(s) 0 Error(s)"
+   },
+   {
+    "what": "Core unit tests (network traits excluded)",
+    "outcome": "passed",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --nologo --no-build --filter \"Network!=TEST-NET-1&Network!=SMB-LOOPBACK\"",
+    "evidence": "Passed! Failed: 0, Passed: 296, Skipped: 0, Total: 296"
+   },
+   {
+    "what": "Architecture rules, including SL-047's two new ones (shell reveal APIs only in ShellReveal.cs; no blocking wait on RevealAsync)",
+    "outcome": "passed",
+    "command": "Fitness op=check",
+    "evidence": "47 rule(s) checked against 81 file(s). Every declared rule holds."
+   },
+   {
+    "what": "R-001 window case: reveal matrix through the published app and the real Explorer",
+    "outcome": "passed",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-001",
+    "evidence": "PASSED: R-001, every line ok. Covers largest file, tree subfolder, tree root, dup. (Ancestor/NameUnaddressable), hs_file.sys note, junction, file and folder symlinks, a,b;c.txt, ' lead', %TEMP%.txt, dup, emoji, a 322-character long path, a competing-selection nested row, the gesture, the placeholder, an unreadable folder, and a top row after a stop. Explorer had 0 windows before and 0 after. Caveats: the hook writes menu.Tag itself (O-026), and the dup. ancestor check can pass on a leftover window (O-025)."
+   },
+   {
+    "what": "B-007 minimum-size layout, including the status-visible variant",
+    "outcome": "passed",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case B-007",
+    "evidence": "PASSED: B-007. Nothing confirms the status line was actually on screen (O-027), so this does not prove the M2 premise."
+   },
+   {
+    "what": "B-008 stopped long-path scan at minimum size, including the status-visible variant",
+    "outcome": "passed",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case B-008",
+    "evidence": "PASSED: B-008 (same O-027 caveat)"
+   },
+   {
+    "what": "Results-list (TopLevelList) row menu during a live scan (60k-folder tree), using my own probe startup hook that does not write menu.Tag, on artifacts/publish exe",
+    "outcome": "failed",
+    "command": "DOTNET_STARTUP_HOOKS=<temp>\\Sl047Probe.dll PROBE_MODE=livetop; artifacts/publish/FsAnalyser.App.exe <temp>\\live",
+    "evidence": "at-open: scanning=True containerOwned=False containerDC={DisconnectedItem} tagIsRow=True miEnabled=True canExec(target=CommandTarget)=False canExec(target=Window)=True. After 2 refreshes: miEnabled=False. Click: scanningAtClick=True clicked=False outcome=null status=''"
+   },
+   {
+    "what": "The same live-scan probe on a fresh publish, to rule out a stale exe",
+    "outcome": "failed",
+    "command": "eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o <temp>\\publish; then PROBE_MODE=livetop against it",
+    "evidence": "at-open miEnabled=False canExec(CommandTarget)=False canExec(Window)=True, containerDC={DisconnectedItem}. After refresh the same. clicked=False outcome=null while scanning=True"
+   },
+   {
+    "what": "Second reveal before the first returns: first to the unreachable \\\\192.0.2.1\\share\\far.txt, second 200 ms later to a local file",
+    "outcome": "passed",
+    "command": "PROBE_MODE=seq (cmd.Execute with a LargestFileRow for each path), with a parallel direct ShellReveal.RevealAsync(far) as a timing proxy",
+    "evidence": "Status went to 'Opening…' at 659 ms, then near.bin Exact at 1036 ms. The direct far call finished at 42134 ms: Kind=Failed, HResult=0x80070043, Shown empty (no climb). Final status at 45.6 s was still near.bin Exact. Max UI round trip 1 ms. Explorer showed small\\sub with near.bin selected."
+   },
+   {
+    "what": "Item deleted after the scan, opened from the largest-files list (the app's own Opened handler fills Tag)",
+    "outcome": "passed",
+    "command": "PROBE_MODE=deleted PROBE_TARGET=<small>\\other.bin",
+    "evidence": "tagIsRowDC=True miEnabled=True clicked=True. Kind=Ancestor Reason=NoLongerExists Shown=<small>. Explorer window on sl047-validate with sel=small. Status text puts the full path before 'no longer exists' (O-029)."
+   },
+   {
+    "what": "'dup.' next to a decoy 'dup', from a tree row, with 0 Explorer windows beforehand, sampling every window every 100 ms for 12 s",
+    "outcome": "passed",
+    "command": "PROBE_MODE=tree PROBE_TARGET='dup.'",
+    "evidence": "Kind=Ancestor Reason=NameUnaddressable. The only window ever seen was dupcase with sel=reveal-root (97 samples, first at ~1.0 s). No window ever showed reveal-root with 'dup' selected."
+   },
+   {
+    "what": "Reserved device name 'con' and trailing-space 'sp ' (decoy 'sp' present), from tree rows",
+    "outcome": "passed",
+    "command": "PROBE_MODE=tree PROBE_TARGET=con / 'sp '",
+    "evidence": "Both Kind=Ancestor Reason=NameUnaddressable. The only window was dupcase with sel=reveal-root (60 and 61 samples)."
+   },
+   {
+    "what": "Placeholder row and KindsList offer nothing",
+    "outcome": "passed",
+    "command": "PROBE_MODE=placeholder (the real FolderTreeNode.NotOpenedYetRow, evaluated through the Window's CommandBinding)",
+    "evidence": "placeholder fullPath='' canExec(placeholder)=False canExec(realRoot)=True kindsListStyleMenu=no-menu kindsContextMenu=null"
+   },
+   {
+    "what": "Drive root C:\\ through Core ShellReveal.RevealAsync (not through the window)",
+    "outcome": "passed",
+    "command": "pwsh: Add-Type FsAnalyser.Core.dll; [FsAnalyser.Core.Native.ShellReveal]::RevealAsync('C:\\')",
+    "evidence": "Kind=Exact hr=0x00000000 in 371 ms. The Explorer window title was 'This PC' with sel='OS (C:)<C:\\>'"
+   },
+   {
+    "what": "A 609-character file path through Core ShellReveal.RevealAsync, first read",
+    "outcome": "failed",
+    "command": "pwsh: RevealAsync(<609-char path>); matched selected items by .Path only",
+    "evidence": "Reported NOT SELECTED. The window was on the parent in 8.3 form (SL047-~1\\LLLLLL~1\\…), so matching by long .Path could not succeed. This was a flaw in my check, not in the product (the same issue as O-023). Re-read below."
+   },
+   {
+    "what": "The same 609-character reveal, re-read by item Name",
+    "outcome": "passed",
+    "command": "pwsh: RevealAsync(<609-char path>); read SelectedItems Name and Path",
+    "evidence": "Kind=Exact hr=0. The window was on the parent (8.3 form) with sel=six_hundred.bin<…\\SIX_HU~1.BIN>"
+   },
+   {
+    "what": "Fresh single-file publish and a read-window smoke run",
+    "outcome": "passed",
+    "command": "eng/dotnet.ps1 publish … -o <temp>\\publish; eng/read-window.ps1 -Root <temp>\\live -Exe <temp>\\publish\\FsAnalyser.App.exe",
+    "evidence": "FsAnalyser.App.exe 139,879,064 bytes, single file. read-window: EXIT 0"
+   },
+   {
+    "what": "The WPF disconnected sentinel's type name, which O-030's guard compares against",
+    "outcome": "passed",
+    "command": "pwsh: [System.Windows.Data.BindingOperations]::DisconnectedSource.GetType()",
+    "evidence": "type=MS.Internal.NamedObject name=NamedObject toString={DisconnectedItem}. The guard `GetType().Name != \"DisconnectedItem\"` is therefore always true (O-030 stands)."
+   },
+   {
+    "what": "Cleanup of my 600-character test folder with a variable \\\\?\\ path",
+    "outcome": "not-run",
+    "command": "Remove-Item -LiteralPath \"\\\\?\\$base\" -Recurse -Force (inside a here-string)",
+    "evidence": "The engine refused it as a possible system path, and the whole command did not run (the folder did not exist afterwards). I re-ran with a literal path, and all my temp folders are removed."
+   },
+   {
+    "what": "A real right-click (ContextMenuOpening route) and a real Ctrl+Enter key press (KeyBinding route)",
+    "outcome": "not-run",
+    "evidence": "In-process input cannot set the Ctrl modifier, and SendInput/UIA against the window is off-limits here. Menus were opened by PlacementTarget+IsOpen and clicked through MenuItem.OnClick. The gesture was exercised only by R-001's direct cmd.Execute(null, window)."
+   },
+   {
+    "what": "Opening a \\\\server\\share root, or an item on a reachable share",
+    "outcome": "not-run",
+    "evidence": "No share is available. The SMB loopback rig (Network=SMB-LOOPBACK) creates and removes SMB client mappings, which is outside what this run may change."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "1. Open a file from the largest-files list in Explorer (LargestFileRow.Path)",
+    "met": "yes",
+    "how": "R-001 step 1: largest_file.bin selected in its parent in the real Explorer, via the menu. My deleted probe opened a largest-files row's menu without writing Tag; the app's Opened handler filled it and the click revealed it. The seq probe revealed near.bin from a LargestFileRow with the file selected."
+   },
+   {
+    "criterion": "2. Open a folder from the folder tree (non-root row, depth 2 or more, full path from ScanStore.GetPath)",
+    "met": "yes",
+    "how": "R-001 step 2 (subfolder, selected in its parent), step 11 (nested inner.bin, path is Join(sub, 'inner.bin')) and step 10 (a deep 322-character long_file.bin whose path resolved exactly), all observed in Explorer."
+   },
+   {
+    "criterion": "3. Open the scan root: the tree root row, a drive root 'C:\\', a \\\\server\\share root",
+    "met": "not-checked",
+    "how": "The tree root row is met for real (R-001 step 3: reveal-root selected in its parent, path not doubled). C:\\ is met for real through Core's RevealAsync: This PC with 'OS (C:)' selected. The \\\\server\\share root is covered only by the Plan unit test (candidates = [\\\\server\\share]); its Explorer landing is unmeasured because there is no share."
+   },
+   {
+    "criterion": "4. Open an item with a very long path (~300 and ~600 characters, \\\\?\\ stripped)",
+    "met": "yes",
+    "how": "~300: R-001 step 10 through the app (322 characters, Exact, selected). ~600: a 609-character file through Core's RevealAsync, Exact hr=0, six_hundred.bin selected in its parent (Explorer reports the parent in 8.3 form). The ~600 case was not driven through the window. Prefix stripping is covered by the Plan_PrefixesStripped unit test."
+   },
+   {
+    "criterion": "5. Open an item whose path holds a name the shell mis-parses (trailing '.' or ' ' with decoys, reserved names, an unaddressable ancestor)",
+    "met": "yes",
+    "how": "Real, through the app, starting with 0 Explorer windows: 'dup.' (decoy 'dup'), 'sp ' (decoy 'sp') and 'con' each gave Ancestor/NameUnaddressable. The only window was the case folder with reveal-root selected, and the decoy was never selected (12 s at 100 ms sampling for dup.). 'nul.txt', 'COM¹', 'CONIN$' and 'dir.\\in.txt' are covered by Plan unit tests only. The landing on an ordinary ancestor is the same mechanism as the one measured."
+   },
+   {
+    "criterion": "6. Open an item with an unusual but addressable name (' lead', 'a,b;c.txt', emoji, '%TEMP%.txt', 'dup')",
+    "met": "yes",
+    "how": "R-001 steps 9a to 9e: each Exact and selected in Explorer."
+   },
+   {
+    "criterion": "7. Open an item deleted after the scan (parent exists; separately, the whole chain gone)",
+    "met": "yes",
+    "how": "Parent exists: real, through the app. other.bin deleted after the scan gave Ancestor/NoLongerExists, with Explorer on the grandparent and 'small' selected. Whole chain gone: only Walk_EntireChainDeleted_ReturnsFailed, with a fake delegate returning 0x80070003 (code level). On a fixed drive the climb always reaches an existing ancestor, so a real Failed needs a vanished volume."
+   },
+   {
+    "criterion": "8. Open a hidden or hidden+system item",
+    "met": "yes",
+    "how": "R-001 step 5: hs_file.sys Exact, and the status note is shown. The Walk_HiddenAndSystemAttributes unit test checks the flags. As the design specifies, the selection itself is not asserted because it depends on Explorer settings."
+   },
+   {
+    "criterion": "9. Open a junction or symbolic link entry (to a file and to a folder)",
+    "met": "yes",
+    "how": "R-001 steps 6 to 8 with real links (Developer Mode): junc, sym_file.bin and sym_dir each Exact and the link itself selected in its parent."
+   },
+   {
+    "criterion": "10. Handle a failing shell call that is not 'not found' (E_ACCESSDENIED, network error)",
+    "met": "yes",
+    "how": "Unit tests Walk_AccessDeniedOrNetworkError_StopsWithoutClimbing (0x80070005, 0x80070035) pass. Real: RevealAsync on \\\\192.0.2.1\\share\\far.txt returned Failed 0x80070043 after 42 s with Shown empty, so no climb. A real E_ACCESSDENIED was not produced."
+   },
+   {
+    "criterion": "11. Open from the context menu on a tree row other than the selected one, including a nested row",
+    "met": "yes",
+    "how": "R-001 step 11: the root is selected, then nested inner.bin is revealed and selected. My probes show the app's own ContextMenu.Opened handler sets Tag from PlacementTarget.DataContext without the hook's help (tagIsRowDC=True on tree rows). A real mouse right-click was not driven."
+   },
+   {
+    "criterion": "12. Open from the unreadable-folders list and from top-level rows (during a running scan, or after a stop or failure)",
+    "met": "no",
+    "how": "Unreadable: met (R-001 step 14, clean path, selected). Top-level after a stop: met (R-001 step 15). Top-level during a running scan: NOT met, measured twice (artifacts exe and a fresh publish). After the first refresh the ListBoxItem is detached, the MenuItem's CommandTarget (bound to PlacementTarget) no longer routes to the Window's CommandBinding, miEnabled=False, and the click does nothing (outcome=null, scanning=True). This is O-024."
+   },
+   {
+    "criterion": "13. Offer the command on a row that has no path (tree placeholder, KindsList aggregate, empty path)",
+    "met": "yes",
+    "how": "Probe: the real NotOpenedYetRow has FullPath '' and CanExecute through the Window binding is False. KindsList has neither a ContextMenu nor an item-style menu. Plan_EmptyOrWhitespace and Plan_InvalidOrRelativeInput unit tests pass."
+   },
+   {
+    "criterion": "14. Start a second reveal before the first returns (the first slower, an unreachable share)",
+    "met": "yes",
+    "how": "Seq probe: far (\\\\192.0.2.1) then near after 200 ms. The status showed near's Exact outcome at 1.0 s and still showed it at 45.6 s, after a parallel direct call of the same API to far had returned at 42.1 s. The UI thread never blocked (max round trip 1 ms). That the app's own far call had returned by then is inferred from the parallel call, not observed."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-024",
+    "verified": "no",
+    "evidence": "Not discharged. MainWindow.xaml:17 still binds CommandTarget to PlacementTarget. My probe (no Tag injection), during a live 60k-folder scan, on both the artifacts exe and a fresh publish: containerDC={DisconnectedItem}, miEnabled=False, canExec(CommandTarget)=False, canExec(Window)=True, clicked=False, outcome=null. Criterion 12 fails on this. Owed to build-slice."
+   },
+   {
+    "key": "O-025",
+    "verified": "no",
+    "evidence": "Test unchanged: R-001 still runs the tree:root step (WindowCases.ps1:2994) before the dup. step (:3005), never Quit()s between steps, and runs the decoy loop without waiting. The product behaviour is correct by my own measurement (0 windows beforehand, decoy never selected over 12 s), but the test weakness stands. Owed to build-slice."
+   },
+   {
+    "key": "O-026",
+    "verified": "no",
+    "evidence": "RevealMode.cs:160 still sets menu.Tag = container.DataContext. ProcessPlaceholder (RevealMode.cs:264-318) still builds its own MenuItem and logs no found= flag. My probes show the app's Opened handler does fill Tag by itself for largest, tree and top rows, so the product behaviour holds, but the test obligation is undone. Owed to build-slice."
+   },
+   {
+    "key": "O-027",
+    "verified": "no",
+    "evidence": "StartupHook.cs unchanged since code-review-3. B-007 and B-008 pass, but nothing in their output confirms the status line was visible, and there is no Completed-ending status variant. Owed to build-slice."
+   },
+   {
+    "key": "O-028",
+    "verified": "no",
+    "evidence": "RevealMode.Drive still calls WaitForScanToStart, then StopScan, without waiting for a top row (RevealMode.cs:39-45). R-001 step 15 passed on this run. The race was not measured. Owed to build-slice."
+   },
+   {
+    "key": "O-029",
+    "verified": "no",
+    "evidence": "FormatRevealStatus is unchanged and still puts the path first. The live status text in my deleted probe was \"'C:\\Users\\…\\small\\other.bin' no longer exists. Highlighting '…', the nearest folder that does.\" The pixel trimming at 560 px was not measured. Owed to build-slice."
+   },
+   {
+    "key": "O-030",
+    "verified": "no",
+    "evidence": "Both handlers still compare GetType().Name != \"DisconnectedItem\" (MainWindow.xaml.cs:716 and :729). Measured: BindingOperations.DisconnectedSource.GetType().Name = 'NamedObject', so the guard never filters. Owed to build-slice."
+   }
+  ],
+  "not_reached": [
+   "A real mouse right-click (the ContextMenuOpening route) and a real Ctrl+Enter key press through the KeyBinding. Menus were opened programmatically in-process, and the gesture was only exercised by a direct cmd.Execute(null, window). Ctrl+Enter on a TopLevelList row during a live scan is untested and may share O-024's detached-container problem.",
+   "Revealing a \\\\server\\share root, or any item on a reachable SMB share. There is no share, and the SMB loopback rig changes SMB client mappings.",
+   "A real E_ACCESSDENIED from SHParseDisplayName or SHOpenFolderAndSelectItems. The real network failure seen was 0x80070043 (ERROR_BAD_NET_NAME), not 0x80070035.",
+   "Explorer at Windows default hidden settings (Hidden=2, ShowSuperHidden=0). The spike found this machine at Hidden=1/SuperHidden=0, and registry settings are off-limits, so hidden and hidden+system selection at defaults is unknown. Only the note was checked.",
+   "A machine with LongPathsEnabled=0. The 609-character reveal was measured on this machine only (LongPathsEnabled=1, 8.3 names on C:).",
+   "Explorer reusing an existing window or tab for the reveal. The spike never formed a tab, and my runs always started from 0 Explorer windows.",
+   "The whole-chain-gone Failed(0x80070003) on a real vanished volume (USB or network drive removed). Only the Walk unit test with a fake delegate covers it.",
+   "Whether the one-line status, trimmed at the 560 px minimum width with a realistic deep path, hides the outcome words (O-029). Not measured in pixels.",
+   "The ~600-character path and C:\\ through the window's own menu. Both were revealed through Core's RevealAsync, which is what the window calls, but not from a row.",
+   "Whether the app's own unreachable-share reveal returned before my final status read. I inferred it from a parallel direct call of the same API (42.1 s), not observed inside the window."
+  ]
+ }
+}

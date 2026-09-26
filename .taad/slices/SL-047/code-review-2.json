@@ -1,0 +1,251 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-047",
+ "stage": "code-review",
+ "attempt": 2,
+ "at": "2026-09-26T17:55:15.390Z",
+ "head": "8c47eb73e4fb68116897c0d02933eafe54fa4e74",
+ "run_id": 1382,
+ "summary": "The Explorer reveal works from the context menu. The planner, Walk, STA runner and interop are built as designed. Two defects stand, and I measured both in the published app. (1) Ctrl+Enter never opens anything. The gesture is matched at the Window's CommandBinding, so WPF raises CanExecute and Executed with the Window as target and no parameter. The Window has no DataContext, so PathOf returns an empty string. In the real app, with a largest-files row focused, CanExecute(null, Window) is False and CanExecute(null, row) is True. Meanwhile the menu advertises \"Ctrl+Enter\". (2) The new RevealStatus line is docked at the bottom and wraps. It breaks the SL-040 guarantee that every list keeps one full row visible at the minimum window size. At 560x620, the two-line hidden-file note leaves the folder tree 8.4 px visible, and a four-line mis-parsed-name message leaves it 0 px. There are also smaller problems. A context menu opened on a live results-list row greys out at the next refresh. R-001 creates several matrix shapes and never feeds them in: the emoji, '%TEMP%.txt' and 'dup' names, a nested row, the root row, a long path, and a symlink to a folder. Two unit tests are named for shapes they don't feed, and obligations cite them: the junction test uses a plain string, and the CanExecute test never calls CanExecute. Plan re-implements LongPath.ToDisplay. What I ran: build (0 warnings, 0 errors); Core tests (295 passed); Fitness (all 47 rules hold); window cases B-007 and B-008 (both pass, with the status line hidden); a WPF routing probe; a probe of SHParseDisplayName on odd, long, link and deleted paths (addressable odd names and links resolve exactly, 'dup.' resolves to the decoy 'dup', and a deleted item or one under a deleted folder gives 0x80070002); and a throwaway startup hook in %TEMP% against the published exe, since removed. I did not run R-001. It opens Explorer windows and calls Quit() on every Explorer window that was absent at its baseline, including any a person opens during the run. So the builder's R-001 pass is still only the builder's claim. The two earlier code-review attempts on this slice recorded nothing: one lacked the language-server tool, the other is unrecorded.\n\nSecond round: Second round: I walked the changed code trying to break it. Three new findings, none of them in round one.\n\n1. The hidden check treats an NTFS drive root as a hidden item. I measured `\\\\?\\C:\\` and `\\\\?\\D:\\` reading \"Hidden, System, Directory\". So opening the folder tree's root row after a whole-drive scan (the drive buttons, the app's main flow) shows a false \"'C:\\' is hidden…\" note.\n\n2. R-001's 'top' step tries to stop a scan that finishes in 63-71 ms. I measured that with three runs of the published app on the same 30×50 tree. If the scan wins, the results list is replaced by the tree and the step logs row-not-found. That fails validation for no product reason.\n\n3. R-001 matches Explorer's selection on FolderItem.Name. That is the display name, and it drops known extensions when Explorer's \"File name extensions\" option is off, which is the Windows default. This PC shows extensions (Name reads \"x.txt\"), so the check passes here only.\n\nWhat I tried that held up, all measured:\n- **Whitespace in names.** The shell resolves names ending in a no-break space, an ideographic space or U+2028 exactly, so the planner rightly leaves them alone. Tabs cannot occur in NTFS names; creating one fails.\n- **Trailing dot or space after an extension.** 'x.txt ' and 'x.txt.' resolve to the decoy 'x.txt'. The planner already flags both.\n- **Case-sensitive folder.** In a case-sensitive folder the shell resolves 'Dup' and 'dup' to themselves. Whether Explorer then selects the right one is unmeasured, because checking it would mean opening windows.\n\nAlso checked by reading:\n- The report writer never serialises the new TopLevelRow.Path or UnreadableRow, so the Q-016 no-paths rule still holds.\n- Plan throws nothing but ArgumentException. A failure to start the thread is caught by the handler's try.\n- A PIDL is freed on every path.\n\nI left out two things on purpose. The architecture-rule regexes can be evaded, for example by writing `/SELECT,` in capitals, but they are the design's rules. And StartScan does not advance the reveal sequence number, so a reveal still in flight can write its message after the next scan starts; the message is still true, so the consequence is negligible.\n\nAll probes ran in temporary folders I created and have removed. The worktree is unchanged.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The Explorer reveal works from the context menu. The planner, Walk, STA runner and interop are built as designed. Two defects stand, and I measured both in the published app. (1) Ctrl+Enter never opens anything. The gesture is matched at the Window's CommandBinding, so WPF raises CanExecute and Executed with the Window as target and no parameter. The Window has no DataContext, so PathOf returns an empty string. In the real app, with a largest-files row focused, CanExecute(null, Window) is False and CanExecute(null, row) is True. Meanwhile the menu advertises \"Ctrl+Enter\". (2) The new RevealStatus line is docked at the bottom and wraps. It breaks the SL-040 guarantee that every list keeps one full row visible at the minimum window size. At 560x620, the two-line hidden-file note leaves the folder tree 8.4 px visible, and a four-line mis-parsed-name message leaves it 0 px. There are also smaller problems. A context menu opened on a live results-list row greys out at the next refresh. R-001 creates several matrix shapes and never feeds them in: the emoji, '%TEMP%.txt' and 'dup' names, a nested row, the root row, a long path, and a symlink to a folder. Two unit tests are named for shapes they don't feed, and obligations cite them: the junction test uses a plain string, and the CanExecute test never calls CanExecute. Plan re-implements LongPath.ToDisplay. What I ran: build (0 warnings, 0 errors); Core tests (295 passed); Fitness (all 47 rules hold); window cases B-007 and B-008 (both pass, with the status line hidden); a WPF routing probe; a probe of SHParseDisplayName on odd, long, link and deleted paths (addressable odd names and links resolve exactly, 'dup.' resolves to the decoy 'dup', and a deleted item or one under a deleted folder gives 0x80070002); and a throwaway startup hook in %TEMP% against the published exe, since removed. I did not run R-001. It opens Explorer windows and calls Quit() on every Explorer window that was absent at its baseline, including any a person opens during the run. So the builder's R-001 pass is still only the builder's claim. The two earlier code-review attempts on this slice recorded nothing: one lacked the language-server tool, the other is unrecorded.\n\nSecond round: Second round: I walked the changed code trying to break it. Three new findings, none of them in round one.\n\n1. The hidden check treats an NTFS drive root as a hidden item. I measured `\\\\?\\C:\\` and `\\\\?\\D:\\` reading \"Hidden, System, Directory\". So opening the folder tree's root row after a whole-drive scan (the drive buttons, the app's main flow) shows a false \"'C:\\' is hidden…\" note.\n\n2. R-001's 'top' step tries to stop a scan that finishes in 63-71 ms. I measured that with three runs of the published app on the same 30×50 tree. If the scan wins, the results list is replaced by the tree and the step logs row-not-found. That fails validation for no product reason.\n\n3. R-001 matches Explorer's selection on FolderItem.Name. That is the display name, and it drops known extensions when Explorer's \"File name extensions\" option is off, which is the Windows default. This PC shows extensions (Name reads \"x.txt\"), so the check passes here only.\n\nWhat I tried that held up, all measured:\n- **Whitespace in names.** The shell resolves names ending in a no-break space, an ideographic space or U+2028 exactly, so the planner rightly leaves them alone. Tabs cannot occur in NTFS names; creating one fails.\n- **Trailing dot or space after an extension.** 'x.txt ' and 'x.txt.' resolve to the decoy 'x.txt'. The planner already flags both.\n- **Case-sensitive folder.** In a case-sensitive folder the shell resolves 'Dup' and 'dup' to themselves. Whether Explorer then selects the right one is unmeasured, because checking it would mean opening windows.\n\nAlso checked by reading:\n- The report writer never serialises the new TopLevelRow.Path or UnreadableRow, so the Q-016 no-paths rule still holds.\n- Plan throws nothing but ArgumentException. A failure to start the thread is caught by the handler's try.\n- A PIDL is freed on every path.\n\nI left out two things on purpose. The architecture-rule regexes can be evaded, for example by writing `/SELECT,` in capitals, but they are the design's rules. And StartScan does not advance the reveal sequence number, so a reveal still in flight can write its message after the next scan starts; the message is still true, so the consequence is negligible.\n\nAll probes ran in temporary folders I created and have removed. The worktree is unchanged.",
+  "matches_design": false,
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "claim": "Ctrl+Enter does nothing on every surface. The key gesture sits on the command (MainWindow.xaml.cs:28-32), and the binding is on the Window (MainWindow.xaml:7-11). WPF's CommandManager matches the gesture when KeyDown reaches the Window and raises CanExecute/Executed with the Window as target and a null parameter. The handlers take `e.Parameter ?? (e.OriginalSource as FrameworkElement)?.DataContext` (MainWindow.xaml.cs:709,716). That is the Window's DataContext, which is null, so PathOf returns \"\", CanExecute is false and nothing runs. The design's contract says 'Ctrl+Enter acts on the focused row', and the context menu advertises InputGestureText=\"Ctrl+Enter\". Neither the hook nor R-001 presses the key or reads InputGestures, so nothing caught this.",
+    "evidence": "Two measurements. (a) A WPF probe with a Window-level CommandBinding and a KeyGesture, with KeyDown raised on a ListBoxItem: Executed fired with OriginalSource=Window, Parameter=null, DataContext=null. (b) A startup hook in the published FsAnalyser.App.exe focused the first LargestFilesList row (focusedElement=ListBoxItem, gesture Control+Return). OpenInExplorer.CanExecute(null, window) = False, the target the key gesture uses; CanExecute(null, focusedRow) = True. There is no DataContext assignment anywhere in src/FsAnalyser.App.",
+    "fix": "In OnCanOpenInExplorer and OnOpenInExplorer, when e.Parameter is null, resolve the row from (Keyboard.FocusedElement as FrameworkElement)?.DataContext (the focused ListBoxItem or TreeViewItem) before falling back to OriginalSource. Add a hook step that focuses a row container and evaluates the command against the Window target, as the gesture does, then asserts a reveal."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "cross-cutting-conformance",
+    "claim": "The new RevealStatus TextBlock is docked at the bottom (DockPanel.Dock=Bottom), has an 8 px top margin and TextWrapping=Wrap, and its messages embed full paths. It takes height out of the budget SL-040 fixed for the minimum window size. MainWindow.xaml:142-167 says both list minimums (376 px) fit in the 396 px left at 560x620 (20 px spare) and that 'Text that grows with a path or a count is bounded'. RevealStatus is unbounded and stays on screen until the next reveal or scan. For example, the hidden-file note stays after revealing pagefile.sys, which usually tops the largest-files list. So the Grid is laid out taller than its slot and the folder tree or results list is clipped below one full row. B-007/B-008 never show the status line, so they still pass.",
+    "evidence": "MainWindow.xaml:138-140 against the budget comment at :142-167. Measured with a startup hook in the published exe after a completed scan, at 560x620. Status hidden: gridSlot 396.2, FolderTree 48.3 px visible, first row fully visible. Hidden-file note (148 chars, 31.9 px): gridSlot 356.3, grid laid out at 376.0, FolderTree 8.4 px visible, root row (20 px) not fully visible. Mis-parsed-name message with a ~270-char path (360 chars, 63.8 px): FolderTree 0.0 px visible.",
+    "fix": "Make RevealStatus one line: TextWrapping=NoWrap, TextTrimming=CharacterEllipsis, ToolTip bound to its Text. Then reserve its height in the budget, for example by raising the window's MinHeight by the line's height and updating the comment at :142-167. Add a B-007/B-008 variant with the status visible."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "While a scan runs, ShowTopLevel replaces TopLevelList.ItemsSource with a new array on every snapshot (MainWindow.xaml.cs:345-353). Every existing ListBoxItem is then disconnected and its DataContext becomes {DisconnectedItem}. A context menu opened on a live row therefore loses its CommandParameter (PlacementTarget.DataContext) at the next refresh, and 'Open in Explorer' turns disabled before the person can click it. There is no wrong target, but the matrix's 'a top-level row on screen during a running scan' does not work in practice. R-001 only reveals after a stop.",
+    "evidence": "WPF probe on a recycling ListBox: after ItemsSource was set to a new re-sorted array holding the same row objects, the old container had DataContext={DisconnectedItem} and was out of the tree; index 0 had a new container. The CommandParameter binding is at MainWindow.xaml:18.",
+    "fix": "Capture the row when the menu opens instead of binding to it live. For example, a ContextMenuOpening handler that copies the container's DataContext into the menu's Tag, with CommandParameter bound to Tag. Or skip RefreshTopLevel while a TopLevelList row's context menu is open."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "R-001 creates or skips several matrix shapes without feeding them in, yet the builder cites it for those obligations. Case 6's WHY requires Explorer to be seen selecting each name exactly: the emoji file, '%TEMP%.txt' and 'dup' (no dot) are created and never revealed; only 'a,b;c.txt' and ' lead' are. There is no nested tree row and no competing selection (case 11): every tree target is a direct child of the root and nothing is selected. There is no tree root row (case 3) and no long path through the App (case 4). There is no symlink to a folder (case 9). For 'dup.' it never asserts the ancestor landing, and it reads the decoy selection once, without waiting, straight after the app exits.",
+    "evidence": "tests/window/WindowCases.ps1:2919-2926 creates ' lead', 'a,b;c.txt', the emoji and '%TEMP%.txt'; only :3020 and :3028 reveal any of them. Tree targets at :2955-3028 are all root children. The decoy loop at :2972-2981 has no wait and no ancestor assertion. Mitigation I measured: SHParseDisplayName resolves '%TEMP%.txt', '%USERNAME%.txt' (with 'sshub.txt' beside it), the emoji name, ' lead', 'a,b;c.txt', 'dup', a junction, and file and folder symlinks to exactly themselves, so the remaining risk is low.",
+    "fix": "Add targets to R-001: 'tree:%TEMP%.txt', the emoji name, 'tree:dup', 'tree:inner.bin' with another tree row selected first, the tree root row, a folder symlink, and a >260-char nested file. For 'dup.', poll Wait-ExplorerSelection on the case folder for 'reveal-root' before running the decoy check."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "Two unit tests are named for shapes they never feed in, and the obligations cite them as discharge. Plan_JunctionOrSymlink_ExactItemFirst plans the plain string C:\\folder\\link. No link exists, and Plan does no I/O, so the test is identical to the plain-folder theory. CanExecute_EmptyOrPlaceholder_ReturnsFalse only asserts Plan(\"\") throws. It never calls PathOf or CanExecute, and never touches the NotOpenedYet placeholder row or KindsList.",
+    "evidence": "tests/FsAnalyser.Core.Tests/ShellRevealTests.cs:237-250. The O-009 and O-013 claims cite them. By reading, the code is right: the NotOpenedYetRow session has no store, so FullPath is \"\" (FolderTreeNode.cs:27,66-77), and KindsList has no ContextMenu setter.",
+    "fix": "Delete Plan_JunctionOrSymlink_ExactItemFirst, which R-001's real links already cover. Rename the other to what it tests. Cover the placeholder with a hook step that asserts the placeholder row's 'Open in Explorer' MenuItem has IsEnabled == false."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "The reveal hook falls back to calling RoutedCommand.Execute directly when the MenuItem click did not start a reveal, and it does not log which path ran. So R-001 cannot tell a working menu entry from one whose click did nothing, although the design says the hook 'proves the menu item's binding'. The hook also never reads the command's InputGestures, though the design says the gesture is checked that way.",
+    "evidence": "tests/window/FsaWindowHook/RevealMode.cs:134-145 (the fallback). The log entry at :209-219 has no field recording whether the menu or the fallback ran.",
+    "fix": "Remove the fallback, or log \"via\":\"menu\"|\"direct\" and have R-001 require \"menu\". Add the gesture check described in M1's fix."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "over-engineering",
+    "claim": "ShellReveal.Plan has its own copy of the \\\\?\\ and \\\\?\\UNC\\ prefix strip that LongPath.ToDisplay already implements, and of NormalizeRoot's rule that a bare 'C:' means 'C:\\'. If one copy changes and the other does not, they drift. ToExtended already handles \\\\.\\, for instance, and neither display copy does.",
+    "evidence": "src/FsAnalyser.Core/Native/ShellReveal.cs:71-80 against LongPath.cs:61-68 (ToDisplay) and :37-38 (NormalizeRoot's bare-drive rule). The design says Plan 'uses the same display-form convention as LongPath.cs'.",
+    "fix": "Keep LongPath.ToDisplay. In Plan, write `string display = LongPath.ToDisplay(path);` and keep only the bare-drive check."
+   },
+   {
+    "id": "R2-m6",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "Walk reads File.GetAttributes on every Exact landing (ShellReveal.cs:258-274) and assumes the Hidden bit means Explorer will not show the item. NTFS volume roots carry Hidden|System, yet This PC always lists drives. After a whole-drive scan the folder tree's root row has FullPath \"C:\\\", so Plan returns [\"C:\\\"], Walk returns Exact with Hidden=true and System=true, and MainWindow.xaml.cs:759-760 shows \"'C:\\' is hidden, so Explorer only highlights it if it is set to show hidden files (and protected operating system files, for system items).\" That is false, and it appears every time someone opens the root row of a drive scan. No test reveals a root row, so nothing catches it.",
+    "evidence": "Measured: [IO.File]::GetAttributes('\\\\?\\C:\\') and ('\\\\?\\D:\\') both return 'Hidden, System, Directory'; '\\\\?\\C:\\Users' returns 'ReadOnly, Directory'. The path is FolderTreeNode.FullPath for the root -> Name -> store.GetPath(0) = \"C:\\\" (FolderTreeNode.cs:58,70-71) -> ShellReveal.Plan (parts empty, candidates [root]) -> Walk isExact -> LongPath.ToExtended(\"C:\\\") -> GetAttributes. GetLeafName(\"C:\\\") falls back to the whole path, so the note names 'C:\\'.",
+    "fix": "In Walk, skip the attribute read when the exact item is the volume root: compute the flags only when `plan.Candidates.Count > 1`, since only the root has no ancestor candidate. Add a Walk test: Plan(@\"C:\\\") with tryReveal `_ => 0` asserts Hidden == false."
+   },
+   {
+    "id": "R2-m7",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "R-001's 'top' step only works if the hook's Cancel lands before the scan completes, and the tree it builds scans in about 65 ms. RevealMode.cs:39-45 polls every 50 ms for ScanningPanel, then dispatches a Cancel click. If the scan completes first, ShowFolderTree sets TopLevelList.ItemsSource = null and collapses it (MainWindow.xaml.cs:399-400). FindTopContainer then finds nothing, the step logs row-not-found, and R-001 fails at validation for no product reason. The builder's single pass does not show the race is won reliably.",
+    "evidence": "Measured: eng/read-window.ps1 on the same tree R-001 builds (WindowCases.ps1:3040-3048, 30 folders x 50 empty subfolders): three runs, all Completed, elapsedMs 64, 71, 63 ('Read in 0.1 s'). B-007/B-008 size their stop trees to 'take the scan past a second' for this reason (WindowCases.ps1:1753-1754).",
+    "fix": "Build the top case's tree with New-TopsTree or New-LargeTree (K-002 stops a scan of New-LargeTree), not 30x50 empty folders, so the stop always lands mid-scan."
+   },
+   {
+    "id": "R2-m8",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "Wait-ExplorerSelection decides whether the expected item is selected by comparing FolderItem.Name (WindowCases.ps1:2877-2878). Name is Explorer's display name, and it drops a known extension when the 'File name extensions' option is off, which is the Windows default. With that setting, 'a,b;c.txt' (and any other registered extension) is never found among the selected names, so R-001 fails even though Explorer selected the right item. This PC shows extensions, which is the only reason the builder's run passed.",
+    "evidence": "Measured on this machine: Shell.Application NameSpace(folder).Items() gives Name='x.txt' for x.txt, so extensions are shown here. That Name follows the hide-extensions option is standard shell behaviour. I did not measure it, because I did not read or change the person's Explorer settings.",
+    "fix": "In Wait-ExplorerSelection, and in the 'dup' decoy loop at :2977, compare leaf names from the item's path: `@($doc.SelectedItems() | ForEach-Object { Split-Path -Leaf $_.Path })`."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "tests/window/WindowCases.ps1:2945-2952: 'largest:largest_file.bin' goes through the real LargestFilesList row's context menu (RevealMode.cs:236-253, 103-148). It asserts the resolved path equals the created file, kind is Exact, and Wait-ExplorerSelection sees the root with that file selected. I did not run R-001; the pass is the builder's."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "WindowCases.ps1:2955-2962: 'tree:subfolder' is a non-root row whose Name is a bare name. The path is asserted equal to $sub (FolderTreeNode.FullPath via ScanStore.GetPath, FolderTreeNode.cs:66-77), and the folder is selected in its parent. Only a direct child of the root is exercised, not a grandchild."
+   },
+   {
+    "key": "O-003",
+    "discharged": "no",
+    "evidence": "Only Plan is fed root shapes: 'C:\\', 'C:' and '\\\\server\\share' (ShellRevealTests.cs:47-80). No tree root row is revealed through the App, and the drive-root landing is not observed. By reading, FolderTreeNode.FullPath returns Name, which is GetPath(0), for the root, so there is no doubling. The shape itself is still not exercised."
+   },
+   {
+    "key": "O-004",
+    "discharged": "no",
+    "evidence": "ShellRevealTests.cs:91-106 feeds 266- and 572-character strings to Plan only. The \\\\?\\ strip is tested on short paths only (:82-89). No long path goes through the App or Explorer, which the case's WHY requires. My SHParseDisplayName probe parsed a 611-character path successfully."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "ShellRevealTests.cs:17-32 covers 'dup.', 'sp ', 'con', 'con.txt', 'NUL', 'COM¹', 'CONIN$' and 'x\\dir.\\in.txt'; :193-209 covers Walk NameUnaddressable. WindowCases.ps1:2914-2981 creates 'dup.' beside a decoy 'dup' and asserts Ancestor/NameUnaddressable through the App. It does not assert the ancestor landing (see m2)."
+   },
+   {
+    "key": "O-006",
+    "discharged": "no",
+    "evidence": "Plan theories feed all five names (ShellRevealTests.cs:34-45). In Explorer, R-001 reveals only 'a,b;c.txt' and ' lead' (WindowCases.ps1:3020-3034). The emoji, '%TEMP%.txt' and 'dup' are created (:2923-2926, :2914) and never revealed, but the WHY requires each to be seen selected. My probe shows SHParseDisplayName resolves them exactly."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "ShellRevealTests.cs:138-172: Walk with a fake not-found then success gives Ancestor/NoLongerExists; all not-found gives Failed 0x80070003. My probe of the real shell returns 0x80070002 for a deleted file and for a file under a deleted folder. Walk treats both as not-found (ShellReveal.cs:287-292)."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "ShellRevealTests.cs:211-235 creates a real Hidden+System file and asserts both flags on an Exact outcome. WindowCases.ps1:2984-2989 asserts the hidden note for hs_file.sys through the App. A Hidden-only item is not fed; it takes the same branch."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "WindowCases.ps1:2936-3007 creates a real junction 'junc' and a real file symlink 'sym_file.bin', reveals both from the tree, and asserts each is selected. There is no symlink to a folder. The unit test cited (ShellRevealTests.cs:237-243) feeds a plain string (m3). My probe: junction, file symlink and folder symlink each resolve to themselves, not their targets."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "ShellRevealTests.cs:174-191: 0x80070005 and 0x80070035 give exactly one tryReveal call and Failed with that HRESULT. ShellReveal.cs:294-303 stops on any other HRESULT."
+   },
+   {
+    "key": "O-011",
+    "discharged": "no",
+    "evidence": "The hook opens the right-clicked container's ContextMenu and invokes MenuItem.OnClick (RevealMode.cs:103-148), but only on root children with nothing selected in the tree. No nested row, no competing SelectedItem, and a direct-Execute fallback that masks a click that did nothing (m4). By reading, CommandParameter=PlacementTarget.DataContext (MainWindow.xaml:18) is correct."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "WindowCases.ps1:3010-3017: 'unreadable:denied' asserts path == $denied (a clean path, not the text with the Win32 message) and the item selected. :3036-3058: 'top:folder0' after a hooked stop asserts TopLevelRow.Path (built in TopLevelTracker.cs:175) and the selection. The 'during a running scan' half is not fed and degrades (m1)."
+   },
+   {
+    "key": "O-013",
+    "discharged": "no",
+    "evidence": "The cited test (ShellRevealTests.cs:245-250) only asserts Plan(\"\") throws. PathOf, OnCanOpenInExplorer, the NotOpenedYet placeholder row and KindsList are never exercised. By reading, the behaviour is right: the placeholder's FullPath is \"\" and KindsList has no ContextMenu."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "R-001 'largest:largest_file.bin' (WindowCases.ps1:2945-2952) feeds a real LargestFileRow through its context menu and asserts the Explorer selection."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "R-001 'tree:subfolder' (:2955-2962) is a non-root row with a bare Name; the FullPath resolution is asserted. It is a root child only, so a wrong ancestor join deeper down is not discriminated."
+   },
+   {
+    "key": "C-003",
+    "exercised": "no",
+    "evidence": "Plan-only tests with C:\\, C: and \\\\server\\share (ShellRevealTests.cs:47-80). No tree root row is revealed and no drive-root landing is observed."
+   },
+   {
+    "key": "C-004",
+    "exercised": "no",
+    "evidence": "Plan_LongPaths_NotTruncated feeds 266- and 572-char strings to Plan only. No long path goes through the App or Explorer, as the WHY requires."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "Plan theories for every listed name, including the 'dir.' ancestor. R-001 feeds 'dup.' with a real decoy 'dup' and asserts Ancestor/NameUnaddressable. There is no ancestor-landing assertion, and the decoy check does not wait."
+   },
+   {
+    "key": "C-006",
+    "exercised": "no",
+    "evidence": "Plan is fed all five names. Explorer selection is seen only for 'a,b;c.txt' and ' lead'. The emoji, '%TEMP%.txt' and 'dup' are created in R-001 but never revealed."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "Walk tests with a fake tryReveal returning not-found (ShellRevealTests.cs:138-172), which is the seam the design chose. The real shell's HRESULTs (0x80070002) were confirmed by my probe."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "A real Hidden+System temp file in Walk_HiddenAndSystemAttributes_DetectedOnExactItem; the hs_file.sys note in R-001. Hidden-only is not fed."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "R-001 creates a real junction and file symlink and asserts each is selected. There is no folder symlink. The unit test named for links feeds a plain string and proves nothing."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "Walk_AccessDeniedOrNetworkError_StopsWithoutClimbing with 0x80070005 and 0x80070035 asserts a single call."
+   },
+   {
+    "key": "C-011",
+    "exercised": "no",
+    "evidence": "The hook right-clicks only root-child tree rows with nothing selected. No nested row, no other row selected, and the RevealMode.cs:135-145 fallback can mask a click that did nothing."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "The unreadable row's clean path is asserted (:3010-3017); a top-level row after a stop (:3036-3058). A row during a running scan is not fed (see m1)."
+   },
+   {
+    "key": "C-013",
+    "exercised": "no",
+    "evidence": "Only Plan(\"\") throwing is tested. PathOf, CanExecute, the placeholder row and KindsList are never fed."
+   },
+   {
+    "key": "C-014",
+    "exercised": "no",
+    "evidence": "No test. The design assigned none ('no App unit-test project to hold a test for it'). By reading, the sequence guard at MainWindow.xaml.cs:721-738 is correct."
+   }
+  ],
+  "drift": [
+   "RevealPlan gained a third member, Requested (default \"\"), and Walk gained a second public overload, Walk(plan, tryReveal, requested) (ShellReveal.cs:22, 217-220). The contract is RevealPlan(Candidates, UnaddressableName) and Walk(RevealPlan, Func<string,int>). Not declared.",
+   "TopLevelRow.Path is built in Core (TopLevelSnapshot.cs:43-61, TopLevelTracker.cs:175 via LongPath.Child on the display root), not in MainWindow.xaml.cs where the design put it. This is the sensible place, since TopLevelRow is a Core type, but it was not declared.",
+   "LongPath went from internal to public (LongPath.cs:9), although nothing in src/FsAnalyser.App calls it; the only mention is a comment at MainWindow.xaml.cs:245. The design said to expose only the display-join helper, and only if the App needed it. This widens Core's public API (NormalizeRoot, ToExtended, ToDisplay, Child) for no caller.",
+   "TopLevelList gained an ItemContainerStyle with Padding=\"0,2\" (MainWindow.xaml:385-391). This replaces ListBoxItem's default padding and changes row geometry, which the design did not mention. B-007 and B-008 still pass at the minimum size (TopLevelList 61.1 px, one full row).",
+   "The FsaWindowHook reveal mode does not read the command's InputGestures, though the design says the gesture is checked that way. It also adds a direct RoutedCommand.Execute fallback (RevealMode.cs:135-145) that the design does not describe.",
+   "R-001 leaves out assertions the design's WindowCases component describes: the ancestor highlighted for 'dup.', and exact selection for the emoji and '%TEMP%.txt' names it creates. It also creates no symlink to a folder.",
+   "FormatRevealStatus has an Ancestor branch with Reason=None (MainWindow.xaml.cs:767-768) that Walk can never produce. It is harmless dead code."
+  ],
+  "unreviewed": [],
+  "second_round": {
+   "run_id": 1383,
+   "filed": 3
+  }
+ }
+}

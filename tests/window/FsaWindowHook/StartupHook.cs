@@ -81,7 +81,9 @@ using System.Windows.Threading;
 /// Both then hold the report, once the ending is on screen, until the drive buttons are in. FSA_HOOK_DRIVES=n
 /// (SL-040, O-028) does the same hold, at any size, and then adds n drive buttons shaped like the app's own
 /// beside the real ones, so a case can show the pickers take the same room however many drives are ready.
-/// The hold logs "drives in ms=n held=n added=n buttons=n".
+/// The hold logs "drives in ms=n held=n added=n buttons=n". FSA_HOOK_STATUS=text (SL-047) also puts that text in the
+/// window's reveal status line as the drives come in, ahead of the report, and adds "status=b statusHeight=px" to
+/// that line: whether the line is visible and how tall it was laid out.
 ///
 /// FSA_HOOK_LOG gets one ASCII line per event: "loaded mode=m pid=n", "waiting found=b enabled=b visible=b"
 /// when that changes, "armed ms=n" when the marker appeared, "acted mode=m enabled=True visible=True ms=n"
@@ -180,7 +182,7 @@ internal class StartupHook
         try
         {
             Log($"loaded mode={mode} pid={Environment.ProcessId}");
-            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "kinds" or "size" or "tree"))
+            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "kinds" or "size" or "tree" or "reveal"))
             {
                 Log($"refused mode={mode} reason=unknown mode");
                 return;
@@ -217,6 +219,11 @@ internal class StartupHook
                     Log("refused mode=tree reason=tree mode is not armed and takes no FSA_HOOK_SLOW_REFRESH_MS");
                 else
                     TreeMode.Drive();
+                return;
+            }
+            if (mode == "reveal")
+            {
+                RevealMode.Drive();
                 return;
             }
             if (mode is "watch" or "measure")
@@ -449,7 +456,16 @@ internal class StartupHook
         if (status.Text != loading)
         {
             AddDrives(drives, extra);
-            Log($"drives in ms={Clock.ElapsedMilliseconds} held={since.ElapsedMilliseconds} added={extra} buttons={drives.Children.Count}");
+            string? hookStatus = Environment.GetEnvironmentVariable("FSA_HOOK_STATUS");
+            string statusInfo = "";
+            if (!string.IsNullOrEmpty(hookStatus) && app.MainWindow?.FindName("RevealStatus") is TextBlock revealTb)
+            {
+                revealTb.Text = hookStatus;
+                revealTb.Visibility = Visibility.Visible;
+                revealTb.UpdateLayout();
+                statusInfo = string.Create(CultureInfo.InvariantCulture, $" status={revealTb.Visibility == Visibility.Visible} statusHeight={revealTb.ActualHeight:F2}");
+            }
+            Log($"drives in ms={Clock.ElapsedMilliseconds} held={since.ElapsedMilliseconds} added={extra} buttons={drives.Children.Count}{statusInfo}");
             return;
         }
         if (since.Elapsed > Deadline)

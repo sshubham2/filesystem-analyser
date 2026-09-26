@@ -75,7 +75,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
         'L-001', 'L-002', 'L-003', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'N-001', 'N-002', 'N-003', 'N-004',
-        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003')]
+        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003', 'R-001')]
     [string] $Case,
     [switch] $IncludeNetwork
 )
@@ -91,9 +91,9 @@ $RigProject = Join-Path $Repo 'tests\window\StallRig\StallRig.csproj'
 $RigExe = Join-Path $Repo 'artifacts\stall-rig\StallRig.exe'
 $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS',
     'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND', 'FSA_HOOK_MINSIZE', 'FSA_HOOK_DRIVES',
-    'FSA_HOOK_WALK', 'FSA_HOOK_RECYCLE', 'FSA_HOOK_MULTIPLY', 'FSA_HOOK_SELECT', 'FSA_HOOK_RELEASE', 'FSA_HOOK_GAP', 'FSA_HOOK_HEIGHT'
+    'FSA_HOOK_WALK', 'FSA_HOOK_RECYCLE', 'FSA_HOOK_MULTIPLY', 'FSA_HOOK_SELECT', 'FSA_HOOK_RELEASE', 'FSA_HOOK_GAP', 'FSA_HOOK_HEIGHT', 'FSA_HOOK_REVEAL', 'FSA_HOOK_STATUS'
 $HookedCases = 'C-002', 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
-    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003'
+    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003', 'R-001'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004'
 $RigOnlyCases = 'N-003', 'N-004'
 $KiB64 = 64KB
@@ -1746,6 +1746,17 @@ function CheckDrives($log, [int] $extra) {
     Check ($drives.Count -eq 1 -and (Field $line 'added') -eq "$extra" -and [int](Field $line 'buttons') -ge $extra) "the report waited for the drive buttons and $extra more were added ($(Show ($drives -join ' | ')))"
 }
 
+# The hook put the reveal status line on screen as the drive buttons came in (FSA_HOOK_STATUS, SL-047 B3-4), ahead of
+# the report: the line was visible, and one line tall, inside the 24 px with its 6 px margin that the window's minimum
+# height budgets for it (MainWindow.xaml).
+function CheckStatusShown($log) {
+    $drives = @($log | Where-Object { $_.StartsWith('drives in ') })
+    $line = if ($drives.Count -eq 1) { $drives[0] } else { '' }
+    $height = 0.0
+    $parsed = [double]::TryParse("$(Field $line 'statusHeight')", [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$height)
+    Check ((Field $line 'status') -ceq 'True' -and $parsed -and $height -gt 0 -and $height + 6 -le 24) "the reveal status line was on screen, one line of $height px ($(Show ($drives -join ' | ')))"
+}
+
 # More drive buttons than Windows has drive letters, fed in beside the ready ones (O-028): the pickers must
 # take the same height with them as without.
 $ExtraDrives = 26
@@ -1831,18 +1842,20 @@ function CheckTopsTree($run, [string] $root) {
 # slow folders are not, with the unreadable folders closed or opened (FSA_HOOK_EXPAND), at the window's minimum
 # size (FSA_HOOK_MINSIZE) or not, and with $extra drive buttons added (FSA_HOOK_DRIVES) or none. Its checks
 # print as they go; the report it read is left in $script:StoppedReport, null when a check before it failed.
-function Invoke-StoppedEnding([string] $case, [string] $root, [bool] $opened, [bool] $smallest, [int] $extra) {
+function Invoke-StoppedEnding([string] $case, [string] $root, [bool] $opened, [bool] $smallest, [int] $extra, [string] $statusMsg = $null) {
     $script:StoppedReport = $null
     $variables = @{}
     if ($smallest) { $variables.FSA_HOOK_MINSIZE = '1' }
     if ($extra -gt 0) { $variables.FSA_HOOK_DRIVES = "$extra" }
     if ($opened) { $variables.FSA_HOOK_EXPAND = '1' }
+    if ($statusMsg) { $variables.FSA_HOOK_STATUS = $statusMsg }
     $run = Invoke-HookedRun 'watch' $root (Join-Path $case 'report.json') $variables
     $before = $script:Failures.Count
     CheckActed $run 'watch'
     if ($opened) { CheckActed $run 'expand' }
     if ($smallest) { CheckSized $run.Log }
     if ($smallest -or $extra -gt 0) { CheckDrives $run.Log $extra }
+    if ($statusMsg) { CheckStatusShown $run.Log }
     if ($script:Failures.Count -gt $before) { return }
     $watch = Read-WatchLine $run.Log
     Check ($null -ne $watch) "the hook logged one 'watch rows=' line"
@@ -1935,6 +1948,28 @@ function Test-B007 {
                 }
             }
         }
+        $statusMsg = "'pagefile.sys' is hidden, so Explorer only highlights it if it is set to show hidden files (and protected operating system files, for system items)."
+        # The reveal status line on screen at the minimum size (SL-047, B3-4), after the Completed ending with the
+        # folder tree, where its height is taken from the tree's row, and after the Cancelled one.
+        Write-Output "  Completed, the unreadable folders opened, at minimum size with reveal status visible"
+        $variables = @{ FSA_HOOK_DRIVES = "$ExtraDrives"; FSA_HOOK_MINSIZE = '1'; FSA_HOOK_STATUS = $statusMsg }
+        $run = Invoke-WithHook 'expand' $HookDll { Read-Window $root } $variables
+        $before = $script:Failures.Count
+        CheckActed $run 'expand'
+        CheckSized $run.Log
+        CheckDrives $run.Log $ExtraDrives
+        CheckStatusShown $run.Log
+        if ($script:Failures.Count -eq $before) {
+            $read = $run.Result
+            CheckEqual 'EXIT 0' $read.Exit 'exit code'
+            Check ($null -ne $read.Report) 'a report was written'
+            if ($null -ne $read.Report) {
+                CheckEqual "Finished: $root" $read.Report.window.OutcomeTitle 'OutcomeTitle'
+                CheckBothLists $read.Report.window $true $true
+            }
+        }
+        Write-Output "  Cancelled, the unreadable folders opened, at minimum size with reveal status visible"
+        Invoke-StoppedEnding $case $root $true $true $ExtraDrives $statusMsg
         CheckPickers $pickers
     }
     finally {
@@ -1968,6 +2003,9 @@ function Test-B008 {
             $texts = $report.window.OutcomeTexts
             Check ($texts.extentHeight -gt $texts.actualHeight) "at this size the texts are taller than their row and scroll ($($texts.extentHeight) px in $($texts.actualHeight) px)"
         }
+        $statusMsg = "'pagefile.sys' is hidden, so Explorer only highlights it if it is set to show hidden files (and protected operating system files, for system items)."
+        Write-Output "  Cancelled, the unreadable folders opened, at minimum size with reveal status visible"
+        Invoke-StoppedEnding $case $root $true $true $ExtraDrives $statusMsg
     }
     finally {
         foreach ($folder in $denied) { Undo-DenyListing $folder }
@@ -2853,9 +2891,412 @@ function Test-K003 {
     }
 }
 
+function Invoke-RevealRun([string] $root, [string] $revealTargets, [int] $timeoutSec = 60) {
+    $variables = @{ FSA_HOOK_REVEAL = $revealTargets }
+    $run = Invoke-WithHook 'reveal' $HookDll { Wait-App (Start-App "`"$root`"") $timeoutSec } $variables
+    $lines = @(Read-HookJson $run.Log)
+    # Every menu the hook opened acted on the row the app's own Opened handler captured: the hook reads the menu's
+    # Tag and never writes it (B3-3). Printed to the host: this function's output is the run.
+    foreach ($line in @($lines | Where-Object via -eq 'menu')) {
+        CheckEqual $true $line.captured "$($line.surface):$($line.name) the app's Opened handler captured the row the menu was opened on" | Out-Host
+    }
+    [pscustomobject]@{
+        Exit  = $run.Result
+        Log   = $run.Log
+        Lines = $lines
+    }
+}
+
+function Wait-ExplorerSelection($expectedFolder, $expectedItem, [int] $timeoutSec = 5) {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $shell = New-Object -ComObject Shell.Application
+    $normalizedExpectedFolder = ($expectedFolder -replace '[/\\]+$', '').ToLowerInvariant()
+    while ($sw.Elapsed.TotalSeconds -lt $timeoutSec) {
+        foreach ($w in $shell.Windows()) {
+            try {
+                $doc = $w.Document
+                if ($null -eq $doc) { continue }
+                $f = $doc.Folder.Self.Path
+                $normalizedActual = ($f -replace '[/\\]+$', '').ToLowerInvariant()
+                if ($normalizedActual -ne $normalizedExpectedFolder) {
+                    try {
+                        $expanded = ([System.IO.DirectoryInfo]::new($f)).FullName
+                        $normalizedActual = ($expanded -replace '[/\\]+$', '').ToLowerInvariant()
+                    } catch { }
+                }
+                if ($normalizedActual -eq $normalizedExpectedFolder) {
+                    $selected = @($doc.SelectedItems() | ForEach-Object {
+                        $_.Name
+                        try { Split-Path -Leaf $_.Path } catch { }
+                    })
+                    if ($expectedItem -in $selected) {
+                        return [pscustomobject]@{ Matched = $true; Window = $w; Folder = $f; Selected = $selected }
+                    }
+                }
+            } catch { }
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    return [pscustomobject]@{ Matched = $false }
+}
+
+# R-001 (SL-047): reveals items from all results surfaces in Windows Explorer, asserting selection,
+# ancestor fallback for unaddressable names, hidden file note, and proper command binding.
+function Test-R001 {
+    $shell = New-Object -ComObject Shell.Application
+    $baselineHwnds = @(try { $shell.Windows() | ForEach-Object { $_.HWND } } catch { @() })
+
+    $case = New-CaseFolder
+    $denied = $null
+    $dupDot = $null
+    $links = @()
+    try {
+        $root = Join-Path $case 'reveal-root'
+        [void][System.IO.Directory]::CreateDirectory($root)
+
+        $sub = Join-Path $root 'subfolder'
+        [void][System.IO.Directory]::CreateDirectory($sub)
+        New-File (Join-Path $sub 'inner.bin') $KiB64
+
+        $largest = Join-Path $root 'largest_file.bin'
+        New-File $largest ($KiB64 * 32)
+
+        $denied = Join-Path $root 'denied'
+        [void][System.IO.Directory]::CreateDirectory($denied)
+        Deny-Listing $denied
+
+        $dup = Join-Path $root 'dup'
+        New-File $dup $KiB64
+        $dupDot = "\\?\" + (Join-Path $root 'dup.')
+        [System.IO.File]::WriteAllBytes($dupDot, [byte[]]@(1, 2, 3))
+
+        $lead = Join-Path $root ' lead'
+        New-File $lead $KiB64
+        $comma = Join-Path $root 'a,b;c.txt'
+        New-File $comma $KiB64
+        $emojiName = "$([char]::ConvertFromUtf32(0x1F600)).txt"
+        $emoji = Join-Path $root $emojiName
+        New-File $emoji $KiB64
+        $pct = Join-Path $root '%TEMP%.txt'
+        New-File $pct $KiB64
+
+        $hs = Join-Path $root 'hs_file.sys'
+        New-File $hs $KiB64
+        [System.IO.File]::SetAttributes($hs, [System.IO.FileAttributes]'Hidden, System')
+
+        $outside = Join-Path $case 'outside'
+        [void][System.IO.Directory]::CreateDirectory($outside)
+        New-File (Join-Path $outside 'target.bin') $KiB64
+
+        $junction = Join-Path $root 'junc'
+        New-Item -ItemType Junction -Path $junction -Value $outside | Out-Null
+        $links += $junction
+
+        $symlink = Join-Path $root 'sym_file.bin'
+        New-Item -ItemType SymbolicLink -Path $symlink -Value (Join-Path $outside 'target.bin') | Out-Null
+        $links += $symlink
+
+        $symDir = Join-Path $root 'sym_dir'
+        New-Item -ItemType SymbolicLink -Path $symDir -Value $outside | Out-Null
+        $links += $symDir
+
+        $longDir = Join-Path $root ('p' * 70 + '\' + 'q' * 70 + '\' + 'r' * 70)
+        [void][System.IO.Directory]::CreateDirectory($longDir)
+        $longFile = Join-Path $longDir 'long_file.bin'
+        New-File $longFile $KiB64
+        Check ($longFile.Length -gt 260) "long file path length is > 260 ($($longFile.Length))"
+
+        # Before every step (B3-2): close the Explorer windows this case opened, never one that was open at its baseline,
+        # and wait until they are gone, so a step's selection can only be matched by the window that step opened.
+        $closeNewWindows = {
+            $sh = New-Object -ComObject Shell.Application
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            do {
+                $left = 0
+                foreach ($w in @($sh.Windows())) {
+                    try {
+                        if ($w.HWND -notin $baselineHwnds) {
+                            $left++
+                            $w.Quit()
+                        }
+                    } catch { }
+                }
+                if ($left -gt 0) { Start-Sleep -Milliseconds 100 }
+            } while ($left -gt 0 -and $sw.Elapsed.TotalSeconds -lt 5)
+            Check ($left -eq 0) "the Explorer windows the case opened are closed before the next step ($left left)"
+        }
+
+        # 1. largest: largest_file.bin (C-001)
+        & $closeNewWindows
+        $runL = Invoke-RevealRun $root 'largest:largest_file.bin'
+        CheckEqual '0' $runL.Exit 'largest run exit code'
+        $lRow = $runL.Lines | Where-Object name -eq 'largest_file.bin'
+        Check ($null -ne $lRow) 'largest_file.bin was logged'
+        CheckEqual 'menu' $lRow.via 'largest_file.bin executed via menu'
+        CheckEqual $largest $lRow.path 'largest_file.bin resolved path'
+        CheckEqual 'Exact' $lRow.kind 'largest_file.bin kind'
+        $lSel = Wait-ExplorerSelection $root 'largest_file.bin'
+        Check $lSel.Matched 'largest_file.bin selected in Explorer'
+
+        # 2. tree: subfolder (C-002)
+        & $closeNewWindows
+        $runSub = Invoke-RevealRun $root 'tree:subfolder'
+        CheckEqual '0' $runSub.Exit 'subfolder run exit code'
+        $treeRow = $runSub.Lines | Where-Object name -eq 'subfolder'
+        Check ($null -ne $treeRow) 'subfolder was logged'
+        CheckEqual 'menu' $treeRow.via 'subfolder executed via menu'
+        CheckEqual $sub $treeRow.path 'subfolder resolved path'
+        CheckEqual 'Exact' $treeRow.kind 'subfolder kind'
+        $tSel = Wait-ExplorerSelection $root 'subfolder'
+        Check $tSel.Matched 'subfolder selected in Explorer'
+
+        # 3. tree: dup. (C-005 / B3-2: mis-parsed name, run before root so no leftover window matches)
+        & $closeNewWindows
+        $runDup = Invoke-RevealRun $root 'tree:dup.'
+        CheckEqual '0' $runDup.Exit 'dup. run exit code'
+        $dupRow = $runDup.Lines | Where-Object name -eq 'dup.'
+        Check ($null -ne $dupRow) 'dup. was logged'
+        CheckEqual 'Ancestor' $dupRow.kind 'dup. kind is Ancestor'
+        CheckEqual 'NameUnaddressable' $dupRow.reason 'dup. reason is NameUnaddressable'
+        $dupAncestorSel = Wait-ExplorerSelection $case (Split-Path -Leaf $root)
+        Check $dupAncestorSel.Matched 'ancestor reveal-root selected in Explorer for dup.'
+        # Poll for 2 s asserting decoy 'dup' is never selected anywhere in root
+        $pollSw = [System.Diagnostics.Stopwatch]::StartNew()
+        $decoyFound = $false
+        while ($pollSw.ElapsedMilliseconds -lt 2000) {
+            $sh = New-Object -ComObject Shell.Application
+            foreach ($w in $sh.Windows()) {
+                try {
+                    $doc = $w.Document
+                    if ($null -ne $doc -and ($doc.Folder.Self.Path -replace '[/\\]+$', '').ToLowerInvariant() -eq ($root -replace '[/\\]+$', '').ToLowerInvariant()) {
+                        $sel = @($doc.SelectedItems() | ForEach-Object {
+                            $_.Name
+                            try { Split-Path -Leaf $_.Path } catch { }
+                        })
+                        if ('dup' -in $sel) {
+                            $decoyFound = $true
+                            break
+                        }
+                    }
+                } catch { }
+            }
+            if ($decoyFound) { break }
+            Start-Sleep -Milliseconds 100
+        }
+        Check (-not $decoyFound) "decoy 'dup' is never selected"
+
+        # 4. tree: root (C-003 / O-017)
+        & $closeNewWindows
+        $runRoot = Invoke-RevealRun $root 'tree:root'
+        CheckEqual '0' $runRoot.Exit 'root run exit code'
+        $rRow = $runRoot.Lines | Where-Object name -eq 'root'
+        Check ($null -ne $rRow) 'root row was logged'
+        CheckEqual 'Exact' $rRow.kind 'root row kind'
+        CheckEqual $root $rRow.path 'root row path'
+        $rSel = Wait-ExplorerSelection (Split-Path -Parent $root) (Split-Path -Leaf $root)
+        Check $rSel.Matched 'root selected in Explorer'
+
+        # 5. tree: hs_file.sys (C-008: hidden+system)
+        & $closeNewWindows
+        $runHs = Invoke-RevealRun $root 'tree:hs_file.sys'
+        CheckEqual '0' $runHs.Exit 'hs_file.sys run exit code'
+        $hsRow = $runHs.Lines | Where-Object name -eq 'hs_file.sys'
+        Check ($null -ne $hsRow) 'hs_file.sys was logged'
+        CheckEqual 'Exact' $hsRow.kind 'hs_file.sys kind'
+        Check ($hsRow.status -match "is hidden, so Explorer only highlights it") "hs_file.sys status note shown ($($hsRow.status))"
+
+        # 6. tree: junc (C-009: junction)
+        & $closeNewWindows
+        $runJ = Invoke-RevealRun $root 'tree:junc'
+        CheckEqual '0' $runJ.Exit 'junc run exit code'
+        $juncRow = $runJ.Lines | Where-Object name -eq 'junc'
+        Check ($null -ne $juncRow) 'junc was logged'
+        CheckEqual 'Exact' $juncRow.kind 'junc kind'
+        $jSel = Wait-ExplorerSelection $root 'junc'
+        Check $jSel.Matched 'junc selected in Explorer'
+
+        # 7. tree: sym_file.bin (C-009: symlink to file)
+        & $closeNewWindows
+        $runSym = Invoke-RevealRun $root 'tree:sym_file.bin'
+        CheckEqual '0' $runSym.Exit 'sym_file.bin run exit code'
+        $symRow = $runSym.Lines | Where-Object name -eq 'sym_file.bin'
+        Check ($null -ne $symRow) 'sym_file.bin was logged'
+        CheckEqual 'Exact' $symRow.kind 'sym_file.bin kind'
+        $sSel = Wait-ExplorerSelection $root 'sym_file.bin'
+        Check $sSel.Matched 'sym_file.bin selected in Explorer'
+
+        # 8. tree: sym_dir (C-009 / O-017: symlink to folder)
+        & $closeNewWindows
+        $runSymDir = Invoke-RevealRun $root 'tree:sym_dir'
+        CheckEqual '0' $runSymDir.Exit 'sym_dir run exit code'
+        $symDirRow = $runSymDir.Lines | Where-Object name -eq 'sym_dir'
+        Check ($null -ne $symDirRow) 'sym_dir was logged'
+        CheckEqual 'Exact' $symDirRow.kind 'sym_dir kind'
+        $sdSel = Wait-ExplorerSelection $root 'sym_dir'
+        Check $sdSel.Matched 'sym_dir selected in Explorer'
+
+        # 9. unusual addressable names (C-006 / O-017)
+        & $closeNewWindows
+        $runC = Invoke-RevealRun $root 'tree:a,b;c.txt'
+        CheckEqual '0' $runC.Exit 'a,b;c.txt run exit code'
+        $cRow = $runC.Lines | Where-Object name -eq 'a,b;c.txt'
+        Check ($null -ne $cRow) 'a,b;c.txt was logged'
+        CheckEqual 'Exact' $cRow.kind 'a,b;c.txt kind'
+        $cSel = Wait-ExplorerSelection $root 'a,b;c.txt'
+        Check $cSel.Matched 'a,b;c.txt selected in Explorer'
+
+        & $closeNewWindows
+        $runLead = Invoke-RevealRun $root 'tree: lead'
+        CheckEqual '0' $runLead.Exit ' lead run exit code'
+        $leadRow = $runLead.Lines | Where-Object name -eq ' lead'
+        Check ($null -ne $leadRow) ' lead was logged'
+        CheckEqual 'Exact' $leadRow.kind ' lead kind'
+        $leadSel = Wait-ExplorerSelection $root ' lead'
+        Check $leadSel.Matched ' lead selected in Explorer'
+
+        & $closeNewWindows
+        $runPct = Invoke-RevealRun $root 'tree:%TEMP%.txt'
+        CheckEqual '0' $runPct.Exit '%TEMP%.txt run exit code'
+        $pctRow = $runPct.Lines | Where-Object name -eq '%TEMP%.txt'
+        Check ($null -ne $pctRow) '%TEMP%.txt was logged'
+        CheckEqual 'Exact' $pctRow.kind '%TEMP%.txt kind'
+        $pctSel = Wait-ExplorerSelection $root '%TEMP%.txt'
+        Check $pctSel.Matched '%TEMP%.txt selected in Explorer'
+
+        & $closeNewWindows
+        $runDupPlain = Invoke-RevealRun $root 'tree:dup'
+        CheckEqual '0' $runDupPlain.Exit 'dup run exit code'
+        $dupPlainRow = $runDupPlain.Lines | Where-Object name -eq 'dup'
+        Check ($null -ne $dupPlainRow) 'dup was logged'
+        CheckEqual 'Exact' $dupPlainRow.kind 'dup kind'
+        $dpSel = Wait-ExplorerSelection $root 'dup'
+        Check $dpSel.Matched 'dup selected in Explorer'
+
+        & $closeNewWindows
+        $runEmoji = Invoke-RevealRun $root "tree:$emojiName"
+        CheckEqual '0' $runEmoji.Exit 'emoji run exit code'
+        $emojiRow = $runEmoji.Lines | Where-Object name -eq $emojiName
+        Check ($null -ne $emojiRow) 'emoji file was logged'
+        CheckEqual 'Exact' $emojiRow.kind 'emoji kind'
+        $eSel = Wait-ExplorerSelection $root $emojiName
+        Check $eSel.Matched 'emoji selected in Explorer'
+
+        # 10. long path >260 chars through App (C-004 / O-017)
+        & $closeNewWindows
+        $runLong = Invoke-RevealRun $root 'tree:long_file.bin'
+        CheckEqual '0' $runLong.Exit 'long file run exit code'
+        $longRow = $runLong.Lines | Where-Object name -eq 'long_file.bin'
+        Check ($null -ne $longRow) 'long file was logged'
+        CheckEqual 'Exact' $longRow.kind 'long file kind'
+        CheckEqual $longFile $longRow.path 'long file resolved path'
+        $longSel = Wait-ExplorerSelection $longDir 'long_file.bin'
+        Check $longSel.Matched 'long file selected in Explorer'
+
+        # 11. nested tree row with competing selection (C-011 / O-017)
+        & $closeNewWindows
+        $runComp = Invoke-RevealRun $root 'tree-competing:inner.bin'
+        CheckEqual '0' $runComp.Exit 'competing selection run exit code'
+        $compRow = $runComp.Lines | Where-Object name -eq 'inner.bin'
+        Check ($null -ne $compRow) 'inner.bin was logged'
+        CheckEqual 'Exact' $compRow.kind 'competing selection row kind'
+        CheckEqual (Join-Path $sub 'inner.bin') $compRow.path 'competing selection path'
+        $compSel = Wait-ExplorerSelection $sub 'inner.bin'
+        Check $compSel.Matched 'inner.bin selected in Explorer'
+
+        # 12. gesture reveal Ctrl+Enter against Window target (M1 / O-014 / O-019)
+        & $closeNewWindows
+        $runG = Invoke-RevealRun $root 'gesture:largest_file.bin'
+        CheckEqual '0' $runG.Exit 'gesture run exit code'
+        $gRow = $runG.Lines | Where-Object name -eq 'largest_file.bin'
+        Check ($null -ne $gRow) 'gesture row was logged'
+        CheckEqual 'gesture' $gRow.via 'command executed via gesture against Window target'
+        CheckEqual 'Exact' $gRow.kind 'gesture kind'
+        $gSel = Wait-ExplorerSelection $root 'largest_file.bin'
+        Check $gSel.Matched 'gesture selected in Explorer'
+
+        # 13. placeholder row disabled (m3 / O-018 / O-026)
+        & $closeNewWindows
+        $runP = Invoke-RevealRun $root 'placeholder:dummy'
+        CheckEqual '0' $runP.Exit 'placeholder run exit code'
+        $pRow = $runP.Lines | Where-Object surface -eq 'placeholder'
+        Check ($null -ne $pRow) 'placeholder row logged'
+        CheckEqual $true $pRow.found "a placeholder row's own container was drawn and its RowContextMenu opened"
+        CheckEqual $true $pRow.captured "the app's Opened handler captured the placeholder row"
+        CheckEqual $true $pRow.disabled "the placeholder row's 'Open in Explorer' is disabled"
+
+        # 14. unreadable: denied (C-012)
+        & $closeNewWindows
+        $runD = Invoke-RevealRun $root 'unreadable:denied'
+        CheckEqual '0' $runD.Exit 'denied run exit code'
+        $unrRow = $runD.Lines | Where-Object name -eq 'denied'
+        Check ($null -ne $unrRow) 'denied was logged'
+        CheckEqual $denied $unrRow.path 'denied clean path (not display string with Win32 message)'
+        CheckEqual 'Exact' $unrRow.kind 'denied kind'
+        $dSel = Wait-ExplorerSelection $root 'denied'
+        Check $dSel.Matched 'denied selected in Explorer'
+
+        # 15. top surface mid-scan live refresh (O-024) and stopped scan (C-012 / O-022 / O-028)
+        # Sized to outlast the hook's stop via New-TopsTree
+        $topCase = New-CaseFolder
+        $topDenied = @()
+        try {
+            $topRoot = Join-Path $topCase 'top-root'
+            $topDenied = New-TopsTree $topRoot
+            $chosenTop = "a1-$Planted"
+            $targetTop = Join-Path $topRoot $chosenTop
+
+            # Mid-scan (B3-1 / O-024): the menu opened on a results-list row stays enabled after a live refresh has
+            # detached that row's container, and its click reveals the row it was opened on, while the scan runs.
+            & $closeNewWindows
+            $runLive = Invoke-RevealRun $topRoot "top-live:$chosenTop"
+            CheckEqual '0' $runLive.Exit 'top-live run exit code'
+            $liveRow = $runLive.Lines | Where-Object surface -eq 'top-live'
+            Check ($null -ne $liveRow) "top-live row was logged ($(Show ($runLive.Lines | ConvertTo-Json -Compress)))"
+            CheckEqual $true $liveRow.detached 'a live refresh detached the container the menu was opened on'
+            CheckEqual $true $liveRow.scanning 'the scan was still running when the container was detached'
+            CheckEqual $true $liveRow.open 'the menu was still open after the refresh'
+            CheckEqual $true $liveRow.enabled "'Open in Explorer' stayed enabled after the refresh"
+            CheckEqual $targetTop $liveRow.path 'the click revealed the row the menu was opened on'
+            CheckEqual 'Exact' $liveRow.kind 'top-live kind'
+            $liveSel = Wait-ExplorerSelection $topRoot $chosenTop
+            Check $liveSel.Matched 'top-live folder selected in Explorer'
+
+            # Stopped scan reveal (O-022 / O-028)
+            & $closeNewWindows
+            $run2 = Invoke-RevealRun $topRoot "top:$chosenTop"
+            CheckEqual '0' $run2.Exit 'run 2 exit code'
+            $topRow = $run2.Lines | Where-Object surface -eq 'top'
+            Check ($null -ne $topRow) 'top surface row was logged'
+            CheckEqual $targetTop $topRow.path 'top folder resolved path'
+            CheckEqual 'Exact' $topRow.kind 'top folder kind'
+            $topSel = Wait-ExplorerSelection $topRoot $chosenTop
+            Check $topSel.Matched 'top folder selected in Explorer'
+        }
+        finally {
+            foreach ($f in $topDenied) { Undo-DenyListing $f }
+            Remove-CaseFolder $topCase
+        }
+    }
+    finally {
+        # Close only hwnds that were not in baseline
+        $sh = New-Object -ComObject Shell.Application
+        foreach ($w in $sh.Windows()) {
+            try {
+                if ($w.HWND -notin $baselineHwnds) {
+                    $w.Quit()
+                }
+            } catch { }
+        }
+        if ($denied) { Undo-DenyListing $denied }
+        if ($dupDot -and [System.IO.File]::Exists($dupDot)) { [System.IO.File]::Delete($dupDot) }
+        Remove-Links $links
+        Remove-CaseFolder $case
+    }
+}
+
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003') + $NetworkCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003', 'R-001') + $NetworkCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })

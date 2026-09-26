@@ -40,10 +40,11 @@ public enum TopLevelState
 /// </summary>
 public sealed class TopLevelRow
 {
-    internal TopLevelRow(string name, TopLevelKind kind, TopLevelState state, long bytes, long onDisk, long files,
+    internal TopLevelRow(string name, string path, TopLevelKind kind, TopLevelState state, long bytes, long onDisk, long files,
         long folders, long unreadableBelow)
     {
         Name = name;
+        Path = path;
         Kind = kind;
         State = state;
         Bytes = bytes;
@@ -55,6 +56,9 @@ public sealed class TopLevelRow
 
     /// <summary>The name as listed.</summary>
     public string Name { get; }
+
+    /// <summary>The full display path of this entry under the root.</summary>
+    public string Path { get; }
 
     public TopLevelKind Kind { get; }
 

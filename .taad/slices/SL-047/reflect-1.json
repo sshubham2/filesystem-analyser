@@ -1,0 +1,161 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-047",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-09-26T20:35:43.015Z",
+ "head": "418cc8e4c127911a10fb740e899c0e83acaeb555",
+ "run_id": 1401,
+ "summary": "SL-047 added 'Open in Explorer' (context menu plus Ctrl+Enter) on the largest-files list, top-level results list, folder tree and unreadable list. It is built on a pure planner (ShellReveal.Plan) that never hands the shell a name it mis-parses, and it falls back to the nearest addressable ancestor. It shipped and validated against real Explorer, but only after 2 fix rounds, 4 validate runs and 6 code-review runs. The work was opened as medium/low risk, so no critique ran. The two majors and the live-refresh defect were all derivable from the design text plus existing SL-039/SL-040 code, and they surfaced only in code review and validation.",
+ "payload": {
+  "status": "complete",
+  "reason": "Full record read; nothing upstream blocked reflection.",
+  "summary": "SL-047 added 'Open in Explorer' (context menu plus Ctrl+Enter) on the largest-files list, top-level results list, folder tree and unreadable list. It is built on a pure planner (ShellReveal.Plan) that never hands the shell a name it mis-parses, and it falls back to the nearest addressable ancestor. It shipped and validated against real Explorer, but only after 2 fix rounds, 4 validate runs and 6 code-review runs. The work was opened as medium/low risk, so no critique ran. The two majors and the live-refresh defect were all derivable from the design text plus existing SL-039/SL-040 code, and they surfaced only in code review and validation.",
+  "estimate_error": "Wrong on both axes, and the tier was the costlier error. Size: opened as medium, ran as large. The design itself said the proposal was 'large for a medium slice'. There were 2 spike runs, 2 design runs, 3 real build rounds, 6 code-review runs and 4 validate runs. Of the 7 build-slice runs, 4 were infra halts (process gone twice, provider 429 spending cap twice), so the design-driven rework was 2 fix rounds after the first build. Tier: 'low' was set even though a spike had already returned a no-go (a silent wrong target) and the slice adds gestures and a docked row to MainWindow. Low tier skipped critique and critique-review, the only gates before code. Both majors (Ctrl+Enter dead on every surface; status line breaking the SL-040 height budget) and the live-refresh menu defect were then found after the first build. Medium risk would likely have caught them at design time.",
+  "learned": [
+   {
+    "kind": "risk",
+    "lesson": "Do not open a slice at low risk, and so skip the pre-build critique, when it adds gestures, menus or a docked row to MainWindow or acts on results-list rows, even if it never touches the scanner. The 'reveal touches no counting rule' reasoning only ruled out scanner-tier obligations, not UI-contract risk.",
+    "evidence": "Critique and critique-review both passed as 'low-risk slice in a minimal project ... builder reviews its own work'. The first complete code review then filed 2 majors and 8 minors, all derivable from the design text plus SL-039/SL-040 code: M1 (Ctrl+Enter has no row), M2 (status line vs MainWindow.xaml:142-167 budget) and m1 (live refresh detaches rows). The tier stayed low even after the odd-names spike returned no-go."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "During a scan, MainWindow replaces TopLevelList.ItemsSource about every 250 ms (SL-039), so any per-row UI on that list (context-menu CommandParameter/CommandTarget bound to PlacementTarget, keyboard focus) dies within ~150 ms. The pattern that works: capture the row into menu.Tag in the Opened handler, compare with ReferenceEquals(x, BindingOperations.DisconnectedSource) (never by type name), and set every MenuItem's CommandTarget to the Window. The next slice that adds a row action (delete, copy path) must reuse this and design for the list being the only results surface mid-scan.",
+    "evidence": "Validate probe: the row container became {DisconnectedItem} 142-158 ms after the menu opened, followed by 5 more refreshes. Build 2's Tag-only fix still greyed the entry (B3-1) and validate #1 failed criterion 12. Build 7's CommandTarget=Window fix passed. The GetType().Name != 'DisconnectedItem' guard never matched (R2-B4-2). Ctrl+Enter on a live-scan results row still stops working after the first refresh (validate probe, failed)."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "MainWindow's height is a hand-measured budget, not free space. SL-047 had to raise MinHeight 620 to 644 for one 15.96 px status line (24 px allowed including margin). Any new docked element must be added to that budget, with the comment at MainWindow.xaml:142-167 updated. B-007 (Completed and Cancelled variants) and B-008 with FSA_HOOK_STATUS are the guard, but they run only at 100% DPI. docs/design/SL-039 and SL-044 still say 620.",
+    "evidence": "M2/O-015; validate measured statusHeight=15.96 at 560x644 with a full row still visible in every list; the build left the SL-039/SL-044 design docs unedited."
+   },
+   {
+    "kind": "design",
+    "lesson": "Any feature that acts on a results item by path (delete is the named next one) inherits the odd-names problem. SHParseDisplayName in display form returns S_OK and selects a decoy for names ending in '.' or ' ', and fails on reserved device names ('con', 'dir.'). SL-047 sidestepped it with ShellReveal.Plan plus an architecture rule that only ShellReveal.cs may call the reveal APIs. It also declined the Win32Path/GetNativePath type that SL-020 deferred to 'a third Win32 caller', so the delete slice must decide that type explicitly rather than defer it again.",
+    "evidence": "odd-names spike: decoy selected 4/4 for 'dup.' and 'sp '; SL-020 design doc lines 107-111; design decision declining Win32Path. Validate confirmed 'sp ', 'con', 'nul.txt' and 'dir.\\in.txt' land on the ancestor through real RevealAsync."
+   },
+   {
+    "kind": "process",
+    "lesson": "Window-case hooks must only observe, and every check must be able to fail. Six review findings were checks that could not fail: the hook wrote menu.Tag itself; a direct-Execute fallback hid whether the menu worked; ProcessPlaceholder built its own menu; a leftover Explorer window satisfied the 'dup.' wait; FolderItem.Name drops extensions under Windows' default 'hide extensions'; and the B-007 status variant never proved the status line was on screen. Future WindowCases work: log a premise field the case must require (captured, via, status=True statusHeight); quit non-baseline Explorer windows before each step; compare Split-Path -Leaf of Item.Path, not Name; and run a new step once against a deliberately broken publish, as build 7 did for the mid-scan step.",
+    "evidence": "B3-3, m4, B3-2, R2-m8, B3-4, m2. Build 7's temporary broken build showed enabled=false on the old routing and enabled=true on the fix."
+   },
+   {
+    "kind": "process",
+    "lesson": "Discharge obligations that touch WPF routing or layout with a measurement on the published exe, not a code claim. Round-3 findings were mostly defects in round-2 fixes: 10 findings closed by reading produced 7 new ones, and the loop converged only when round 3 probed the published exe against real Explorer. Check that the exe is newer than the last source edit, as code-review 6 did.",
+    "evidence": "O-016 was marked discharged in build 2 ('Handled ContextMenuOpening ... preventing DisconnectedItem') and was wrong (B3-1). Also the no-op type-name guard (R2-B4-2), path-before-outcome status text that ellipsis trimming cut (R2-B4-1), and the 'dup.' check that could not fail (B3-2)."
+   },
+   {
+    "kind": "process",
+    "lesson": "A code-review pass can carry findings marked 'minor' that break an acceptance criterion, and validation then spends a full run rediscovering them. Read the claim text, not the severity label, before letting a slice through to validate. Also read run counts with care: 4 of this slice's 7 build-slice runs were infra halts (agent process gone twice, google-ai-studio 429 monthly spend cap twice), not rework.",
+    "evidence": "B3-1's own claim says the results-list entry is 'exactly as broken as before', yet it was filed minor. Code-review 5 passed with it owed and validate #1 failed criterion 12 at HEAD 8c47eb7 with src untouched since build 2. Build-slice runs 3-6 all halted without a build."
+   },
+   {
+    "kind": "risk",
+    "lesson": "Every shell measurement on this project was taken on a machine that is not at Windows defaults: Hidden=1/ShowSuperHidden=0, LongPathsEnabled=1, 8.3 names on C:, extensions shown. Registry settings are off-limits to runs, so the spike's hidden-at-defaults and tab-landing experiments stopped for a person, and validate could not reach them either. A future shell-facing slice should either get the person's OK for the registry before the spike opens or design experiments that run unattended.",
+    "evidence": "Risk-spike run 1 halted with 2 of 4 experiments unfinished (needed HKCU Explorer\\Advanced writes and a manual Ctrl+T). Validate 'not reached': Hidden=2 defaults, LongPathsEnabled=0, tab landing. R2-m8 (extensions hidden by default) was found only by reading, because this PC shows extensions."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "SynchronousIoCancelTests.CancelIsResentWhileACallBlocksAgainAfterACancel is timing-flaky under a full run. A red there in a slice that touches no Core code should be re-run in isolation before it sends the slice back.",
+    "evidence": "Build 7 first full run: 295 passed, 1 failed ('the call was still blocked 2 s after Cancel'), no Core change in the diff. The class alone ran 25/25 and the full re-run gave 296/296."
+   }
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "what": "The design put Ctrl+Enter on a RoutedUICommand whose only CommandBinding is on MainWindow, and resolved the row as e.Parameter ?? OriginalSource.DataContext. A key gesture matched at the Window has a null parameter and the Window's null DataContext, so the gesture never had a row and did nothing on any surface. The critique did not ask what the command's target and parameter are when the gesture, not the menu, raises it. The design's chosen check ('read InputGestures') cannot prove routing, and the hook never pressed the key.",
+    "dimension": "contract-gaps",
+    "severity": "major",
+    "caught_by": "code-review attempt 2, measured in the published exe"
+   },
+   {
+    "gate": "critique",
+    "what": "RevealStatus was added as a docked, wrapping TextBlock carrying full paths, while MainWindow.xaml:142-167 already budgets the 560x620 minimum size (20 px spare, 'text that grows with a path or a count is bounded'). Nobody cross-read that comment against the new element, and the hidden-file note stays on screen until the next reveal. The fix cost a MinHeight change to 644, which overrides an SL-040 decision.",
+    "dimension": "cross-cutting-conformance",
+    "severity": "major",
+    "caught_by": "code-review, first complete pass (M2)"
+   },
+   {
+    "gate": "critique",
+    "what": "The design named TopLevelList as the only results surface during a scan and bound the menu to PlacementTarget.DataContext, but never crossed that with SL-039's ItemsSource replacement every ~250 ms. Menu entries and Ctrl+Enter on the only mid-scan results surface lose their row within ~150 ms. The menu was fixed only in round 3; Ctrl+Enter on a live results row still does nothing after the first refresh.",
+    "dimension": "unfounded-assumptions",
+    "severity": "major",
+    "caught_by": "code-review (m1), then validate attempt 1 after an incomplete fix"
+   },
+   {
+    "gate": "code-review",
+    "what": "The m1 fix it prescribed (copy the row into menu.Tag on ContextMenuOpening, bind CommandParameter to Tag) was never run against a detached container, so it left CommandTarget bound to the dead PlacementTarget. The entry still greyed out mid-scan, and the build discharged O-016 on that basis. The follow-up finding B3-1 was then filed as 'minor' although its claim says the entry is 'exactly as broken as before'. Code-review attempt 5 passed with it owed, so validate #1 ran on a tree with the criterion-12 defect still in it.",
+    "dimension": "unfounded-assumptions",
+    "severity": "major",
+    "caught_by": "code-review attempt 4 (routing flaw); validate attempt 1 (criterion 12 failed)"
+   },
+   {
+    "gate": "critique",
+    "what": "The design listed the drive root as a case and the Hidden-attribute status note as a case, but not their intersection. NTFS volume roots carry Hidden|System, so revealing the tree root row of a whole-drive scan would always show a false 'C:\\ is hidden' note. No test revealed a root row.",
+    "dimension": "missing-edge-cases",
+    "severity": "minor",
+    "caught_by": "code-review, first complete pass (R2-m6)"
+   },
+   {
+    "gate": "code-review",
+    "what": "It accepted NoWrap + CharacterEllipsis as making RevealStatus one line across three rounds. A NoWrap TextBlock still breaks at explicit line breaks, and code-review attempt 6 reports 423 of about 4,500 FACILITY_WIN32 messages contain them. A Failed status can therefore still exceed the 24 px budget behind the 644 px minimum height. It was raised only as drift in attempt 6 and left unfixed.",
+    "dimension": "missing-edge-cases",
+    "severity": "minor",
+    "caught_by": "code-review attempt 6 (left open, not fixed)"
+   }
+  ],
+  "what_went_wrong": [
+   "Low risk tier removed critique and critique-review from a slice that already had a no-go spike and a new interaction surface on MainWindow. The first complete code review then filed 2 majors and 8 minors, several derivable from the design text (Ctrl+Enter routing, the SL-040 height budget, the SL-039 refresh). It took 2 fix rounds to close them.",
+   "Build 1 shipped Ctrl+Enter dead on every surface, and its hook neither pressed the key nor read InputGestures, which the design had named as the check. Obligations O-009 and O-013 were 'discharged' citing unit tests that never fed the shape they were named for (m3).",
+   "Round-2 fixes generated a new round: 6 of the 7 round-3 findings were defects in round-2 fixes or tests (Tag fix leaving CommandTarget live, a type-name guard that never matched, status text with the path before the outcome, R-001 checks that could not fail). O-016 was marked discharged by a code claim with no measurement and was wrong.",
+   "The first-pass reveal hook filled in the values it should have observed (menu.Tag, direct Execute fallback, its own placeholder menu). R-001 would have passed with the app's row-capture code deleted, which nothing flagged until code review.",
+   "The build cycled 4 times on infra (agent process gone twice, provider 429 spend cap twice) and code-review attempt 1 failed outright. No design work was lost, but it inflated the run count and calendar time.",
+   "Code review passed with B3-1 (a criterion-breaking defect) owed and labelled minor, so validate #1 spent a whole run rediscovering it as criterion 12. This forced a send-back to build.",
+   "Risk-spike run 1 halted with 2 of 4 experiments unfinished because it asked for registry writes and a manual Ctrl+T. The slice was built anyway while the owner was away. Tab landing and hidden-item behaviour at Windows defaults were never measured, and the design's open question about accepting the ancestor fallback was never answered by a person.",
+   "Some drift remains at close: multi-line Win32 messages can break the one-line status budget, the NoRow comment claims one shared menu instance while the exe has per-row instances, the design's CommandParameter contract no longer matches the code, and the SL-039/SL-044 docs still say a 620 minimum."
+  ],
+  "unknowns": [
+   "Does Explorer select hidden and hidden+system items at Windows defaults (Hidden=2, ShowSuperHidden=0)? The hidden-file status note's wording rests on a Hidden=1 machine where hidden+system never selected (0/6). pagefile.sys usually tops the largest-files list, so this decides how the note should read.",
+   "Does reveal of a path over 260 characters work with LongPathsEnabled=0 (the Windows default) in an app with no longPathAware manifest? The go measured for 300/600 characters was taken only with LongPathsEnabled=1 and 8.3 names on C:.",
+   "When Explorer is set to open folders in tabs, or a window already has several tabs, does SHOpenFolderAndSelectItems land in the right tab? No tab ever formed in the spike and validate never tried.",
+   "Can a child PIDL built through IShellFolder on the parent select 'dup.', 'sp ' or 'con' exactly? Answering it decides whether the ancestor fallback (which is what PS-007's 'jump to it' currently delivers for those names) is acceptable or needs an exact route.",
+   "What should keep focus and selection on TopLevelList across the SL-039 live refresh? The design decision build-slice recorded is still unmade; the entry is disabled rather than wrong."
+  ],
+  "candidates": [
+   {
+    "title": "Keep results-list rows, focus and selection alive across the live-scan refresh",
+    "urgency": "soon",
+    "why": "SL-039 replaces TopLevelList.ItemsSource about every 250 ms. Ctrl+Enter on a results row stops working after the first refresh (validate probe failed, recorded 'not reached'), and every future row action must work around detached containers via the Tag/CommandTarget=Window pattern. Diffing the list or preserving items would remove the class of defect."
+   },
+   {
+    "title": "Make RevealStatus genuinely one line: strip CR/LF from Win32 messages and pin FormatRevealStatus with a test",
+    "urgency": "soon",
+    "why": "Code-review attempt 6 reports that a NoWrap TextBlock still breaks at explicit line breaks and that 423 of about 4,500 FACILITY_WIN32 messages contain them. That can push the status line past the 24 px budget behind the 644 px MinHeight. The O-029 wording is asserted by no test because FormatRevealStatus lives in the App, which has no unit-test project."
+   },
+   {
+    "title": "Write docs/design/SL-047 and correct the stale minimum-height and command-contract notes",
+    "urgency": "soon",
+    "why": "MinHeight moved 620 to 644 while docs/design/SL-039 (line 74) and SL-044 (line 60) still say 620. The design's 'CommandParameter = PlacementTarget.DataContext' contract no longer matches the code (row captured into menu.Tag, CommandTarget = Window). The NoRow comment claims one shared menu instance, which the exe contradicts (TopLevelList rows 0 and 1 have different instances). The delete slice will read these."
+   },
+   {
+    "title": "Decide Win32Path / ScanStore.GetNativePath before opening a delete slice",
+    "urgency": "someday",
+    "why": "SL-020 deferred it to the 'third Win32 caller (open in Explorer, delete)'. SL-047 declined it because SHParseDisplayName takes the display form. The odd-names spike shows names ending in '.' or ' ' and reserved device names cannot be addressed in display form, so delete needs the native form and the decision is now unavoidable."
+   },
+   {
+    "title": "Spike exact selection of 'dup.', 'sp ' and reserved device names via an IShellFolder child PIDL",
+    "urgency": "someday",
+    "why": "The odd-names no-go's remedy was left unbuilt and unmeasured. Today those items only land on their ancestor with a status note, a scope reduction against 'jump to it'. The spike would settle whether an exact route exists before anyone reopens the design."
+   },
+   {
+    "title": "Person-gated measurement pass at Windows defaults for reveal",
+    "urgency": "someday",
+    "why": "Hidden=2/ShowSuperHidden=0, LongPathsEnabled=0 with a >260-char path, tab landing, and a reachable \\\\server\\share root were all 'not reached' because registry writes and shares were off-limits. The hidden-file note and the long-path go both rest on this machine's non-default settings. It needs the person's OK for HKCU writes, or a second machine."
+   },
+   {
+    "title": "Investigate the flaky SynchronousIoCancelTests.CancelIsResentWhileACallBlocksAgainAfterACancel",
+    "urgency": "someday",
+    "why": "It failed once in a full Core run ('still blocked 2 s after Cancel') with no Core change in the diff, then passed 25/25 alone and in the full re-run. A false red will send a future slice back for no product reason."
+   }
+  ]
+ }
+}

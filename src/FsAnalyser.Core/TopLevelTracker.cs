@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using FsAnalyser.Core.Native;
 using FsAnalyser.Core.Scanning;
 using FsAnalyser.Core.Store;
 
@@ -171,7 +172,8 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
             _ when r.Pending > 0 => final ? TopLevelState.StoppedPartway : TopLevelState.Reading,
             _ => r.OwnUnreadable ? TopLevelState.Unreadable : TopLevelState.Done,
         };
-        return new TopLevelRow(r.Name, r.Kind, state, r.Bytes, r.OnDisk, r.Files, r.Folders, r.UnreadableBelow);
+        string path = LongPath.Child(root, r.Name);
+        return new TopLevelRow(r.Name, path, r.Kind, state, r.Bytes, r.OnDisk, r.Files, r.Folders, r.UnreadableBelow);
     }
 
     private struct Row

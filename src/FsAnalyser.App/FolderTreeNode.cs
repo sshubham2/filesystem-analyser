@@ -57,6 +57,26 @@ internal sealed class FolderTreeNode : INotifyPropertyChanged
     /// <summary>The name as listed; for the root, the path that was scanned.</summary>
     public string Name => _session.Store is { } store ? (_isRoot ? store.GetPath(_entry) : store.Name(_entry).ToString()) : "";
 
+    private string? _fullPath;
+
+    /// <summary>
+    /// Lazily computed full display path for any tree row: <see cref="ScanStore.GetPath(int)"/>, cached on the node.
+    /// The root keeps its existing full-path <see cref="Name"/> and <see cref="FullPath"/> returns it unchanged.
+    /// </summary>
+    public string FullPath
+    {
+        get
+        {
+            if (_isRoot)
+                return Name;
+            if (_fullPath != null)
+                return _fullPath;
+            if (_session.Store is { } store)
+                _fullPath = store.GetPath(_entry);
+            return _fullPath ?? string.Empty;
+        }
+    }
+
     public EntryKind? Kind => _session.Store?.Kind(_entry);
 
     /// <summary>
