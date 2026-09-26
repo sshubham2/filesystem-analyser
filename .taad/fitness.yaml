@@ -399,3 +399,30 @@ rules:
     because: Its accumulators are plain fields written only by the scanner's thread. Letting
       another thread reach them is a torn read; guarding them with a lock makes the scanner
       wait on that lock, the exact cost that pushed spike 1 over its 15% limit.
+
+  # settled by SL-042
+  - name: the Scanner does not register file IDs or set the duplicate flag; the store does
+    files: src/FsAnalyser.Core/Scanning/**/*.cs
+    must_not_match:
+    - \bTryAddFileId\s*\(
+    - \|=\s*EntryFlags\.HardlinkDuplicate
+    because: The store applies first-seen dedup inside append. If the Scanner registers the
+      ID too, the first name finds its own ID already present, is flagged a duplicate and its
+      bytes are charged nowhere. Every folder total under it is silently low, and the whole
+      suite can stay green if only synthetic tests run.
+  - name: the store does not know about the Scanner
+    files: src/FsAnalyser.Core/Store/**/*.cs
+    must_not_match:
+    - \b(Scanner|DirectoryReader|SizeProbe|TopLevelTracker)\b
+    because: The counting rule lives in the store so criteria 1-6 can be proved on synthetic
+      entry streams with no disk. A store that reaches back into the Scanner makes those tests
+      need a real drive and lets a second copy of the rule grow in the Scanner.
+  - name: the rollup and timing tests are never skipped or filtered out
+    files: tests/FsAnalyser.Core.Tests/ScanStoreRollup*.cs
+    must_not_match:
+    - \bSkip\s*=
+    - Assert\.Skip
+    - Trait\(\s*"Network"
+    because: The project's testing constraint says counting-rule tests are never skipped, and
+      criterion 6 is a measured number. A skipped or default-filtered test reports green while
+      proving nothing, which is the failure this slice's cases exist to prevent.

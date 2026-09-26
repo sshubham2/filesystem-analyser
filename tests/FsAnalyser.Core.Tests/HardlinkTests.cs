@@ -59,6 +59,16 @@ public class HardlinkTests
         // rule, after which the repeat has nothing left to correct.
         Assert.Equal(1, result.Probes);
         Assert.Equal(0, result.ProbeFailures);
+
+        // Per folder (SL-042). The first name's folder carries the file's true size, the one read through a
+        // handle, even when that name's own listing was the stale one (writtenThrough > 0): the correction
+        // lands on an entry appended earlier and is posted up its folders. Every other name's folder
+        // carries no bytes and one file.
+        var copy = new Rolled(64 * MiB, store.OnDisk(charged), 1);
+        Assert.Equal(copy, Rolled.Of(store, store.Parent(charged)));
+        for (int i = 1; i < names; i++)
+            Assert.Equal(new Rolled(0, 0, 1), Rolled.Of(store, store.Parent(Scans.Find(result, paths[i]))));
+        Assert.Equal(copy with { Files = names }, Rolled.Of(store, 0));
     }
 
     /// <summary>

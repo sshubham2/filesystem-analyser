@@ -14,8 +14,9 @@ design disagree, this file is right. Do not "correct" the code back to the origi
   1M-char pages, with page directories preallocated so that nothing moves or doubles; (b) no
   per-entry object, and paths rebuilt from `Parent`; (c) the table above. Measured at U-001's 5M shape:
   555.9 MiB retained, 569.9 MiB peak (`ScanStoreBudgetTests`).
-- **Byte accessors (O-002).** `ChargedSize(i)` and `ChargedOnDisk(i)` return 0 for `Link` and for
-  `HardlinkDuplicate` entries, and `Size`/`OnDisk` for every other entry. Anything that adds bytes up
+- **Byte accessors (O-002).** `ChargedSize(i)` and `ChargedOnDisk(i)` return 0 for `Link`, for
+  `HardlinkDuplicate` entries and, since SL-042, for every `Folder` whatever size it states;
+  `Size`/`OnDisk` for a File that is charged (see docs/design/SL-042-folder-totals.md). Anything that adds bytes up
   (rollups, largest-first order, the kind breakdown) sums these, never `Size()`/`OnDisk()`. Summed over
   entries 1..Count-1 they equal `Totals.Bytes`/`Totals.BytesOnDisk`, and every scan in the tests
   asserts that (`Scans.AssertChargedBytesAreTheTotals`). A duplicate's own `Size` is its listing value,

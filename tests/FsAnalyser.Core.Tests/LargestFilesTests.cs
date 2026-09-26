@@ -308,12 +308,16 @@ public class LargestFilesScaleTests(ITestOutputHelper output)
             }
             else if (i % 1000 == 9)
             {
-                store.Append(level2, n, EntryKind.File, EntryFlags.HardlinkDuplicate, 0x20, Terabyte, Terabyte, UInt128.Zero);
+                // A later name of the file just before it (same ID, same folder), listed larger than any planted
+                // file: the store flags it a hardlink duplicate and charges it nothing (SL-042: only the store
+                // sets that flag, so it is built through a repeated ID, not passed in).
+                store.Append(level2, n, EntryKind.File, EntryFlags.None, 0x20, Terabyte, Terabyte, new UInt128(1, (ulong)(i - 1)));
             }
             else
             {
                 long size = (long)((uint)(i * 2654435761u) % 1_000_000_000u);
-                store.Append(level2, n, EntryKind.File, EntryFlags.None, 0x20, size, size, UInt128.Zero);
+                UInt128 id = i % 1000 == 8 ? new UInt128(1, (ulong)i) : UInt128.Zero; // the first name of the one above
+                store.Append(level2, n, EntryKind.File, EntryFlags.None, 0x20, size, size, id);
             }
         }
         Assert.Equal(Entries, store.Count);

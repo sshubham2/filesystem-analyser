@@ -19,7 +19,9 @@ internal static class Scans
     /// <summary>
     /// Each byte counted once holds in the store's own API, not only in the scanner's running totals:
     /// ChargedSize and ChargedOnDisk summed over every entry under the root are Totals.Bytes and
-    /// Totals.BytesOnDisk.
+    /// Totals.BytesOnDisk. And the folder totals (SL-042), whatever the scan's ending: every folder's are the
+    /// sums below it (<see cref="RollupOracle.CheckStructure"/>), the root's are Bytes, BytesOnDisk and
+    /// Files, and every top-level row, the scanner's second accumulator of the same numbers, is its entry's.
     /// </summary>
     public static void AssertChargedBytesAreTheTotals(ScanResult result)
     {
@@ -31,6 +33,22 @@ internal static class Scans
         }
         Assert.Equal(result.Totals.Bytes, size);
         Assert.Equal(result.Totals.BytesOnDisk, onDisk);
+
+        ScanStore store = result.Store;
+        if (store.Count == 0)
+            return; // the root was never listed
+        RollupOracle.CheckStructure(store);
+        Assert.Equal(new Rolled(result.Totals.Bytes, result.Totals.BytesOnDisk, result.Totals.Files), Rolled.Of(store, 0));
+        if (result.TopLevel is not { } top)
+            return;
+        Assert.Equal(store.ChildCount(0), top.Rows.Count);
+        for (int i = 0; i < top.Rows.Count; i++)
+        {
+            TopLevelRow row = top.Rows[i];
+            int entry = store.FirstChild(0) + i;
+            Assert.True(new Rolled(row.Bytes, row.OnDisk, row.Files) == Rolled.Of(store, entry),
+                $"top-level row {row.Name} holds {new Rolled(row.Bytes, row.OnDisk, row.Files)}, the store {Rolled.Of(store, entry)} under entry {entry}");
+        }
     }
 
     public static Dictionary<string, int> ByPath(ScanStore store)
