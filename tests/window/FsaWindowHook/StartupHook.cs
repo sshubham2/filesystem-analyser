@@ -18,13 +18,17 @@ using System.Windows.Threading;
 /// </summary>
 /// <remarks>
 /// <code>
-///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|watch|measure|rescan|expand|size
+///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|watch|measure|rescan|expand|size|tree
 ///   FSA_HOOK_LOG=&lt;file&gt;  [FSA_HOOK_ARMED=&lt;marker file&gt;  FSA_HOOK_CANCEL_DELAY_MS=&lt;n&gt;  FSA_HOOK_CLOSE_DELAY_MS=&lt;n&gt;]
 ///   [FSA_HOOK_SLOW_REFRESH_MS=&lt;n&gt;]  (watch and measure only)
 ///   [FSA_HOOK_MISSING=&lt;the root folder, under %TEMP%&gt;]  (rescan only)
-///   [FSA_HOOK_EXPAND=1]  (watch only)  [FSA_HOOK_MINSIZE=1]  (watch and expand only)
+///   [FSA_HOOK_EXPAND=1]  (watch only; a folder's path for tree)  [FSA_HOOK_MINSIZE=1]  (watch and expand only)
 ///   [FSA_HOOK_DRIVES=&lt;n&gt;]  (watch, expand and size only)
+///   [FSA_HOOK_WALK, FSA_HOOK_RECYCLE, FSA_HOOK_MULTIPLY, FSA_HOOK_SELECT, FSA_HOOK_RELEASE, FSA_HOOK_GAP, FSA_HOOK_HEIGHT]  (tree only)
 /// </code>
+/// tree (SL-044) reads and drives the folder tree a completed scan shows, and logs JSON lines; TreeMode.cs has
+/// all of it. It is not armed and takes no FSA_HOOK_SLOW_REFRESH_MS.
+///
 /// The runtime calls <see cref="Initialize"/> before the app's Main, in every .NET process that inherits the
 /// variable: pwsh 7, dotnet.exe and MSBuild nodes too. So it does nothing unless FSA_HOOK_MODE is set and the
 /// process is FsAnalyser.App.exe, and nothing it does can end the host.
@@ -32,8 +36,9 @@ using System.Windows.Threading;
 /// Without FSA_HOOK_ARMED every mode waits for the same thing: the window's CancelButton pressable
 /// (<see cref="Pressable"/>), which is only while a scan is running. It reads that and acts in one dispatcher
 /// callback, so the state it read is the state it acted on. stop raises the button's Click; close closes the
-/// main window; throw posts an exception to the UI thread. If nothing is pressable within 20 s, or the mode is
-/// unknown, it logs "refused" and does nothing. The hook never ends the process or picks its exit code: every
+/// main window; throw posts an exception to the UI thread, and logs "shutdown tree=b treeItems=n ms=n" as the app
+/// shuts down on it (whether the folder tree was shown, SL-044). If nothing is pressable within 20 s, or the mode
+/// is unknown, it logs "refused" and does nothing. The hook never ends the process or picks its exit code: every
 /// exit code a case reads is the app's own.
 ///
 /// With FSA_HOOK_ARMED (SL-038, the stalled-share cases) it acts on the stall rig's clock instead: it waits
@@ -124,7 +129,7 @@ internal class StartupHook
     private static readonly TimeSpan WatchDeadline = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ProbeEvery = TimeSpan.FromMilliseconds(50);
 
-    private static readonly Stopwatch Clock = new();
+    internal static readonly Stopwatch Clock = new();
     private static readonly object LogGate = new();
     private static string? _logPath;
 
@@ -168,7 +173,7 @@ internal class StartupHook
         try
         {
             Log($"loaded mode={mode} pid={Environment.ProcessId}");
-            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "size"))
+            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "size" or "tree"))
             {
                 Log($"refused mode={mode} reason=unknown mode");
                 return;
@@ -194,9 +199,17 @@ internal class StartupHook
             }
             string? marker = Environment.GetEnvironmentVariable("FSA_HOOK_ARMED");
             string? expandAfter = Environment.GetEnvironmentVariable("FSA_HOOK_EXPAND");
-            if (!string.IsNullOrEmpty(expandAfter) && (mode != "watch" || expandAfter != "1"))
+            if (!string.IsNullOrEmpty(expandAfter) && mode != "tree" && (mode != "watch" || expandAfter != "1"))
             {
-                Log($"refused mode={mode} reason=FSA_HOOK_EXPAND is 1, and for watch only");
+                Log($"refused mode={mode} reason=FSA_HOOK_EXPAND is 1 for watch, or a folder's path for tree");
+                return;
+            }
+            if (mode == "tree")
+            {
+                if (!string.IsNullOrEmpty(marker) || pad is not null)
+                    Log("refused mode=tree reason=tree mode is not armed and takes no FSA_HOOK_SLOW_REFRESH_MS");
+                else
+                    TreeMode.Drive();
                 return;
             }
             if (mode is "watch" or "measure")
@@ -830,7 +843,7 @@ internal class StartupHook
     private static string Max(IReadOnlyCollection<double> ms) =>
         ms.Count == 0 ? "-" : ms.Max().ToString("F1", CultureInfo.InvariantCulture);
 
-    private static Application? WaitForApplication(string mode)
+    internal static Application? WaitForApplication(string mode)
     {
         Application? app;
         while ((app = Application.Current) is null)
@@ -900,6 +913,11 @@ internal class StartupHook
                 app.MainWindow!.Close();
                 break;
             case "throw":
+                // What the window shows as the app shuts down on the fault: a scan that failed shows no folder
+                // tree (SL-044). Found now: by then the window may be gone from the app.
+                var tree = app.MainWindow?.FindName("FolderTree") as ItemsControl;
+                app.Dispatcher.ShutdownStarted += (_, _) =>
+                    Log($"shutdown tree={tree is { Visibility: Visibility.Visible }} treeItems={tree?.Items.Count ?? -1} ms={Clock.ElapsedMilliseconds}");
                 // BeginInvoke, not InvokeAsync: an exception in an InvokeAsync callback goes to its Task. No
                 // SetErrorMode: interop lives only in Native (ArchitectureRulesTests), and with the app's
                 // handler removed the process still ended at once, 0xE0434352 and no crash dialog.
@@ -968,7 +986,7 @@ internal class StartupHook
         return true;
     }
 
-    private static void Log(string line)
+    internal static void Log(string line)
     {
         if (string.IsNullOrEmpty(_logPath))
             return;

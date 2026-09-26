@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.ExceptionServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using FsAnalyser.Core;
@@ -16,7 +18,8 @@ namespace FsAnalyser.App;
 /// Pick a drive or folder, watch it being read, and see how the scan ended. Progress is polled from
 /// the scanner's counters every 250 ms; there is one scan at a time. The results list below them fills in
 /// from the scanner's published snapshots of the root's direct children (SL-039), and keeps the last one
-/// after the scan ends.
+/// after a stop. A scan that completes shows the folder tree in its place instead (SL-044), read from the
+/// store the scan returned, which nothing writes any more.
 /// </summary>
 public partial class MainWindow : Window
 {
@@ -49,6 +52,7 @@ public partial class MainWindow : Window
     private readonly Stopwatch _refreshClock = new();
     private bool _skipNextRefresh;
     private ScrollViewer? _topLevelScroll;
+    private FolderTreeSession? _treeSession; // the completed scan the folder tree shows; closed as the next one starts
 
     public MainWindow(string? launchPath)
     {
@@ -87,6 +91,12 @@ public partial class MainWindow : Window
 
     /// <summary>Whether the next tick with something new to show will skip it.</summary>
     internal bool SkipsNextRefresh => _skipNextRefresh;
+
+    /// <summary>How long the last folder opened in the tree took to sort its children, in ms; null before any.</summary>
+    internal double? LastFolderSortMs => _treeSession?.LastSortMs;
+
+    /// <summary>How long the last folder opened in the tree took to build their rows, in ms; null before any.</summary>
+    internal double? LastFolderBuildMs => _treeSession?.LastBuildMs;
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -172,6 +182,7 @@ public partial class MainWindow : Window
         UnreadableList.ItemsSource = null;
         HideLargestFiles(); // the last scan's list is never shown as this one's
         OutcomePanel.Visibility = Visibility.Collapsed;
+        ClearFolderTree(); // and its store with it, before this scan builds another
         ClearTopLevel();
         SkippedRefreshes = 0;
         SetPickersEnabled(false);
@@ -337,6 +348,71 @@ public partial class MainWindow : Window
         return null;
     }
 
+    // ---- The folder tree (SL-044) ----
+
+    // At a completed ending, in the results list's place: the root, opened, over the store the scan returned,
+    // which nothing writes any more. Its rows hold the session, never the store, so the next scan takes the store
+    // away from every one of them at once, whatever WPF still holds on to.
+    private void ShowFolderTree(ScanResult result)
+    {
+        var session = new FolderTreeSession(result.Store);
+        FolderTreeNode root = FolderTreeNode.Root(session);
+        root.EnsureChildren();
+        root.IsExpanded = true;
+        _treeSession = session;
+
+        TopLevelList.ItemsSource = null;
+        TopLevelList.Visibility = Visibility.Collapsed;
+        _shownTopLevel = null;
+        TopLevelHeader.Text = root.Children.Count == 0
+            ? $"{result.Root} is empty."
+            : $"Largest at the top of {result.Root}, by space on disk";
+        FolderTreeHeadings.Visibility = Visibility.Visible;
+        FolderTree.ItemsSource = new[] { root };
+        FolderTree.Visibility = Visibility.Visible;
+        TopLevelPanel.Visibility = Visibility.Visible;
+    }
+
+    // As a scan starts: the tree and its store go before the new scan builds another, so two stores are never held
+    // at once (one at 5M entries is about 650 MiB, against a budget of 1 GiB).
+    private void ClearFolderTree()
+    {
+        _treeSession?.Close();
+        _treeSession = null;
+        FolderTree.ItemsSource = null;
+        FolderTree.Visibility = Visibility.Collapsed;
+        FolderTreeHeadings.Visibility = Visibility.Collapsed;
+        TopLevelList.Visibility = Visibility.Visible;
+    }
+
+    // A folder's rows are built here as it opens, not in the row's IsExpanded setter: that is reached through
+    // bindings, and a binding turns an exception into a trace line, leaving an open folder that shows nothing
+    // (review m4). The expander's own click reaches here through a binding too, so a fault is raised again on the
+    // dispatcher, where the app's own failure handling sees it.
+    private void OnFolderExpanded(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is not TreeViewItem { DataContext: FolderTreeNode node })
+            return;
+        try
+        {
+            node.EnsureChildren();
+        }
+        catch (Exception fault)
+        {
+            ExceptionDispatchInfo captured = ExceptionDispatchInfo.Capture(fault);
+            Dispatcher.BeginInvoke(DispatcherPriority.Send, new Action(captured.Throw));
+        }
+    }
+
+    // The numpad's * on a row opens every folder below the selected one (TreeView's ExpandSubtree): on a drive's
+    // root, rows for every folder of the scan, built on the UI thread and kept until the next scan. Folders open
+    // one at a time (review M1).
+    private void OnFolderTreeKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Multiply)
+            e.Handled = true;
+    }
+
     // ---- Outcomes ----
 
     private void ShowOutcome(ScanResult result)
@@ -387,6 +463,8 @@ public partial class MainWindow : Window
 
         // Last, so that a failure here cannot take away what is already filled in above.
         ShowLargestFiles(result);
+        if (finished)
+            ShowFolderTree(result); // a stopped scan keeps its list: a share would be of an incomplete whole
         OutcomePanel.Visibility = Visibility.Visible;
         ShowVolumeInUse(result.Store.VolumeUsed, _scanGeneration, detail); // and then EndingShown
     }

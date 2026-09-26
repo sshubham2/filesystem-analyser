@@ -42,7 +42,8 @@ namespace FsAnalyser.App;
 ///                 "UnreadableExpander": { "visible": bool, "actualHeight": number, "inView": bool, "expanded": bool },
 ///                 "UnreadableList": { "actualHeight": number, "inView": bool, "fullRows": number },
 ///                 "TopLevelPanel": { "visible": bool, "actualHeight": number },
-///                 "TopLevelList": { "actualHeight": number, "inView": bool, "realizedRows": number, "fullRows": number } },
+///                 "TopLevelList": { "actualHeight": number, "inView": bool, "realizedRows": number, "fullRows": number },
+///                 "FolderTree": { "visible": bool, "actualHeight": number, "inView": bool, "realizedRows": number, "fullRows": number } },
 ///     "largestFilesShown": rows bound to LargestFilesList, "largestFileOnDisk": the first row's on-disk
 ///         bytes or null, "largestFilesMs": how long ranking them took or null (SL-040),
 ///     "core": { "status", "rootError", "files", "folders", "links", "bytes", "bytesOnDisk", "elapsedMs" } or null,
@@ -62,7 +63,10 @@ namespace FsAnalyser.App;
 /// of them lie wholly inside the list's viewport, readable without scrolling. OutcomeTexts is the scrolling
 /// region of the outcome's texts: "extentHeight" is their whole height, and more than "actualHeight" means
 /// the rest is a scroll away. PickerPanel's height is what the pickers take above everything else, and
-/// DrivePanel's "buttons" how many drive buttons they hold; the height must not depend on that count. Later
+/// DrivePanel's "buttons" how many drive buttons they hold; the height must not depend on that count.
+/// FolderTree (SL-044) is the folder tree a completed scan shows in TopLevelList's place: its layout only, never
+/// a row's name or figures (Q-016). Its "realizedRows" are the tree rows built at any depth, and a row is one of
+/// its "fullRows" when its own line, not the folders opened under it, lies wholly inside the viewport. Later
 /// screens ADD keys; they never rename one or change what it holds. "window" is the evidence a check
 /// compares with the tree it built. The largestFiles* keys are read from the list's own rows and from the
 /// window's timing of the one call that ranked them; they never hold a name or a path. "core" is the
@@ -135,6 +139,14 @@ internal static class WindowReport
                     inView = InView(window.TopLevelList),
                     realizedRows = Enumerable.Range(0, window.TopLevelList.Items.Count).Count(i => window.TopLevelList.ItemContainerGenerator.ContainerFromIndex(i) is not null),
                     fullRows = FullRows(window.TopLevelList),
+                },
+                FolderTree = new
+                {
+                    visible = window.FolderTree.IsVisible,
+                    actualHeight = window.FolderTree.ActualHeight,
+                    inView = InView(window.FolderTree),
+                    realizedRows = TreeRows(window.FolderTree).Count,
+                    fullRows = FullRows(window.FolderTree),
                 },
             },
             ["largestFilesShown"] = largest.Count,
@@ -223,6 +235,37 @@ internal static class WindowReport
                 full++;
         }
         return full;
+    }
+
+    // The same for the folder tree: each built row's own line (its header), inside the tree's viewport.
+    private static int FullRows(TreeView tree)
+    {
+        if (!tree.IsVisible || FindViewport(tree) is not { } viewport)
+            return 0;
+        int full = 0;
+        foreach (TreeViewItem row in TreeRows(tree))
+        {
+            if (row.Template?.FindName("PART_Header", row) is not FrameworkElement line || !line.IsVisible || line.ActualHeight <= 0)
+                continue;
+            Rect box = line.TransformToAncestor(viewport).TransformBounds(new Rect(line.RenderSize));
+            if (box.Top >= -0.5 && box.Bottom <= viewport.ActualHeight + 0.5)
+                full++;
+        }
+        return full;
+    }
+
+    // The tree's built rows at every depth: the containers in its visual tree.
+    private static List<TreeViewItem> TreeRows(DependencyObject node, List<TreeViewItem>? rows = null)
+    {
+        rows ??= [];
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(node, i);
+            if (child is TreeViewItem row)
+                rows.Add(row);
+            TreeRows(child, rows);
+        }
+        return rows;
     }
 
     private static ScrollContentPresenter? FindViewport(DependencyObject node)

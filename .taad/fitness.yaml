@@ -402,7 +402,14 @@ rules:
       (MainWindow.xaml.cs, the unreadable list), so result.Store is allowed and any other .Store,
       a property pattern on Store, or the type name fails. Run against trunk before it was
       declared: the rule as first appended failed trunk on exactly that result.Store line, and
-      this one passes trunk and the slice. A tripwire on names, not a proof.'
+      this one passes trunk and the slice. A tripwire on names, not a proof. Narrowed again, not
+      deleted, by SL-044, whose folder tree reads a store without a live read path: only the
+      finished one, handed over by MainWindow as result.Store once Scan() has returned, and only
+      in the FolderTree files (the session that holds it and the rows that read it). The rule
+      below, that Core publishes no store before the scan ends, is what keeps a live one out of
+      reach; any other App file still may not name the store.'
+    except_files:
+    - src/FsAnalyser.App/FolderTree*.cs
   - name: published snapshot types cannot be changed after they are built
     files: src/FsAnalyser.Core/TopLevelSnapshot.cs
     must_not_match:
@@ -486,3 +493,57 @@ rules:
       If that thread's closure names the store, the discarded scan (~700 MiB at 5M rows, against
       ~136 MiB of headroom) stays alive for as long as the thread. The read is handed only the
       completion source.
+
+  # settled by SL-044
+  - name: the folder tree shows Core's order and never re-sorts or mutates children item by
+      item
+    files: src/FsAnalyser.App/FolderTree*.cs
+    must_not_match:
+    - SortDescriptions
+    - CollectionViewSource
+    - \.OrderBy(Descending)?\(
+    - \.Sort\(
+    - \bChildren\.(Add|Insert|AddRange|Remove\w*)\(
+    because: ChildrenLargestFirst owns the order (on-disk size, then entry order). A second
+      sort in the window with another key, such as the bytes sort the flat list uses, silently
+      disagrees with Core and with row 2. Per-item edits to Children raise one change notification
+      per row, which cannot meet row 5 at 100,000 children. Children is replaced once, as a
+      whole array.
+  - name: Core does not publish a live ScanStore before the scan ends
+    files: src/FsAnalyser.Core/**/*.cs
+    must_not_match:
+    - \bScanStore\b
+    because: Rollups are posted while the scanner writes, and reading them from another thread
+      is unsupported (SL-042 doc). The mid-scan-shares spike measured child above parent 10-21
+      times per scan and children summing above the parent about 400 times. ScanResult.Store,
+      set when Scan() returns, is the only sanctioned way to a store. A live tree needs a consistent
+      read path first (immutable per-folder snapshots, or a seqlock or epoch), and whoever builds
+      it must change this rule on purpose. An allow-list (SL-044 review m5), because a pattern for
+      a public property misses a nullable one, a method, a record's positional parameter (on
+      ScanProgress, which already carries TopLevel mid-scan) and an event. The store's own files,
+      the Scanner that holds its private store, ScanResult, the tracker the Scanner seeds, and the
+      analysis that reads a finished store name the type; any other Core file that does fails and
+      must be justified here. Code only, not comments.
+    except_files:
+    - src/FsAnalyser.Core/Store/ScanStore*.cs
+    - src/FsAnalyser.Core/Scanning/Scanner.cs
+    - src/FsAnalyser.Core/Scanning/ScanResult.cs
+    - src/FsAnalyser.Core/TopLevelTracker.cs
+    - src/FsAnalyser.Core/Analysis/LargestFiles.cs
+  - name: the window does not sort the folder tree in its XAML either
+    files: src/FsAnalyser.App/*.xaml
+    must_not_match:
+    - SortDescriptions|CollectionViewSource|IsLiveSorting
+    because: The folder tree lives and is wired in MainWindow.xaml and MainWindow.xaml.cs, outside
+      the FolderTree files the rule above covers (SL-044 review m6). A CollectionViewSource or a
+      sort description there re-sorts the rows under Core's order (ChildrenLargestFirst, on-disk
+      size then entry order) and disagrees with row 2 without failing anything else. The flat
+      list's bytes sort is done in code over an array (Array.Sort), not in a view, so it does
+      not match.
+  - name: the window does not sort the folder tree in its code either
+    files: src/FsAnalyser.App/MainWindow.xaml.cs
+    must_not_match:
+    - SortDescriptions|CollectionViewSource|IsLiveSorting
+    because: The same rule for the window's code, where FolderTree.Items.SortDescriptions would
+      be the easy way to break it (SL-044 review m6). One entry per file type, because files
+      takes one glob.

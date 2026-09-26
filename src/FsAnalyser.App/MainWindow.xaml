@@ -7,6 +7,89 @@
     <Window.Resources>
         <local:TopLevelRowText x:Key="RowTitle" />
         <local:TopLevelRowText x:Key="RowFigures" Figures="True" />
+
+        <!-- The folder tree's open and close arrow, drawn as the stock one is. -->
+        <Style x:Key="FolderTreeExpander" TargetType="ToggleButton">
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Width" Value="16" />
+            <Setter Property="Height" Value="16" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border Width="16" Height="16" Background="Transparent" Padding="5,5,5,5">
+                            <Path x:Name="Arrow" Data="M0,0 L0,6 L6,0 z" Fill="Transparent" Stroke="#FF818181">
+                                <Path.RenderTransform>
+                                    <RotateTransform Angle="135" CenterX="3" CenterY="3" />
+                                </Path.RenderTransform>
+                            </Path>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Arrow" Property="RenderTransform">
+                                    <Setter.Value>
+                                        <RotateTransform Angle="180" CenterX="3" CenterY="3" />
+                                    </Setter.Value>
+                                </Setter>
+                                <Setter TargetName="Arrow" Property="Fill" Value="#FF595959" />
+                                <Setter TargetName="Arrow" Property="Stroke" Value="#FF262626" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Arrow" Property="Stroke" Value="#FF27C7F7" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- A folder tree row: the stock TreeViewItem's parts, names and triggers, with one change. The stock
+             template sizes the header to its content, so columns docked to its right edge would move with every
+             name and every depth; here the header runs to the right edge of the tree, which every row at every
+             depth shares, so the figures line up under their headings (SL-044). PART_Header and ItemsHost keep
+             their names: the TreeView's virtualization reads them. -->
+        <ControlTemplate x:Key="FolderTreeItem" TargetType="TreeViewItem">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition MinWidth="19" Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition />
+                </Grid.RowDefinitions>
+                <ToggleButton x:Name="Expander" Style="{StaticResource FolderTreeExpander}" ClickMode="Press"
+                              IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}}" />
+                <Border x:Name="Bd" Grid.Column="1" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                    <ContentPresenter x:Name="PART_Header" ContentSource="Header" HorizontalAlignment="Stretch"
+                                      SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
+                </Border>
+                <ItemsPresenter x:Name="ItemsHost" Grid.Row="1" Grid.Column="1" />
+            </Grid>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsExpanded" Value="False">
+                    <Setter TargetName="ItemsHost" Property="Visibility" Value="Collapsed" />
+                </Trigger>
+                <Trigger Property="HasItems" Value="False">
+                    <Setter TargetName="Expander" Property="Visibility" Value="Hidden" />
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                    <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                </Trigger>
+                <MultiTrigger>
+                    <MultiTrigger.Conditions>
+                        <Condition Property="IsSelected" Value="True" />
+                        <Condition Property="Selector.IsSelectionActive" Value="False" />
+                    </MultiTrigger.Conditions>
+                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource {x:Static SystemColors.InactiveSelectionHighlightBrushKey}}" />
+                    <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}}" />
+                </MultiTrigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
     </Window.Resources>
     <DockPanel Margin="16">
 
@@ -217,26 +300,86 @@
                 </Grid>
             </Border>
 
-            <!-- What has been read under the root, largest first: filled in while the scan runs and kept after it
-                 ends (SL-039). Its row gives the list a bounded height, all that is left while the scan runs and
-                 its share beside the outcome after it, which is what lets it virtualize: only the rows on screen
-                 get containers. Two TextBlocks a row, as measured, trimmed rather than scrolled sideways, and a
-                 header of one line with the whole of it as its tooltip, so the row's minimum holds for any name. -->
+            <!-- What has been read under the root, largest first: filled in while the scan runs and kept after a
+                 stop (SL-039); once a scan completes, the folder tree takes its place in the same cell (SL-044).
+                 Its row gives the list and the tree a bounded height, all that is left while the scan runs and its
+                 share beside the outcome after it, which is what lets them virtualize: only the rows on screen get
+                 containers. Two TextBlocks a list row, as measured, and one line a tree row, trimmed rather than
+                 scrolled sideways, and a header of one line with the whole of it as its tooltip, so the row's
+                 minimum (84) holds for any name: the header and one list row, or the header, the tree's headings and
+                 one tree row. -->
             <DockPanel x:Name="TopLevelPanel" Grid.Row="1" Visibility="Collapsed" Margin="0,16,0,0">
                 <TextBlock x:Name="TopLevelHeader" DockPanel.Dock="Top" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,0,0,6"
                            ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
-                <ListBox x:Name="TopLevelList" HorizontalContentAlignment="Stretch" ScrollViewer.CanContentScroll="True"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                         VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <StackPanel Margin="0,2">
-                                <TextBlock Text="{Binding Converter={StaticResource RowTitle}}" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="{Binding Converter={StaticResource RowFigures}}" Foreground="Gray" TextTrimming="CharacterEllipsis" />
-                            </StackPanel>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                <!-- The folder tree's headings, shown with it: the same widths, docked to the same right edge as its
+                     rows, less the tree's border, padding and its vertical scroll bar, which is always shown. -->
+                <DockPanel x:Name="FolderTreeHeadings" DockPanel.Dock="Top" Visibility="Collapsed" Margin="0,0,2,2">
+                    <Border DockPanel.Dock="Right" Width="{DynamicResource {x:Static SystemParameters.VerticalScrollBarWidthKey}}" />
+                    <TextBlock DockPanel.Dock="Right" Width="80" Margin="8,0,0,0" Text="Size" TextAlignment="Right" Foreground="Gray" />
+                    <TextBlock DockPanel.Dock="Right" Width="80" Margin="8,0,0,0" Text="On disk" TextAlignment="Right" Foreground="Gray" />
+                    <TextBlock DockPanel.Dock="Right" Width="116" Margin="12,0,0,0" Text="Share of folder, on disk" TextTrimming="CharacterEllipsis"
+                               Foreground="Gray" ToolTip="Each row's share of the space its folder takes on disk" />
+                    <TextBlock Margin="22,0,0,0" Text="Name" Foreground="Gray" />
+                </DockPanel>
+                <!-- One cell, one of the two shown: the results list while a scan runs and after a stop or a failure
+                     (SL-039), the folder tree once a scan completes (SL-044). -->
+                <Grid>
+                    <ListBox x:Name="TopLevelList" HorizontalContentAlignment="Stretch" ScrollViewer.CanContentScroll="True"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="0,2">
+                                    <TextBlock Text="{Binding Converter={StaticResource RowTitle}}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding Converter={StaticResource RowFigures}}" Foreground="Gray" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <!-- The folder tree (SL-044): a completed scan's store, largest first by space on disk, each row's
+                         share of its folder beside it, one folder opened at a time. Virtualized as it was measured
+                         (spike tree-layer-fits-under-1gib-with-built-store-at-5m, U-001): in this bounded cell only the
+                         rows on screen get containers, recycled, scrolled by pixel, every row the same height. The rows
+                         come in Core's order (ChildrenLargestFirst) and nothing here sorts them. Text is TextBlocks
+                         bound to the row, never a Label or a ContentPresenter over a string, so '_' and '&' in a name
+                         show as written. -->
+                    <TreeView x:Name="FolderTree" Visibility="Collapsed"
+                              ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Visible"
+                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                              VirtualizingPanel.ScrollUnit="Pixel"
+                              TreeViewItem.Expanded="OnFolderExpanded" PreviewKeyDown="OnFolderTreeKeyDown">
+                        <TreeView.ItemContainerStyle>
+                            <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+                                <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                                <Setter Property="Template" Value="{StaticResource FolderTreeItem}" />
+                            </Style>
+                        </TreeView.ItemContainerStyle>
+                        <TreeView.ItemTemplate>
+                            <HierarchicalDataTemplate ItemsSource="{Binding Children, Mode=OneWay}">
+                                <DockPanel Height="20" Background="Transparent">
+                                    <TextBlock x:Name="SizeText" DockPanel.Dock="Right" Width="80" Margin="8,0,0,0" VerticalAlignment="Center"
+                                               Text="{Binding SizeText, Mode=OneTime}" TextAlignment="Right" Foreground="Gray" />
+                                    <TextBlock x:Name="OnDiskText" DockPanel.Dock="Right" Width="80" Margin="8,0,0,0" VerticalAlignment="Center"
+                                               Text="{Binding OnDiskText, Mode=OneTime}" TextAlignment="Right" />
+                                    <Grid DockPanel.Dock="Right" Width="116" Margin="12,0,0,0">
+                                        <Border x:Name="ShareTrack" Width="60" Height="10" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                Background="#FFE4E4E4" Visibility="{Binding ShareShown, Mode=OneTime}">
+                                            <Rectangle x:Name="ShareBar" HorizontalAlignment="Left" Fill="#FF5E9E4A"
+                                                       Width="{Binding BarWidth, Mode=OneTime}" />
+                                        </Border>
+                                        <TextBlock x:Name="ShareText" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                   Text="{Binding ShareText, Mode=OneTime}" TextAlignment="Right" />
+                                    </Grid>
+                                    <TextBlock x:Name="NoteText" DockPanel.Dock="Right" Margin="8,0,0,0" VerticalAlignment="Center"
+                                               Text="{Binding Note, Mode=OneTime}" Foreground="Gray" />
+                                    <TextBlock x:Name="NameText" VerticalAlignment="Center" Text="{Binding Name, Mode=OneTime}"
+                                               TextTrimming="CharacterEllipsis" ToolTip="{Binding Name, Mode=OneTime}" />
+                                </DockPanel>
+                            </HierarchicalDataTemplate>
+                        </TreeView.ItemTemplate>
+                    </TreeView>
+                </Grid>
             </DockPanel>
         </Grid>
 
