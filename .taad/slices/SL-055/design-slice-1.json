@@ -1,0 +1,359 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-055",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-27T03:11:20.236Z",
+ "head": "192213183ef7b96165a88a62419d7c1f3a055df1",
+ "run_id": 1495,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "reason": "Composed from the single practice proposal. Nobody has disagreed with it. Its central premise (a second concurrent CancelSynchronousIo frees a re-blocked wait while the first is still held) has not been run by anyone and is recorded as a decidable disagreement.",
+  "selection_rationale": "Selected the practice proposal as the core, unchanged in mechanism. Reality supports each load-bearing claim it makes. (1) Fix, not quarantine: the spike measured every run past 2 s as a LOST cancel (4 of 300 class runs; the worker was blocked more than 30 s in ConnectNamedPipe and the scan-cancel thread sat in CancelSynchronousIo). None were slow cancels. A quarantine also cannot make the acceptance command pass, because that command is the repro test, which is red 10 of 10. (2) The 2 s bar and RetryMilliseconds = 25 stay: cancels that landed freed the worker within 622 ms (p99 423 ms) in 500 of 500 trials under full load, and moving the interval to 50 ms still failed 12 of 300 runs. (3) Issuing each CancelSynchronousIo from its own short-lived dedicated thread is exactly the 'needs first' the third spike left open. It is the simplest change that removes head-of-line blocking, it stays inside one file that .taad/fitness.yaml already exempts (lines 164 and 250), and it is cheap to reverse. (4) Proof has to be loaded: idle runs are 20 of 20 and 6 of 6 green before any fix, while 14 of 15 loaded class runs are red.\n\nThe slice's third criterion, whether local cancel can exceed 2 s under load, gets a two-part answer that the build must write into the code and the slice record. A DELIVERED cancel does not (max 622 ms, roughly 3x headroom on this Ryzen 9 8945H with 16 threads under 100% CPU). A LOST cancel is unbounded (more than 30 s in the spike), and that is the whole flake.\n\nChanges I made to the proposal:\n- Added two architecture rules.\n- Made the fallback route explicit: if the premise fails, the slice goes back to the risk-spike stage, and the design is not patched around it.\n- Required the build to read the current Exit/Dispose ordering and the Kernel32 handle type before editing, because the proposal was written without file access and the survey confirmed only the `_state` gate, that Exit sets Idle, and that the handle comes from OpenThread.\n- Added three cases the proposal left implicit: first-attempt latency now includes a thread-start hop, Dispose without Exit, and the hot-path Exit.\n\nNothing outside the project's stack block was chosen. The design uses a raw dedicated `Thread` inside the existing file and the existing xUnit collection mechanism.\n\nAssumed from a title-only report: the flaky target is SynchronousIoCancelTests.CancelIsResentWhileACallBlocksAgainAfterACancel, and the acceptance is the repro test's command exiting 0.",
+  "components": [
+   {
+    "name": "CancelLoop as a dispatcher",
+    "responsibility": "Keeps the existing loop shape: while _state is Cancelling, start one cancel attempt if fewer than MaxAttemptsInKernel (4) are inside the kernel, then Thread.Sleep(RetryMilliseconds = 25, unchanged). It never calls Kernel32.CancelSynchronousIo itself, so a call held in the kernel cannot stop the resend. At the cap it sleeps and re-checks, with no busy wait. A failure to start an attempt thread is caught and retried at the next tick, and must not end the loop.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs",
+    "key_interactions": "Started by StartCanceller from the token callback (unchanged). Reads _state. Starts cancel attempts. Priority of the loop thread is unchanged."
+   },
+   {
+    "name": "Cancel attempt (one CancelSynchronousIo call on its own dedicated thread)",
+    "responsibility": "Private method run on `new Thread { IsBackground = true, Name = \"scan-cancel-attempt\" }` at the same priority as the scan-cancel thread. Under the gate it checks that _state is still Cancelling. If so it increments the in-kernel count and CancelAttempts, and makes exactly one Kernel32.CancelSynchronousIo call on the worker's OpenThread handle. In a finally block it decrements the count and pulses the gate. FALSE/1168 (ERROR_NOT_FOUND) is ignored, as today. The count is incremented on the attempt thread, never by the dispatcher, so a failed thread start leaks nothing. Dedicated threads only: no ThreadPool, Task.Run or Timer, because a call held in the kernel would pin a pool thread the scanner shares.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs",
+    "key_interactions": "Gate shared with Exit(). Uses the handle Dispose closes. Existing P/Invoke in src/FsAnalyser.Core/Native/Kernel32.cs."
+   },
+   {
+    "name": "Exit()/Dispose drain",
+    "responsibility": "Hot path unchanged: if the previous state was not Cancelling, Exit does exactly what it does now, with no lock and no wait. Slow path (previous state Cancelling): set Idle, then wait under the gate until the in-kernel count is 0 before returning. Dispose closes the worker thread handle only after that drain, and also drains when it is reached without a prior Exit while Cancelling. Guarantee: after Exit returns, no CancelSynchronousIo for this guard is issued or in flight, and the handle is never closed under a live call.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs",
+    "key_interactions": "Called by scanner call sites and by tests after the guarded call returns. The build must read the current Exit/Dispose order and the handle type (IntPtr vs SafeHandle) before editing, and preserve whatever guarantee exists today."
+   },
+   {
+    "name": "Record of the '>2 s under load' answer",
+    "responsibility": "A short comment beside RetryMilliseconds/CancelLoop states the measured answer: delivered cancels freed the worker in at most 622 ms (p99 423 ms) over 500 trials under full CPU load, and every run past 2 s was a lost cancel with the canceller held in CancelSynchronousIo. The doc comment on Kernel32.CancelSynchronousIo, which already says the call can block, gains one line: it can stay blocked while the target waits again, so callers must not serialize retries behind it. The build also writes the answer into the slice record.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs, src/FsAnalyser.Core/Native/Kernel32.cs",
+    "key_interactions": "Comments only; nothing reads them at runtime."
+   },
+   {
+    "name": "Regression test (the repro, committed)",
+    "responsibility": "Commit SynchronousIoCancelResendRaceTests.cs. Put it in a [Collection] whose [CollectionDefinition] sets DisableParallelization = true, copied exactly from the existing MemoryBudget/VolumeFigure declarations. Restore ProcessorAffinity and thread priority in a finally block. Add one assertion: after the worker's guard Exit() returns and before Dispose, the same worker thread lists a TempTree folder with Directory.GetFileSystemEntries and the test asserts no exception and the expected entry count. The 2 s Join and the 'N cancel attempt(s) made' message stay.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/SynchronousIoCancelResendRaceTests.cs",
+    "key_interactions": "It is the acceptance command. Reads CancelAttempts. Its process-wide affinity pin is why it must not run in parallel with other classes."
+   },
+   {
+    "name": "Flaky test, unchanged",
+    "responsibility": "SynchronousIoCancelTests.CancelIsResentWhileACallBlocksAgainAfterACancel keeps its 2 s bar and assertions. It is the load-sensitive witness that the fix holds and is not to be relaxed, skipped or given a retry attribute.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/SynchronousIoCancelTests.cs",
+    "key_interactions": "Run 30 times under 32 busy-loop jobs at validate."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "SynchronousIoCancel: Cancel frees a guarded call, including one that blocks again",
+    "kind": "function",
+    "notes": "While the guard is entered and the token is cancelled, a CancelSynchronousIo attempt is started every 25 ms until Exit(), whether or not earlier attempts have returned from the kernel. Every re-blocked wait is interrupted and the guarded thread returns within 2 s of Cancel. Measured for landed cancels: max 622 ms, p99 423 ms, under full load. The first attempt now goes through a thread start, so first-cancel latency must be re-checked under load.",
+    "error_cases": "An attempt that finds no pending I/O returns FALSE/1168 and is ignored. An attempt the kernel holds keeps its thread until the I/O it waits on completes. At most 4 are held at once, and at the cap the loop sleeps and creates no more threads. A failed attempt-thread start is retried at the next tick.",
+    "auth_model": "In-process. Worker handle from OpenThread(THREAD_TERMINATE) as today; ordinary user, no elevation."
+   },
+   {
+    "name": "SynchronousIoCancel.Exit()/Dispose: no cancel after the region is left",
+    "kind": "function",
+    "notes": "After Exit() returns, no CancelSynchronousIo for this guard is being issued or is in flight, so later synchronous I/O on that thread cannot be aborted. A stray abort would show up as folders wrongly listed as unreadable (PS-006). Atomicity: an attempt checks Cancelling and increments the in-kernel count under the gate, and reads _state inside the gate. Exit sets Idle first and then reads the count under the same gate, so every attempt that saw Cancelling is counted before Exit reads the count. The hot path, where no cancel happened, adds no lock and no wait. Dispose closes the handle only after the drain.",
+    "error_cases": "If a CancelSynchronousIo call stayed in the kernel after the worker had left all I/O, Exit would wait forever. That shows up as a hung test and must be treated as a failure of the loaded loops. Fallback (bounded drain or SafeHandle ref-counting) weakens the no-stray-abort guarantee and needs a person's sign-off."
+   },
+   {
+    "name": "CancelAttempts test counter",
+    "kind": "function",
+    "notes": "Counts attempts that passed the gate. Incremented just before the kernel call, so 'N cancel attempt(s) made' still means calls issued. Existing member name and visibility are kept."
+   },
+   {
+    "name": "Acceptance: repro command exits 0",
+    "kind": "cli",
+    "notes": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj -nologo --filter FullyQualifiedName~SynchronousIoCancelResendRaceTests. Red 10 of 10 today at both 25 and 50 ms, so 10 of 10 green is a real signal.",
+    "error_cases": "Still red with more than 1 attempt made and every attempt thread held in CancelSynchronousIo means the premise is false. Raise an obligation naming the risk-spike stage (its retry-cancel-loop experiment left this as 'needs first') and do not patch around it."
+   },
+   {
+    "name": "Proof under load (validate protocol, inline, no new script)",
+    "kind": "cli",
+    "notes": "(1) The repro command 10 times. (2) With 32 Start-Job busy-loop jobs on 16 logical CPUs, 30 runs of --filter FullyQualifiedName~SynchronousIoCancelTests; baseline is 14 of 15 red, target 0 red. (3) 10 full-suite runs of FsAnalyser.slnx with the repro file included; target 0 red, no hang. (4) ArchitectureRulesTests and RuleCopiesAgreeTests green. Idle-only green does not count: idle is already 20 of 20 without the fix. Remove the load jobs afterwards and report the job count left."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Fix the resend in the product. Do not quarantine, skip, add a retry attribute or relax the test.",
+    "reversibility": "cheap",
+    "rationale": "The spike measured every failure as a lost cancel (worker blocked more than 30 s), not a slow one, so Cancel really does nothing for a guarded call that blocks again. A quarantine hides that defect and cannot make the acceptance command, which is the repro test, pass."
+   },
+   {
+    "decision": "Issue each CancelSynchronousIo from its own short-lived dedicated background thread. The scan-cancel loop only dispatches, every 25 ms.",
+    "reversibility": "cheap",
+    "rationale": "This is the spike's own 'needs first': a call held in the kernel cannot stop the next one. Dedicated threads rather than ThreadPool, Task.Run or Timer, because a call held in the kernel would pin a pool thread the scanner shares, and pool injection is slow under load, which is the flake's condition. It is internal to one file."
+   },
+   {
+    "decision": "Cap attempts inside the kernel at 4; at the cap the loop sleeps and starts nothing.",
+    "reversibility": "cheap",
+    "rationale": "Bounds thread growth if a stalled share's redirector ignores cancel and holds every call. In theory 2 suffice, since each new attempt frees the one waiting on the I/O it cancels; 4 is margin."
+   },
+   {
+    "decision": "Exit()/Dispose drain in-flight attempts under a gate before returning or closing the handle; the hot path stays lock-free.",
+    "reversibility": "expensive",
+    "rationale": "This is the guard's contract with every scanner call site: no stray abort after Exit (which would list folders as unreadable) and no handle closed under a live call. Detaching attempts widens the window where a late cancel could hit later I/O, so the drain makes the guarantee explicit. The post-Exit directory-listing assertion proves it before the contract is locked in."
+   },
+   {
+    "decision": "Keep the 2 s bar and RetryMilliseconds = 25. Record the answer to 'can local cancel exceed 2 s under load': a delivered cancel does not (max 622 ms of 500), a lost one is unbounded.",
+    "reversibility": "cheap",
+    "rationale": "500 of 500 landed cancels freed the worker with about 3x headroom, and the 50 ms variant still failed 12 of 300 runs, so neither the interval nor the bar is the cause. The answer goes in a code comment and the slice record; a latency-asserting test would itself become a new flake."
+   },
+   {
+    "decision": "Keep all product changes inside SynchronousIoCancel.cs, plus one comment line in Kernel32.cs. No new type or file.",
+    "reversibility": "cheap",
+    "rationale": ".taad/fitness.yaml already exempts SynchronousIoCancel.cs in two rules (lines 164 and 250). A new file that starts raw threads and calls the P/Invoke could fall foul of them."
+   },
+   {
+    "decision": "Commit the repro as the regression test, in a DisableParallelization collection, with affinity and priority restored in a finally block.",
+    "reversibility": "cheap",
+    "rationale": "It forces the losing interleaving deterministically on one CPU, where the class test hits it only under load. Its process-wide affinity pin is the suspected (unproven) cause of the one uncaptured CancelInterruptsACallBlockedInTheKernel failure seen in the first full-suite run."
+   },
+   {
+    "decision": "Prove the fix under load; idle loops are not evidence.",
+    "reversibility": "cheap",
+    "rationale": "Idle is 20 of 20 and 6 of 6 green before any fix. Under 32 busy-loop jobs the class was red in 14 of 15 runs."
+   },
+   {
+    "decision": "If the repro stays red with more than 1 attempt made and all attempt threads held, send the slice back to the risk-spike stage instead of adding workarounds.",
+    "reversibility": "cheap",
+    "rationale": "That outcome falsifies the only untested premise, and a different mechanism would change the component boundary. Quarantine is not a substitute; it is an open question for a person."
+   },
+   {
+    "decision": "Add two architecture rules: CancelSynchronousIo is called only from SynchronousIoCancel.cs and its P/Invoke declaration; the guard file uses no ThreadPool, Task.Run or Timer.",
+    "reversibility": "cheap",
+    "rationale": "The gate-and-drain protocol is the only thing standing between a cancel and later I/O, and the thread-pool shortcut is the obvious wrong implementation of this design."
+   }
+  ],
+  "architecture_rules": [
+   {
+    "name": "Only the cancel guard issues CancelSynchronousIo",
+    "files": "src/**/*.cs",
+    "must_not_match": [
+     "\\bCancelSynchronousIo\\s*\\("
+    ],
+    "except_files": [
+     "src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs",
+     "src/FsAnalyser.Core/Native/Kernel32.cs"
+    ],
+    "because": "A CancelSynchronousIo call made outside the guard's gate and drain can land on I/O after the guarded region was left, which lists readable folders as unreadable (PS-006), or on a closed thread handle."
+   },
+   {
+    "name": "Cancel attempts never run on the thread pool or a timer",
+    "files": "src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs",
+    "must_not_match": [
+     "\\bThreadPool\\b",
+     "\\bTask\\.Run\\s*\\(",
+     "\\bQueueUserWorkItem\\b",
+     "\\bnew\\s+(System\\.Threading\\.)?Timer\\s*\\("
+    ],
+    "because": "A CancelSynchronousIo call held in the kernel would pin a pool thread the scanner shares, and slow pool thread injection under load would bring back the same lost resend this slice removes. Attempts need dedicated threads."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "Cancel a guarded call that blocks again",
+    "shape": "the worker re-blocks before the first CancelSynchronousIo call has returned (process pinned to one CPU, worker at highest priority)",
+    "why": "This is the lost-cancel interleaving: the only canceller is held in the kernel, so the resend never runs. It is the acceptance test, red 10 of 10 today with '1 cancel attempt(s) made'."
+   },
+   {
+    "behaviour": "Cancel a guarded call that blocks again after each interruption",
+    "shape": "the existing class test run 30 times while 32 busy-loop jobs occupy 16 logical CPUs",
+    "why": "Baseline is 14 of 15 red under load and 0 of 20 idle. Only loaded runs can tell fixed from unfixed."
+   },
+   {
+    "behaviour": "Cancel a call blocked in the kernel with a single wait",
+    "shape": "the first attempt now runs on a newly started thread, under full CPU load",
+    "why": "The dispatch hop adds thread-start latency to the first cancel. Baseline max was 622 ms; CancelInterruptsACallBlockedInTheKernel must stay well inside 2 s."
+   },
+   {
+    "behaviour": "Cancel before the worker is in a synchronous call",
+    "shape": "the attempt finds no pending I/O and CancelSynchronousIo returns FALSE/1168",
+    "why": "The ERROR_NOT_FOUND branch must be ignored and the resend must still land once the worker blocks. A dispatcher that treats it as terminal would recreate the lost cancel."
+   },
+   {
+    "behaviour": "Exit the guard when no cancel happened",
+    "shape": "guard entered, token never cancelled, Exit and Dispose called",
+    "why": "Every folder listing passes through the guard. The hot path must stay lock-free and wait-free, with CancelAttempts equal to 0."
+   },
+   {
+    "behaviour": "Exit the guard after a cancel",
+    "shape": "at least one attempt is still inside CancelSynchronousIo when Exit is called",
+    "why": "This is the new drain branch. Exit must not return while the in-kernel count is above 0, and it must not hang if the attempt is held. A hang here is worse than the flake, so the loaded loops must be run with a timeout."
+   },
+   {
+    "behaviour": "Synchronous I/O after Exit returns",
+    "shape": "after Exit() and before Dispose, the same worker thread calls Directory.GetFileSystemEntries on a temp folder",
+    "why": "Detached attempts can outlive the call they were aimed at. A stray abort would return an I/O-aborted error and list a readable folder as unreadable. The assertion is no exception and the expected entry count, checked inside the loaded loops."
+   },
+   {
+    "behaviour": "Dispose the guard",
+    "shape": "Dispose is reached while still Cancelling, with no prior Exit (an exception unwinding through using)",
+    "why": "The thread handle must be closed only after in-flight attempts drain, or a CancelSynchronousIo call runs on a closed or reused handle."
+   },
+   {
+    "behaviour": "Run the full suite with the repro included",
+    "shape": "the repro pins ProcessorAffinity for the whole process and raises priority while other classes run",
+    "why": "Without serialization it starves parallel tests, the suspected cause of the one uncaptured CancelInterruptsACallBlockedInTheKernel failure. Affinity and priority must be restored so later tests see the original mask. 10 full-suite runs, 0 red, no hang."
+   },
+   {
+    "behaviour": "Cap on attempts inside the kernel",
+    "shape": "4 attempts all held in CancelSynchronousIo (a redirector that ignores cancel)",
+    "material": false,
+    "why": "Needs a seam that holds four real kernel calls, and the cap is a bound rather than a behaviour. Covered by review of the finally-block decrement instead, which is the only way a leaked count could stop dispatch."
+   },
+   {
+    "behaviour": "Delivered cancel latency",
+    "shape": "a landed cancel that takes more than 2 s under load",
+    "material": false,
+    "why": "The spike measured 500 of 500 landed, max 622 ms, under full load. A latency-asserting test would itself become a new flake; the answer is recorded in a comment and the slice record."
+   },
+   {
+    "behaviour": "Start an attempt thread",
+    "shape": "Thread.Start throws under resource exhaustion",
+    "material": false,
+    "why": "Cannot be provoked without a seam. The count is incremented on the attempt thread, so a failed start leaks nothing, and the dispatcher catches and retries at the next tick. Confirmed by review."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "Only proposal handed in. Taken as the core, mechanism unchanged. I added two architecture rules, made the risk-spike fallback route explicit, and added the first-attempt-latency, Dispose-without-Exit and hot-path Exit cases. I also required the build to read the current Exit/Dispose ordering and the Kernel32 handle type first, because the proposal was written without file access."
+   }
+  ],
+  "coherence_check": "One proposal, no composition to check. Nothing here has survived a disagreement, so the reviewer should treat this design as never having been contested and argue with it first.\n\nWhat I checked instead, inside the single proposal and against the survey and spikes:\n- Hot-path Exit (lock-free) against the drain gate: consistent, because only attempts on the Cancelling path and Exit's slow path take the gate.\n- The cap of 4 against the drain: the cap never blocks Exit, and the count is decremented in a finally block.\n- The atomicity claim: an attempt reads _state and increments the count under the gate, while Exit sets Idle first and reads the count under the same gate. I re-derived that both interleavings are safe.\n- The proposal's numbers against the spikes and survey: 622 ms, p99 423, 500 of 500, 12 of 300 at 50 ms, 14 of 15 loaded, 20 of 20 idle, and the repro red 10 of 10 all match.\n- The commit-the-repro decision: the acceptance command runs only the repro file, and the post-Exit read assertion lives in that file, so acceptance covers the stray-abort risk too.\n\nWhat reality has not confirmed:\n(a) The premise that a second CancelSynchronousIo from another thread frees a re-blocked wait while the first is still held. The repro turning green settles this, and it is recorded as a decidable disagreement.\n(b) That a held attempt returns once the worker leaves its I/O, so the drain terminates.\n(c) The current Exit/Dispose order and the Kernel32 handle type. The survey confirmed the CancelLoop shape, the _state gate, Exit setting Idle, and the OpenThread handle, but not Dispose ordering or IntPtr versus SafeHandle, so the build must read them first.\n\nSeam changes: I added the risk-spike routing rule for (a), the Dispose-without-Exit case, and the first-attempt-latency case. I found no contradictory invariants, and no error-contract conflict arises because all changes stay in one file.\n\nArchitecture rules: the fitness rules are appended to the existing .taad/fitness.yaml (Q-010), and RuleCopiesAgreeTests must stay green. The build must grep the two governed locations first to confirm neither regex fires on existing correct code.",
+  "cross_domain_transfer": {
+   "source_domain": "Tail-latency control in distributed RPC (hedged requests)",
+   "pattern": "If a request has not returned by a deadline, send a bounded duplicate instead of waiting on the slow one; duplicates are idempotent, losers are reclaimed, and hedging stops when the request is satisfied. Each 25 ms tick hedges the cancel on a fresh thread instead of queuing behind a call held in the kernel.",
+   "transfer_found": true,
+   "rationale": "The failure is head-of-line blocking: a serialized retry path whose single in-flight call never returns. That is what hedging addresses, and the bounded fan-out and stop-on-success rules map onto the cap of 4 and the Exit gate and drain. The analogy is partial: hedged RPC has a separate server per duplicate, whereas here every duplicate targets the same thread.",
+   "invariants": [
+    {
+     "precondition": "Duplicate cancels are harmless while the guard is entered: a CancelSynchronousIo call with no pending I/O returns FALSE/1168 and does nothing.",
+     "status": "holds",
+     "evidence": "The shipped loop already repeats the call every 25 ms inside the guarded region, and the retry-loop spike ran it. The FALSE/1168 behaviour is recalled from the Win32 docs, not checked."
+    },
+    {
+     "precondition": "While one CancelSynchronousIo call is held in the kernel, a second call from another thread on the same target reaches the new wait and cancels it.",
+     "status": "must-verify",
+     "evidence": "Untested; the spike left it as 'needs first'. Settled by the repro test, red 10 of 10 today, turning green."
+    },
+    {
+     "precondition": "Held attempts are reclaimed: a call stuck in the kernel returns once the I/O it waits on completes, so Exit's drain terminates.",
+     "status": "must-verify",
+     "evidence": "Consistent with the spike's stacks (the canceller was stuck only while the worker sat in ConnectNamedPipe). Never observed returning after the worker was freed."
+    },
+    {
+     "precondition": "Hedging stops at success and never hits a different request: no cancel lands after Exit().",
+     "status": "must-verify",
+     "evidence": "Follows from the gate-and-drain design; proven only by the post-Exit directory-listing assertion in the regression test."
+    },
+    {
+     "precondition": "Fan-out is bounded.",
+     "status": "holds",
+     "evidence": "By construction: at most 4 attempts in the kernel, and at the cap the loop sleeps."
+    }
+   ]
+  },
+  "channeled_experts": [
+   "Jeffrey Dean and Luiz André Barroso (hedged requests, 'The Tail at Scale')"
+  ],
+  "decidable_disagreements": [
+   {
+    "question": "Does a second CancelSynchronousIo issued from another thread cancel the re-blocked wait (and thereby release the first, held call) while the first call is still inside the kernel?",
+    "positions": "The practice proposal says yes, and a repro that goes green settles it. The risk-spike stage recorded it as an untested 'needs first'. No one has run it. If it is false, the repro stays red with more than 1 attempt made and every attempt held.",
+    "would_force_resynthesis": true
+   },
+   {
+    "question": "Can a CancelSynchronousIo call stay held in the kernel after the worker has left all I/O, so that an unbounded drain in Exit hangs the scan worker?",
+    "positions": "The proposal assumes held calls are reclaimed once the target I/O completes and keeps an unbounded drain, with a bounded-drain or SafeHandle fallback that needs a person's sign-off. Settled by 10 full-suite runs and 30 loaded class runs completing without a hang.",
+    "would_force_resynthesis": true
+   }
+  ],
+  "taste_disagreements": [
+   "A fresh dedicated thread per attempt versus a small fixed set of long-lived attempt threads. Uncontested here; the proposal chose the simpler per-attempt thread.",
+   "Cap of 4 in-kernel attempts versus 2 or unbounded. 4 was chosen as margin over the theoretical 2.",
+   "Gate and drain as a Monitor-based lock versus a counted event or SemaphoreSlim. Left to the build.",
+   "Recording the '>2 s under load' answer as a code comment and slice record versus a docs page or ADR.",
+   "The repro stays its own test class with its own serialized collection, rather than being folded into SynchronousIoCancelTests."
+  ],
+  "open_questions": [
+   "If SynchronousIoCancelTests.CancelInterruptsACallBlockedInTheKernel (failed once in a full-suite run beside the unserialized repro, message never captured) recurs after the fix and the serialization, is it part of SL-055 or a separate slice?",
+   "If a second concurrent CancelSynchronousIo turns out not to free a re-blocked wait, no fix inside the current design can make the repro pass. Is quarantining the flaky test and the repro, with a tracked lost-cancel defect left open, an accepted outcome for this slice, or does it stay blocked until a real fix exists?"
+  ],
+  "stack_chosen": [],
+  "prior_art": [
+   {
+    "pattern": "A flake where cancellation lost a race because a step in the retry path blocked unconditionally (time.Sleep ignoring ctx). The fix made the blocking step itself interruptible instead of lengthening the timeout. Same shape as a resend loop serialized behind a call that can block.",
+    "where": "https://github.com/projectcalico/calico/commit/441303fda6a567362482a2b70e448c2274dd86c4",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-03-10"
+   },
+   {
+    "pattern": "A cancel-test flake under CI load was traced to a race in which the cancel handler did not cover the step that ran first. It was fixed by closing the race, not by raising the 30 s wait.",
+    "where": "https://github.com/softwaremill/tapir/commit/b934224044dcc3119d048ccd9c2fbe4861e64d27",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-06-19"
+   },
+   {
+    "pattern": "A timing-sensitive cancellation test should assert its guarantee deterministically whatever the runner speed. Here the one-CPU, highest-priority repro forces the interleaving every time.",
+    "where": "https://github.com/Gentleman-Programming/gentle-pi/issues/178",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-07-18"
+   },
+   {
+    "pattern": "Make sure the asynchronous side effect has finished before verifying. Here Exit()/Dispose drain in-flight cancel attempts before returning or closing the handle. The analogy is loose: Flink's case is a slow async close, not a cancel race.",
+    "where": "https://github.com/apache/flink/pull/25373",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2025-01-17"
+   },
+   {
+    "pattern": "CancelSynchronousIo cancels only I/O already pending on the target thread and otherwise fails with ERROR_NOT_FOUND, so callers retry until the target acknowledges. The shipped 25 ms loop already follows this.",
+    "where": "Microsoft Win32 documentation for CancelSynchronousIo",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Hedged requests: send a bounded duplicate after a deadline instead of waiting on a straggler, and reclaim the losers.",
+    "where": "Dean & Barroso, 'The Tail at Scale' (CACM 2013)",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Blocking thread-pool threads in long kernel waits starves the pool, and injection is slow under starvation. Use dedicated threads for calls that can block indefinitely.",
+    "where": ".NET thread pool starvation guidance (Microsoft .NET docs / runtime team writing)",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "whats_new": [
+   "CancelLoop becomes a dispatcher; each CancelSynchronousIo call runs on its own dedicated short-lived thread, capped at 4 in the kernel",
+   "An in-kernel attempt count with a gate, and a drain in Exit()/Dispose (slow path only; hot path unchanged)",
+   "SynchronousIoCancelResendRaceTests.cs committed as the regression test in a DisableParallelization collection, with affinity/priority restored in finally and a post-Exit directory-listing assertion",
+   "A comment and slice-record entry answering 'can local cancel exceed 2 s under load'",
+   "Two architecture rules: CancelSynchronousIo confined to the guard and its declaration, and no ThreadPool/Task.Run/Timer in the guard file",
+   "A loaded validate protocol: 10 repro runs, 30 class runs under 32 busy-loop jobs, 10 full-suite runs"
+  ],
+  "whats_reused": [
+   "The existing CancelLoop shape, RetryMilliseconds = 25, the _state gating (Exit sets Idle) and the OpenThread handle",
+   "The existing CancelAttempts counter and the 2 s Join bar in both tests",
+   "SynchronousIoCancelTests.CancelIsResentWhileACallBlocksAgainAfterACancel as the unchanged witness",
+   "The existing MemoryBudget and VolumeFigure DisableParallelization collection declarations",
+   "eng/dotnet.ps1 and the repo-local .dotnet 10.0.401 SDK",
+   "The build-check's 32 Start-Job busy-loop harness for the loaded runs",
+   "The .taad/fitness.yaml except_files entries that already permit SynchronousIoCancel.cs, plus ArchitectureRulesTests and RuleCopiesAgreeTests"
+  ]
+ }
+}

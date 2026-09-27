@@ -19,9 +19,12 @@ namespace FsAnalyser.Core.Scanning;
 /// nothing in it (measured), so only this recorded intent tells it from an empty folder.</para>
 /// <para>The token's callback runs inside Cancel(), on the UI thread in the app, and CancelSynchronousIo
 /// can itself block, so the callback only starts the scan-cancel thread. That thread marks the call
-/// cancelled, then repeats CancelSynchronousIo every 25 ms until the scan thread leaves it: a call that has
-/// not reached the kernel yet is not found, and a cloud fetch can be re-issued. Dispose joins it before
-/// closing the thread handle, so no cancel lands after the scan.</para>
+/// cancelled, then starts a CancelSynchronousIo every 25 ms until the scan thread leaves it: a call that has
+/// not reached the kernel yet is not found, and a cloud fetch can be re-issued. Each one runs on a thread
+/// of its own: Windows was observed to hold a CancelSynchronousIo in the kernel while the call it
+/// interrupted waits again, and a resend queued behind it never ran (SL-055, see
+/// <see cref="Kernel32.CancelSynchronousIo"/>). Exit waits for the ones still running,
+/// so no cancel lands after the call, and Dispose does the same before closing the thread handle.</para>
 /// <para>A token that cannot be cancelled, or already is, still brackets every call, so every test scan
 /// runs the app's path, but opens no thread handle and registers nothing.</para>
 /// </remarks>
@@ -33,7 +36,18 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
     private const int Idle = 0;
     private const int InCall = 1;
     private const int CancelIssued = 2;
+    // Can a local cancel take more than 2 s under load (SL-055)? One that lands, no: 500 of 500 freed the
+    // scan thread in at most 622 ms (p99 423 ms) with every CPU busy, on a Ryzen 9 8945H under Windows 11
+    // 26200 (risk spike delivered-cancel-latency-under-load). One that is lost, yes, without bound: every run
+    // past 2 s in 300 was a resend stuck behind a CancelSynchronousIo the kernel held, the scan thread still
+    // blocked at 30 s (risk spike flake-is-lost-cancel-not-slow-cancel). That is why each attempt has its own
+    // thread; neither this interval nor the tests' 2 s bar was the cause.
     private const int RetryMilliseconds = 25;
+
+    // A redirector that ignores cancel holds every attempt; this bounds the threads it can keep. Measured on
+    // one CPU with the call waiting again up to 8 times, an attempt held in the kernel returned as soon as the
+    // next one interrupted the new wait: 2 were live at once, and 3 in 2 of 87 runs under load (SL-055).
+    private const int MaxAttemptsInKernel = 4;
 
     private static int s_pendingCloses;
 
@@ -46,6 +60,7 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
     private readonly SafeThreadHandle? _thread;
     private readonly CancellationTokenRegistration _registration;
     private readonly Lock _gate = new();
+    private readonly ManualResetEventSlim _noAttempts = new(initialState: true, spinCount: 0);
     private Thread? _canceller;
     private volatile bool _disposed;
     private int _state;
@@ -53,6 +68,9 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
     private int _attempts;
     private int _delivered;
     private int _handedOff;
+    private int _live; // cancel attempts reserved and not yet ended, under _gate
+    private int _peakLive;
+    private int _liveAtLastDrain;
     private bool _aborted;
 
     public SynchronousIoCancel(CancellationToken ct)
@@ -82,6 +100,12 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
     internal Action<int>? AfterCall { get; set; }
 
     /// <summary>
+    /// Tests only: called on a cancel attempt's own thread with its number (from 1), once it may cancel and
+    /// before it calls CancelSynchronousIo. Holds an attempt there, as a busy machine can.
+    /// </summary>
+    internal Action<int>? BeforeCancelCall { get; set; }
+
+    /// <summary>
     /// Tests only: given a <see cref="Query"/> call's number and the error Windows returned, the error to
     /// report instead, as if Windows had returned it. Feeds in errors Windows gives rarely, such as a 995
     /// nobody asked for.
@@ -97,8 +121,31 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
     /// <summary>How many calls were bracketed, refused ones included.</summary>
     internal int Calls => _calls;
 
-    /// <summary>How many times the canceller called CancelSynchronousIo.</summary>
+    /// <summary>How many times the canceller's attempts called CancelSynchronousIo.</summary>
     internal int CancelAttempts => Volatile.Read(ref _attempts);
+
+    /// <summary>The most cancel attempts that were live at once, held in the kernel or about to call it.</summary>
+    internal int PeakAttemptsInKernel
+    {
+        get
+        {
+            lock (_gate)
+                return _peakLive;
+        }
+    }
+
+    /// <summary>
+    /// How many cancel attempts were still live when Exit, a refused Enter or Dispose last waited for them
+    /// to end. Nothing waits when no cancel was issued during the call.
+    /// </summary>
+    internal int AttemptsLiveAtLastDrain
+    {
+        get
+        {
+            lock (_gate)
+                return _liveAtLastDrain;
+        }
+    }
 
     /// <summary>How many of those found a call to cancel (returned TRUE).</summary>
     internal int CancelsDelivered => Volatile.Read(ref _delivered);
@@ -195,7 +242,7 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
         BeforeCall?.Invoke(call);
         if (_ct.IsCancellationRequested || _disposed)
         {
-            Interlocked.Exchange(ref _state, Idle);
+            Leave();
             _aborted = true;
             LastCallAborted = true;
             return false;
@@ -204,9 +251,11 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
     }
 
     /// <summary>Leaves the call. True when a cancel was issued during it, so its result must be discarded.</summary>
+    /// <remarks>Once it returns, no CancelSynchronousIo of this guard is in flight or can start, so later
+    /// synchronous I/O on this thread is not aborted by it.</remarks>
     internal bool Exit()
     {
-        bool issued = Interlocked.Exchange(ref _state, Idle) == CancelIssued;
+        bool issued = Leave();
         if (issued)
             _aborted = true;
         LastCallAborted = issued;
@@ -225,7 +274,22 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
         }
         _registration.Dispose();
         canceller?.Join();
+        // Reached without Exit, as when an exception unwinds through a using, the state may still say a
+        // cancel was issued; _disposed, set under the gate, is what stops an attempt from starting.
+        Drain();
+        _noAttempts.Dispose();
         _thread?.Dispose();
+    }
+
+    // Idle first, then the drain: an attempt checks the state under the gate, so one that saw a call in
+    // progress was counted before Drain reads the count. With no cancel issued no attempt was started, and
+    // this takes no lock and waits for nothing.
+    private bool Leave()
+    {
+        if (Interlocked.Exchange(ref _state, Idle) != CancelIssued)
+            return false;
+        Drain();
+        return true;
     }
 
     private int Open(string win32Path, uint access, uint flags, out SafeFileHandle? handle)
@@ -278,25 +342,91 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
 
     private void CancelLoop()
     {
+        while (!_disposed)
+        {
+            // The call in progress is marked cancelled before it is interrupted, so the scan thread
+            // discards its result whatever it returns. Idle means no call is in progress, and none can
+            // start now that the token is cancelled.
+            if (Interlocked.CompareExchange(ref _state, CancelIssued, InCall) == Idle)
+                return;
+            StartAttempt();
+            Thread.Sleep(RetryMilliseconds);
+        }
+    }
+
+    // Reserves a slot under the gate before the thread starts, so the cap and the drain both see an attempt
+    // from the moment it exists. A thread that fails to start gives its slot back; the next tick tries again.
+    private void StartAttempt()
+    {
+        lock (_gate)
+        {
+            if (_disposed || Volatile.Read(ref _state) != CancelIssued || _live >= MaxAttemptsInKernel)
+                return;
+            if (_live++ == 0)
+                _noAttempts.Reset();
+            _peakLive = Math.Max(_peakLive, _live);
+        }
         try
         {
-            while (!_disposed)
+            new Thread(CancelOnce) { IsBackground = true, Name = "scan-cancel-attempt" }.Start();
+        }
+        catch (Exception)
+        {
+            EndAttempt();
+        }
+    }
+
+    // One CancelSynchronousIo, on a thread of its own: a call Windows holds in the kernel keeps only this
+    // thread, and the next tick's attempt still reaches the call the scan thread blocked in again.
+    private void CancelOnce()
+    {
+        try
+        {
+            int attempt;
+            lock (_gate)
             {
-                // The call in progress is marked cancelled before it is interrupted, so the scan thread
-                // discards its result whatever it returns. Idle means no call is in progress, and none can
-                // start now that the token is cancelled.
-                if (Interlocked.CompareExchange(ref _state, CancelIssued, InCall) == Idle)
+                // Exit and Dispose change these before they drain, so an attempt that passes here is one they
+                // wait for, and one that comes later cancels nothing.
+                if (_disposed || Volatile.Read(ref _state) != CancelIssued)
                     return;
-                Interlocked.Increment(ref _attempts);
-                // FALSE (ERROR_NOT_FOUND) when the call has not reached the kernel yet or has just left it.
-                if (Kernel32.CancelSynchronousIo(_thread!))
-                    Interlocked.Increment(ref _delivered);
-                Thread.Sleep(RetryMilliseconds);
+                attempt = Interlocked.Increment(ref _attempts);
             }
+            BeforeCancelCall?.Invoke(attempt);
+            // FALSE (ERROR_NOT_FOUND) when the call has not reached the kernel yet or has just left it.
+            if (Kernel32.CancelSynchronousIo(_thread!))
+                Interlocked.Increment(ref _delivered);
         }
         catch (ObjectDisposedException)
         {
-            // The thread handle was closed under the loop: the scan is over.
+            // The thread handle was closed: the scan is over. Dispose drains first, so this is not expected,
+            // but an exception left to escape this thread would end the process.
         }
+        finally
+        {
+            EndAttempt();
+        }
+    }
+
+    private void EndAttempt()
+    {
+        lock (_gate)
+        {
+            if (--_live == 0)
+                _noAttempts.Set();
+        }
+    }
+
+    // Waits until no attempt is live. Called once _state is Idle or _disposed is set, so none can start.
+    // Unbounded: an attempt held in the kernel was measured to return once the call it cancelled has left
+    // (SL-055), and nothing here watches for one that never does.
+    private void Drain()
+    {
+        lock (_gate)
+        {
+            _liveAtLastDrain = _live;
+            if (_live == 0)
+                return;
+        }
+        _noAttempts.Wait();
     }
 }

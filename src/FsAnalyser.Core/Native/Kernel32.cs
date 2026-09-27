@@ -91,7 +91,12 @@ internal static unsafe partial class Kernel32
     [LibraryImport("kernel32.dll", SetLastError = true)]
     public static partial SafeThreadHandle OpenThread(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint threadId);
 
-    /// <summary>Only SynchronousIoCancel's own canceller thread calls this: it can block.</summary>
+    /// <summary>Only SynchronousIoCancel's own cancel attempts call this: it can block.</summary>
+    /// <remarks>Observed on Windows 11 26200, against the documented Remarks ("does not wait for all
+    /// canceled operations to complete"): a call that interrupted a wait stays in the kernel while the
+    /// target thread waits again, until another cancel interrupts that wait. So callers must not queue a
+    /// retry behind it (SL-055's risk spikes flake-is-lost-cancel-not-slow-cancel and
+    /// retry-cancel-loop-clears-flake-without-collateral, and its SynchronousIoCancelResendRaceTests).</remarks>
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool CancelSynchronousIo(SafeThreadHandle thread);

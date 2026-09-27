@@ -1,0 +1,141 @@
+{
+ "schema": "slice-record@1",
+ "slice": "SL-055",
+ "title": "Fix or quarantine the flaky SynchronousIoCancelTests",
+ "status": "active",
+ "branch": "slice/SL-055",
+ "opened_at": "2026-09-27T00:44:03.485Z",
+ "merge_commit": null,
+ "how_to_read": "Each attempt is one line and a `details` filename in this same directory. Open a detail file ONLY when this index points you at one -- the summaries are here so you do not have to. `caused_by` is what sent the stage back; `changed` is what the attempt then touched, counted by kind. Several attempts in a row that were caused by the same stage and changed no `src` is a loop, not progress.",
+ "open": [
+  {
+   "stage": "repro",
+   "issue": "observed: CancelFreesACallThatBlocksAgainBeforeTheCancelCallHasReturned [FAIL]: \"the call was still blocked 2 s after Cancel, interrupted 1 time(s), 1 cancel attempt(s) made\" at SynchronousIoCancelResendRaceTests.cs:line 77"
+  },
+  {
+   "stage": "build-check",
+   "issue": "The flake is removed by a fix or a quarantine: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "Repeated class and full-suite runs no longer go red (was about 3 of 50 class runs, 1 of 2 full-suite runs): missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "The answer to whether local cancel can really exceed 2 s under load: partial"
+  },
+  {
+   "stage": "risk-spike",
+   "issue": "flake-is-lost-cancel-not-slow-cancel: 4 of 300 runs stalled, all lost cancels (canceller stuck in CSIO), none slow; 12/12 under load"
+  },
+  {
+   "stage": "risk-spike",
+   "issue": "retry-cancel-loop-clears-flake-without-collateral: needs first: Something has to keep the resend alive while one CancelSynchronousIo call is held in the kernel: for example, each attempt issued from its own short-lived thread or timer callback, so a …"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "If SynchronousIoCancelTests.CancelInterruptsACallBlockedInTheKernel (failed once in a full-suite run beside the unserialized repro, message never captured) recurs after the fix and the serialization, is it part of SL-055 or a separate slice?"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "If a second concurrent CancelSynchronousIo turns out not to free a re-blocked wait, no fix inside the current design can make the repro pass. Is quarantining the flaky test and the repro, with a tracked lost-cancel defect left open, an accepted outcome for this slice, or does it stay blocked until a real fix exists?"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "A fresh dedicated thread per attempt versus a small fixed set of long-lived attempt threads. Uncontested here; the proposal chose the simpler per-attempt thread."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Cap of 4 in-kernel attempts versus 2 or unbounded. 4 was chosen as margin over the theoretical 2."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Gate and drain as a Monitor-based lock versus a counted event or SemaphoreSlim. Left to the build."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Recording the '>2 s under load' answer as a code comment and slice record versus a docs page or ADR."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The repro stays its own test class with its own serialized collection, rather than being folded into SynchronousIoCancelTests."
+  }
+ ],
+ "stages": [
+  {
+   "stage": "repro",
+   "title": "Repro",
+   "order": 1,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "build-check",
+   "title": "Build check",
+   "order": 2,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "risk-spike",
+   "title": "Risk spike",
+   "order": 3,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "design-slice",
+   "title": "Design",
+   "order": 4,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-27T03:11:20.236Z",
+     "head": "192213183ef7b96165a88a62419d7c1f3a055df1",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique",
+   "title": "Critique",
+   "order": 5,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-27T04:06:51.006Z",
+     "head": "192213183ef7b96165a88a62419d7c1f3a055df1",
+     "summary": "The core mechanism is sound and follows from the spikes: each CancelSynchronousIo runs on its own dedicated thread, and Exit waits under a gate until no attempt is left in flight.",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique-review",
+   "title": "Critique review",
+   "order": 6,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-27T04:16:44.317Z",
+     "head": "192213183ef7b96165a88a62419d7c1f3a055df1",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-review-1.json"
+    }
+   ]
+  }
+ ]
+}

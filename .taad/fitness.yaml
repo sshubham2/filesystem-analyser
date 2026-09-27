@@ -602,3 +602,25 @@ rules:
       SL-043 refreshed it by hand. No gate runs RuleCases (O-005), so this fitness rule is the
       only place a re-pin can fail visibly. The expected count must come from the Fitness rule
       count minus the twinned count.
+
+  # settled by SL-055
+  # Its design also declared 'Only the cancel guard issues CancelSynchronousIo'. That was SL-024's rule
+  # above to the letter (same files, pattern and except_files), so its build dropped the copy (review m7).
+  # SL-024's rule now also stands for this: a CancelSynchronousIo made outside the guard skips its gate and
+  # drain, and can land after Exit on later I/O, listing a readable folder as unreadable (PS-006).
+  - name: Cancel attempts never run on the thread pool or a timer
+    files: src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs
+    must_not_match:
+    - \bThreadPool\.(?!UnsafeQueueUserWorkItem\b)
+    - \bTask\.Run\s*\(
+    - \bTask\.Factory\.StartNew\b
+    - \bQueueUserWorkItem\b
+    - \bnew\s+(System\.Threading\.)?Timer\s*\(
+    - \bSystem\.Timers\.Timer\b
+    - \bPeriodicTimer\b
+    because: A CancelSynchronousIo call held in the kernel would pin a pool thread the scanner
+      shares, and slow pool thread injection under load would bring back the same lost resend
+      this slice removes. Attempts need dedicated threads. Close hands an aborted call's handle
+      to the pool with ThreadPool.UnsafeQueueUserWorkItem on purpose (SL-024), which is why that
+      one call is allowed (review m3); \bQueueUserWorkItem\b does not match it. Matched against
+      code only, so a comment can say why without failing it.
