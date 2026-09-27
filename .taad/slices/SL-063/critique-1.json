@@ -1,0 +1,131 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-063",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-09-27T18:21:17.877Z",
+ "head": "c07096335cca3a7dbfb525a4bb2e8d6db7a78903",
+ "run_id": 1669,
+ "summary": "The bug report gives only a title, so the defect was taken from the failing test and the repro/build-check accounts: TopLevelRowText.TitleOf shows a Done row's bare name even when TopLevelTracker.Moved changed that row's bytes after it settled. The design's shape is proportionate and respects every spike: one bool, set in the tracker and read in one converter case, with no report or hook work. Only one designer produced a proposal and nobody else has argued with it, so the premises were attacked directly.\n\n**Acceptance timing is unproven.** The acceptance test's only ordering-sensitive assertion depends on the correction landing after '1-folder' reaches Done. Nothing on record measured that:\n- The Done and 64 MiB assertions pass whatever the order.\n- The determinism spike measured final sizes, not timing.\n- The design's fallback (ScanOptions.AfterFolder) is internal and can't be reached from the bug test assembly. It also contradicts \"test unchanged\".\n\n**The invariant depends on remembering.** The mark is tied to one mutation site plus a pending-count read. Its only enforcement rule (`\\.Revised\\s*=\\s*true`) cannot match any compiling way to set an init-only property. The \"no new synchronisation\" claim rests on an unverified must-verify. If that precondition fails, a lock race brings back the exact bug, and no single-threaded test can catch it.\n\n**Smaller issues:**\n- The init-only field lets a missed construction site pass silently.\n- Two material cases have no test home.\n- Two rules are tied to transient choices.\n- The design leans on the NTFS citation for more than the source says.\n- The design settles a decision the brief says is still the person's.\n\n**Citations:**\n- The Microsoft hard-links page does say directory-entry size is \"visibly updated only at the link through which the change was made\", but not \"cannot be prevented\" or \"cannot be predicted\".\n- windirstat #108 and superdeduper #83 exist and are decorative.\n- The recalled Beam and BLS sources are decorative and weren't checked.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The bug report gives only a title, so the defect was taken from the failing test and the repro/build-check accounts: TopLevelRowText.TitleOf shows a Done row's bare name even when TopLevelTracker.Moved changed that row's bytes after it settled. The design's shape is proportionate and respects every spike: one bool, set in the tracker and read in one converter case, with no report or hook work. Only one designer produced a proposal and nobody else has argued with it, so the premises were attacked directly.\n\n**Acceptance timing is unproven.** The acceptance test's only ordering-sensitive assertion depends on the correction landing after '1-folder' reaches Done. Nothing on record measured that:\n- The Done and 64 MiB assertions pass whatever the order.\n- The determinism spike measured final sizes, not timing.\n- The design's fallback (ScanOptions.AfterFolder) is internal and can't be reached from the bug test assembly. It also contradicts \"test unchanged\".\n\n**The invariant depends on remembering.** The mark is tied to one mutation site plus a pending-count read. Its only enforcement rule (`\\.Revised\\s*=\\s*true`) cannot match any compiling way to set an init-only property. The \"no new synchronisation\" claim rests on an unverified must-verify. If that precondition fails, a lock race brings back the exact bug, and no single-threaded test can catch it.\n\n**Smaller issues:**\n- The init-only field lets a missed construction site pass silently.\n- Two material cases have no test home.\n- Two rules are tied to transient choices.\n- The design leans on the NTFS citation for more than the source says.\n- The design settles a decision the brief says is still the person's.\n\n**Citations:**\n- The Microsoft hard-links page does say directory-entry size is \"visibly updated only at the link through which the change was made\", but not \"cannot be prevented\" or \"cannot be predicted\".\n- windirstat #108 and superdeduper #83 exist and are decorative.\n- The recalled Beam and BLS sources are decorative and weren't checked.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "claim": "Must-verify #2 (the repro's correction lands after '1-folder' is Done) has no evidence behind it, and the design's fallback isn't available. (1) The recorded run proves nothing about order: at scan end every row is Done and the final bytes are 64 MiB whether the correction landed before or after '1-folder' settled. Only the NotEqual depends on that order. (2) The selection rationale says 'charging is deterministic so the acceptance test's setup is reproducible'. But hardlink-charge-deterministic-across-scans compared final RolledSize and ChargedSize across 30 runs and never measured when Correct/Credit fired relative to pending reaching 0. (3) If the correction lands before Done in some or all runs, the design's 'only if Done' rule leaves the correct fix failing the acceptance, and the build has no legal move left. The contract forbids widening the rule. The bug-project component says the test 'stays unchanged'. The named escape hatch, ScanOptions.AfterFolder, sits on the internal 4-arg Scanner.Scan overload: the at-risk spike had to reach it by reflection because only FsAnalyser.Core.Tests has InternalsVisibleTo, and the bug assembly SL063.DoneRowFinality.Tests doesn't. If the order turns out to be pre-Done every time, this is a blocker.",
+    "evidence": "cross_domain_transfer.invariants[4] status must-verify; selection_rationale 'hardlink-charge-deterministic-across-scans ... so the acceptance test's setup is reproducible'; contract 'Acceptance command' error_cases 'fix the ordering with ScanOptions.AfterFolder'; component 'Bug project' 'stays unchanged and must pass'; spike at-risk-rows evidence 'internal Scanner.Scan ... 4-arg overload via reflection (... reachable only from FsAnalyser.Core.Tests via InternalsVisibleTo)'",
+    "fix": "Settle the order before building. Add a temporary log in TopLevelTracker.Moved that records the target row's pending count, then run the unchanged acceptance command through eng/dotnet.ps1 at least 20 times. In the design, name which test-side change is allowed if any run is pre-Done: an InternalsVisibleTo entry for SL063.DoneRowFinality.Tests plus an AfterFolder gate that holds the real-name folder until '1-folder' settles. Also remove 'charging is deterministic' as the justification for the setup being reproducible."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "under-engineering",
+    "claim": "The Revised invariant ('a Done row's figure changed') is enforced by remembering at one mutation site, not by construction. The bit is set only inside Moved, gated on a pending read. Any other path that changes a Done row's Bytes or OnDisk would have to remember to set it. That includes the project's recorded next feature (the admin MFT reader), any later on-disk or cloud correction, and a path the code reading missed. 'Moved is the only path' comes from reading the code. The spike that 'confirms' it saw zero post-Done changes in 3 scans (0/126 each), so the positive case was never observed on real data. This is the five-call-sites pattern: correct today, and each new writer is a chance to reintroduce the exact bug silently.",
+    "evidence": "component 'Revision bit in the tracker' ('Inside TopLevelTracker.Moved ... set that row's revised bit'); invariant 'a revision has a single known cause' citing post-done-change-only-from-hardlinks, whose evidence says 'Read TopLevelTracker.cs, Scanner.cs ... the only path that can change a row's numbers after its Pending count reached 0 is TopLevelTracker.Moved'; project constraint 'The fast admin read of the drive's file table ... is the first thing to add later'",
+    "fix": "In the tracker, record each row's (Bytes, OnDisk) at the moment its pending count reaches 0, in the same critical section as the decrement. Compute Revised = (Bytes, OnDisk) != settled wherever the row is built for publishing. Capture at the pending-to-0 transition, not at snapshot publish. The repro scan finishes inside one 250ms interval, so a capture at publish would never see a stale Done figure and would fail the acceptance. This gives the same timing semantics and the same acceptance behaviour as the design. The zero-byte and two-Done-rows cases follow automatically, every future writer is covered, and the 'only Moved sets the bit' rule is no longer needed."
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "cross-cutting-conformance",
+    "claim": "The rule 'only the tracker's Moved path sets the revision bit' can never fail. The design declares Revised as `bool Revised { get; init; }`. Outside the record's own constructor, an init-only property can only be set by an object initializer (`new TopLevelRow(...) { Revised = x }`) or a `with` expression (`row with { Revised = x }`). Neither has the leading `.` the pattern requires, and neither need use the literal `true`. The rule also covers only src/FsAnalyser.Core, so App can write `with { Revised = true }` freely. And it excepts the whole of TopLevelTracker.cs, so it can't tell Moved apart from, say, the pending-decrement path in the same file. The rule's stated purpose ('setting it elsewhere risks marking a row before it settled') gets no enforcement while appearing to have it.",
+    "evidence": "architecture_rules[1] must_not_match '\\\\.Revised\\\\s*=\\\\s*true', files 'src/FsAnalyser.Core/**/*.cs', except 'src/FsAnalyser.Core/TopLevelTracker.cs'; contract 'TopLevelRow.Revised' 'bool, init-only'",
+    "fix": "If M2 is adopted, drop the rule. Otherwise replace it with a pattern on `\\bRevised\\s*=` over src/FsAnalyser.*/**/*.cs, excepting only TopLevelTracker.cs. Inside the tracker, route every set through one private method, for example MarkIfSettled(row, dBytes, dOnDisk), so a second writer inside the file is at least visible in review."
+   },
+   {
+    "id": "M4",
+    "severity": "major",
+    "dimension": "contract-gaps",
+    "claim": "Must-verify #1 (Moved can read the row's pending count under the lock it credits under) contradicts a design decision that assumes it: 'no new synchronisation'. Suppose the pending decrement that flips Done, or the snapshot publish, isn't serialised with Moved's lock. Then this interleaving is possible: Moved reads pending=1, so no mark. The decrement flips the row to Done. A lock-free publish shows Done with the stale figure. Moved's credit lands. The row now reads Done at 64 MiB with Revised=false. That is the exact reported bug, surviving as a race. All the design's tracker facts drive Moved single-threaded, and the acceptance test reads only the final state, so nothing proposed can catch it. The contract gives the build no instruction for the case where the precondition fails.",
+    "evidence": "component 'Revision bit in the tracker' 'Written under the same lock/publish discipline Moved already uses ... -- no new synchronisation'; cross_domain_transfer.invariants[3] 'the build must confirm Moved can read that row's pending count under the same lock it uses to credit bytes/on-disk' (must-verify)",
+    "fix": "Write the requirement as an atomicity contract instead of 'no new synchronisation': the Done check, the credit and the mark (or the M2 settled capture) must be serialised with the pending decrement and with the read that builds a published row. Allow adding that lock if it isn't already there. Add one real-tree property test in Core.Tests. Scan the spike's hardlinked tree shape repeatedly while polling ScanProgress.TopLevel. Assert that any row whose figure in a published Done snapshot differs from its final figure has Revised=true in the final result."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "claim": "Revised is init-only 'so existing construction sites still compile', and that same property lets a site that forgets it fail silently. Any tracker site that builds a TopLevelRow with `new` and no initializer publishes Revised=false with no compile error. An example would be the site that rewrites rows at Cancel or builds the final snapshot. The acceptance test covers only the Completed path, and no case covers a revised Done row surviving Cancel. Also, record value equality now includes Revised. The existing AnInPlaceCorrectionOfAnEarlierNameIsCreditedToThatNamesRow is exactly the shape that will now set it, so a whole-row Assert.Equal in TopLevelTests would start failing. 'Still compiles' is not 'still passes'.",
+    "evidence": "key_decisions[2] 'Revised is an init-only member ... Extends the Core-to-App row contract without breaking existing construction sites'; cases list has no Cancelled-ending entry",
+    "fix": "Make Revised a positional parameter, so every construction site fails to compile until it decides. Or build published rows through exactly one tracker factory. Add a case: a scan cancelled after a revised Done row keeps Revised=true in ScanResult.TopLevel. Tell the build to check existing TopLevelTests for whole-row equality."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "Two cases marked material have no test that exercises them. (1) 'TitleOf is given Revised=true paired with each non-Done TopLevelState' has no named location. The project has no App test project, Core.Tests is not stated to reference App, and the bug project is given only 'one control fact'. (2) 'Both the live 250ms list and ShowFinalTopLevel go through TopLevelRowText' is a build-time reading only. If ShowFinalTopLevel composes text another way, the suffix never shows in the view the person reads after the scan, and every test stays green.",
+    "evidence": "cases[6] and cases[7] material:true; component 'Bug project: acceptance plus a negative control' (one control fact); tech stack 'There is no App test project'",
+    "fix": "Put the TitleOf state matrix in the SL-063 bug project, which already builds FsAnalyser.App as a dependency (see the engine's captured build output). Make the single-converter claim fail when crossed with a rule: `\\.Revised\\b` must not appear in src/FsAnalyser.App/**/*.cs except TopLevelRowText.cs."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "Two of the three rules are tied to choices that won't last. Rule 1 matches the literal '(revised)', which the design itself calls unsettled wording. If the person picks '(updated)', the rule silently checks nothing, and duplicated wording stops being caught. Rule 3 is named for 'this slice', but rules are appended to the project-wide rules file (Q-010) and will outlive it. It will block the design's own recommended next step, an aggregate revised count in the report, for a reason that no longer applies.",
+    "evidence": "architecture_rules[0] must_not_match '\\\\(revised\\\\)'; taste_disagreements on wording; architecture_rules[2] name 'the mid-scan report stays untouched by this slice'; key_decisions[5] 'an aggregate revised count with no names is the smallest next step'",
+    "fix": "Replace rules 1 and 3 with one structural rule that doesn't depend on wording: the Revised signal is read in App only by TopLevelRowText.cs (the `\\.Revised\\b` rule in m2). It covers duplicated wording and WindowReport both, and a future report slice widens one except list on purpose."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "The cited Microsoft page supports less than the design draws from it. It says: 'the directory entry size and attribute information of the file are visibly updated only at the link through which the change was made.' It says nothing about the stale charge being impossible to prevent, or about the case that 'can only be shown after the fact, not predicted reliably beforehand'. The slice's own at-risk spike did predict at-risk folders, at 3.0%. That 3.0% counts all 932,531 Done folders on C:\\, not top-level rows, which is a different granularity from the top-level list this design marks. Rejecting predictive marking is fine on other grounds (the failing test asks for a changed row's title, and the brief doesn't ask for prediction), but the stated reason is not what the source or the measurement says.",
+    "evidence": "prior_art[0] 'which is why ... that cannot be prevented, only shown' (cited https://learn.microsoft.com/en-us/windows/win32/fileio/hard-links-and-junctions); key_decisions[4] 'At-risk rows are 3.0% of 932,531 Done rows ... NTFS itself only updates ... (cited), which is exactly why this can only be shown after the fact, not predicted reliably beforehand'",
+    "fix": "Restate key decision 5's rationale. Predictive marking is out because the acceptance asks for after-the-fact marking and M2 ('make Done immutable') was recorded as impossible, not because NTFS makes prediction impossible. Label the 3.0% as a folder-level figure, not a top-level-row one."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "drift-from-design",
+    "claim": "The brief says the Done promise 'is a still-open person decision'. The design settles it (the 'show it' branch, with Done meaning 'listed and measured') and doesn't list it in open_questions. Its new negative-control fact then hard-codes that branch against the alternative the slice title itself offers ('or stop implying finality'). The failing acceptance test would pass under either branch.",
+    "evidence": "brief: 'The critique's M2 'Done is immutable' fix was impossible and is a still-open person decision'; key_decisions[0] 'Takes the 'show it' branch'; component 'Bug project' negative control; open_questions lists only the tree-view scope",
+    "fix": "Add the branch choice to open_questions, stated as already built and cheap to reverse. Note that the negative-control fact is the thing to delete if the person picks the global-relabel branch."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M1: the acceptance ordering has no evidence, and the determinism spike is misapplied. m4: the NTFS citation and the 3.0% figure are stretched. The claim that Moved is the only post-Done writer comes from reading the code, and the spike never saw a positive case (feeds M2)."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "Found: a Cancelled ending with a revised Done row is uncovered (m1). Considered and not raised: a folder literally named 'X (revised)' reads as revised, but the existing '(reading...)' suffix already has that ambiguity; zero-delta Credit calls from the 47,409 later names are handled by the non-zero guard, which a case covers."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "M2: the mark depends on remembering at one mutation site instead of being derived from a Done-time settled figure."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "Mostly lean: one bool, one converter case, and the report/hook work declined per the no-go spike. Only rule 3 (m3) overreaches, as a slice-scoped constraint made permanent."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "M4: atomicity isn't specified, and 'no new synchronisation' conflicts with must-verify #1. m1: the init-only field lets construction sites fail silently, and record equality now includes Revised."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "No new failure path. Adjacent and not raised (not in the brief): a multi-name file whose probe fails (ProbeFailures) leaves a stale figure under a bare Done, so the rewritten Done doc comment shouldn't promise more than 'listed and measured'."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "m5: the design resolves the Done-promise decision the brief calls the person's, and a test locks that in. Keeps to the failing test's framing otherwise."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "M3: the only rule meant to enforce the single writer cannot match any compiling init-only assignment. m3: the wording rule is tied to an unsettled literal, and the report rule is slice-scoped."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "m2: the TitleOf×state matrix has no test location, and the check that both views use one converter is reading-only. M4: nothing tests the concurrency race. Neither the ~20 repeated acceptance runs nor any ordering check (M1) are wired to anything."
+   },
+   {
+    "dimension": "security",
+    "result": "None: the change adds no input surface, file write, or report field. The suffix is a constant and the report stays unchanged."
+   }
+  ]
+ }
+}

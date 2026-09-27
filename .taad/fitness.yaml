@@ -773,3 +773,32 @@ rules:
       line, because the file also says "on this machine" about measurements that are true and stay
       (B-008''s title lengths, the 4 KiB clusters above the folder-tree cases), and the design
       leaves unrelated hits alone (SL-059 C-003).'
+
+  # settled by SL-063
+  # As its design declared them, then changed at build by the review findings the person accepted: the three
+  # declared rules are replaced by these two (M3, m2, m3). The first fences every set of the flag, in an object
+  # initializer as much as through a dot, and lets == and => through, which only read it: the converter's own
+  # `when row.Revised =>` would otherwise break it. The second is structural rather than tied to the wording or
+  # to one file, so it covers a copy of the suffix and the report alike; a later slice that reports the flag
+  # widens its except list on purpose. Neither has an xUnit twin; comments are not matched.
+  - name: only the tracker sets a top-level row's Revised flag
+    files: src/FsAnalyser.*/**/*.cs
+    must_not_match:
+    - '\bRevised\s*=(?![=>])'
+    because: 'The tracker derives the flag where it builds a row, from the figures the row had when its
+      pending count reached 0, so every writer of a row''s figures is covered without remembering to mark it
+      (SL-063 review M2). Set anywhere else, a row can be marked before it settled, or a Done row whose figure
+      moved can be published as final: the bug SL-063 fixed.'
+    except_files:
+    - src/FsAnalyser.Core/TopLevelTracker.cs
+  - name: in the App only the row converter reads a top-level row's Revised flag
+    files: src/FsAnalyser.App/**/*.cs
+    must_not_match:
+    - '\.Revised\b'
+    because: 'TopLevelRowText is the one converter both the live results list and the ending''s list bind
+      through (MainWindow.xaml, RowTitle). A second reader in the App, a copy of the suffix or the schema-1
+      report, drifts from it, so a row can read as final in one place and revised in another; and the report
+      is written only after the ending, with no per-row field and no names (Q-016), so wiring the flag in
+      there without that work would be inert or wrong.'
+    except_files:
+    - src/FsAnalyser.App/TopLevelRowText.cs

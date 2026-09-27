@@ -101,6 +101,7 @@ public class TopLevelTests
         Assert.Equal(64 * MiB, charged.Bytes);
         Assert.Equal(scan.Result.Store.OnDisk(stale), charged.OnDisk);
         Assert.Equal((1L, 1L), (charged.Files, charged.Folders));
+        Assert.Equal((true, false), (charged.Revised, repeat.Revised)); // SL-063: the moved figure says so
         // Never credited to the listing the correction arrived in, in any snapshot.
         Assert.All(scan.Snapshots, s => Assert.Equal((0L, 0L), (Named(s, "2-folder").Bytes, Named(s, "2-folder").OnDisk)));
         Assert.Equal(1L, repeat.Files);
@@ -427,6 +428,173 @@ public class TopLevelTests
         Assert.Throws<NotSupportedException>(() => asList[0] = final.Rows[0]);
     }
 
+    // ---- Revised (SL-063) ----
+    // Driven through the tracker itself, as the scan's thread calls it (HandDriven), so the order of listing,
+    // settling and correcting is the test's and no scan's timing decides it.
+
+    /// <summary>
+    /// A charge corrected in place after its row was Done marks the row Revised for the rest of the scan,
+    /// whatever the ending: a later correction that brings the figures back leaves the mark, because the moved
+    /// figure may already have been read.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ANonZeroCorrectionOfADoneRowMarksItRevisedForTheRestOfTheScan(bool completed)
+    {
+        var rig = new HandDriven();
+        rig.ListA(1 * MiB);
+        rig.ListB(0);
+        rig.ListBSub();
+        Assert.Equal((TopLevelState.Done, false), (rig.Row("a").State, rig.Row("a").Revised));
+
+        rig.Move(rig.AFile, 63 * MiB, 63 * MiB);
+
+        TopLevelRow a = rig.Row("a");
+        Assert.Equal((TopLevelState.Done, 64 * MiB, true), (a.State, a.Bytes, a.Revised));
+        Assert.False(rig.Row("b").Revised);
+
+        rig.Move(rig.AFile, -63 * MiB, -63 * MiB); // back to the figures it settled at
+        Assert.Equal((1 * MiB, true), (rig.Row("a").Bytes, rig.Row("a").Revised));
+
+        TopLevelSnapshot final = rig.Finish(completed);
+        Assert.Equal((true, false), (Named(final, "a").Revised, Named(final, "b").Revised));
+    }
+
+    /// <summary>
+    /// A row still reading has shown no figure as settled: a correction there is part of the figure it settles
+    /// at, so it is not marked, then or once it is Done.
+    /// </summary>
+    [Fact]
+    public void ACorrectionOfARowStillReadingDoesNotMarkIt()
+    {
+        var rig = new HandDriven();
+        rig.ListA(1 * MiB);
+        rig.ListB(1 * MiB); // b\sub is still to be listed
+        Assert.Equal(TopLevelState.Reading, rig.Row("b").State);
+
+        rig.Move(rig.BFile, 63 * MiB, 63 * MiB);
+        Assert.Equal((TopLevelState.Reading, 64 * MiB, false), (rig.Row("b").State, rig.Row("b").Bytes, rig.Row("b").Revised));
+
+        rig.ListBSub();
+        Assert.Equal((TopLevelState.Done, 64 * MiB, false), (rig.Row("b").State, rig.Row("b").Bytes, rig.Row("b").Revised));
+        Assert.False(Named(rig.Finish(completed: true), "b").Revised);
+    }
+
+    /// <summary>
+    /// Only a figure that moved marks a Done row: a correction that changes neither (Moved with 0 and 0)
+    /// leaves it as it settled, and one that moves either figure alone marks it.
+    /// </summary>
+    [Theory]
+    [InlineData(0L, 0L, false)]
+    [InlineData(0L, 4096L, true)]
+    [InlineData(100L, 0L, true)]
+    public void ACorrectionOfADoneRowMarksItOnlyWhenAFigureMoved(long bytes, long onDisk, bool revised)
+    {
+        var rig = new HandDriven();
+        rig.ListA(1 * MiB);
+        TopLevelRow before = rig.Row("a");
+
+        rig.Move(rig.AFile, bytes, onDisk);
+
+        TopLevelRow after = rig.Row("a");
+        Assert.NotSame(before, after); // built again and published, not left as it was
+        Assert.Equal((TopLevelState.Done, revised), (after.State, after.Revised));
+    }
+
+    /// <summary>
+    /// A charge that moves from one Done row to another marks both, the row that lost it and the row that
+    /// gained it: each one's figures moved after it settled. Moved credits one row a call, so it is two calls.
+    /// </summary>
+    [Fact]
+    public void AChargeMovingBetweenTwoDoneRowsMarksBoth()
+    {
+        var rig = new HandDriven();
+        rig.ListA(1 * MiB);
+        rig.ListB(0);
+        rig.ListBSub();
+
+        rig.Move(rig.AFile, -1 * MiB, -1 * MiB);
+        rig.Move(rig.BFile, 1 * MiB, 1 * MiB);
+
+        TopLevelSnapshot final = rig.Finish(completed: true);
+        Assert.Equal((0L, true), (Named(final, "a").Bytes, Named(final, "a").Revised));
+        Assert.Equal((1 * MiB, true), (Named(final, "b").Bytes, Named(final, "b").Revised));
+        Assert.Equal(final.Bytes, final.Rows.Sum(r => r.Bytes));
+    }
+
+    /// <summary>
+    /// The tracker driven by hand, as the scan's thread drives it, over a store holding the root, "a" with a.bin,
+    /// and "b" with b.bin and the folder b\sub. It publishes on every change, and Row reads the latest snapshot.
+    /// </summary>
+    private sealed class HandDriven
+    {
+        private const uint DirectoryAttribute = 0x10, ArchiveAttribute = 0x20;
+        private readonly ScanStore _store = new();
+        private readonly ScanProgress _progress = new();
+        private readonly TopLevelTracker _tracker;
+        private ScanTotals _totals = new(Files: 0, Folders: 2, Links: 0, Bytes: 0, BytesOnDisk: 0);
+        private int _sub = -1;
+
+        public HandDriven()
+        {
+            _tracker = new TopLevelTracker(_progress, @"C:\hand", TimeSpan.Zero);
+            _store.AppendRoot(@"C:\hand", DirectoryAttribute);
+            _store.Append(0, "a", EntryKind.Folder, EntryFlags.None, DirectoryAttribute, 0, 0, UInt128.Zero);
+            _store.Append(0, "b", EntryKind.Folder, EntryFlags.None, DirectoryAttribute, 0, 0, UInt128.Zero);
+            _store.SetChildren(0, 1, 2);
+            _tracker.Seed(_store, 0, 1, 2, _totals);
+        }
+
+        public int AFile { get; private set; } = -1;
+
+        public int BFile { get; private set; } = -1;
+
+        public void ListA(long size) => AFile = List(folder: 1, row: 0, "a.bin", size, withSub: false);
+
+        public void ListB(long size) => BFile = List(folder: 2, row: 1, "b.bin", size, withSub: true);
+
+        public void ListBSub()
+        {
+            _store.SetChildren(_sub, _store.Count, 0);
+            _tracker.FolderExited(_sub, 1, unreadable: false, subfoldersPushed: 0, _totals);
+        }
+
+        /// <summary>A correction in place of <paramref name="entry"/>, credited and published as a probe batch's is.</summary>
+        public void Move(int entry, long bytes, long onDisk)
+        {
+            _totals = _totals with { Bytes = _totals.Bytes + bytes, BytesOnDisk = _totals.BytesOnDisk + onDisk };
+            _tracker.Moved(entry, bytes, onDisk);
+            _tracker.Corrected(_totals);
+        }
+
+        public TopLevelRow Row(string name) => Named(_progress.TopLevel!, name);
+
+        public TopLevelSnapshot Finish(bool completed) => _tracker.Finish(completed, _totals)!;
+
+        // A committed listing: one file, and for b its subfolder, which is pushed and so holds b's row open.
+        private int List(int folder, int row, string file, long size, bool withSub)
+        {
+            int first = _store.Count;
+            int entry = _store.Append(folder, file, EntryKind.File, EntryFlags.None, ArchiveAttribute, size, size, UInt128.Zero,
+                out _, out ScanStore.Posted posted);
+            _totals = _totals with
+            {
+                Files = _totals.Files + posted.Files,
+                Bytes = _totals.Bytes + posted.Size,
+                BytesOnDisk = _totals.BytesOnDisk + posted.OnDisk,
+            };
+            if (withSub)
+            {
+                _sub = _store.Append(folder, "sub", EntryKind.Folder, EntryFlags.None, DirectoryAttribute, 0, 0, UInt128.Zero);
+                _totals = _totals with { Folders = _totals.Folders + 1 };
+            }
+            _store.SetChildren(folder, first, _store.Count - first);
+            _tracker.FolderExited(folder, row, unreadable: false, subfoldersPushed: withSub ? 1 : 0, _totals);
+            return entry;
+        }
+    }
+
     // ---- The watch ----
 
     private sealed record Watched(ScanResult Result, ScanProgress Progress, List<TopLevelSnapshot> Snapshots)
@@ -511,6 +679,7 @@ public class TopLevelTests
             {
                 TopLevelRow row = s.Rows[i];
                 string which = $"{at}, row {row.Name}";
+                Assert.True(!row.Revised || row.State == TopLevelState.Done, $"{which}: revised while {row.State}");
                 switch (row.Kind)
                 {
                     case TopLevelKind.File:
@@ -533,9 +702,15 @@ public class TopLevelTests
                     Assert.True(then.State == row.State && then.Files == row.Files && then.Folders == row.Folders &&
                         then.UnreadableBelow == row.UnreadableBelow && (corrected || (then.Bytes, then.OnDisk) == (row.Bytes, row.OnDisk)),
                         $"{which} changed after it was {then.State} in snapshot {snapshots[settledAt[i]].Sequence}");
+                    // Revised (SL-063): a figure moved since it settled marks the row, the mark never goes, and a row
+                    // no correction reaches is never marked.
+                    bool moved = (then.Bytes, then.OnDisk) != (row.Bytes, row.OnDisk);
+                    Assert.True((!moved || row.Revised) && (!snapshots[k - 1].Rows[i].Revised || row.Revised) && (corrected || !row.Revised),
+                        $"{which}: Revised is {row.Revised}, its figures {(moved ? "moved" : "as")} in snapshot {snapshots[settledAt[i]].Sequence}");
                 }
                 else if (row.State is TopLevelState.Done or TopLevelState.Unreadable or TopLevelState.NotFollowed)
                 {
+                    Assert.True(!row.Revised, $"{which}: revised in the snapshot it settled in");
                     settledAt[i] = k;
                 }
             }

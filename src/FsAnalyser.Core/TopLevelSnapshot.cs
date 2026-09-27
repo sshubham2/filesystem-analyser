@@ -13,8 +13,12 @@ public enum TopLevelKind
 /// <summary>How far a top-level row has been read.</summary>
 public enum TopLevelState
 {
-    /// <summary>Every folder under it has been listed (a file row always is). A later name of a hardlinked
-    /// file elsewhere can still correct its bytes in place: the first name the scan meets is charged.</summary>
+    /// <summary>Every folder under it has been listed and measured (a file row always is). That is the whole
+    /// promise, not that its figures are final: until the scan ends, the probe that reads each file's own size
+    /// once every folder is listed (SL-056) can still correct a file under it in place, such as the first name
+    /// of a hardlinked file that was written through another name. A Done row whose figures moved that way
+    /// says so in <see cref="TopLevelRow.Revised"/> (SL-063). Once the scan has ended, completed or cancelled,
+    /// nothing under it changes again.</summary>
     Done,
 
     /// <summary>Its own folder has been listed and folders under it are still to be listed.</summary>
@@ -78,6 +82,13 @@ public sealed class TopLevelRow
 
     /// <summary>Folders under it (not the row's own folder) that could not be opened or listed.</summary>
     public long UnreadableBelow { get; }
+
+    /// <summary>
+    /// A Done row whose bytes or on-disk bytes are no longer those it had when it became Done: a correction
+    /// landed under it after it settled (SL-063). Only ever true on a Done row, and once true it stays true
+    /// for the rest of the scan, even if a later correction brings the figures back.
+    /// </summary>
+    public bool Revised { get; init; }
 }
 
 /// <summary>

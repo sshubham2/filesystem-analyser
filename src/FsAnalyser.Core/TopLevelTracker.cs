@@ -25,6 +25,9 @@ namespace FsAnalyser.Core;
 /// A folder row is Done when its pending count reaches 0: one for its own folder, plus one for every folder
 /// pushed under it, less one for every folder under it that exits a listing, read or unreadable. Links are
 /// never pushed, so they never hold a row open.
+/// <para>A row keeps the figures it had when its pending count reached 0 (a file row: when it was seeded). A
+/// Done row built with other figures is Revised from then on (SL-063), whichever change moved them, so no
+/// later writer of a row's figures has to remember to mark it.</para>
 /// </remarks>
 internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSpan interval)
 {
@@ -66,6 +69,8 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
                 Folders = kind == TopLevelKind.Folder ? 1 : 0,
                 Pending = kind == TopLevelKind.Folder ? 1 : 0, // pushed by the root listing
             };
+            if (_rows[i].Pending == 0)
+                Settle(ref _rows[i]);
             _published[i] = Build(i, final: false);
         }
         _credited = totals;
@@ -87,6 +92,8 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
 
         r.Pending += subfoldersPushed - 1;
         Debug.Assert(r.Pending >= 0, $"row {r.Name}: pending {r.Pending} after folder {folder}");
+        if (r.Pending == 0)
+            Settle(ref r);
         if (folder == _first + row)
         {
             r.Started = true;
@@ -185,18 +192,28 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
             _ when r.Pending > 0 => final ? TopLevelState.StoppedPartway : TopLevelState.Reading,
             _ => r.OwnUnreadable ? TopLevelState.Unreadable : TopLevelState.Done,
         };
+        if (state == TopLevelState.Done && (r.Bytes, r.OnDisk) != (r.SettledBytes, r.SettledOnDisk))
+            r.Revised = true;
         string path = LongPath.Child(root, r.Name);
-        return new TopLevelRow(r.Name, path, r.Kind, state, r.Bytes, r.OnDisk, r.Files, r.Folders, r.UnreadableBelow);
+        return new TopLevelRow(r.Name, path, r.Kind, state, r.Bytes, r.OnDisk, r.Files, r.Folders, r.UnreadableBelow)
+        {
+            Revised = r.Revised,
+        };
     }
+
+    // Its pending count has reached 0 and never rises again: what it holds now is what Done first shows.
+    private static void Settle(ref Row r) => (r.SettledBytes, r.SettledOnDisk) = (r.Bytes, r.OnDisk);
 
     private struct Row
     {
         public string Name;
         public TopLevelKind Kind;
         public long Bytes, OnDisk, Files, Folders, UnreadableBelow;
+        public long SettledBytes, SettledOnDisk; // Bytes and OnDisk when its pending count reached 0
         public int Pending; // its own folder and every folder pushed under it, less those that exited a listing
         public bool Started; // its own folder has exited its listing
         public bool OwnUnreadable;
+        public bool Revised; // built Done with figures other than the settled ones; never cleared
         public bool Dirty;
     }
 }
