@@ -21,7 +21,8 @@
 # C-006  -Mutant All: the run's own roster, evaluated with $Mutant = 'All', holds EndingObeysSkip and every
 #        other name the ValidateSet offers.
 # C-007  WindowMutants.ps1 -Mutant EndingObeysSkip for real: exit 0, the mutated app published in the scratch
-#        copy, the skip armed at the ending, L-002 FAILED on topLevel.final, and the real source untouched.
+#        copy, the skip armed at the ending, L-002 FAILED on topLevel.final, the real source untouched, and the
+#        run's own copy (named in its output, since every run shares the scratch folder) removed after.
 # C-008  L-002 in an unmutated copy made by the harness's own New-Scratch and run by its own
 #        Invoke-ScratchCase: PASSED, the copy byte-identical to the real source, and the copy removed after.
 #
@@ -345,13 +346,8 @@ function Test-C006 {
     Check ($one.Count -eq 1 -and $one[0] -ceq $Name) "-Mutant $Name runs it alone ($($one -join ', '))"
 }
 
-function Get-Scratches {
-    if (Test-Path -LiteralPath $ScratchParent) { @(Get-ChildItem -LiteralPath $ScratchParent -Directory | ForEach-Object { $_.FullName }) } else { @() }
-}
-
 function Test-C007 {
     $hash = (Get-FileHash -LiteralPath $Source).Hash
-    $scratches = Get-Scratches
     $lines = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $Mutants -Mutant $Name 2>&1 | ForEach-Object { "$_" })
     $exit = $LASTEXITCODE
     foreach ($line in $lines) { Write-Output "    > $line" }
@@ -364,8 +360,14 @@ function Test-C007 {
     Check ($lines -ccontains '    | FAILED: L-002') 'L-002 was reported FAILED'
     Check (@($lines -match '^  ok    L-002 failed on /').Count -eq 1) 'the harness matched its Fail pattern and nothing else'
     Check ((Get-FileHash -LiteralPath $Source).Hash -eq $hash) 'the real MainWindow.xaml.cs is unchanged'
-    $left = @(Get-Scratches | Where-Object { $_ -notin $scratches })
-    Check ($left.Count -eq 0) "the scratch copy was removed ($($left -join ', '))"
+    # This run's own copy, named in its build lines: every run on the machine shares the folder it is in.
+    $copies = @($lines | ForEach-Object { [regex]::Matches($_, 'fsa-window-mutants\\([0-9a-f]{32})\\') } |
+            ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+    Check ($copies.Count -eq 1) "the run named one scratch copy ($($copies -join ', '))"
+    if ($copies.Count -eq 1) {
+        $copy = Join-Path $ScratchParent $copies[0]
+        Check (-not (Test-Path -LiteralPath $copy)) "the scratch copy was removed ($copy)"
+    }
 }
 
 function Test-C008 {
