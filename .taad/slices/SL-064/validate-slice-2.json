@@ -1,0 +1,160 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-064",
+ "stage": "validate-slice",
+ "attempt": 2,
+ "at": "2026-09-27T23:04:59.874Z",
+ "head": "2ff8d7636f3455e90463252de95f3e8873a70312",
+ "run_id": 1717,
+ "summary": "The only thing that changed since validate-1 (at 4cf607a) was O-011, and that fix is now in the tree. It holds when tested for real. `git diff 4cf607a..HEAD -- tests src eng` touches only tests/bugs/SL-064-MutantCases.ps1: C-007's cleanup check and its header comment. WindowMutants.ps1, MainWindow.xaml.cs and the acceptance test are byte-identical to what attempt 1 validated.\n\n- **O-011 reproduction:** I re-ran the trigger that went red last time: C-007, with C-008 started 10 s later, both real publishes, 67 s in total.\n  - C-007 exit 0: all 11 checks ok. It named exactly one copy (949698…), and that copy is gone.\n  - C-008 exit 0: its copy 84d06a… overlapped C-007's run.\n  - At 4cf607a the same run exited 1 with a false red.\n- **Cleanup check can still fail:** I pulled Test-C007's cleanup statements out of the script's AST and ran them over the real C-007 output. They go red in three cases: the run's own copy re-created, a second copy named, and no copy named.\n- **Full suite at current HEAD:** `-Mutant All` exit 0 in 334 s, all 9 killed. EndingObeysSkip was killed on topLevel.final 'False', with reading 1, bytes 393216 and files 6 set aside by MayFail. The source was unchanged, and no scratch copies or app processes were left.\n- **Fast cases and rules:** C-001 to C-006 each exit 0. Fitness: 61 rules, all hold.\n\nCriteria 1-8 are met by today's runs. Criterion 9 (a broken mutation is not counted as a kill) rests on attempt 1's two real broken mutations, a CS0103 compile error and a crash at the ending, plus today's C-005. Test-CaseMutant has not changed since then.\n\nNot a loop: build-2 was sent back by a different finding (O-011) than anything before it, and it fixed that alone.\n\nThe bug report was only a title. I assumed the intent was a standing mutant in the harness with no app change, and the diff matches that.\n\nMy temp folder was removed, and the working tree has only the engine's own .taad changes.",
+ "payload": {
+  "status": "complete",
+  "verdict": "passes",
+  "contact": "code",
+  "summary": "The only thing that changed since validate-1 (at 4cf607a) was O-011, and that fix is now in the tree. It holds when tested for real. `git diff 4cf607a..HEAD -- tests src eng` touches only tests/bugs/SL-064-MutantCases.ps1: C-007's cleanup check and its header comment. WindowMutants.ps1, MainWindow.xaml.cs and the acceptance test are byte-identical to what attempt 1 validated.\n\n- **O-011 reproduction:** I re-ran the trigger that went red last time: C-007, with C-008 started 10 s later, both real publishes, 67 s in total.\n  - C-007 exit 0: all 11 checks ok. It named exactly one copy (949698…), and that copy is gone.\n  - C-008 exit 0: its copy 84d06a… overlapped C-007's run.\n  - At 4cf607a the same run exited 1 with a false red.\n- **Cleanup check can still fail:** I pulled Test-C007's cleanup statements out of the script's AST and ran them over the real C-007 output. They go red in three cases: the run's own copy re-created, a second copy named, and no copy named.\n- **Full suite at current HEAD:** `-Mutant All` exit 0 in 334 s, all 9 killed. EndingObeysSkip was killed on topLevel.final 'False', with reading 1, bytes 393216 and files 6 set aside by MayFail. The source was unchanged, and no scratch copies or app processes were left.\n- **Fast cases and rules:** C-001 to C-006 each exit 0. Fitness: 61 rules, all hold.\n\nCriteria 1-8 are met by today's runs. Criterion 9 (a broken mutation is not counted as a kill) rests on attempt 1's two real broken mutations, a CS0103 compile error and a crash at the ending, plus today's C-005. Test-CaseMutant has not changed since then.\n\nNot a loop: build-2 was sent back by a different finding (O-011) than anything before it, and it fixed that alone.\n\nThe bug report was only a title. I assumed the intent was a standing mutant in the harness with no app change, and the diff matches that.\n\nMy temp folder was removed, and the working tree has only the engine's own .taad changes.",
+  "checks": [
+   {
+    "what": "Scope of change since validate-1",
+    "command": "git diff 4cf607ad9..HEAD --stat -- tests src eng",
+    "outcome": "passed",
+    "evidence": "Only tests/bugs/SL-064-MutantCases.ps1 changed (10+/8-). WindowMutants.ps1, MainWindow.xaml.cs, WindowCases.ps1 and the acceptance test are unchanged since attempt 1."
+   },
+   {
+    "what": "Declared architecture rules",
+    "command": "mcp__taad3__Fitness op=check",
+    "outcome": "passed",
+    "evidence": "61 rules checked against 99 parsed files. Every declared rule holds."
+   },
+   {
+    "what": "Fast cases C-001..C-006 (binding, $CaseMutants wiring, anchor once inside ShowFinalTopLevel, compiled guard behaviour, kill classification, -Mutant All roster)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-064-MutantCases.ps1 -Case C-00N (N=1..6, each separately)",
+    "outcome": "passed",
+    "evidence": "All six exit 0 with 0 FAIL lines and 'PASSED: C-00N', 3 s in total."
+   },
+   {
+    "what": "O-011 natural reproduction: C-007 with another harness user (C-008) creating a scratch copy in the shared folder 10 s into the run",
+    "command": "Start-Process pwsh ... SL-064-MutantCases.ps1 -Case C-007; Start-Sleep 10; Start-Process pwsh ... -Case C-008; wait for both",
+    "outcome": "passed",
+    "evidence": "C-007 exit 0 and C-008 exit 0, 67 s. C-007: every check ok, including 'the run named one scratch copy (949698499b6a4a5094651a26217c59be)' and 'the scratch copy was removed'. C-008's copy 84d06a9491e343b5946c9d92fc1f8b1f appears only in C-008's output. At 4cf607a this identical trigger gave C-007 exit 1."
+   },
+   {
+    "what": "C-007 as a real end-to-end kill (criteria 5, 7)",
+    "command": "(same run as above; C-007 invokes WindowMutants.ps1 -Mutant EndingObeysSkip)",
+    "outcome": "passed",
+    "evidence": "ok: exits 0; PASSED: EndingObeysSkip; 'publishing the app' in the scratch copy; skip armed; topLevel.final FAIL line; actual 'False'; FAILED: L-002; Fail pattern matched and nothing else; real MainWindow.xaml.cs unchanged."
+   },
+   {
+    "what": "C-008 unmutated control through the harness's own New-Scratch/Invoke-ScratchCase (criterion 8)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-064-MutantCases.ps1 -Case C-008 (run concurrently above)",
+    "outcome": "passed",
+    "evidence": "exit 0. Copy hash equals the real source. L-002 exit 0 and PASSED with no FAIL line. Skip armed and topLevel.final held. Remove-Scratch removed the copy, and the source is unchanged."
+   },
+   {
+    "what": "The new C-007 cleanup check still goes red (independent red check)",
+    "command": "Took Test-C007's last 3 statements from the script's AST and dot-sourced them over the real C-007 output with a stub Check",
+    "outcome": "passed",
+    "evidence": "(1) Real output, copy gone: 2 ok. (2) The run's own GUID folder re-created under %TEMP%\\fsa-window-mutants: FAIL 'the scratch copy was removed'. (3) An extra line naming C-008's GUID: FAIL 'the run named one scratch copy (949698..., 84d06a...)'. (4) No copy named: FAIL 'named one scratch copy ()'. The re-created folder was deleted with [IO.Directory]::Delete."
+   },
+   {
+    "what": "Full mutant suite at current HEAD (criterion 6)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowMutants.ps1 -Mutant All",
+    "outcome": "passed",
+    "evidence": "exit 0 in 334 s. PASSED: StopDisabled, StopCollapsed, NoCrashHandler, NoExitRule, CancelThrows, HookFailsAfterActing, HookCompileError, HookLocked, EndingObeysSkip. EndingObeysSkip: L-002 exits 1 with reading '1', bytes '393216', files '6' and final 'False'. The harness matched the final line (got 1) and 'actual False'. Source hash unchanged, 0 scratch copies left, 0 FsAnalyser.App processes."
+   },
+   {
+    "what": "Environment and leftovers",
+    "command": ".dotnet\\dotnet.exe --list-sdks; Get-ChildItem %TEMP%\\fsa-window-mutants; Get-Process FsAnalyser.App; git status --short",
+    "outcome": "passed",
+    "evidence": "SDK 10.0.401 in the worktree's gitignored .dotnet (Q-003). Scratch parent empty before and after. No app processes. %TEMP%\\sl064-validate2 removed. git status shows only the engine's .taad changes."
+   },
+   {
+    "what": "Acceptance test tests/bugs/SL-064-EndingObeysSkipMutant.Tests.ps1",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-064-EndingObeysSkipMutant.Tests.ps1",
+    "outcome": "not-run",
+    "evidence": "Not re-run by design. The engine ran it and recorded exit 0 (O-001 discharged). The file is unchanged since then."
+   },
+   {
+    "what": "Real broken mutations (compile error, crash) through the real Test-CaseMutant (criterion 9)",
+    "command": "validate-1's temp driver (CS0103 Replace; throw-at-ending Replace)",
+    "outcome": "not-run",
+    "evidence": "Not repeated this attempt. Validate-1 ran both at 4cf607a, and both were counted NOT killed. Test-CaseMutant and Set-Mutation in WindowMutants.ps1 have not changed since (git diff empty). Today's C-005 re-confirms the classification over synthetic shapes."
+   },
+   {
+    "what": "dotnet build / test of FsAnalyser.slnx",
+    "command": "eng/dotnet.ps1 build FsAnalyser.slnx",
+    "outcome": "not-run",
+    "evidence": "No src/ or C# file changed in this slice. The app was published inside the harness's scratch copies instead: 11 successful publishes this attempt (9 in -Mutant All, C-007, C-008)."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "1. invoke the mutant harness by name, when -Mutant EndingObeysSkip is passed as the parameter value",
+    "met": "yes",
+    "how": "C-001 exit 0: it binds through the real param block, and 'EndingObeysSkipX' is refused. C-007's real invocation of WindowMutants.ps1 -Mutant EndingObeysSkip exits 0 with PASSED: EndingObeysSkip."
+   },
+   {
+    "criterion": "2. look up which case and file a mutant targets, when $CaseMutants is queried by the key 'EndingObeysSkip'",
+    "met": "yes",
+    "how": "C-002 exit 0: Case L-002, File MainWindow.xaml.cs. The real runs (C-007, -Mutant All) ran L-002 against the mutated scratch copy."
+   },
+   {
+    "criterion": "3. apply the mutant's Find/Replace to the real source, when the Find anchor's match count inside the current file is exactly one",
+    "met": "yes",
+    "how": "C-003 exit 0: one match inside ShowFinalTopLevel, and duplicated or reformatted anchors are refused. The real runs applied it: Set-Mutation throws otherwise, and L-002 then behaved as the mutant."
+   },
+   {
+    "criterion": "4. the mutated guard decides whether to show the final snapshot, when _skipNextRefresh is true when the scan ends",
+    "met": "yes",
+    "how": "C-004 exit 0: with the skip armed, the real guard shows the final snapshot and the mutated one does not. In the real runs L-002 logged the skip armed, and topLevel.final was False under the mutant but held in the C-008 control."
+   },
+   {
+    "criterion": "5. the harness decides whether a mutant is killed, when L-002's failure output contains the literal 'topLevel.final' failure line",
+    "met": "yes",
+    "how": "-Mutant All: the harness matched exactly the topLevel.final FAIL line (got 1), with reading/bytes/files allowed by MayFail, and 'actual False'. C-005 exit 0: 8 shapes classified correctly."
+   },
+   {
+    "criterion": "6. run the full mutant suite as normally scheduled, when -Mutant All is invoked",
+    "met": "yes",
+    "how": "-Mutant All exit 0 in 334 s at HEAD 2ff8d76, with all 9 killed including EndingObeysSkip. C-006 exit 0: the roster matches the ValidateSet."
+   },
+   {
+    "criterion": "7. kill the mutant end-to-end through the standing harness path, when the mutated app is actually built and L-002 actually run against it, not hand-patched",
+    "met": "yes",
+    "how": "C-007 and -Mutant All both published the mutated app in a scratch copy ('publishing the app (eng/dotnet.ps1 publish)') and ran L-002, which FAILED on topLevel.final 'False'."
+   },
+   {
+    "criterion": "8. confirm the kill is attributable to the mutation, not a pre-existing failure, with L-002 against the unmutated clean build through the harness's own sandbox",
+    "met": "yes",
+    "how": "C-008 exit 0, run concurrently with C-007. New-Scratch's copy is identical to the real source. L-002 PASSED with the skip armed and topLevel.final held. The copy was removed."
+   },
+   {
+    "criterion": "9. distinguish a genuine kill from a broken mutation, when the mutation causes a compile error or an app crash instead of a clean L-002 failure",
+    "met": "yes",
+    "how": "From validate-1 at 4cf607a: a real CS0103 compile-error mutation and a real crash-at-ending mutation, both run through the real Test-CaseMutant, were both counted NOT killed. Test-CaseMutant and Set-Mutation are unchanged since (git diff empty for WindowMutants.ps1). Today's C-005 re-confirms the synthetic shapes. I did not repeat the real broken mutations this attempt."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-011",
+    "verified": "yes",
+    "evidence": "Test-C007 (SL-064-MutantCases.ps1:363-370) now takes its own copy's GUID from its output, requires exactly one, and checks Test-Path on it. Get-Scratches is gone. The trigger that failed at 4cf607a (C-008 started 10 s into C-007) now gives C-007 exit 0, with its own copy 949698... named and removed while C-008's copy 84d06a... existed alongside. An independent red check on the real output fails when the own copy exists, when two copies are named, and when none is named."
+   },
+   {
+    "key": "O-010",
+    "verified": "yes",
+    "evidence": "Already discharged in validate-1 with real CS0103 and crash mutations, and the code it rests on is unchanged. Today's -Mutant All shows the kill counted only on the topLevel.final line plus 'actual False'."
+   }
+  ],
+  "not_reached": [
+   "Kill reliability over many runs through the harness: this attempt saw 2 more real kills (C-007, -Mutant All), 4 across both attempts' standalone and suite runs. The 20/20 + 10/10 rate is from the risk spike's hand-patch.",
+   "A killed mutant run with the whole machine under load. The only overlap was two harness runs publishing at once.",
+   "Running the harness under Windows PowerShell 5.1. It was only parsed there, in earlier attempts. All runs used pwsh 7.",
+   "A machine with a machine-wide .NET 10 SDK. Every run used the worktree's repo-local .dotnet 10.0.401 (Q-003).",
+   "Real broken mutations (compile error, crash) were not re-run this attempt. They are carried from validate-1 against unchanged harness code.",
+   "A real mutation that exits 0 without writing a report, without crashing. Only C-005's synthetic shapes cover it.",
+   "Future drift: the -Mutant All roster is hard-coded, so a later mutant added to the ValidateSet but not to All is caught only if someone re-runs C-006.",
+   "The bug report was only a title. Its intent (a standing mutant in WindowMutants.ps1, no app change) was assumed from the repro test and the design. Nobody confirmed it."
+  ],
+  "planned": []
+ }
+}

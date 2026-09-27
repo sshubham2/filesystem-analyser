@@ -1,0 +1,115 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-064",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-09-27T23:13:41.470Z",
+ "head": "2ff8d7636f3455e90463252de95f3e8873a70312",
+ "run_id": 1718,
+ "summary": "SL-064 added a standing EndingObeysSkip mutant to tests/window/WindowMutants.ps1. It is a ValidateSet value, a $CaseMutants entry wired to L-002 using the spike's Find/Replace, a name in the hard-coded -Mutant All roster, and a MayFail key on Test-CaseMutant. The real run killed it on topLevel.final 'False', and -Mutant All killed 9/9 in 334 s. The deliverable was stable from build #1. WindowMutants.ps1, MainWindow.xaml.cs and the acceptance test were byte-identical from validate-1 (4cf607a) to HEAD. All the rework (build #2, code-review #3, validate #3) went into one minor flaw in the slice's own scaffolding: C-007 in tests/bugs/SL-064-MutantCases.ps1 diffed a temp folder shared by every harness run on the machine. The bug report was only a title. The repro and design assumed the intent was a standing mutant with no app change, and nobody confirmed that.",
+ "payload": {
+  "status": "complete",
+  "reason": "All stages before reflect ran or were recorded. Critique and critique-review were skipped by the low-risk sizing rule. That is recorded as a fact and used in `missed`.",
+  "summary": "SL-064 added a standing EndingObeysSkip mutant to tests/window/WindowMutants.ps1. It is a ValidateSet value, a $CaseMutants entry wired to L-002 using the spike's Find/Replace, a name in the hard-coded -Mutant All roster, and a MayFail key on Test-CaseMutant. The real run killed it on topLevel.final 'False', and -Mutant All killed 9/9 in 334 s. The deliverable was stable from build #1. WindowMutants.ps1, MainWindow.xaml.cs and the acceptance test were byte-identical from validate-1 (4cf607a) to HEAD. All the rework (build #2, code-review #3, validate #3) went into one minor flaw in the slice's own scaffolding: C-007 in tests/bugs/SL-064-MutantCases.ps1 diffed a temp folder shared by every harness run on the machine. The bug report was only a title. The repro and design assumed the intent was a standing mutant with no app change, and nobody confirmed that.",
+  "estimate_error": "The size was roughly right and the tier was slightly low, and both were wrong about where the work sat. The deliverable was about 15 lines of harness table. The verification was an 8-case script (SL-064-MutantCases.ps1, past line 370), including a real 50 s publish in C-007, plus three full validate runs at up to 334 s each. 'Low risk' was correct for the product code, because the app was not touched. It was wrong for the scaffolding. That scaffolding read shared machine state (%TEMP%\\fsa-window-mutants) and was the only source of rework. Because of the low tier, critique and critique-review did not run, so nobody adversarial looked at the plan for the checks-of-checks before code review. The '2x' counts for build-check and risk-spike are not real rework. Each second pass was an engine override ('built anyway despite a partial survey / conditional spike') with nothing changed in between.",
+  "learned": [
+   {
+    "kind": "codebase",
+    "lesson": "WindowMutants.ps1's New-Scratch puts every run's copy under one shared %TEMP%\\fsa-window-mutants, for every worktree, every -Mutant All run and every C-00N case. Any check that lists or diffs that folder races with other slices' runs. Find a run's own copy from its output instead: the 'Restored ...' and '-> ...' lines carry fsa-window-mutants\\<32-hex>\\.",
+    "evidence": "R2-m1: C-007 went red with a stand-in folder created 10 s in, and validate-2 reproduced it with C-008 started 10 s after C-007. The fix (distinct GUIDs from the run's own lines, exactly one, Test-Path false) passed with both overlapping."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "Adding a mutant to WindowMutants.ps1 touches four places: the ValidateSet, the $CaseMutants entry, the hard-coded $names roster that -Mutant All uses, and possibly a MayFail key on the entry. The design listed the roster as 'verify, patch only if needed', and it was hard-coded. It also said Test-CaseMutant needed no change, but it got a MayFail key (lines ~194-201) to set aside the reading/bytes/files FAIL lines that the mutation trips alongside topLevel.final.",
+    "evidence": "build-slice #1 summary (ValidateSet, All roster, entry at lines 78-84, MayFail at 194-201). code-review #2 drift: 'MayFail was added to the shared Test-CaseMutant, and an Expect line pins actual False'. validate-2: 'reading 1, bytes 393216 and files 6 set aside by MayFail'."
+   },
+   {
+    "kind": "estimate",
+    "lesson": "Cost figures for the next mutant slice: one real -Mutant <name> run takes about 51 s (publish plus L-002). C-007 takes about 52 s. -Mutant All took 334 s for 9 mutants, so each added mutant costs roughly 40-50 s in every full run. A validate that runs All once, plus one standalone kill, is about 7 minutes of wall clock.",
+    "evidence": "validate-1: -Mutant EndingObeysSkip exit 0 in 51 s. validate-2: -Mutant All exit 0 in 334 s. build #2: C-007 52 s. validate-2: C-007 plus C-008 67 s."
+   },
+   {
+    "kind": "process",
+    "lesson": "For a harness-only slice, the deliverable is not where the risk sits. The build-authored checks of the checks are. They get no design case and, at the low tier, no critique. Add an explicit design question for such slices: what shared machine state (TEMP folders, processes, ports, SDK dirs) does each new check read, and what happens when another worktree runs the same harness at the same time.",
+    "evidence": "WindowMutants.ps1, MainWindow.xaml.cs and the acceptance test were byte-identical from 4cf607a to HEAD. The only rework diff was C-007's cleanup block, which no design case described and which critique and critique-review (skipped by tier) never saw."
+   },
+   {
+    "kind": "process",
+    "lesson": "A finding accepted-pending at code-review does not stop the slice. It goes on to validate and is discharged only after validate fails on it. R2-m1 was known and had a one-paragraph fix at code-review #2, yet it cost a build, a code-review and a validate attempt. When the reviewer's fix is concrete and the file is the slice's own scaffolding, fix it before validate opens.",
+    "evidence": "code-review #2 passed with R2-m1 accepted-pending. validate-2 failed and sent the slice to build-slice #2, which changed only that check. The reviewer had called it 'minor', but it made a standing test fail under concurrent runs, which is why validate could not pass."
+   },
+   {
+    "kind": "risk",
+    "lesson": "Spike experiment 'mutant-killed-for-the-right-reason' ran out of turns. The design carried it as the one unproven precondition (compile error or crash never counted as a kill). It was settled only at validate-1 by a temporary driver (a CS0103 Replace and a throw-at-ending Replace) that is not in the repo. validate-2 relied on that record ('carried from validate-1 against unchanged harness code'), and only C-005's synthetic outputs are standing. When a spike question is the design's sole unproven precondition, re-split it into a smaller experiment rather than proceeding on 'did not finish'.",
+    "evidence": "spikes#57: 1 of 3 experiments 'out of turns... missing required property verdict'. O-010 was discharged by a real run at validate-1. validate-2 not-run: real broken mutations (criterion 9)."
+   },
+   {
+    "kind": "design",
+    "lesson": "Do not mark a case immaterial when it exercises the design's own unproven precondition. The engine turns the precondition into a verify obligation anyway. Design case 9 (broken mutation vs genuine kill) was 'material: false', yet O-010 required real runs and C-005 was written to cover it.",
+    "evidence": "design case 9 (material: false, 'not worth a dedicated test'). O-010 [verify] discharged at validate-1 with real compile-error and crash mutations. C-005 was added with synthetic shapes."
+   },
+   {
+    "kind": "design",
+    "lesson": "The 20/20 and 10/10 kill rates that justified the single 'topLevel.final' Fail pattern came from a hand-patched scratch copy, not the harness. Through the harness path there are only 4 observed real kills across both attempts. A design that leans on a spike's rate should say whether the spike ran through the same code path.",
+    "evidence": "validate-2 left open: 'Kill reliability over many runs through the harness: ... 4 across both attempts... The 20/20 + 10/10 rate is from the risk spike's hand-patch.' Spike evidence says 'hand-patched code'."
+   },
+   {
+    "kind": "process",
+    "lesson": "The loop's rework counters overstate rework for build-check and risk-spike on bug slices that start with nothing built. The 'halted' first pass and 'built anyway' second pass are the same state re-stamped, not a redo. Real rework on SL-064 was build-slice (2) and the review/validate passes that followed it.",
+    "evidence": "build-check #2 'built anyway despite a partial survey' and risk-spike #2 'built anyway despite a conditional spike', both contact none, engine override, with no code change between."
+   }
+  ],
+  "what_went_wrong": [
+   "All the real rework (build #2, code-review #3, validate #3) was one minor flaw in the slice's own scaffolding. C-007's cleanup check compared before/after listings of the machine-shared %TEMP%\\fsa-window-mutants folder, so it went red whenever another harness run overlapped its ~50 s. The deliverable in WindowMutants.ps1 never changed after build #1.",
+   "The flaw was found at code-review #2 as 'minor' and accepted-pending, then validate-2 failed on it. The slice went through validate with a known owed fix. The minor label under-called the consequence: a standing test that goes false-red under concurrent runs blocks validation.",
+   "The design said Test-CaseMutant was unchanged shared behaviour and picked a single 'topLevel.final' Fail pattern. It did not check how the harness treats the other L-002 FAIL lines the mutation also trips (reading, bytes, files). Build had to add MayFail to the shared Test-CaseMutant and an Expect line pinning actual 'False'. This was reported as a drift departure.",
+   "Risk spike: 1 of 3 experiments ran out of turns on the design's only unproven precondition. The slice went ahead on 'built anyway', and the precondition was settled at validate-1 by a temporary driver that was not kept. The standing suite covers it only with synthetic outputs (C-005).",
+   "critique and critique-review did not run (low-risk sizing). The design's 8 cases and 1 judged-immaterial case went unchallenged. Code-review #1 and validate #1 each halted and were re-run. The record here does not say why, so I cannot tell whether those halts were real findings or interruptions.",
+   "The bug report was a title only. The intent (standing mutant in WindowMutants.ps1, no app change) was assumed by repro and design and was still unconfirmed at validate-2."
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "dimension": "missing-edge-cases",
+    "severity": "minor",
+    "what": "The design had a case for 'applied and restored through the harness's own sandbox mechanism' but never asked what happens when a second harness run uses the same scratch parent during a case's ~50 s. New-Scratch (WindowMutants.ps1:123) puts every run from every worktree under one %TEMP%\\fsa-window-mutants. The cleanup check built for that case listed the whole folder before and after, so a concurrent -Mutant All, another worktree or C-008 turned it red. The critique did not run, because low-risk sizing skips it, so this measures the cost of skipping it.",
+    "caught_by": "code-review round 2 (R2-m1, filed minor, accepted-pending), then validate-2 reproduced it as a false red and sent the slice back to build"
+   },
+   {
+    "gate": "critique",
+    "dimension": "unfounded-assumptions",
+    "severity": "minor",
+    "what": "The design asserted Test-CaseMutant's classification was 'shared, pre-existing behaviour this slice does not modify' and chose exactly one Fail pattern ('topLevel.final'). It did not read how the harness handles the other L-002 FAIL lines (reading, bytes, files) that the mutation also trips. Build had to add a MayFail key to Test-CaseMutant (WindowMutants.ps1 ~194-201) and an Expect line pinning actual 'False'. The critique did not run.",
+    "caught_by": "build-slice #1 (the MayFail edit), then code-review's drift section recorded the departure"
+   }
+  ],
+  "unknowns": [
+   "What runs `WindowMutants.ps1 -Mutant All` (334 s) on a routine basis? This slice made the mutant 'standing' in the roster, but the only runs on record are validate's manual invocations. If nothing schedules it, the guard stands only while someone remembers to run it.",
+   "Are tests/bugs/SL-064-*.ps1 (the acceptance test and the 8-case script) run by anything after this slice ships, or are they slice scaffolding that will rot? C-006, the only check that catches a mutant missing from the hard-coded All roster, lives in that script.",
+   "Is the kill through the harness path (Set-Mutation, then Invoke-ScratchCase, then Test-CaseMutant) as reliable as the hand-patched spike's 30/30? Only 4 real harness kills exist, and none was under load.",
+   "Did the person who raised this (reflection on SL-039) mean a standing L-002 mutant with no app change? That was assumed from the title and never confirmed."
+  ],
+  "candidates": [
+   {
+    "title": "Add standing real broken-mutation cases (compile error, crash at the ending) to the mutant harness self-tests",
+    "urgency": "soon",
+    "why": "Test-CaseMutant must not count a build failure or crash as a kill, and that guarantees every one of the nine mutants. It is proven for real only by validate-1's temporary CS0103 and throw-at-ending driver, which is not in the repo. validate-2 listed it as 'not reached', and the standing suite covers it only with synthetic outputs (C-005). This is the same 'proven only by hand' state this slice was opened to remove."
+   },
+   {
+    "title": "Make WindowMutants.ps1 fail at startup if the ValidateSet (minus 'All') and the hard-coded -Mutant All roster disagree",
+    "urgency": "soon",
+    "why": "The All roster is hard-coded. A mutant added to the ValidateSet and $CaseMutants but not to the roster drops out of the standing run silently. The only check for that is C-006, in a slice-named script under tests/bugs. validate-2 recorded it as future drift."
+   },
+   {
+    "title": "Establish and wire where `WindowMutants.ps1 -Mutant All` runs routinely",
+    "urgency": "soon",
+    "why": "The full run takes 334 s and the record shows only manual validate invocations. Whether anything routinely runs it is not on record. If nothing does, 'standing mutant' means only 'exists in the roster', and this slice's guard would not bite on a future MainWindow change."
+   },
+   {
+    "title": "Run -Mutant EndingObeysSkip repeatedly through the harness, including with cores busy, to check the kill rate against the spike's hand-patched 30/30",
+    "urgency": "someday",
+    "why": "The design's single-Fail-pattern choice rested on the spike's 20/20 and 10/10 rates from a hand-patched copy. validate-2 saw only 4 real harness kills and none under load."
+   }
+  ]
+ }
+}
