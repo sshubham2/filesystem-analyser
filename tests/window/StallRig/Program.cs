@@ -10,7 +10,7 @@ using FsAnalyser.Core.Tests;
 // written at that moment. When stdin closes, the server answers again, the rig removes its own mapping,
 // deletes the tree and exits 0.
 //
-// It waits up to --wait-sec (default 150) for another rig run on this machine to finish (LoopbackShare,
+// It waits up to --wait-sec (default 150) for another rig run in this sign-in session to finish (LoopbackShare,
 // RigLock) and exits 1 if one holds on. A failed mapping also exits 1, with the error on stderr and nothing
 // on stdout. Bad arguments exit 2. A rig that is killed cannot clean up: its mapping stays until the next
 // rig run sweeps it, or until sign-out, and its tree stays beside <file>.

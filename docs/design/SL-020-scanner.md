@@ -245,12 +245,22 @@ so it becomes `\` again.
       N-001 to N-004 pass was run) to blob `8fdf6e87345668eafc91b09015bdf83997820801`. SmbRig.cs does not
       make the pass stale while `git rev-parse <HEAD>:tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs` is
       exactly that second blob. The exemption names the file's content, not the commit, because the
-      builder does not commit. StalledShareTests has never passed on the extracted rig, so the record is
-      incomplete until a person runs it.
+      builder does not commit. SL-059 renamed the constant to `RigLock.SessionName`, with the mutex name
+      unchanged, so SmbRig.cs is no longer that blob and the exemption no longer covers it; the pass was
+      already stale by then through `src/FsAnalyser.Core/Scanning/**` and WindowCases.ps1.
+      StalledShareTests has never passed on the extracted rig, so the record is incomplete until a
+      person runs it.
     - *The rig* (`tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs`, also built as `tests/window/StallRig`)
       serialises runs with one mutex per sign-in session, because the SMB client allows one port per
-      server name: a second run waits for the first, or fails saying so. Under the mutex it removes rig
-      mappings a killed run left behind before making its own. That sweep is the only code in this slice
+      server name: a second run waits for the first, or fails saying so. Runs from different sign-in
+      sessions are NOT serialised: the mutex is `Local\FsAnalyser-SmbRig` (`RigLock.SessionName`), which
+      a run by a second user through Fast User Switching or Remote Desktop, or by a scheduled task or
+      service in session 0, never sees. Nothing runs the rig that way today (SL-059). A slice that needs
+      cross-session exclusion switches the name to `Global\` and proves the exclusion across two
+      sessions, in both creation orders, with a person running the check: the agent sandbox cannot start
+      a second session (SL-059's spike was refused when it tried to register the S4U scheduled task that
+      would start one). Under the mutex it removes rig mappings a killed run left behind before making
+      its own. That sweep is the only code in this slice
       that deletes anything on the person's machine. It deletes a mapping only when the one predicate
       `LoopbackShare.IsRigMapping` matches it: exactly `\\127.0.0.1\` followed by `fsa` in lower case and 8
       hex digits in either case. The default-run `SmbRigTests.OnlyTheRigsOwnMappingsAreSwept` calls that

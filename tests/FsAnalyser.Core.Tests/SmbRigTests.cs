@@ -5,7 +5,7 @@ namespace FsAnalyser.Core.Tests;
 /// <summary>
 /// The stall rig's isolation (SL-038, M1), without a share: the lock that keeps two rig runs off
 /// 127.0.0.1 at once, and the filter that decides which mappings a new run may sweep. Each lock test
-/// uses a name of its own, never <see cref="RigLock.MachineName"/>, so it cannot hold up a real rig run.
+/// uses a name of its own, never <see cref="RigLock.SessionName"/>, so it cannot hold up a real rig run.
 /// The same shapes with real mappings are window cases N-003 and N-004 (-IncludeNetwork).
 /// </summary>
 public class SmbRigTests

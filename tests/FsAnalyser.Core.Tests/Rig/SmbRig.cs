@@ -48,7 +48,7 @@ internal sealed class LoopbackShare : IDisposable
 
     public LoopbackShare(string folder, TimeSpan waitForOtherRun)
     {
-        _lock = RigLock.Take(RigLock.MachineName, waitForOtherRun);
+        _lock = RigLock.Take(RigLock.SessionName, waitForOtherRun);
         try
         {
             Store = new StallingFileStore(new NTDirectoryFileSystem(folder));
@@ -173,7 +173,7 @@ internal sealed class LoopbackShare : IDisposable
 internal sealed class RigLock : IDisposable
 {
     /// <summary>The lock every rig run takes. Tests of the lock itself use a name of their own.</summary>
-    public const string MachineName = @"Local\FsAnalyser-SmbRig";
+    public const string SessionName = @"Local\FsAnalyser-SmbRig";
 
     private readonly Mutex _mutex;
 
