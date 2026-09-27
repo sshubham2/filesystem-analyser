@@ -1,0 +1,200 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-053",
+ "stage": "validate-slice",
+ "attempt": 1,
+ "at": "2026-09-27T00:21:57.365Z",
+ "head": "f1037e38084c94e22e4bb0511cdbe524169a49eb",
+ "run_id": 1470,
+ "summary": "C-001 and C-003 no longer pin a settled count. Get-ExpectedSettled (tests/rules/RuleCases.ps1:209-233) counts the indent-2 items of the yaml's rules: list and subtracts $Twinned = 15. It never reads parity output. I re-measured every figure on the real tree:\n- The yaml has 48 '  - name:' items, and Fitness op=check reports the same 48 rules, all holding. 48 - 15 = 33, which matches the settled count rules-parity prints under both shells (AGREE 11/15/27, 33 settled).\n- C-001 and C-003, each run alone, exit 0 under both pwsh and powershell.exe as the outer shell (33 and 34).\n- C-007 against the engine exits 0 under both outer shells.\n- SettledCountProbe -Shape All exits 0 with all 9 shapes green.\n- The full RuleCases -Case All exits 0 in 233 s, with 415 ok checks across C-001 to C-014.\n\nI also ran my own mutations on scratch copies, separate from the probe:\n- 3 entries appended under two markers: C-001 stays green at 36 under both outer shells.\n- Parity printing settled-1: C-001 fails with 4 checks.\n- Parity printing facts+1: C-001 fails with 4 checks.\n- The pre-fix RuleCases.ps1 run against the current yaml: fails, expecting 28.\n\nThe guard regex hits the pre-fix file at exactly lines 205 and 268, and nothing in the current file.\n\nThe tree was clean afterwards and I removed my temp folders. There was one build attempt, so no loop. Deviations stand as recorded, in particular the oracle source changed per O-015. The guard rule's 'because' text still names the Fitness rule count as the source. It is not wrong (48 = 48), but it has drifted from the code, as code-review recorded. Contact is `code`: these are repo scripts and the engine's Fitness check, not a live environment.",
+ "payload": {
+  "status": "complete",
+  "verdict": "passes",
+  "contact": "code",
+  "summary": "C-001 and C-003 no longer pin a settled count. Get-ExpectedSettled (tests/rules/RuleCases.ps1:209-233) counts the indent-2 items of the yaml's rules: list and subtracts $Twinned = 15. It never reads parity output. I re-measured every figure on the real tree:\n- The yaml has 48 '  - name:' items, and Fitness op=check reports the same 48 rules, all holding. 48 - 15 = 33, which matches the settled count rules-parity prints under both shells (AGREE 11/15/27, 33 settled).\n- C-001 and C-003, each run alone, exit 0 under both pwsh and powershell.exe as the outer shell (33 and 34).\n- C-007 against the engine exits 0 under both outer shells.\n- SettledCountProbe -Shape All exits 0 with all 9 shapes green.\n- The full RuleCases -Case All exits 0 in 233 s, with 415 ok checks across C-001 to C-014.\n\nI also ran my own mutations on scratch copies, separate from the probe:\n- 3 entries appended under two markers: C-001 stays green at 36 under both outer shells.\n- Parity printing settled-1: C-001 fails with 4 checks.\n- Parity printing facts+1: C-001 fails with 4 checks.\n- The pre-fix RuleCases.ps1 run against the current yaml: fails, expecting 28.\n\nThe guard regex hits the pre-fix file at exactly lines 205 and 268, and nothing in the current file.\n\nThe tree was clean afterwards and I removed my temp folders. There was one build attempt, so no loop. Deviations stand as recorded, in particular the oracle source changed per O-015. The guard rule's 'because' text still names the Fitness rule count as the source. It is not wrong (48 = 48), but it has drifted from the code, as code-review recorded. Contact is `code`: these are repo scripts and the engine's Fitness check, not a live environment.",
+  "checks": [
+   {
+    "what": "Parity tool on the real tree under both shells",
+    "command": "pwsh / powershell.exe -NoProfile -ExecutionPolicy Bypass -File eng/rules-parity.ps1",
+    "outcome": "passed",
+    "evidence": "Both shells exit 0 and print 'rules-parity: AGREE 11 facts <- 15 twinned entries, 27 patterns; 33 settled entries not compared'."
+   },
+   {
+    "what": "Independent count of yaml rule entries (not via parity or the oracle)",
+    "command": "ReadAllLines .taad/fitness.yaml; count '^  - name:' and group '^( *)-( |$)' by indent",
+    "outcome": "passed",
+    "evidence": "There is one column-0 key (rules: at line 71). It has 48 indent-2 items, all '- name:', plus 102 items at indent 4 and 48 at indent 6. 48 - 15 = 33 matches the parity tool."
+   },
+   {
+    "what": "Engine Fitness check on the current tree (guard rule does not fire on fixed code; rule count equals yaml count)",
+    "command": "mcp__taad3__Fitness op=check rebuild=true",
+    "outcome": "passed",
+    "evidence": "48 rule(s) checked against 82 file(s) read, and every declared rule holds."
+   },
+   {
+    "what": "C-001 and C-003 alone, with pwsh as the outer shell",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-001 ; -Case C-003",
+    "outcome": "passed",
+    "evidence": "C-001: exit 0, 8 ok, expects 33 settled for both inner shells, with and without -ExpectFacts 11. C-003: exit 0, all ok, and the appended-entry check expects and sees 34."
+   },
+   {
+    "what": "C-001 and C-003 alone, with Windows PowerShell 5.1 as the outer shell (oracle evaluated under 5.1)",
+    "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-001 ; -Case C-003",
+    "outcome": "passed",
+    "evidence": "Same as under pwsh: C-001 exits 0 with 33, and C-003 exits 0 with 34."
+   },
+   {
+    "what": "C-007 against the engine under both outer shells (oracle premise twinned + settled = Fitness rule count)",
+    "command": "pwsh|powershell.exe -File tests/rules/RuleCases.ps1 -Case C-007 -EnginePython %APPDATA%\\taad3\\venv\\Scripts\\python.exe -EngineRoot C:\\Users\\sshub\\projets\\taad_v3\\backend",
+    "outcome": "passed",
+    "evidence": "pwsh: exit 0 in 24 s. powershell.exe: exit 0 in 23 s. Both print 'ok the Fitness rule count equals the yaml entries (twinned + settled)' and the clean scenario reads CLEAN."
+   },
+   {
+    "what": "The slice's permanent probe, all shapes",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/SettledCountProbe.ps1 -Shape All",
+    "outcome": "passed",
+    "evidence": "Exit 0, 'All checks held.'\n- AppendOne 34, AppendTwo 35.\n- CountPlusOne, NotAgree and Misclassified each exit 1 with '4 check(s) failed.' under both shells.\n- C003Base: 34 on the unchanged copy, and 2 failures when the tool does not move or moves by two.\n- OracleUnavailable: the named messages, and C-002 still green.\n- BothShells: 33 and 1.\n- GuardRule: hits 205,268 in the pre-fix file and none in the current one."
+   },
+   {
+    "what": "My own mutation: a growth shape the probe does not use (3 entries, two under one marker plus one under a second marker)",
+    "command": "scratch copy of the 4 files in %TEMP%\\val053, append SL-900 (2 entries) + SL-901 (1 entry), run the copy's RuleCases -Case C-001 under pwsh and powershell.exe outer",
+    "outcome": "passed",
+    "evidence": "Exit 0 under both outer shells, with the output containing '; 36 settled entries not compared'."
+   },
+   {
+    "what": "My own mutation: parity prints settled-1 (the probe uses +1)",
+    "command": "scratch copy, rules-parity.ps1 '$($yaml.Settled)' -> '$($yaml.Settled - 1)', run C-001",
+    "outcome": "passed",
+    "evidence": "Exit 1 with '4 check(s) failed.', so C-001 bites."
+   },
+   {
+    "what": "My own mutation: parity prints facts+1 (the fixed part of the line still asserted exactly)",
+    "command": "scratch copy, rules-parity.ps1 '$($facts.Count) facts' -> '$($facts.Count + 1) facts', run C-001",
+    "outcome": "passed",
+    "evidence": "Exit 1 with '4 check(s) failed.'."
+   },
+   {
+    "what": "The pre-fix RuleCases.ps1 against the current yaml (the defect exists without the fix)",
+    "command": "scratch copy with `git show 0647ead17:tests/rules/RuleCases.ps1`, run -Case C-001",
+    "outcome": "passed",
+    "evidence": "Exit 1 with 'FAIL the repo [powershell.exe] says ... 28 settled entries not compared', so the old pinned file is red on this tree."
+   },
+   {
+    "what": "Guard-rule regex applied directly to pre-fix and current RuleCases.ps1",
+    "command": "Select-String -Pattern '\\b\\d+ settled entr(?:y|ies)' on git show 0647ead17:tests/rules/RuleCases.ps1 and on tests/rules/RuleCases.ps1",
+    "outcome": "passed",
+    "evidence": "The pre-fix file hits at lines 205 and 268. The current file has no hits."
+   },
+   {
+    "what": "No case-insensitive name collision from the new script-scope $Twinned",
+    "command": "Grep (?i)\\$(script:)?twinned\\b|ExpectedSettled in tests/rules/RuleCases.ps1",
+    "outcome": "passed",
+    "evidence": "The only uses are lines 35, 228-229, 240 and 305, and nothing else shadows them."
+   },
+   {
+    "what": "Full RuleCases suite with the engine (regression across C-001..C-014)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case All -EnginePython %APPDATA%\\taad3\\venv\\Scripts\\python.exe -EngineRoot C:\\Users\\sshub\\projets\\taad_v3\\backend",
+    "outcome": "passed",
+    "evidence": "Exit 0 in 233 s, with 415 ok lines and no FAIL lines across 14 case headers. The run ended with 'All checks held.'."
+   },
+   {
+    "what": "Tree left untouched and temp folders removed",
+    "command": "git status --short; count %TEMP%\\fsa-settled-probe-*; Remove-Item %TEMP%\\val053",
+    "outcome": "passed",
+    "evidence": "git status shows only the pre-existing .taad/slices/SL-053 changes. There are 0 probe temp folders left, and val053 is removed."
+   },
+   {
+    "what": "SettledCountProbe with Windows PowerShell 5.1 as the OUTER shell",
+    "outcome": "not-run",
+    "evidence": "Not run. The probe already runs each shape's inner RuleCases under both shells, and code-review ran GuardRule under powershell.exe. Only the probe's own driver code under 5.1 is unchecked."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "1. C-001 asserts the parity summary line on the current tree (both shells, with and without -ExpectFacts 11), which already includes this slice's own settled entry",
+    "met": "yes",
+    "how": "RuleCases -Case C-001 run alone exits 0 under pwsh and powershell.exe as the outer shell. It gives 8 ok checks, and the expected line has 33 settled (the survey had 32, and SL-053's own entry is included)."
+   },
+   {
+    "criterion": "2. C-001 stays green with one extra settled entry appended below the marker",
+    "met": "yes",
+    "how": "The probe's AppendOne gives 34 under both shells. My own scratch copy with 3 extra entries gives 36 and exits 0 under both outer shells."
+   },
+   {
+    "criterion": "3. C-001 stays green when one slice appends two settled entries under one marker",
+    "met": "yes",
+    "how": "The probe's AppendTwo gives 35. My own copy had two entries under SL-900 plus one under SL-901: 36, exit 0."
+   },
+   {
+    "criterion": "4. C-001 still fails when the parity tool prints the wrong count",
+    "met": "yes",
+    "how": "The probe's CountPlusOne (settled+1) exits 1 with 4 failed. My own settled-1 mutation also exits 1 with 4 failed."
+   },
+   {
+    "criterion": "5. C-001 still fails when parity is not AGREE with otherwise identical counts",
+    "met": "yes",
+    "how": "The probe's NotAgree (DRIFT on the AGREE line) exits 1 with '4 check(s) failed.' under both shells. My facts+1 mutation also shows the rest of the line is still asserted exactly."
+   },
+   {
+    "criterion": "6. C-001 does not let the oracle absorb a misclassification (14 twinned, settled+1)",
+    "met": "yes",
+    "how": "The probe's Misclassified exits 1 with 4 failed under both shells. The oracle subtracts the pinned $Twinned and never uses the tool's figure (RuleCases.ps1:228)."
+   },
+   {
+    "criterion": "7. C-003 asserts the count after appending one entry, with the base taken from the unmodified tree",
+    "met": "yes",
+    "how": "C-003 run alone exits 0 under both outer shells and expects 34 (33+1, computed before the append at :300). The probe's C003Base fails with 2 checks when the tool does not move or moves by two."
+   },
+   {
+    "criterion": "8. The oracle fails by name when its source is unavailable, and C-001 works run alone",
+    "met": "yes",
+    "how": "The probe's OracleUnavailable: with the yaml deleted, C-001 prints 'ExpectedSettled: fitness rule count unavailable' and exits 1, and C-002 on the same copy stays green. Lone -Case C-001 is green on the real tree. The 'interpreter missing' half no longer applies, because O-015 made the oracle a direct yaml count that needs no interpreter."
+   },
+   {
+    "criterion": "9. The oracle works under both shells (scalar, single or array shapes)",
+    "met": "yes",
+    "how": "C-001 and C-003 run with both powershell.exe and pwsh as the outer shell (both green). The probe's BothShells covers 33 settled entries and the single-entry yaml (1 settled) under both shells. The direct line count returns an [int], so the object-shape concern no longer applies."
+   },
+   {
+    "criterion": "10. Oracle premise: C-007 (twinned + settled = Fitness rule count) on the current tree",
+    "met": "yes",
+    "how": "C-007 exits 0 under both outer shells ('the Fitness rule count equals the yaml entries'). Fitness op=check reports 48 rules, and the direct yaml count is 48."
+   },
+   {
+    "criterion": "11. The guard rule fires on the defect and not on correct code",
+    "met": "yes",
+    "how": "Select-String with the rule's regex hits the pre-fix file (0647ead17) at exactly 205 and 268 and the current file nowhere. The engine's Fitness check passes on the current tree, and the probe's GuardRule agrees."
+   },
+   {
+    "criterion": "12. The oracle guards against a non-positive derived count",
+    "met": "yes",
+    "how": "The probe's OracleUnavailable with the yaml cut to only twinned entries (15 rules) prints 'ExpectedSettled: derived count 0 < 1' and exits 1 under both shells. Fewer than 15 was not run separately; the guard at :229 is `-lt 1`."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-012",
+    "verified": "yes",
+    "evidence": "The independent source exists and agrees:\n- RuleCases -Case C-007 exits 0 under pwsh (24 s) and powershell.exe (23 s), with 'the Fitness rule count equals the yaml entries (twinned + settled)' ok.\n- The engine's Fitness op=check reports 48 rules, the yaml has 48 '  - name:' items, and 48 - 15 = 33 matches rules-parity's settled count.\nPer O-015 the shipped oracle is the direct yaml count, not Fitness's count, but the two are equal on this tree."
+   },
+   {
+    "key": "O-013",
+    "verified": "yes",
+    "evidence": "C-001, C-003 and C-007 were each run as a lone -Case under both powershell.exe and pwsh as the outer shell, and all six runs exit 0. The shipped oracle is the direct yaml count (O-015), and it evaluates under 5.1 and 7 alike."
+   },
+   {
+    "key": "O-014",
+    "verified": "yes",
+    "evidence": "SL-053's guard entry sits under '# settled by SL-053' at .taad/fitness.yaml:595. rules-parity under both shells prints '11 facts <- 15 twinned entries, 27 patterns; 33 settled', so facts, twinned and patterns are unchanged and settled went from 32 to 33."
+   }
+  ],
+  "not_reached": [
+   "No engine gate runs tests/rules/RuleCases.ps1 or tests/rules/SettledCountProbe.ps1 (O-005 is still open). Whether C-001 stays green after the NEXT real engine append was simulated on scratch copies, not observed. The only real append observed is SL-053's own entry, and C-001 is green on it.",
+   "Adding a twinned entry (a new Fact) still requires a hand edit of $Twinned, 11 and 27 in RuleCases.ps1 and SettledCountProbe.ps1. That path was not exercised, by design.",
+   "SettledCountProbe was driven only from pwsh as the outer shell. Its own driver code under Windows PowerShell 5.1 was not run by me for the eight non-GuardRule shapes.",
+   "I judged the guard rule's firing on the pre-fix file with .NET Select-String using the same regex. I did not re-run the engine's Fitness against the pre-fix file; build-slice recorded that run.",
+   "C-007 and the full suite depend on machine-specific engine paths (%APPDATA%\\taad3\\venv, C:\\Users\\sshub\\projets\\taad_v3\\backend at 020811e). Another machine or engine revision was not tried."
+  ],
+  "planned": []
+ }
+}
