@@ -1,0 +1,266 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-056",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-09-27T13:03:39.538Z",
+ "head": "146ccb3b1290ff50453a159e4cd70e4ed5b88b6b",
+ "run_id": 1555,
+ "summary": "The build matches the design as the accepted review findings amended it. Scanner.SizeFiles lists every folder first, then builds batches of paths from the store. ProbePass probes each batch on BelowNormal worker threads, each with its own SynchronousIoCancel, and the scan thread applies every reading through Correct/Credit, which ThreadOwner guards. Later hardlink names are dedup-only. SynchronousIoCancel.OpenDirectory does the FILE_WRITE_ATTRIBUTES open plus the LastAccessTime -1 set, with a plain fallback, all inside one bracketed call. It is gated on local NTFS, outside the OneDrive env roots and folders with cloud attributes.\n\nI built the solution (0 warnings, 0 errors) and ran the full default suite: 370 passed, 0 failed. Fitness check: all 56 rules hold. A detailed run of the criterion-1 test recorded grow.bin and locked.bin listed at (0,0) as the last step before the scan, 3 of 6 probes corrected, 8 of 8 folders kept, and the fsutil state. TheRuleSl056ReplacedFailsCriteria1_3And7 runs the replaced rule on the same tree and shows the checks for criteria 1, 3 and 7 fail under it. So the matrix tests really do feed their shapes in. That includes the B1 discipline: nothing opens a held file or the stale name before the scan, and the before-snapshot is taken by a separate process that lists nothing.\n\nAll six deviations the builder declared are what the code does. I found no undeclared departure of consequence.\n\nTwo minor issues, neither a blocker:\n- **Sockets and alias files now count as probe failures.** Reparse files without the surrogate bit that are not cloud files are now probed, and the probe's open fails with Windows error 1920 (ERROR_CANT_ACCESS_FILE). I measured this on an AF_UNIX socket file. The app then says \"N files could not be opened\" on scans that contain one. The old rule never opened these files.\n- **Two branches of the M6 gate have no test.** No test covers the cloud-attribute folder exclusion or the remote-volume half of the gate. Removing either leaves the suite green.\n\nSecond round: Second round, going over the changed code to break it. I found two new minor issues, both reproduced on this machine.\n\n(1) The sync-root exclusion (review M6) compares the root path as the person gave it, but the scan opens a link chosen as the root through to its target. Scanning a junction that points into a named sync root makes every folder inside it take the LastAccessTime -1 set. Scanning the sync root directly: asked 0, kept 0. Scanning the same folder through a junction: asked 2, kept 2.\n\n(2) Two of the new settled rules have holes: rule 2 misses File.SetAttributes, and rule 4 misses DirectoryInfo's .GetFiles() and .GetDirectories(). I checked each pattern with .NET's regex engine against sample lines.\n\nOther paths I probed held up:\n- **Change notifications:** the -1 set raised no notification on a watched parent, while a plain listing raised one (control).\n- **Cancel:** mid-open, mid-set, between batches, and with stuck workers left running after the scan returned.\n- **Reused arrays:** the readings array is reused across batches.\n- **Probe paths:** rebuilt correctly for drive, UNC, \\\\?\\ and GLOBALROOT roots.\n- **Failures:** a worker fault reaches the window.\n- **Trailing backslash:** sync-root matching treats a root ending in \\ correctly.\n\nFindings from round one are not repeated here.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "matches_design": true,
+  "summary": "The build matches the design as the accepted review findings amended it. Scanner.SizeFiles lists every folder first, then builds batches of paths from the store. ProbePass probes each batch on BelowNormal worker threads, each with its own SynchronousIoCancel, and the scan thread applies every reading through Correct/Credit, which ThreadOwner guards. Later hardlink names are dedup-only. SynchronousIoCancel.OpenDirectory does the FILE_WRITE_ATTRIBUTES open plus the LastAccessTime -1 set, with a plain fallback, all inside one bracketed call. It is gated on local NTFS, outside the OneDrive env roots and folders with cloud attributes.\n\nI built the solution (0 warnings, 0 errors) and ran the full default suite: 370 passed, 0 failed. Fitness check: all 56 rules hold. A detailed run of the criterion-1 test recorded grow.bin and locked.bin listed at (0,0) as the last step before the scan, 3 of 6 probes corrected, 8 of 8 folders kept, and the fsutil state. TheRuleSl056ReplacedFailsCriteria1_3And7 runs the replaced rule on the same tree and shows the checks for criteria 1, 3 and 7 fail under it. So the matrix tests really do feed their shapes in. That includes the B1 discipline: nothing opens a held file or the stale name before the scan, and the before-snapshot is taken by a separate process that lists nothing.\n\nAll six deviations the builder declared are what the code does. I found no undeclared departure of consequence.\n\nTwo minor issues, neither a blocker:\n- **Sockets and alias files now count as probe failures.** Reparse files without the surrogate bit that are not cloud files are now probed, and the probe's open fails with Windows error 1920 (ERROR_CANT_ACCESS_FILE). I measured this on an AF_UNIX socket file. The app then says \"N files could not be opened\" on scans that contain one. The old rule never opened these files.\n- **Two branches of the M6 gate have no test.** No test covers the cloud-attribute folder exclusion or the remote-volume half of the gate. Removing either leaves the suite green.\n\nSecond round: Second round, going over the changed code to break it. I found two new minor issues, both reproduced on this machine.\n\n(1) The sync-root exclusion (review M6) compares the root path as the person gave it, but the scan opens a link chosen as the root through to its target. Scanning a junction that points into a named sync root makes every folder inside it take the LastAccessTime -1 set. Scanning the sync root directly: asked 0, kept 0. Scanning the same folder through a junction: asked 2, kept 2.\n\n(2) Two of the new settled rules have holes: rule 2 misses File.SetAttributes, and rule 4 misses DirectoryInfo's .GetFiles() and .GetDirectories(). I checked each pattern with .NET's regex engine against sample lines.\n\nOther paths I probed held up:\n- **Change notifications:** the -1 set raised no notification on a watched parent, while a plain listing raised one (control).\n- **Cancel:** mid-open, mid-set, between batches, and with stuck workers left running after the scan returned.\n- **Reused arrays:** the readings array is reused across batches.\n- **Probe paths:** rebuilt correctly for drive, UNC, \\\\?\\ and GLOBALROOT roots.\n- **Failures:** a worker fault reaches the window.\n- **Trailing backslash:** sync-root matching treats a root ending in \\ correctly.\n\nFindings from round one are not repeated here.",
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "Probing every file now opens files whose reparse tag has no surrogate bit and is not a cloud tag: AF_UNIX sockets (0x80000023), and, by the same route, the app-execution aliases (0x8000001B) in every user's %LOCALAPPDATA%\\Microsoft\\WindowsApps. SynchronousIoCancel.OpenForAttributes opens without FILE_FLAG_OPEN_REPARSE_POINT, so CreateFileW fails with Windows error 1920 (ERROR_CANT_ACCESS_FILE). Scanner.Correct then sets ProbeFailed and counts the file in ProbeFailures, and MainWindow.ShowOutcome tells the person 'N files could not be opened to read their true size on disk; their listed size was used.' Any profile or C:\\ scan that contains such a file now shows this note. The old IsDue never opened these 0-byte files (EndOfFile 0, so not a WOF suspect and under 64 MiB). The 'refused' count criterion 5 relies on now mixes real ACL refusals with files the probe route simply cannot open.",
+    "evidence": "Measured in a %TEMP% folder holding plain.txt and a bound AF_UNIX socket 'sock' (fsutil: Reparse Tag 0x80000023). Scanner.Scan from the built FsAnalyser.Core.dll returned Status=Completed, Probes=2, ProbeFailures=1, with sock flagged ProbeFailed (attributes 0x420). CreateFileW(\\\\?\\...\\sock, FILE_READ_ATTRIBUTES, share 7, OPEN_EXISTING, flags 0) failed with error 1920; the same call with 0x00200000 (OPEN_REPARSE_POINT) succeeded. Code: SizeProbe.cs:38-61 (Probe), SynchronousIoCancel.cs:193-194 (OpenForAttributes, flags 0), Scanner.cs:417-426 (Correct sets ProbeFailed), MainWindow.xaml.cs:484-485 (the note).",
+    "fix": "In SizeProbe.Probe, when OpenForAttributes returns ERROR_CANT_ACCESS_FILE (1920), retry the open once with FILE_FLAG_OPEN_REPARSE_POINT. That call succeeded in the measurement, and WOF and dedup files never reach the retry because their first open succeeds. Add a temp-tree test that binds an AF_UNIX socket and asserts ProbeFailures == 0 for it."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "Two of M6's three gates on the write-class last-access set are branches no test reaches. (a) Scanner.KeepsLastAccess returns false for a folder carrying RECALL_ON_DATA_ACCESS, RECALL_ON_OPEN, OFFLINE, PINNED or UNPINNED, but no test builds such a folder. NothingUnderASyncRootIsAskedToKeepItsLastAccessTime covers only the SyncRoots path check. (b) DecideLastAccess marks a volume remote when GetFileInformationByHandleEx(FileRemoteProtocolInfo) succeeds. Only the pure truth table MayKeepLastAccess(fileSystem, remote) is tested, and no scan of a share, not even the opt-in SMB-LOOPBACK rig, asserts that nothing was asked. Deleting the attribute check, or hard-wiring remote=false, keeps the whole default suite green. The second is exactly the case M6 exists to prevent: a share whose server reports 'NTFS' would get SetFileInformationByHandle calls on every folder.",
+    "evidence": "Scanner.cs:245-255 (the CloudFolderAttributes check), Scanner.cs:225-241 (the FileRemoteProtocolInfo query). A grep of tests/ for PINNED|RECALL_ON|FILE_ATTRIBUTE_OFFLINE|LastAccessAsked finds LastAccessAsked only in HeldOpenTreeTests and LastAccessTests.cs:85,108, and neither covers attributes or shares. The only SMB-LOOPBACK test is StalledShareTests.cs:31, and it asserts nothing about last access.",
+    "fix": "Add a LastAccessTests Fact that sets FileAttributes.Offline on a temp subfolder (TempTree.AddAttributes, already used for files in OnDiskSizeTests) and asserts that LastAccessAsked leaves it out while its children are still counted. Add a LastAccessAsked == 0 assertion to a scan of the opt-in SMB-LOOPBACK share."
+   },
+   {
+    "id": "R2-m3",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "The sync-root exclusion that review M6 required can be bypassed with a link. Scanner.KeepsLastAccess (Scanner.cs:245-255) compares each folder's walk path, built from the root string the caller passed, against the sync roots with IsAtOrUnder. But SynchronousIoCancel.OpenDirectory opens a root that is a junction, symlink or subst drive through to its target. The comparison happens before that resolution, so a root that reaches a sync root under another name never matches. In a standalone exe the folder-attribute check cannot catch OneDrive folders either (U-004), so every writable folder inside the sync root gets the unmeasured FILE_WRITE_ATTRIBUTES open and the LastAccessTime -1 set. The same happens in reverse when the OneDrive variable names a junction and the real folder is scanned under its own path.",
+    "evidence": "Measured with the built FsAnalyser.Core.dll, calling the internal Scan overload with ScanOptions.SyncRoots = [%TEMP%\\...\\synced]. Scanning ...\\synced gave LastAccessAsked=0, LastAccessKept=0. Scanning ...\\link, a junction to synced, gave LastAccessAsked=2, LastAccessKept=2 for the same two folders. The link-root behaviour is intended (SynchronousIoCancel.cs:172-174: 'a link a person chose as the root is opened through to its target'), and the exclusion is string-only (Scanner.cs:68-70, 249-253).",
+    "fix": "In ListRoot, read the root handle's final path with GetFinalPathNameByHandleW, declared in Kernel32 and bracketed in SynchronousIoCancel. If it differs from win32Root, ignoring case, set _keepLastAccess to false. Resolve each sync root the same way in NormalizeSyncRoots. Add a LastAccessTests case that scans a junction pointing into a SyncRoots folder and asserts LastAccessAsked == 0."
+   },
+   {
+    "id": "R2-m4",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "Two of the new settled rules let through calls their own because-text says are fenced. Rule 2 ('only the directory-listing open path may write a file-system timestamp') says 'every way to write a time or an attribute is fenced', but File.SetAttributes(...) matches none of its six patterns: '\\bSetFileAttributes\\w*' needs the Win32 spelling. Rule 4 ('only DirectoryReader lists a directory') fences DirectoryInfo's GetFileSystemInfos( and Enumerate*( but not its GetFiles( or GetDirectories(. So `new DirectoryInfo(p).GetFiles()` passes. In Core outside Scanning/** (Store/, TopLevelTracker.cs, Native/), no other rule catches either call. Scanning/** has TheScannerListsDirectoriesOnlyThroughDirectoryReader and TheScannerMakesNoBclFileSystemCalls, but those are scoped to Scanning. That is exactly where review M8 said a second listing or setter would go unnoticed.",
+    "evidence": "Every rule-2 and rule-4 pattern from .taad/fitness.yaml:700-745, run with PowerShell's .NET -match: 'File.SetAttributes(path, FileAttributes.Normal);' 0 hits; 'new DirectoryInfo(p).GetFiles();' 0 hits; 'dir.GetDirectories();' 0 hits. The controls did match: 'dir.GetFileSystemInfos();', 'Directory.GetFiles(p);' and 'File.SetLastAccessTimeUtc(p, t);' each hit 1. A grep of src/FsAnalyser.Core finds none of the missed forms today, so adding them trips nothing. A bare '\\.Attributes\\s*=' would false-positive on DirectoryReader.cs:147 (entry.Attributes = ...), so it is not proposed.",
+    "fix": "Add '(?m)\\bFile\\.SetAttributes\\b' to rule 2's must_not_match. Widen rule 4's instance pattern to '(?m)\\.(EnumerateFiles|EnumerateDirectories|EnumerateFileSystemInfos|GetFileSystemInfos|GetFiles|GetDirectories)\\s*\\('. Or narrow rule 2's because-text so it no longer claims every attribute writer is fenced."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "No overlapped pipeline exists. Scanner.cs:152-165 walks every folder first, then SizeFiles (Scanner.cs:333-389) probes in batches through ProbePass.Run and applies each batch after its workers join (ProbePass.cs:66-103). ProbePassTests.TheScanEndsOnlyOnceEveryProbeIsApplied asserts no probe starts during the walk."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "HeldOpenTreeTests.cs:35-41 plus the fixture (Build, :224, :253-258). HoldRig, a separate process with FileShare.Read, grows grow.bin to 257 MiB in unflushed 1 MiB writes. The listing is read last before the scan (my run printed grow.bin (0,0)). The test asserts Size and OnDisk equal the holder's handle, with SizeProbed|ProbeCorrected. The same checks fail under the replaced rule (:120-130)."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "HeldOpenTreeTests.cs:45-51. locked.bin is held by HoldRig with FileShare.None (HoldRig/Program.cs:44) and listed at (0,0). It is charged at the holder-reported size, and ProbeFailures is 0."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "HeldOpenTreeTests.cs:60-84. HoldRig's snapshot, a separate process opening FILE_READ_ATTRIBUTES handles only (Program.cs:78-91), records the four times, EOF, allocation and attributes of every non-held entry before and after both scans. Held files are compared through their holders' reports. Each entry is asserted back-dated, the folders kept 8 of 8, and the fsutil state is recorded (seen in my run)."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "HeldOpenTreeTests.cs:92-101. A back-dated control folder outside the root is listed plainly by Directory.GetFileSystemEntries, and the same HoldRig observer must see its last-access time move by more than an hour."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "LastAccessTests.cs:24-47 runs DirectoryReader.Read with keepLastAccess true against false on two back-dated folders: the kept one is unchanged with KeptLastAccess true, and the plain one moves. The mechanism is in SynchronousIoCancel.cs:386-399."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "HeldOpenTreeTests.cs:107-113 and FolderFailures (:303-328). Every folder's RolledSize, RolledOnDisk and FilesBelow are checked against snapshot and holder readings. The hardlink is charged once to links\\a-first, and the baseline shows the held folder fails under the old rule."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "OnDiskSizeTests.ASmallFileWhoseListingSaysNothingIsChargedAtItsOwnSize (3 MiB, precondition listed at 0/0) and HardlinkTests.ALoneNameUnderTheRootIsChargedAtItsOwnSize (precondition: listed at a stale 1 MiB; asserts 64 MiB and Probes/Corrections 1/1). The plain 10,000-byte file in the first OnDiskSizeTests test is also now SizeProbed."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "ProbePassTests.cs:25-72 uses 4-file batches, 3 workers and a +7-byte probe seam. It asserts no probe starts during the walk, all 15 files carry the probe's figure when Scan returns, and FilesSized == FilesToSize == 15."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "ProbePassTests.cs:81-118, reworked after M4. It asserts listedAtFirstProbe == 3 (the later name was met before any probe), that only the stale first name's path was probed, that the file is charged once at 64 MiB to 1-first, and that the later name charges 0."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "HeldOpenTreeTests: Observed excludes the held files and stale.bin (:230-231). The old-rule scan opens neither held file (OldRule, :273-277). Scans.Listing reads the listing last before the scan (:253-258) and Record() writes it to the output. Criterion 7 expectations come from holder reports and the snapshot. ProbeCorrected is asserted. TheRuleSl056ReplacedFailsCriteria1_3And7 is the automated baseline and passed in my run."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "ThreadOwner.cs. Scanner.Correct (:415) and Credit (:444) call _owner.Check, and ProbePass.Run calls _owner.Check (:68). Workers receive only paths and readings arrays (ProbePass.Batch). Fitness rule 1 covers ProbePass.cs with CorrectSizes and AddFlags added. Tested by ProbePassTests.TheStoresWriterAndTheProbePassRefuseEveryOtherThread."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "ProbePass.cs:106-117 waits without a bound until Cancel, then for abandonAfter (default 1 s). A batch Cancel reaches returns Cancelled, so Scanner ends through ScanStatus.Cancelled (Scanner.cs:163-165). A worker fault throws InvalidOperationException (:98-99). Tests: AProbeWorkerThatThrowsFailsTheScanInsteadOfHanging, CancelWhileWorkersAreStuckEndsTheScanCancelledWithinTheBound, CancelInterruptsTheCallAWorkerIsBlockedIn."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "The git diff shows ProbeListing, ProbeAndCorrect, _dueProbes and _settled removed from Scanner.cs. SizeProbe.IsEligible (SizeProbe.cs:27-28) excludes HardlinkDuplicate. HardlinkTests, LongPathTests, TopLevelTests, CancelledFolderTests and CancellationTests expectations are updated."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "ScanResult.cs adds ListingTime, SizingTime, LongestProbe, LastAccessAsked and LastAccessKept, all set in Scanner.Finish. Workers run BelowNormal (ProbePass.cs:82), asserted in ProbesRunOnBackgroundWorkersBelowNormalEachWithItsOwnGuard. The inline probe is gone. The design record calls a time miss advisory. The per-phase report itself is validate's."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "Scanner.DecideLastAccess (:225-241) keeps last access only when the file system is NTFS and FileRemoteProtocolInfo is refused. KeepsLastAccess (:245-255) excludes the OneDrive env roots and folders with cloud attributes. The narrower guarantee is recorded in docs/design/SL-056-probe-every-file.md. Excluding only OneDrive's roots, not every sync engine's, was declared as a deviation. The attribute and remote branches are untested (finding m2)."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "LastAccessTests.cs:55-88 denies FILE_WRITE_ATTRIBUTES only on 'refusing'. It asserts the folder is listed with 2 children, is not unreadable, that asked/kept is 4/3, and that the three other folders' times are unchanged. The contract is reworded in SynchronousIoCancel.cs:176-185: only a failed plain open fails."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "The set lives only in SynchronousIoCancel.TryOpenKeepingLastAccess, reached through OpenDirectory. Fitness rule 2 fences SetFileInformationByHandle, SetFileTime, NtSetInformationFile, SetFileAttributes*, File/Directory.Set*Time and assignments to *Time properties, excepting Kernel32.cs and SynchronousIoCancel.cs. Rule 4 says only DirectoryReader lists a directory. The Fitness check passes (56 rules)."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "OnDiskSizeTests is renamed AFileWhoseListingSaysNothingIsAllocatedIsProbedUnlessItIsCloudOnly. It asserts Probes 4, all-hole and resident SizeProbed, ProbeCorrections 1, and keeps the OFFLINE CloudOnly assertions."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "EntryFlags.ProbeCorrected = 32 (EntryKind.cs) and ScanResult.ProbeCorrections. A grep of src shows the App reads no SizeProbed or ProbeFailed flag (FolderTreeNode reads only Unreadable)."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "fitness.yaml rule 3 now covers src/FsAnalyser.Core/Scanning/*.cs, and its because-text says a route change turns the wof-denied test red."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "SizeProbe.IsGone (errors 2 and 3). Scanner.Correct counts _vanished and keeps the listing figure (:419-423). ScanResult.VanishedBeforeProbe exists and the App shows a note for it. Tests: AFileDeletedBeforeItsProbeKeepsItsListingSizesAndIsNoFailure and AnEntryWithNoFileIdIsProbedAsAFirstName. The replaced-file case is accepted in the design record."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "HeldOpenTreeTests.cs:216-222 puts links\\a-first\\stale.bin (met first) and links\\b-second\\written.bin (written through). FolderFailures charges written's snapshot to a-first and gives b-second Rolled(0,0,1)."
+   },
+   {
+    "key": "O-024",
+    "discharged": "yes",
+    "evidence": "SynchronousIoCancel.cs:59 holds a single static readonly KeepLastAccessInfo. CheckedKeepLastAccessInfo (:401-413) checks sizeof and Marshal.SizeOf == 40 and the offsets 8 and 32 when the type loads, and throws PlatformNotSupportedException otherwise. Tested by LastAccessTests.TheBasicInfoPayloadHasTheLayoutWindowsReads. Recording CFA is left to validate, as decided."
+   },
+   {
+    "key": "O-025",
+    "discharged": "yes",
+    "evidence": "The 'Prior art, corrected' section of docs/design/SL-056-probe-every-file.md drops 'threshold', adds SL-045's refresh-on-open, cites U-012, and uses stackoverflow.com/questions/7828132."
+   },
+   {
+    "key": "O-026",
+    "discharged": "yes",
+    "evidence": "The list-then-probe-then-apply shape is in Scanner.SizeFiles and ProbePass, with the declared 32,768-file batches (ProbePass.BatchSize). ScanProgress.FilesToSize and FilesSized carry the sizing phase, and the App shows it (MainWindow.xaml.cs:311-313)."
+   },
+   {
+    "key": "O-027",
+    "discharged": "yes",
+    "evidence": "The design record's 'Drive time and network volumes' section states the per-file round trip on network volumes and hands the loopback-SMB re-measurement to validate. No measurement was made, as declared."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "HeldOpenTreeTests.AFileAnotherProcessIsGrowingIsChargedAtItsOwnSize. A separate HoldRig process creates grow.bin with FileShare.Read and grows it to 257 MiB in unflushed 1 MiB writes. The listing is read last before the scan and asserted (0,0) (my run: grow.bin (0, 0)). The test asserts the holder's EOF and allocation with SizeProbed|ProbeCorrected, and the baseline Fact shows the old rule charges 0."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "OnDiskSizeTests.ALargeFileHeldOpenAndGrowingIsChargedAtItsTrueSize: 64 MiB flushed, then another 64 MiB unflushed through an in-process handle still open; asserts 128 MiB and SizeProbed. In-process rather than a separate process, as the cut item accepted."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "HeldOpenTreeTests.AFileHeldWithNoSharingIsChargedAtItsOwnSize: HoldRig opens locked.bin with FileShare.None (share 0), listed at (0,0). It is charged at the holder's figures with ProbeFailures 0."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "HardlinkTests.AFileWithSeveralNamesIsChargedOnceAtItsTrueSize(2,1). The first name met (paths[0]) is stale and the 63 MiB went in through name 1. It asserts 64 MiB charged once with SizeProbed|ProbeCorrected and Probes 1. The HeldOpenTree links\\a-first and b-second pair repeats this across folders."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "OnDiskSizeTests.AFileWhoseListingSaysNothingIsAllocatedIsProbedUnlessItIsCloudOnly: wof-denied.txt carries a deny-read-attributes ACE and is asserted ProbeFailed, keeping the 1 MiB listing and 0 on disk, with ProbeFailures 1."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "HeldOpenTreeTests.TheScanChangesNoEntrysMetadata. HoldRig snapshots (separate process, handles only) are taken before the old-rule scan, the kept listing and the real scan, and again after, for 12 entries. Each is asserted back-dated more than 47 h. The held files are compared through their holders. Folders kept is asserted 8/8 in both scans, and the fsutil output is recorded."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "HeldOpenTreeTests.APlainListingOfTheControlFolderMovesItsLastAccessTime: a back-dated folder outside the root is listed by FindFirstFile (Directory.GetFileSystemEntries) and must show more than 1 h of movement to the same HoldRig observer."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "LastAccessTests.AListingThatKeepsTheLastAccessTimeLeavesItWhereAPlainOneMovesIt runs the same DirectoryReader.Read with keepLastAccess on and off over two back-dated folders, with a built-in control."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "LastAccessTests.AFolderThatRefusesWriteAttributesIsListedPlainlyAndCountedInFull: a deny ACE for FILE_WRITE_ATTRIBUTES (0x100) only. The folder is listed with 2 children, is not unreadable, and asked/kept is 4/3."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "HeldOpenTreeTests.EachFolderIsTheOnDiskBytesBelowIt. Every folder's RolledSize, RolledOnDisk and FilesBelow are checked against holder reports (grow.bin, locked.bin), snapshot readings, and the hardlink charged once to a-first. The baseline Fact shows the held folder fails under the old rule."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "OnDiskSizeTests.ASmallFileWhoseListingSaysNothingIsChargedAtItsOwnSize: 3 MiB, not a WOF suspect, precondition listed at 0/0. HardlinkTests.ALoneNameUnderTheRootIsChargedAtItsOwnSize: precondition a stale 1 MiB, now 64 MiB. The plain 10,000-byte file in OnDiskSizeTests' first test is SizeProbed too."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "ProbePassTests.TheScanEndsOnlyOnceEveryProbeIsApplied. The shape is adapted to list-then-probe, since probes can no longer be in flight while the walk finishes. It asserts no probe starts before every folder is listed, and that all 15 files carry the probe's +7 figure when Scan returns, across 4-file batches."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "ProbePassTests.ALaterNameMetBeforeTheFirstNamesProbeIsNeverProbedOrCharged. The designed race (an async result after an inline correction) cannot occur now that M4 removed the inline probe. The test feeds the nearest shape, a later name met before the first name's probe starts (listedAtFirstProbe == 3), and asserts a single charge at 64 MiB with the later name at 0."
+   }
+  ],
+  "drift": [
+   "Nothing undeclared of consequence: each of the six declared deviations is what the code does. They are: 32,768-file batches (ProbePass.BatchSize); ProbePass.cs replacing ProbePipeline.cs, with fitness rule 1 retargeted; no Submit; sync-root exclusion by the OneDrive environment variables plus folder attributes; C-013 reworked; the App's sizing line and vanished-files note.",
+   "ScanResult.LastAccessKept's doc and the design record read LastAccessAsked − LastAccessKept as the folders that took the fallback plain open. Scanner.CountListingOpen (Scanner.cs:257-264) also counts a folder whose plain open failed as asked but not kept, so validate should take Unreadable off that difference before reporting fallback opens.",
+   "When the volume allows keeping, the root is opened twice: plainly, to query the file system and FileRemoteProtocolInfo, then again with the keeping open (Scanner.ListRoot). The design does not describe this. It is harmless, since an open moves no time.",
+   "TopLevelTests.AnInPlaceCorrectionOfAnEarlierNameIsCreditedToThatNamesRow still says 'This is the one change a Done row can still take'. That is no longer true: every probe correction now lands after its row is Done, as the updated TopLevelTracker remarks say.",
+   "Nothing new beyond round one: the six declared deviations match the code, and the round-one drift notes still stand."
+  ],
+  "unreviewed": [],
+  "second_round": {
+   "run_id": 1556,
+   "filed": 2
+  }
+ }
+}
