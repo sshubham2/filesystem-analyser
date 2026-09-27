@@ -352,7 +352,7 @@ public class SynchronousIoCancelTests
         using (var guard = new SynchronousIoCancel(cts.Token))
         {
             guard.AfterCall = _ => CancelDuringTheCall(cts, guard);
-            Assert.Equal(SynchronousIoCancel.Aborted, guard.OpenDirectory(tree.ExtendedRoot, out var discarded));
+            Assert.Equal(SynchronousIoCancel.Aborted, guard.OpenDirectory(tree.ExtendedRoot, keepLastAccess: true, out var discarded));
             Assert.Null(discarded); // Windows returned a handle; the aborted open does not hand it out
             Assert.Equal(1, guard.ClosesHandedOff);
         }
@@ -361,7 +361,7 @@ public class SynchronousIoCancelTests
         using (var guard = new SynchronousIoCancel(cts.Token))
         using (var reader = new DirectoryReader(guard))
         {
-            Assert.Equal(0, guard.OpenDirectory(tree.ExtendedRoot, out var handle));
+            Assert.Equal(0, guard.OpenDirectory(tree.ExtendedRoot, keepLastAccess: true, out var handle));
             guard.AfterCall = _ => CancelDuringTheCall(cts, guard);
             Assert.Equal(SynchronousIoCancel.Aborted, reader.List(handle!, fullClass: false));
             Assert.Equal(0, reader.Count); // Windows listed file.bin; nothing of the aborted listing is kept
@@ -389,11 +389,11 @@ public class SynchronousIoCancelTests
         using (var cts = new CancellationTokenSource())
         using (var guard = new SynchronousIoCancel(cts.Token))
         {
-            Assert.Equal(0, guard.OpenDirectory(tree.ExtendedRoot, out var opened));
+            Assert.Equal(0, guard.OpenDirectory(tree.ExtendedRoot, keepLastAccess: true, out var opened));
             guard.Close(opened!);
             cts.Cancel();
 
-            Assert.Equal(SynchronousIoCancel.Aborted, guard.OpenDirectory(tree.ExtendedRoot, out var refused));
+            Assert.Equal(SynchronousIoCancel.Aborted, guard.OpenDirectory(tree.ExtendedRoot, keepLastAccess: true, out var refused));
             Assert.Null(refused);
             Assert.Equal(SynchronousIoCancel.Aborted, guard.OpenForAttributes(tree.ExtendedRoot + @"\file.bin", out refused));
             Assert.Null(refused);
@@ -406,7 +406,7 @@ public class SynchronousIoCancelTests
         {
             cts.Cancel();
             using var guard = new SynchronousIoCancel(cts.Token);
-            Assert.Equal(SynchronousIoCancel.Aborted, guard.OpenDirectory(tree.ExtendedRoot, out var refused));
+            Assert.Equal(SynchronousIoCancel.Aborted, guard.OpenDirectory(tree.ExtendedRoot, keepLastAccess: true, out var refused));
             Assert.Null(refused);
         }
 

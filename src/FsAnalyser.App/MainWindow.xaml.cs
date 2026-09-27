@@ -307,7 +307,10 @@ public partial class MainWindow : Window
             return;
         string unreadable = p.Unreadable > 0 ? $", {p.Unreadable:N0} folders unreadable" : "";
         CountersText.Text = $"{p.Files:N0} files, {p.Folders:N0} folders, {FormatSize(p.Bytes)} ({FormatSize(p.BytesOnDisk)} on disk){unreadable}";
-        CurrentFolderText.Text = p.CurrentFolder ?? "";
+        // Once every folder is listed, the scan reads each file's own size (SL-056): say so, not the last folder.
+        CurrentFolderText.Text = p.FilesToSize > 0
+            ? $"Reading each file's own size: {p.FilesSized:N0} of {p.FilesToSize:N0}"
+            : p.CurrentFolder ?? "";
     }
 
     // ---- Results so far (SL-039) ----
@@ -480,6 +483,8 @@ public partial class MainWindow : Window
             notes.Add("This drive does not report file IDs, so a file with more than one name (a hardlink) may be counted more than once.");
         if (result.ProbeFailures > 0)
             notes.Add($"{result.ProbeFailures:N0} files could not be opened to read their true size on disk; their listed size was used.");
+        if (result.VanishedBeforeProbe > 0)
+            notes.Add($"{result.VanishedBeforeProbe:N0} files were deleted before their true size could be read; their listed size was used.");
         OutcomeNotes.Text = string.Join("\n", notes);
         OutcomeNotes.Visibility = notes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 

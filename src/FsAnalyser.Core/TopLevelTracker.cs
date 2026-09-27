@@ -18,8 +18,9 @@ namespace FsAnalyser.Core;
 /// <item>Every later listing that commits (<see cref="FolderExited"/>) credits the change in the totals
 /// since the last credit to its row, which the scanner carries on its stack. A listing that Cancel aborted
 /// commits nothing and changes no total, so it is never credited.</item>
-/// <item>A probe that corrects an earlier name's record in place (<see cref="Moved"/>) credits that name's
-/// row at once, and the listing it happened in is credited the rest.</item>
+/// <item>A probe that corrects a record in place (<see cref="Moved"/>) credits that record's row at once. Since
+/// SL-056 probes run once every folder is listed, so a correction lands on a row that is already Done, and
+/// <see cref="Corrected"/> publishes each batch of them.</item>
 /// </list>
 /// A folder row is Done when its pending count reaches 0: one for its own folder, plus one for every folder
 /// pushed under it, less one for every folder under it that exits a listing, read or unreadable. Links are
@@ -120,6 +121,18 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
         r.OnDisk += onDisk;
         _credited = _credited with { Bytes = _credited.Bytes + bytes, BytesOnDisk = _credited.BytesOnDisk + onDisk };
         MarkDirty(row);
+    }
+
+    /// <summary>
+    /// A batch of probes has been applied after the walk (SL-056): publishes the rows it moved, at most once per
+    /// interval, as a listing does.
+    /// </summary>
+    public void Corrected(in ScanTotals totals)
+    {
+        if (_store is null || _dirty.Count == 0)
+            return;
+        if (Stopwatch.GetTimestamp() - _lastPublish >= _interval)
+            Publish(totals, final: false, completed: false);
     }
 
     /// <summary>The last snapshot, always published; null when the root listing never committed.</summary>

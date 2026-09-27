@@ -67,12 +67,15 @@ internal static class Scans
         throw new XunitException($"'{path}' is not in the scan. It holds:\n  " + string.Join("\n  ", paths.Keys.Order()));
     }
 
-    /// <summary>The raw listing of one folder, as DirectoryReader gives it, keyed by name.</summary>
+    /// <summary>
+    /// The raw listing of one folder, as DirectoryReader gives it, keyed by name. Listed as the scan lists, keeping
+    /// the folder's last-access time where the folder allows it (SL-056), and opening none of its files.
+    /// </summary>
     public static Dictionary<string, RawEntry> Listing(string folder, bool fullClass = false)
     {
         using var io = new SynchronousIoCancel(CancellationToken.None);
         using var reader = new DirectoryReader(io);
-        int error = reader.Read(LongPath.ToExtended(folder), fullClass);
+        int error = reader.Read(LongPath.ToExtended(folder), fullClass, keepLastAccess: true);
         if (error != 0)
             throw new XunitException($"Listing {folder} failed with Win32 error {error}.");
         var entries = new Dictionary<string, RawEntry>(StringComparer.Ordinal);

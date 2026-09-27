@@ -1,0 +1,195 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-056",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-09-27T11:36:04.658Z",
+ "head": "3ef7fbec6068435c69e157298d9ec1506a6a985e",
+ "run_id": 1546,
+ "summary": "The main mechanism has measurements behind it: probe every file seen for the first time, apply every result on one thread, and suppress last-access on the listing handle. The test rig has a blocker. Its before-scan HoldRig snapshot opens every entry for FILE_READ_ATTRIBUTES. SL-045 measured that this kind of open refreshes a stale listing entry (h.bin 0→256 MiB). By scan time the held files therefore list at their true size, and the new tests for criteria 1, 3 and 7 would pass against the old IsDue code. Seven major issues follow. (1) Criterion 6's 'size' check is met by choosing an observer that cannot see a listing refresh the scan measurably causes. (2) The single-writer rule that SL-042 measured as necessary is enforced only by a regex on one file. (3) Submit can deadlock when workers die or the scan is cancelled, including under a stall, which StallRig exists to simulate. (4) The inline repeat-FileId probe is redundant once every first-seen name is probed, and it sits on the critical path. (5) The drive-time bet leaves out work the design adds to the listing thread. (6) The last-access suppression was measured only on a local NTFS temp folder but is applied to every folder, including OneDrive sync roots and SMB shares. (7) The fallback for folders that refuse write-attributes is the majority path on a real C: but is never tested. The criterion-6 guard is also leaky: rule 2 fences one API name, would flag the idiomatic declaration in Kernel32.cs, and nothing fences directory listing outside DirectoryReader. This design had one proposal and no dissent. Of its three cited sources, one adds a detail its visible text doesn't contain and one is contradicted by its own accepted answer. Neither is load-bearing.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The main mechanism has measurements behind it: probe every file seen for the first time, apply every result on one thread, and suppress last-access on the listing handle. The test rig has a blocker. Its before-scan HoldRig snapshot opens every entry for FILE_READ_ATTRIBUTES. SL-045 measured that this kind of open refreshes a stale listing entry (h.bin 0→256 MiB). By scan time the held files therefore list at their true size, and the new tests for criteria 1, 3 and 7 would pass against the old IsDue code. Seven major issues follow. (1) Criterion 6's 'size' check is met by choosing an observer that cannot see a listing refresh the scan measurably causes. (2) The single-writer rule that SL-042 measured as necessary is enforced only by a regex on one file. (3) Submit can deadlock when workers die or the scan is cancelled, including under a stall, which StallRig exists to simulate. (4) The inline repeat-FileId probe is redundant once every first-seen name is probed, and it sits on the critical path. (5) The drive-time bet leaves out work the design adds to the listing thread. (6) The last-access suppression was measured only on a local NTFS temp folder but is applied to every folder, including OneDrive sync roots and SMB shares. (7) The fallback for folders that refuse write-attributes is the majority path on a real C: but is never tested. The criterion-6 guard is also leaky: rule 2 fences one API name, would flag the idiomatic declaration in Kernel32.cs, and nothing fences directory listing outside DirectoryReader. This design had one proposal and no dissent. Of its three cited sources, one adds a detail its visible text doesn't contain and one is contradicted by its own accepted answer. Neither is load-bearing.",
+  "findings": [
+   {
+    "id": "B1",
+    "severity": "blocker",
+    "dimension": "test-coverage",
+    "claim": "The test rig refreshes the stale listing it is supposed to prove the scanner handles. HeldOpenTreeTests checks tree/held/ for 0/0 first, then runs a HoldRig snapshot of every entry before the scan. That snapshot opens each path, grow.bin and locked.bin included, for FILE_READ_ATTRIBUTES. SL-045 measured that such an open refreshes the directory entry (h.bin 0→256 MiB, b.bin 1→65 MiB). So Scanner.Scan lists grow.bin at about 256 MiB, and the old IsDue (listing >= 64 MiB) probes it anyway. locked.bin lists at its true size and needs no probe. Criterion 7's totals are computed by an 'independent process … at the same time', which can race the scan's listing in the same way. The Facts for criteria 1, 3 and 7 would therefore pass against the unchanged scanner, leaving the slice's headline behaviour untested on a counting rule. Separately, criterion 1's wording ('the listing must be shown to still say 0 B') can only hold up to the moment the scanner lists the file, because the scanner's own probe refreshes the entry (SL-045). The design quietly checks it before the scan and does not record that reading.",
+    "evidence": "HeldOpenTreeTests: 'Lists tree/held/ once before the scan to record the stale 0/0 listing, back-dates everything not held … snapshots before/after via HoldRig, runs Scanner.Scan'; HoldRig snapshot: 'opens each listed path for FILE_READ_ATTRIBUTES only'; criterion-6 case: 'snapshot of … every entry in the temp tree'; SL-045 NO-GO 'Metadata open refreshed stale entries 3/3: h.bin 0→256 MiB'; build-check: IsDue probes a listing >= 64 MiB.",
+    "fix": "(1) Never open held files (or the stale hardlink name) from a third process before Scanner.Scan returns. Take their before/after figures only from the holder's own self-report, which part (a) of the held-open spike showed leaves the listing at 0. For the hardlink, snapshot through the name it was written through. (2) Run the 0/0 listing check after the before-snapshot, then back-date tree/held. (3) Compute criterion 7's expected totals from self-reports during the run, and run third-party snapshots only after the scan. (4) Have the scan itself show that it saw 0 B, for example with a 'probe changed the figure' flag or counter on grow.bin. (5) Add a baseline check to run: the new Facts for 1, 3 and 7 must fail against the as-built IsDue. (6) Record in the design that 'still says 0 B' is checked up to the moment of listing."
+   },
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "drift-from-design",
+    "claim": "Criterion 6 says no entry may have a changed 'size' after the scan. SL-045 measured that the scanner's metadata open refreshes a stale entry's listed size (0→256 MiB), so after a scan, `dir` shows a different size for every held-open file. The design meets the criterion by observing only through handles, which by construction cannot see this. It presents that as observation discipline, not as a reading of an agreed criterion that contradicts a measured side effect. If the person meant 'no trace', criterion 6 cannot be met for held files at all, because any probe refreshes the entry. That needs deciding before build, not finding at validate.",
+    "evidence": "key_decisions: 'Criterion 6 is observed only through handle-based snapshots … SL-045 measured a metadata open refreshing a stale listing entry (0->256 MiB)'; criterion 6: 'no file or folder … has a changed … size'.",
+    "fix": "State in the design record and open_questions that the scan does change the listed size of stale entries in the directory's cached copy, and that criterion 6 is read as the file's own metadata (handle-reported) plus the parent folder's own timestamps, attributes and USN, which the held-open spike measured unchanged by a probe."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "under-engineering",
+    "claim": "The single-writer invariant holds only if people remember it. SL-042 measured the race it prevents at 587 MiB of swing. Rule 1 only stops ProbePipeline.cs from spelling `.Correct(`/`.Credit(`. A worker calling the `apply` delegate, Drain being called from a worker or a timer (a tempting change so the UI sees corrections sooner), or Scanner passing a lambda that runs off-thread all pass the rule and write the store from several threads.",
+    "evidence": "architecture_rules[0]: files 'ProbePipeline.cs', must_not_match '\\.Correct\\s*\\(' / '\\.Credit\\s*\\('; ProbePipeline contract: 'apply runs only on the caller's thread'.",
+    "fix": "Make it structural. Scanner records the listing thread's ManagedThreadId, and Correct/Credit throw if called from any other thread, so every test in the suite enforces it. ProbePipeline records its owning thread, Drain/Complete throw off it, and workers never receive the apply delegate. Keep the regex rule as a secondary check."
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "error-paths",
+    "claim": "The pipeline can hang where the design promises it 'fails loudly'. Submit blocks once 8192 requests are outstanding, and a worker fault is surfaced only at the next Drain or Complete. If every worker has exited, whether from a systematic fault or a scan cancel, the listing thread sits in Submit forever and never reaches that Drain. The stall scenario StallRig exists for makes this concrete: workers block on stalled probes, the queue fills, the listing blocks in Submit, the user cancels, the workers exit, and the listing stays stuck. Complete 'joins workers' with no cancel semantics. On an ordinary cancel, the 'applied != submitted' check turns OperationCanceledException into an invariant failure, and a join on a worker stuck in an uncancellable open hangs the cancel.",
+    "evidence": "ProbePipeline contract: 'Submit(entry,path) blocks past capacity … A worker exception is captured and rethrown from the next Drain/Complete … Complete throws if applied != submitted'; no cancellation path is specified.",
+    "fix": "(1) Use a linked token that the scan token or the first worker fault cancels, and have Submit call Add(item, linkedToken) and rethrow the captured fault. (2) On cancel, Complete skips the applied/submitted check, rethrows OperationCanceledException, and bounds its join the same way SynchronousIoCancel already handles a stuck close. (3) Add cases, using an injectable probe delegate, for a worker that faults mid-scan and for a cancel while Submit is blocked."
+   },
+   {
+    "id": "M4",
+    "severity": "major",
+    "dimension": "over-engineering",
+    "claim": "The inline repeat-FileId probe is redundant once every first-seen name is probed. U-010 showed the handle query is exact whichever name is used, and all names share attributes and ACL. Keeping it costs three things. (1) It adds a synchronous probe on the listing thread, which is the critical path, for every repeat in the WinSxS/System32 hardlink farms. (2) It creates the async-versus-inline race that needed a key decision, a material case and a change to Correct. (3) It lets one entry carry both SizeProbed and ProbeFailed when the two probes disagree. The race handling is also only partly right. 'Correct diffs against current' makes a late result a no-op only when both readings agree. For a hardlinked file still growing, the older pipeline reading applied last overwrites the newer inline one. The case also cannot be tested deterministically, because ProbePipeline has no seam to delay a worker. The stated reason for keeping it ('fallback lever if drive time regresses') is backwards: it adds drive time.",
+    "evidence": "key_decisions: 'The inline repeat probe is redundant under probe-all but harmless once Correct diffs against the current value, and stays as a fallback lever if drive time regresses'; case 'apply an async probe result after that entry was already corrected inline'.",
+    "fix": "Make repeat names dedup-only: charge them 0 and never probe them, because the first-seen name is always probed now. Remove the race case. If the inline probe is kept, add an injectable probe delegate to ProbePipeline for a deterministic interleaving test, and tag results with a measurement order so an older reading can never overwrite a newer one."
+   },
+   {
+    "id": "M5",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "claim": "The drive-time bet says overlap 'should land near the listing thread's own ~100.7s'. That figure came from a bare DirectoryReader walk. The design adds work to that same thread which the measurement never included: (1) a failed FILE_WRITE_ATTRIBUTES open followed by a second plain open for every folder that refuses write-attributes, which is most of C:\\Windows, Program Files and WinSxS for a Medium-IL user, across about 920k folders; (2) a SetFileInformationByHandle call on every other folder; (3) the inline repeat probes (M4); (4) building a full path string for each of about 3.54M submissions; (5) Drain after every directory. Fifteen workers on 16 logical CPUs also leave no core for the WPF dispatcher, where SL-044 already measured UI gaps of 866 ms against a 250 ms bar.",
+    "evidence": "decidable_disagreements: 'overlap should land near the listing thread's own ~100.7s'; probe-all-as-built-route-drive-time: 'single-threaded listing alone ate 100.7s' (a listing-only walk); Directory open component: fall back to a plain open when the write-attributes open or the set call fails.",
+    "fix": "(1) In the validate re-measurement, report listing-thread time broken down by phase: walk, suppressed opens, fallback opens, inline probes and drains. (2) Drop the inline probe (M4). (3) Name the measured sequential shape (list, then 16-worker probe: 188.3 s, which fits the project's 'a few minutes' constraint) as the fallback if the overlap does not pay off, not a resynthesis. (4) Run workers at BelowNormal priority so the listing thread and the dispatcher stay ahead."
+   },
+   {
+    "id": "M6",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "claim": "The last-access suppression is a write-class operation, and this is its first use in a scanner that until now only read. It was measured only on a plain %TEMP% folder on local NTFS, but the design applies it to every folder the scan lists. That includes OneDrive sync roots (1.11M placeholders on this PC, under cldflt), SMB shares (the project has an SMB loopback rig), FAT/exFAT removable drives and ReFS. The fallback fires only when the open or set fails. A filesystem, filter or server that accepts the call with different semantics writes to the user's folders, or signals a metadata change to a sync engine, and the scan carries on without noticing. Support for these special timestamp values is per-filesystem: Microsoft's own protocol test suite has a test that checks 'if file system supports -2 timestamp'.",
+    "evidence": "folder-atime-suspend-on-list-handle spike: 'On an NTFS temp tree the current (non-elevated) user owns'; Directory open component: 'Enumeration handles open FILE_LIST_DIRECTORY|FILE_WRITE_ATTRIBUTES|SYNCHRONIZE … SetFileInformationByHandle(FileBasicInfo) sets LastAccessTime=-1'. https://github.com/microsoft/WindowsProtocolTestSuites/blob/35c64278/TestSuites/FileServer/src/FSA/TestSuite/FileInformation/FileInfo_Set_FileBasicInformation_Timestamp_MinusTwo.cs: 'check if file system supports -2 timestamp'.",
+    "fix": "Use the suppressed open only where it was measured: a local volume that GetVolumeInformationByHandleW reports as NTFS. Use today's plain open everywhere else. Before enabling it inside a sync root, repeat the spike's method in the CfProvider sync root under %TEMP% and check the placeholder's in-sync state and the provider's callbacks. Before enabling it on SMB, repeat it through the loopback rig."
+   },
+   {
+    "id": "M7",
+    "severity": "major",
+    "dimension": "test-coverage",
+    "claim": "Folders that grant list but not write-attributes send the scan down the fallback path. That is the majority path on a real system drive, yet it is marked material:false and has no fixture. Every temp-tree folder the user creates grants write-attributes, so the suite never exercises it. The contract text is also ambiguous: 'falls back to today's plain open and is listed (and recorded as unreadable) exactly as today'. A builder who records the folder as unreadable when the first open fails would mark C:\\Windows and Program Files unreadable, and every test would still pass.",
+    "evidence": "case 'still list a folder whose ACL refuses the write-attributes open' material:false; Directory open component responsibility text quoted above.",
+    "fix": "Make the case material. Build a temp-tree folder with a deny ACE for FILE_WRITE_ATTRIBUTES only (icacls /deny <user>:(WA)) and assert it is listed, its children are counted, and it is not in the unreadable set. Keep it outside the tree criterion 6 diffs, or expect its last-access time to move. Reword the contract: a successful fallback open lists normally, and only a failed plain open records the folder unreadable."
+   },
+   {
+    "id": "M8",
+    "severity": "major",
+    "dimension": "cross-cutting-conformance",
+    "claim": "Criterion 6's guarantee depends on people remembering it. (1) Rule 2 fences only the string 'SetFileInformationByHandle'. SetFileTime, NtSetInformationFile, SetFileAttributesW, File.SetLastAccessTime and the FileSystemInfo setters all write timestamps without tripping it. (2) As written, the rule fails on the project's own idiom. P/Invoke declarations live in Kernel32.cs (spike evidence: 'Kernel32 P/Invoke declarations', 'Kernel32.cs only has … no FileBasicInfo write'), so declaring the function there trips the rule and pushes a builder either to move the DllImport into DirectoryReader.cs or to loosen the rule. (3) No rule stops a second directory listing outside DirectoryReader, for example a future folder refresh or child count. Such a listing would move folder last-access times, and HeldOpenTreeTests would not notice because it only runs Scanner.Scan.",
+    "evidence": "architecture_rules[1]: must_not_match ['SetFileInformationByHandle'], except_files ['src/FsAnalyser.Core/Scanning/DirectoryReader.cs'].",
+    "fix": "(1) Add the P/Invoke declaration file to except_files; call sites elsewhere still match. (2) Extend must_not_match to SetFileTime, NtSetInformationFile, SetFileAttributes, File\\.Set(LastAccess|LastWrite|Creation)Time and \\.LastAccessTime\\s*=. (3) Add a rule that only DirectoryReader.cs may call FindFirstFile, NtQueryDirectoryFile, GetFileInformationByHandleEx with a directory-info class, or Directory.Enumerate*/Get*. (4) Put the suppression inside the one function that returns an enumeration handle, so no caller can get a listing handle without it."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "The synthesis told the builder that AFileWhoseListingSaysNothingIsAllocatedIsProbedOnlyWhenItIsWof needs only a new name, not new assertions. The build-check does not support that. It cited only the deny-fixture lines (117-119, 165-170) and never said the test contains no gating assertion, while the test's name says it asserts that a zero-allocation non-WOF file is not probed, which is exactly the gate this slice removes. Its Probes counts will also change once every file is probed.",
+    "evidence": "Existing tests reconciled: 'only its name … needs correcting, not its assertions'; build-check criterion 5 evidence cites OnDiskSizeTests.cs:117-119 and :165-170 only.",
+    "fix": "Tell the builder to read the whole test and rewrite every assertion that encodes the old gate (unprobed zero-allocation files, Probes counts) to the new rule, in the same change as the rename."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "claim": "EntryFlags.SizeProbed changes meaning from 'corrected by a probe' to 'probed', and the Probes counter grows from a handful to millions. The design lists no consumers: the App, the schema-1 --report file, or window-test assertions. The change also removes the in-scan signal B1 needs to prove the scanner corrected a figure it listed at 0 B.",
+    "evidence": "Scan completion and counters contract: 'EntryFlags.SizeProbed now marks every successfully probed file, not only corrected ones'.",
+    "fix": "Keep a signal for 'the probe changed the charged figure', either the existing flag or a new ProbeCorrected bit or counter. Search App, the report writer and tests/window for SizeProbed and Probes, and list what changes."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "Rule 3 covers only SynchronousIoCancel.cs. The likely place for a drive-time optimisation to adopt the parent-relative NtOpenFile that U-014 used is ProbePipeline.cs or SizeProbe.cs, and neither is fenced. The rule's reasoning is also overstated: the criterion-5 test asserts ProbeFailed, so a route change would turn it red rather than disarm it silently. The real risk is someone then 'fixing' the fixture.",
+    "evidence": "architecture_rules[2]: files 'src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs'; because: 'without any test noticing'.",
+    "fix": "Widen files to src/FsAnalyser.Core/Scanning/*.cs and correct the because-text."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "under-engineering",
+    "claim": "The design gives each worker 'its own SynchronousIoCancel' because cancellation works per thread, but does not say where each instance is constructed. The natural place is the ProbePipeline constructor, which runs on the listing thread. If the type binds to the thread that constructs it, cancelling would target the listing thread's I/O and leave the workers' stuck opens alone, which also feeds M3.",
+    "evidence": "ProbePipeline component: 'dedicated worker threads, each with its own SynchronousIoCancel bound to the scan's token'; key_decisions: 'SynchronousIoCancel cancels I/O per-thread'.",
+    "fix": "Construct each instance inside the worker's thread body. Have SynchronousIoCancel record and assert its owning thread id on every call. Checking this needs one read of the constructor."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "The queue widens the gap between listing a file and probing it (up to 8192 requests deep). A file deleted in that gap is recorded as ProbeFailed and counted with the ACL refusals of criterion 5. A path deleted and recreated in that gap has the new file's size applied to the old entry, because nothing checks the FileId. The eligibility rule ('first name of this FileId') does not say what happens to an entry whose FileId is 0 or unusable, as on some SMB servers or FAT.",
+    "evidence": "SizeProbe eligibility rule contract: 'first name of this FileId in this scan'; request carries (entry, path) only.",
+    "fix": "Report not-found and path-not-found separately from refusals, keeping the listing figure. Treat an entry with no usable FileId as first-seen. Either compare FileIdInfo with the listed FileId or explicitly accept the replaced-file case in the design record."
+   },
+   {
+    "id": "m6",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "claim": "Criterion 7's independently computed expected total has no stated rule for the hardlinked file. Which folder is charged depends on the scanner's first-seen order. If the two names sit in different folders, the test needs that order. If they sit in the same folder, per-folder attribution is never tested.",
+    "evidence": "HeldOpenTreeTests: 'tree/links (hardlink, grown through the second name)'; case: 'an independent process computes the expected total from handle-reported allocations'.",
+    "fix": "Put the two names in different folders. Specify that the expected total charges the file once, to the folder of the name the scan meets first, either fixed by construction or read from the store's flag for the first holder."
+   },
+   {
+    "id": "m7",
+    "severity": "minor",
+    "dimension": "security",
+    "claim": "The scanner now holds a handle with FILE_WRITE_ATTRIBUTES on every folder the user owns. A marshaling slip in FILE_BASIC_INFO, such as the wrong size (it should be 40 bytes on x64) or the wrong field offset, would rewrite timestamps across the whole profile, and OneDrive would sync the change. Only the temp-tree test guards against this. Separately, Controlled Folder Access 'blocks the attempt and notifies you' when an untrusted app changes protected folders. I could not find whether an attribute-only set on a folder counts. If it does, every protected folder produces a notification while the scan silently falls back.",
+    "evidence": "Directory open contract: 'LastAccessTime=-1, all else 0'; https://learn.microsoft.com/en-us/defender-endpoint/controlled-folder-access-overview.",
+    "fix": "Keep the payload as a single static readonly FILE_BASIC_INFO with LastAccessTime=-1, and add an always-on assertion that Marshal.SizeOf is 40. At validate, record Get-MpPreference EnableControlledFolderAccess alongside the fsutil state."
+   },
+   {
+    "id": "m8",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "Two cited claims go beyond their sources. The Old New Thing page shows only that the listing reads 0, GetFileSize reads correctly, and 'If I close the file handle, then Explorer and the dir command both report the correct file size'. Nothing visible supports 'or a threshold is crossed', and the page leaves out the refresh triggered by opening the file, which SL-045 measured and B1 trips over. On SO 20995578, 'measurably slower' is only the asker's impression, and the accepted answer questions it. The third citation is a content-farm copy of SO 7828132. None of them carries the design's weight; U-005, U-012 and U-018 do.",
+    "evidence": "prior_art[0..2]; https://devblogs.microsoft.com/oldnewthing/20111226-00/?p=8813; https://stackoverflow.com/questions/20995578/",
+    "fix": "Drop 'or a threshold is crossed', add that a new open refreshes the entry (SL-045), cite U-012 for the cost claim, and replace the exchangetuts URL with https://stackoverflow.com/questions/7828132/."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M5: the drive-time bet leaves out work the design adds to the listing thread. M6: the atime spike, measured on a local NTFS temp folder, is applied to sync roots, SMB and non-NTFS volumes without measurement. m1: 'rename only' is not supported by the build-check's evidence. m8: two cited claims overreach their sources."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "m5: files that vanish or are replaced between listing and probe, and entries with FileId 0. The folder that refuses write-attributes is under test-coverage (M7)."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "M2: the single-writer rule depends on people remembering it; a regex on one file does not enforce the SL-042-critical invariant. m4: the thread that constructs each worker's SynchronousIoCancel is unspecified."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "M4: keeping the inline repeat-FileId probe under probe-all is redundant, costs critical-path time and creates the race the design then has to handle. The parallel pipeline itself is justified by the 'a few minutes' constraint, since inline probing of about 3.5M files would exceed it."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "m2: SizeProbed and Probes change meaning with no consumer inventory, and the 'corrected' signal B1 needs is lost. m6: criterion 7's expected-total rule for the hardlink is not stated."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "M3: Submit deadlocks when all workers exit (fault or cancel, for example under a stall); Complete's join and applied!=submitted check have no cancel semantics."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "M1: criterion 6's 'size' is met with an observer that cannot see a listing refresh the scan measurably causes, and this is not declared. B1 also notes that criterion 1's 'still says 0 B' is quietly checked before the scan. All 7 criteria are served by at least one case, and no case serves none."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "M8: rule 2 fences one API name, conflicts with P/Invoke declarations living in Kernel32.cs, and no rule fences directory listing outside DirectoryReader. m3: rule 3's scope is too narrow and its reasoning overstated."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "B1: the before-scan HoldRig snapshot refreshes the stale listing (SL-045), so the Facts for criteria 1, 3 and 7 pass on the old code. M7: the write-attributes fallback, the majority path on a real C:, has no fixture. Cases for worker fault and cancel are missing (M3). The race case cannot be tested deterministically (M4)."
+   },
+   {
+    "dimension": "security",
+    "result": "m7: the new write-capable handle on every folder has no structural guard on the FILE_BASIC_INFO payload, and Controlled Folder Access interaction is unverified. M6 covers writes on filesystems where the call was never measured. No elevation is needed or requested."
+   }
+  ]
+ }
+}

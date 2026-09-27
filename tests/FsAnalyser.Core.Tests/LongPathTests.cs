@@ -53,13 +53,17 @@ public class LongPathTests
 
         Assert.True(probePath.Length > 400, $"the probe folder's path is {probePath.Length} characters");
         int wof = Scans.Find(result, $@"{probePath}\wof.");
-        Assert.Equal(EntryFlags.SizeProbed, store.Flags(wof)); // set, and ProbeFailed not
+        Assert.Equal(EntryFlags.SizeProbed | EntryFlags.ProbeCorrected, store.Flags(wof)); // set, and ProbeFailed not
         Assert.Equal(1 * TempTree.MiB, store.Size(wof));
         Assert.InRange(store.OnDisk(wof), 1, TempTree.MiB / 2);
         int charged = Scans.Find(result, $@"{probePath}\a.");
-        Assert.Equal(EntryFlags.SizeProbed, store.Flags(charged)); // probed through the repeat's own path, b.
-        Assert.Equal(EntryFlags.HardlinkDuplicate, store.Flags(Scans.Find(result, $@"{probePath}\b.")));
-        Assert.Equal(2, result.Probes);
+        Assert.Equal(EntryFlags.SizeProbed, store.Flags(charged)); // probed through its own path, a.
+        Assert.Equal(EntryFlags.HardlinkDuplicate, store.Flags(Scans.Find(result, $@"{probePath}\b."))); // a later name: never probed
+        // Every file is probed through its \\?\ path (SL-056), so each of these names Win32 would alter is opened:
+        // the deep file, "file." in "dot.", "space ", NUL, wof. and a.; b. is a later name.
+        foreach (string path in new[] { deepFilePath, $@"{tree.Root}\dot.\file.", $@"{tree.Root}\space ", $@"{tree.Root}\NUL" })
+            Assert.Equal(EntryFlags.SizeProbed, store.Flags(Scans.Find(result, path)));
+        Assert.Equal(6, result.Probes);
         Assert.Equal(0, result.ProbeFailures);
 
         Assert.Equal(new ScanTotals(Files: 7, Folders: 5, Links: 0, Bytes: 57 + TempTree.MiB + 10_000, BytesOnDisk: result.Totals.BytesOnDisk), result.Totals);

@@ -1,0 +1,339 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-056",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-27T11:13:31.087Z",
+ "head": "3ef7fbec6068435c69e157298d9ec1506a6a985e",
+ "run_id": 1542,
+ "summary": "",
+ "payload": {
+  "architecture_rules": [
+   {
+    "name": "probe results are applied only on the listing thread, never inside a worker",
+    "files": "src/FsAnalyser.Core/Scanning/ProbePipeline.cs",
+    "must_not_match": [
+     "\\.Correct\\s*\\(",
+     "\\.Credit\\s*\\("
+    ],
+    "because": "SL-042 measured 16-worker parallel attribution swinging folder totals by more than 10 MiB across 5 runs (WinSxS by 587 MiB); routing every store mutation through the single listing thread's apply callback, never from inside a worker, is what keeps Scanner.Correct/Credit's rollup race-free while probing runs in parallel."
+   },
+   {
+    "name": "only the directory-listing open path may write a file-system timestamp",
+    "files": "src/FsAnalyser.Core/**/*.cs",
+    "must_not_match": [
+     "SetFileInformationByHandle"
+    ],
+    "except_files": [
+     "src/FsAnalyser.Core/Scanning/DirectoryReader.cs"
+    ],
+    "because": "criterion 6 forbids the scan changing any timestamp; the folder-atime-suspend-on-list-handle spike proved the one call that legitimately sets LastAccessTime=-1 leaves everything else untouched, but only when it is the single place that writes metadata -- a second call site elsewhere could set a wrong field and nobody would notice."
+   },
+   {
+    "name": "the size probe's open stays on CreateFileW, not a parent-relative NtOpenFile",
+    "files": "src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs",
+    "must_not_match": [
+     "NtOpenFile"
+    ],
+    "because": "SL-045 measured that a SYNCHRONIZE-deny ACE refuses CreateFileW's implicit SYNCHRONIZE request but does not refuse a parent-relative NtOpenFile with FILE_READ_ATTRIBUTES only; moving the probe's open to NtOpenFile would silently disarm criterion 5's already-passing refusal fixture without any test noticing."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "size a file another process is actively growing, still listed at 0 B (criterion 1)",
+    "shape": "file created and grown past 256 MiB by another process while held open, share=Read; the directory listing still reports EndOfFile 0 / AllocationSize 0 right before the scan",
+    "why": "U-018 measured a held-open growing file can list 0 B for at least 300 s; no listing-driven heuristic (the old IsDue) can ever see this, so probing must be unconditional on first-seen files rather than gated by the listing's own figures",
+    "material": true
+   },
+   {
+    "behaviour": "size a file another process appended to after it was already large (criterion 2)",
+    "shape": "64 MiB file, held open, +64 MiB more appended, unflushed",
+    "why": "already covered and passing (OnDiskSizeTests.ALargeFileHeldOpenAndGrowingIsChargedAtItsTrueSize); widening the eligibility rule doesn't change this file's path since it was already probed under the old >=64 MiB branch",
+    "material": false
+   },
+   {
+    "behaviour": "size a file held open with no sharing at all (criterion 3)",
+    "shape": "temp file opened by another process with FileShare.None (share mode 0)",
+    "why": "the metadata-only open (FILE_READ_ATTRIBUTES, no data access requested) must still succeed against an exclusively-locked file; nothing in the repo exercises this today, and it was previously reachable only if the file also happened to be >=64 MiB or WOF-suspect",
+    "material": true
+   },
+   {
+    "behaviour": "charge a hardlinked file once, at its true size, when the stale name is seen first (criterion 4)",
+    "shape": "two names for one FileId; growth happens through the second name; the scanner meets the stale (unchanged) name first",
+    "why": "already covered and passing (HardlinkTests, U-005 stale-first case); the repeat-name correction path (Scanner.cs:243-256) runs unconditionally today and is left unchanged by this design",
+    "material": false
+   },
+   {
+    "behaviour": "keep a file at its listing size when its metadata query is refused (criterion 5)",
+    "shape": "temp file carries a deny-ACE for the current user on read-attributes/SYNCHRONIZE",
+    "why": "already covered and passing (OnDiskSizeTests' wof-denied.txt fixture); ProbeFailed/ProbeFailures accounting is unaffected by widening which files get probed",
+    "material": false
+   },
+   {
+    "behaviour": "leave every file and folder's metadata untouched by the scan (criterion 6)",
+    "shape": "independent before/after snapshot of all four timestamps, size and attributes of every entry in the temp tree, diffed by a process outside the scanner, with fsutil disablelastaccess recorded",
+    "why": "missing entirely today; SL-045 measured the scanner's own listing moving a folder's back-dated atime, and a separate spike measured a metadata probe refreshing a stale listing entry -- both are exactly what this criterion forbids and nothing proves either is fixed",
+    "material": true
+   },
+   {
+    "behaviour": "prove the before/after snapshot method actually detects a real change (criterion 6)",
+    "shape": "a control folder outside the scan root, listed plainly with no atime suppression, must show its own last-access time move",
+    "why": "without a positive control, a diff that finds nothing changed is indistinguishable from a method too insensitive to notice a real change; the folder-atime-suspend-on-list-handle spike relied on exactly this control to trust its own 3/3 result",
+    "material": true
+   },
+   {
+    "behaviour": "suppress a folder's own last-access time while it is being listed (criterion 6)",
+    "shape": "the enumeration handle is opened with FILE_WRITE_ATTRIBUTES and LastAccessTime is set to -1 before the first directory-enumeration call",
+    "why": "the folder-atime-suspend-on-list-handle spike (GO, 3/3) measured this exact open+set sequence leaves a folder's timestamps, attributes and USN unchanged; without it every folder above a probed file fails criterion 6 the moment it is listed",
+    "material": true
+   },
+   {
+    "behaviour": "still list a folder whose ACL refuses the write-attributes open (criterion 6, boundary)",
+    "shape": "a folder where the current user has list/read access but not write-attributes access",
+    "why": "the atime-suspend open must fall back to today's plain listing open rather than failing the scan or marking the folder unreadable; the criterion 6 guarantee only holds where the ACL permits suppression, and that limit needs to stay visible rather than assumed away",
+    "material": false
+   },
+   {
+    "behaviour": "roll a folder's size up from current on-disk bytes, including held-open and hardlinked files (criterion 7)",
+    "shape": "a folder containing a growing held-open file, a share-0 held file, and a hardlinked file, all probed while an independent process computes the expected total from handle-reported allocations at the same time",
+    "why": "folder rollup arithmetic is unit-tested in isolation (ScanStoreRollupTests) but never against a live combined tree with in-flight held-open files, where a mis-sized child (criterion 1's gap) silently mis-sizes every ancestor folder too",
+    "material": true
+   },
+   {
+    "behaviour": "widen the probe rule off the old listing-driven gates (criterion 1, mechanism)",
+    "shape": "an ordinary small file well under 64 MiB, not WOF-suspect, with a plain listing",
+    "why": "OnDiskSizeTests.ALoneNameUnderTheRootIsChargedAtItsListingSize currently asserts the old narrow rule (Probes==0, listing size kept) for exactly this shape and will fail once probing becomes unconditional; it must be rewritten to assert the new invariant rather than left to go red or be deleted",
+    "material": true
+   },
+   {
+    "behaviour": "run the whole scan to completion only once every probe result is applied (mechanism, supports all criteria)",
+    "shape": "the listing walk finishes while probes are still in flight in the pipeline",
+    "why": "Scanner must not report done until ProbePipeline.Complete has applied every submitted result, or a file could be left at its listing figure with nothing showing it was never actually sized -- the exact silent failure this slice exists to remove",
+    "material": true
+   },
+   {
+    "behaviour": "apply an async probe result after that entry was already corrected inline (mechanism, criterion 4 interaction)",
+    "shape": "the first name of a hardlinked file is submitted to the pipeline, then a later name for the same FileId is met by the listing thread and corrected inline before the pipeline's result for the first name returns",
+    "why": "Correct must diff against the entry's current charged value, not a stale one, or a late pipeline result could overwrite the inline hardlink correction and reintroduce double-counting for exactly the case (criterion 4) this design must not regress",
+    "material": true
+   }
+  ],
+  "channeled_experts": [],
+  "coherence_check": "Single proposal (practice); there is no second proposal to compose against, so most of this is \"select against reality,\" not \"reconcile conflicting pieces.\" Two real tensions inside the one proposal still needed resolving. First, two atime spikes looked contradictory on their face: folder-atime-suspend-on-list-handle is a GO (folder fully unchanged, 3/3) while held-open-observers-dont-disturb is a NO-GO whose headline reads \"Parent LastAccessTime differs 6/6 around probes.\" Reading the second spike's own isolated sub-test resolves it: \"isolated test: listing causes it, not probe (0/3)\" -- the parent's atime moved because of listing interleaved in that spike's method, not because of the probe itself. That means the GO spike's fix (suspend atime on the listing handle) targets the actual cause of both findings, and the proposal's design is coherent with both spikes rather than only the one it names. I kept this reasoning explicit in the design rather than silently picking the favorable spike. Second, the proposal's own account of what OnDiskSizeTests.AFileWhoseListingSaysNothingIsAllocatedIsProbedOnlyWhenItIsWof asserts (\"becomes 'probed, and charged at what it reports'\") does not match the build-check's measured account of that same test, which ties it by name to the wof-denied.txt deny-ACE fixture (criterion 5, cut and already present). The build-check is the node that opened the file; it outranks the proposal's guess. I corrected this in the design: that test likely only needs a name change (it no longer gates on \"is it WOF\"), not a new behavioral assertion, while ALoneNameUnderTheRootIsChargedAtItsListingSize is the one that genuinely asserts the old narrow rule (Probes==0) and must be behaviorally rewritten. Everything else -- keeping the listing single-threaded (per SL-042's parallel-attribution no-go), keeping the probe on CreateFileW (per SL-045's SYNCHRONIZE-deny finding), and treating drive-time as unproven risk rather than a settled win (the pipeline overlaps listing and probing but was never itself measured, only its two halves separately) -- is the proposal's own position and reality does not contradict it.",
+  "components": [
+   {
+    "name": "Probe-set rule",
+    "responsibility": "Replaces IsDue's three listing-driven gates (WOF-suspect pattern, listing >=64 MiB, repeat FileId) with one predicate: probe when the entry is an ordinary file, not a link (REPARSE_POINT with surrogate bit 0x20000000; a bare REPARSE_POINT never counts as a link, per U-004), not cloud-only (existing guard, unchanged), and this is the first name the scan has met for its FileId. SizeProbe.Probe itself is unchanged.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/SizeProbe.cs",
+    "key_interactions": "Called by Scanner.ProbeListing on the listing thread, after hardlink dedup decides first-seen vs repeat. Repeat names keep the existing inline path (Scanner.cs:243-256), unchanged."
+   },
+   {
+    "name": "ProbePipeline",
+    "responsibility": "Bounded producer/consumer that runs probes alongside the listing instead of blocking it. BlockingCollection<(int entry,string path)> capacity 8192; Math.Clamp(ProcessorCount-1,1,15) dedicated worker threads, each with its own SynchronousIoCancel bound to the scan's token. Results go to a ConcurrentQueue and are only ever applied by the caller (listing thread), never by a worker.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/ProbePipeline.cs",
+    "key_interactions": "Scanner.ProbeListing calls Submit (blocks past 8192 outstanding). The listing thread calls Drain(apply) after each directory it writes, and Complete(apply) once after the walk, before the scan reports done. A worker exception is captured and rethrown from the next Drain/Complete so the scan fails loudly rather than leaving files at stale listing figures."
+   },
+   {
+    "name": "Scanner wiring",
+    "responsibility": "ProbeListing submits eligible files to ProbePipeline instead of probing inline; the listing thread drains results after every directory and runs Complete before signalling completion. Correct/Credit remain the only path that mutates the store, and Correct diffs against the entry's current charged value so a late or duplicate pipeline result is a no-op against an already-applied inline hardlink correction.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "key_interactions": "Single-writer: only this thread ever calls Correct/Credit. The inline repeat-FileId probe (Scanner.cs:243-256) is left exactly as it is."
+   },
+   {
+    "name": "Directory open with last-access suspended",
+    "responsibility": "Enumeration handles open FILE_LIST_DIRECTORY|FILE_WRITE_ATTRIBUTES|SYNCHRONIZE (plus today's BACKUP_SEMANTICS); before the first enumeration call, SetFileInformationByHandle(FileBasicInfo) sets LastAccessTime=-1 and every other field 0. If that open or the set call fails, the folder falls back to today's plain open and is listed (and recorded as unreadable) exactly as today.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/DirectoryReader.cs",
+    "key_interactions": "This is the exact open+set sequence the folder-atime-suspend-on-list-handle spike measured GO (folder fully unchanged, 3/3 reps, including USN)."
+   },
+   {
+    "name": "HoldRig",
+    "responsibility": "Framework-dependent net10.0-windows console with two verbs. 'hold <path> <bytes> <share>' creates a file in a separate process, sets its own atime back 48h before writing, grows it in <=64 MiB chunks with no flush, prints a JSON self-report on demand, and holds the handle open until stdin closes. 'snapshot <manifest> <out>' opens each listed path for FILE_READ_ATTRIBUTES only and records its four timestamps, size, allocation and attributes; it never lists a directory.",
+    "lives_at": "tests/HoldRig/",
+    "key_interactions": "Wired like tests/CfProvider: listed in FsAnalyser.slnx, ProjectReferenced by FsAnalyser.Core.Tests, built by eng/dotnet.ps1 build/test. Lifetime tied to stdin EOF so orphans can't leak into the next run."
+   },
+   {
+    "name": "HeldOpenTreeTests",
+    "responsibility": "One fixture, one temp tree, one scan, with a Fact each for criteria 1, 3, 6 and 7. Builds tree/plain, tree/links (hardlink, grown through the second name), tree/held/grow.bin (share Read, grown to 256 MiB+), tree/held/locked.bin (share None), and a sibling control/ folder. Lists tree/held/ once before the scan to record the stale 0/0 listing, back-dates everything not held (and control/) by 48h, snapshots before/after via HoldRig, runs Scanner.Scan, snapshots again, and separately confirms control/'s atime moved under a plain listing. Records `fsutil behavior query disablelastaccess`.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/HeldOpenTreeTests.cs",
+    "key_interactions": "Never lists a held file to observe it (a listing itself was measured to move parent atime and to refresh stale entries); observes only through HoldRig's handle-based snapshot and self-reports."
+   },
+   {
+    "name": "Existing tests reconciled",
+    "responsibility": "ALoneNameUnderTheRootIsChargedAtItsListingSize currently asserts the old narrow rule (Probes==0, listing size kept for a file that isn't WOF-suspect, isn't >=64 MiB, isn't a repeat) and must be rewritten to assert the new invariant: it is now probed and charged at what it reports. AFileWhoseListingSaysNothingIsAllocatedIsProbedOnlyWhenItIsWof is, per the build-check's measured evidence, the criterion-5 deny-ACE fixture, not a gating test; only its name (which implies WOF-only gating that no longer exists) needs correcting, not its assertions.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/OnDiskSizeTests.cs",
+    "key_interactions": "HardlinkTests.cs's U-005 case and per-folder Rolled assertions are unaffected except for Probes counts, which move with the wider eligibility rule."
+   },
+   {
+    "name": "Design record",
+    "responsibility": "Documents the eligibility rule, pipeline sizing, the atime-suspend open and its ACL-limited fallback, and the observation discipline (never list to observe a held file, always back-date, always run a positive control, always record fsutil state). Amends docs/design/SL-020-scanner.md:97, whose 'does not catch a file listed under 64 MiB... accepted' line no longer holds.",
+    "lives_at": "docs/design/SL-056-probe-every-file.md"
+   }
+  ],
+  "contracts": [
+   {
+    "name": "SizeProbe eligibility rule",
+    "kind": "function",
+    "notes": "eligible(entry) = ordinary file && !link (REPARSE_POINT with surrogate bit) && !cloudOnly && first name of this FileId in this scan. Pure predicate on the listing thread, after dedup.",
+    "error_cases": "None; not eligible just means the entry keeps its listing figure and gets no SizeProbed flag."
+   },
+   {
+    "name": "ProbePipeline",
+    "kind": "function",
+    "notes": "new ProbePipeline(token, workers, capacity=8192); Submit(entry,path) blocks past capacity; Drain(apply) non-blocking; Complete(apply) joins workers and applies the rest; apply runs only on the caller's thread.",
+    "error_cases": "A worker exception is captured and rethrown from the next Drain/Complete, failing the scan. Complete throws if applied != submitted. A probe's own nonzero Win32 error travels in the result and is handled by Correct exactly as today (ProbeFailed, listing kept)."
+   },
+   {
+    "name": "Directory open with last-access suspended",
+    "kind": "function",
+    "auth_model": "Ordinary Medium-integrity user, never elevated; FILE_WRITE_ATTRIBUTES only succeeds where the folder's ACL already grants it.",
+    "notes": "SetFileInformationByHandle(FileBasicInfo){LastAccessTime=-1, all else 0} on the enumeration handle before the first directory-listing call.",
+    "error_cases": "Open or set failure falls back to today's plain open and today's unreadable-folder recording; the atime guarantee only holds where the ACL permits suppression."
+   },
+   {
+    "name": "HoldRig hold",
+    "kind": "cli",
+    "notes": "`HoldRig hold <path> <bytes> <share:none|read>`: CREATE_NEW, back-dates its own atime 48h before writing, writes in <=64 MiB chunks with no flush/SetEndOfFile, prints a JSON self-report on a 'report' stdin line, holds the handle until stdin EOF.",
+    "error_cases": "Any Win32 failure goes to stderr and exits nonzero before the ready line; the fixture names the helper and the error and kills a holder that outlives stdin-close by 10s."
+   },
+   {
+    "name": "HoldRig snapshot",
+    "kind": "cli",
+    "notes": "`HoldRig snapshot <manifest> <out.json>`: opens each path FILE_READ_ATTRIBUTES-only and records FileBasicInfo+FileStandardInfo; never lists a directory.",
+    "error_cases": "Any open/query failure exits nonzero and names the path; a missing record is a test failure, never a skip."
+   },
+   {
+    "name": "Scan completion and counters",
+    "kind": "function",
+    "notes": "Scan reports done only after ProbePipeline.Complete returns. Probes = pipeline submissions + inline repeat-name probes. EntryFlags.SizeProbed now marks every successfully probed file, not only corrected ones.",
+    "error_cases": "A worker fault surfaces as a scan failure, never a silent stale figure."
+   },
+   {
+    "name": "Drive-time re-measurement",
+    "kind": "cli",
+    "notes": "At validate, repeat the probe-all-as-built-route-drive-time method against the built, pipelined Scanner.Scan; record wall time, listing-thread time, pipeline tail, and longest single probe against the spike's own 150s/10s bars.",
+    "error_cases": "Advisory only -- see key_decisions; a miss is a risk to flag for review, not a failure of any of the 7 person-agreed done-when criteria, none of which name a time budget."
+   }
+  ],
+  "decidable_disagreements": [
+   {
+    "question": "Does overlapping the parallel probe pipeline with the still-single-threaded listing actually bring warm full-drive time back under the spike's 150s bar, given the sequential route measured 188.3s (100.7s listing + 87.6s probing) and the pipeline itself was never measured, only its two halves separately?",
+    "positions": "The design's bet is that overlap should land near the listing thread's own ~100.7s, since probing moves off the critical path; the risk is that CPU/IO contention between listing and 15 probe workers erases some or all of that saving, and the compound 'under 5 min AND <=3x listing' bar was already marked impossible at the epic level (U-012) for a related, non-pipelined route.",
+    "would_force_resynthesis": true
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Probe every first-seen, non-link, non-cloud-only file; the listing figure survives only when the probe is refused or the entry is ineligible.",
+    "reversibility": "cheap",
+    "rationale": "U-005 (impossible) and U-018 (impossible) both show the listing alone can never be sufficient, including staying at 0 B for at least 300s while a file grows past 256 MiB held open -- no listing-driven heuristic can catch that. U-010 (possible) measured the handle route exact in 820/820 checks, including share 0."
+   },
+   {
+    "decision": "Probes run on a bounded pool of dedicated worker threads alongside the unchanged, single-threaded listing walk; only the listing thread ever applies a result, through the existing Scanner.Correct/Credit.",
+    "reversibility": "cheap",
+    "rationale": "Keeps the store single-writer, avoiding the exact race SL-042 measured for parallel attribution (68 folders swinging >10 MiB across 5 runs). Dedicated threads, not the ThreadPool, because SynchronousIoCancel cancels I/O per-thread and blocking CreateFileW calls would starve pool threads."
+   },
+   {
+    "decision": "The listing itself stays single-threaded and in listing order; which name of a hardlinked file charges the bytes is still decided on the listing thread.",
+    "reversibility": "expensive",
+    "rationale": "SL-042's no-go is specifically about parallelizing first-seen attribution, not about parallelizing probing. Reopening this later means redesigning how ProbePipeline results are applied, since the whole design now assumes exactly one writer."
+   },
+   {
+    "decision": "Enumeration handles open FILE_LIST_DIRECTORY|FILE_WRITE_ATTRIBUTES|SYNCHRONIZE with LastAccessTime=-1 set before listing; any open or set failure falls back to today's plain open.",
+    "reversibility": "cheap",
+    "rationale": "The folder-atime-suspend-on-list-handle spike measured this exact sequence leaves a folder's timestamps, attributes and USN unchanged in 3/3 reps; the held-open-observers spike's isolated result shows listing, not probing, was the actual cause of the atime drift it saw. The fallback keeps folders the user can't write-attributes to scannable, at the cost of the guarantee not holding there."
+   },
+   {
+    "decision": "The probe keeps its current open route (SynchronousIoCancel.OpenForAttributes / CreateFileW with FILE_READ_ATTRIBUTES); no switch to a parent-relative NtOpenFile. The inline repeat-FileId probe (Scanner.cs:243-256) is left unchanged.",
+    "reversibility": "cheap",
+    "rationale": "SL-045 measured a SYNCHRONIZE-deny ACE refuses CreateFileW but not a parent-relative NtOpenFile with FILE_READ_ATTRIBUTES only -- switching routes would silently disarm criterion 5's already-passing refusal fixture. The inline repeat probe is redundant under probe-all but harmless once Correct diffs against the current value, and stays as a fallback lever if drive time regresses."
+   },
+   {
+    "decision": "Workers = ProcessorCount-1 clamped to 1..15; request queue capacity 8192; a worker fault fails the scan; the scan reports done only once every submitted probe is applied.",
+    "reversibility": "cheap",
+    "rationale": "Leaves a core for the listing thread (the critical path). Silent background-probe failure is exactly the bug class this slice removes, so it must fail loudly rather than leave files at stale listing figures with nothing to show it."
+   },
+   {
+    "decision": "Scanner.Correct diffs against the entry's current charged value rather than assuming its own prior figure, so a late or duplicate pipeline result is a no-op against an already-applied inline hardlink correction.",
+    "reversibility": "cheap",
+    "rationale": "Without this, a pipeline result for a hardlink's first-seen name arriving after the listing thread already corrected that FileId inline (criterion 4's path) could re-apply a stale delta and reintroduce double-counting."
+   },
+   {
+    "decision": "Test rig is one tests/HoldRig console with 'hold' and 'snapshot' verbs, lifetime tied to stdin EOF, wired like the existing tests/CfProvider pattern.",
+    "reversibility": "cheap",
+    "rationale": "Criteria 1, 3 and 6 need genuinely separate processes; tying lifetime to stdin EOF clears orphaned locked files if the test host dies; reusing CfProvider's wiring avoids a new build path."
+   },
+   {
+    "decision": "Criterion 6 is observed only through handle-based snapshots (HoldRig snapshot) and holder self-reports, never by listing; everything not held is back-dated 48h; a control folder outside the root must show its atime move or the test fails; fsutil disablelastaccess is recorded; the pre-scan listing is checked for 0/0 before the scan runs.",
+    "reversibility": "cheap",
+    "rationale": "SL-045 measured a metadata open refreshing a stale listing entry (0->256 MiB) and a listing moving folder atime; NTFS only records an access when the stored atime is over an hour stale. Without a positive control and the pre-scan 0/0 check, a passing diff could mean the method never actually exercised anything."
+   },
+   {
+    "decision": "The validate-stage drive-time re-measurement (spike's 150s/10s bars) is advisory, not a done-when gate.",
+    "reversibility": "cheap",
+    "rationale": "None of the 7 person-agreed criteria mention a time budget, and U-012 already marked the compound 'under 5 min AND <=3x listing' claim impossible at the epic level for a related route. A regression here is a risk for review to weigh, not grounds to fail criteria the person never wrote."
+   }
+  ],
+  "open_questions": [
+   "Should a validate-stage drive-time regression (against the spike's self-imposed 150s warm / 10s-per-probe bars) block this slice, given none of the 7 person-agreed done-when criteria name a time budget and U-012 already marked the related compound bar impossible at the epic level? The design treats it as advisory; a person may disagree.",
+   "Is it acceptable that criterion 6's no-side-effects guarantee only holds for folders where the enumerating user's ACL grants FILE_WRITE_ATTRIBUTES, with a silent fallback to today's plain (atime-disturbing) open elsewhere -- or should such a folder be surfaced in the scan result rather than passed over quietly?"
+  ],
+  "prior_art": [
+   {
+    "pattern": "A file's true current size and allocation are only ever correct through a live handle query (GetFileSize/GetFileInformationByHandleEx); the directory listing (Explorer, dir, FindFirstFile-family) reflects a cached directory-entry value that a writer does not flush until the handle closes or a threshold is crossed.",
+    "where": "https://devblogs.microsoft.com/oldnewthing/20111226-00/?p=8813",
+    "authority": "official",
+    "basis": "cited",
+    "source_date": "2011-12-26"
+   },
+   {
+    "pattern": "Per-file metadata queries (FileInfo/handle-based stat calls) are measurably slower than a bare directory listing, which is the underlying tension the drive-time spike and this design's parallel pipeline are answering.",
+    "where": "https://stackoverflow.com/questions/20995578/what-is-a-fast-way-to-get-metadata-about-files-in-a-folder-that-includes-size-us",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2014-01-08"
+   },
+   {
+    "pattern": "A cached FileInfo/DirectoryInfo-style wrapper reports stale length once stat'd, which is the exact failure mode this slice removes; supports never routing the probe through a caching .NET API and always re-querying via a fresh handle.",
+    "where": "https://www.exchangetuts.com/getting-current-file-length-fileinfolength-caching-and-stale-information-1639896252703409",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2011-10-19"
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "Accepted the eligibility-rule widening, the parallel ProbePipeline with single-writer apply, the atime-suspended directory open, and the HoldRig/HeldOpenTreeTests test rig essentially as proposed. Corrected one factual claim against the build-check's measured account (which existing test the WOF-named test actually covers) and made the unproven drive-time claim explicit as risk rather than a settled result."
+   }
+  ],
+  "selection_rationale": "The single proposal's core mechanism is well-grounded in measurement, not taste: U-005 and U-018 (both impossible) show the listing can never substitute for a handle query, which forces unconditional first-seen probing exactly as proposed; U-010 (possible) proves the chosen open route is exact including share 0 (criterion 3); the folder-atime-suspend-on-list-handle spike (go) is the only measured fix for criterion 6's folder half, and its exact open+set sequence is what the design keeps; SL-042's no-go against parallel attribution is respected by keeping the listing single-threaded and routing every store mutation through one thread; SL-045's SYNCHRONIZE-deny finding is respected by not switching the probe's open route. The one place reality does not yet back the proposal is drive time: the spike measured sequential listing-then-probe at 188.3s against a 150s bar, and running the two in parallel is a new, unmeasured claim, which the proposal itself flags as a risk. I kept that as an advisory validate-stage check rather than promoting it to a design gate, since none of the 7 person-agreed done-when criteria mention timing and the epic already marked a related compound timing bar impossible. I also corrected one internal inconsistency: the proposal misdescribes which existing test the WOF-named fixture is (it read it as a gating test; the build-check's measured account ties it to the criterion-5 deny-ACE fixture instead), so only ALoneNameUnderTheRootIsChargedAtItsListingSize needs a behavioral rewrite, not both.",
+  "stack_chosen": [],
+  "status": "complete",
+  "taste_disagreements": [
+   "Whether to keep a cheap listing-based fast-skip for files whose listing has been stable across two directory refreshes (to cut probe volume) versus probing every eligible file unconditionally as this design does -- a perf/complexity tradeoff the data doesn't settle.",
+   "Whether the WOF-suspect-named ACE-denial test (AFileWhoseListingSaysNothingIsAllocatedIsProbedOnlyWhenItIsWof) should be renamed now, since its name implies a gating condition that no longer exists, or left for whichever slice next touches OnDiskSizeTests.cs."
+  ],
+  "whats_new": [
+   "Unconditional first-seen/non-link/non-cloud-only probe eligibility rule, replacing IsDue's three listing-driven gates",
+   "ProbePipeline: bounded parallel probe workers with single-writer apply back on the listing thread",
+   "Directory-open-with-suspended-atime (FILE_WRITE_ATTRIBUTES + SetFileInformationByHandle LastAccessTime=-1) with ACL-limited fallback to today's open",
+   "tests/HoldRig console (hold/snapshot verbs, stdin-EOF lifetime)",
+   "HeldOpenTreeTests fixture combining criteria 1, 3, 6 and 7 in one scan against one temp tree with a positive control",
+   "Rewritten OnDiskSizeTests assertions reflecting unconditional probing (ALoneNameUnderTheRootIsChargedAtItsListingSize) and a corrected test name for the WOF-suspect-named ACE-denial test",
+   "Advisory validate-stage drive-time re-measurement against the spike's own bars",
+   "Three architecture rules: single-writer store, confined SetFileInformationByHandle call site, CreateFileW-only probe route"
+  ],
+  "whats_reused": [
+   "SizeProbe.Probe internals, unchanged",
+   "SynchronousIoCancel / FILE_READ_ATTRIBUTES-only open route, unchanged",
+   "Scanner.Correct/Credit rollup mechanism as the sole store-mutation path",
+   "Inline repeat-FileId hardlink correction path (Scanner.cs:243-256), unchanged",
+   "Hardlink dedup via HashSet<UInt128> FileId (SL-042/U-017)",
+   "Existing ACE-denial handling (ProbeFailed, listing size kept) -- criterion 5, cut and already present",
+   "Existing large-file-append handling -- criterion 2, cut and already present",
+   "tests/CfProvider wiring pattern, reused for tests/HoldRig",
+   "Existing unreadable-folder recording and fallback-open path"
+  ]
+ }
+}

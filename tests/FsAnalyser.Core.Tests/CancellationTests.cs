@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using FsAnalyser.Core.Scanning;
+using FsAnalyser.Core.Store;
 
 namespace FsAnalyser.Core.Tests;
 
@@ -217,7 +218,10 @@ public class CancellationTests
         Assert.Equal(Scans.UnreadableByPath(none), Scans.UnreadableByPath(liveResult));
         Assert.Equal(none.Probes, liveResult.Probes);
         Assert.Equal(none.ProbeFailures, liveResult.ProbeFailures);
-        Assert.Equal(Scans.Snapshot(none.Store), Scans.Snapshot(liveResult.Store));
+        // Whether a probe corrected a figure is a fact about the listing at that moment, and the first scan's probe
+        // of the stale name made Windows refresh that name's directory entry (SL-045), so the second scan lists it
+        // current. Everything else, sizes included, must be the same.
+        Assert.Equal(WithoutCorrections(Scans.Snapshot(none.Store)), WithoutCorrections(Scans.Snapshot(liveResult.Store)));
         switch (shape)
         {
             case "unreadable folder":
@@ -226,6 +230,7 @@ public class CancellationTests
             case "stale hardlink":
                 Assert.Equal(1, none.Probes);
                 Assert.Equal(64 * TempTree.MiB, none.Totals.Bytes);
+                Assert.Equal((1, 0), (none.ProbeCorrections, liveResult.ProbeCorrections));
                 break;
             default:
                 Assert.Equal(2, none.Probes);
@@ -234,6 +239,9 @@ public class CancellationTests
                 break;
         }
     }
+
+    private static Dictionary<string, Scans.EntryState> WithoutCorrections(Dictionary<string, Scans.EntryState> entries) =>
+        entries.ToDictionary(e => e.Key, e => e.Value with { Flags = e.Value.Flags & ~EntryFlags.ProbeCorrected }, StringComparer.Ordinal);
 
     private static string UnreachableShare() => $@"\\192.0.2.{Random.Shared.Next(1, 255)}\s";
 

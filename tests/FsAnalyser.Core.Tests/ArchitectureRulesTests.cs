@@ -87,6 +87,8 @@ public class ArchitectureRulesTests
     /// Every Win32 call goes through Native, where paths are \\?\ and built by LongPath. Fixture-only
     /// interop lives in TestNative.cs, and the opt-in cloud rig's in its two files (SL-049): the
     /// Trait-gated class that unregisters its sync root, and the provider process under tests\CfProvider.
+    /// The held-open rig under tests\HoldRig (SL-056) is a process of its own that reads metadata through
+    /// handles, the observer the scan is checked against, so it shares nothing with Native either.
     /// </summary>
     [Fact]
     public void InteropLivesOnlyInNative()
@@ -94,6 +96,7 @@ public class ArchitectureRulesTests
         AssertNoMatch(Files("src", "*.cs").Concat(Files("tests", "*.cs"))
                 .Where(f => !f.StartsWith(@"src\FsAnalyser.Core\Native\", StringComparison.OrdinalIgnoreCase))
                 .Where(f => !f.StartsWith(@"tests\CfProvider\", StringComparison.OrdinalIgnoreCase))
+                .Where(f => !f.StartsWith(@"tests\HoldRig\", StringComparison.OrdinalIgnoreCase))
                 .Except([@"tests\FsAnalyser.Core.Tests\TestNative.cs", @"tests\FsAnalyser.Core.Tests\CloudPlaceholderTests.cs"]),
             @"(Library|Dll)Import");
     }

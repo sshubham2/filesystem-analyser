@@ -38,7 +38,9 @@ consequence, which only DFS namespaces meet; an unreadable-folder record does no
 nothing fails. `CloudOnly` is set on **files only**. A folder carrying RECALL attributes is a Folder and
 is entered.
 
-**SizeProbe** (O-004). It runs in **three** cases, never twice for one file, and never for a
+**SizeProbe** (O-004). *Superseded by SL-056 (docs/design/SL-056-probe-every-file.md): every file the scan
+charges is probed, never a later name of a hardlinked file and never a cloud-only file, after the listing walk and on
+worker threads.* As SL-020 built it, it ran in **three** cases, never twice for one file, and never for a
 cloud-only file:
 1. a WOF suspect (listing AllocationSize 0, EndOfFile at least 4096, not sparse);
 2. a **large file**: listing EndOfFile or AllocationSize at least 64 MiB (`LargeFileThreshold`);
@@ -90,7 +92,8 @@ so it becomes `\` again.
 
 ## Key decisions added or changed
 
-- **Large files are probed (O-004, option a).** Measured on this PC: after a writer flushes, the
+- **Large files are probed (O-004, option a).** *Superseded by SL-056: the gap accepted below is closed by probing
+  every file, since a file held open and growing can list 0 B for as long as it is held (U-018).* Measured on this PC: after a writer flushes, the
   directory entry of a file it still holds open matches the file (64 MiB listed and real). Between an
   unflushed write and the lazy writer, the entry lagged: 1 MiB listed against 64 MiB real, caught up
   within 2 s. The rule catches large files that keep growing, the ones that carry a drive's bytes.
@@ -106,7 +109,8 @@ so it becomes `\` again.
   the gap the unreadable folders hold.
 - **Win32 paths.** Every CreateFileW takes a `LongPath.Child` or normalised-root `\\?\` path. The
   hardlink probe opens the repeat name's own path in the folder being listed. It does not open the
-  charged record's path. The extended long-path case now probes a WOF file and a hardlink pair under a
+  charged record's path. *Since SL-056 the probe opens each charged file through its own name's `\\?\` path, built
+  from the store after the walk, and a repeat name is never opened.* The extended long-path case now probes a WOF file and a hardlink pair under a
   path over 400 characters with trailing-dot names. A `Win32Path` type and `ScanStore.GetNativePath`
   wait for the slice that adds a third Win32 caller (open in Explorer, delete).
 - **Cancel interrupts a blocked call (SL-024, replacing the m7 deferral).** Every Win32 filesystem call
@@ -123,6 +127,8 @@ so it becomes `\` again.
   - **Probes run before their folder is appended**, so an aborted probe aborts its folder whole. The
     probe of a first repeat runs while the folder is appended. If that probe is aborted, the charged
     record stays as it would be had the repeat never been reached, and the folder is committed whole.
+    *Superseded by SL-056: probes run on worker threads after the walk, a batch at a time, each worker with its own
+    guard; a batch Cancel reaches commits nothing, as a folder Cancel aborts commits nothing.*
   - **Handles of aborted calls are closed on a pool thread**, because on a share that stopped answering
     the close can wait on the server.
   - **Only the guard's own abort empties a listing.** `LastCallAborted` means the call was refused, or a

@@ -14,6 +14,14 @@ namespace FsAnalyser.Core.Scanning;
 /// of a hardlinked file the scan meets is always the same one: the store charges that name and flags the
 /// rest, and it is repeatable only because this is the one thread appending, in this order. Links are
 /// recorded and never entered.
+/// <para>Then every file the walk charged is sized from the file itself (SL-056, <see cref="SizeProbe"/>): the
+/// listing's figures are stale for a file another process holds open and is growing, and for a hardlink name not
+/// written through. Probes run on <see cref="ProbePass"/>'s worker threads a batch at a time, and this thread
+/// applies each batch once its workers have finished, so it stays the store's one writer. The scan is Completed
+/// only once every probe is applied.</para>
+/// <para>On a local NTFS volume, outside a sync engine's folders, each folder is listed through a handle that
+/// keeps its last-access time (<see cref="SynchronousIoCancel.OpenDirectory"/>), so the scan changes no folder's
+/// metadata where the folder lets it.</para>
 /// Nothing that goes wrong inside the tree fails the scan: an unreadable folder is flagged and listed in
 /// <see cref="ScanResult.Unreadable"/>.
 /// <para>Cancel interrupts the filesystem call the scan is blocked in, through the scan thread's
@@ -42,11 +50,46 @@ public static class Scanner
         return run.Execute();
     }
 
-    /// <summary>What a folder's read error, or a probe's, means for the scan.</summary>
+    /// <summary>What a folder's read error means for the scan.</summary>
     internal static ReadOutcome ClassifyReadError(int error, bool cancelRequested) =>
         error == 0 ? ReadOutcome.Read
         : error == Kernel32.ERROR_OPERATION_ABORTED && cancelRequested ? ReadOutcome.Cancelled
         : ReadOutcome.Unreadable;
+
+    /// <summary>
+    /// Whether a scan keeps its folders' last-access times, from what the root's volume says it is: only on a local
+    /// NTFS volume, the one place the suppression was measured (review M6). A share, ReFS, FAT and exFAT are listed
+    /// as before.
+    /// </summary>
+    internal static bool MayKeepLastAccess(string? fileSystem, bool remote) =>
+        !remote && string.Equals(fileSystem, "NTFS", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Whether <paramref name="win32Path"/> is <paramref name="win32Root"/> or a path below it. Both are \\?\ paths.</summary>
+    internal static bool IsAtOrUnder(string win32Path, string win32Root) =>
+        win32Path.StartsWith(win32Root, StringComparison.OrdinalIgnoreCase)
+        && (win32Path.Length == win32Root.Length || win32Root.EndsWith('\\') || win32Path[win32Root.Length] == '\\');
+
+    /// <summary>
+    /// The OneDrive folders the environment names (OneDrive, OneDriveConsumer, OneDriveCommercial), in \\?\ form:
+    /// the sync roots this PC has (U-004, U-019), under which no folder's last-access time is kept (review M6).
+    /// A folder another sync engine manages is not found this way; see docs/design/SL-056-probe-every-file.md.
+    /// </summary>
+    internal static IReadOnlyList<string> SyncRootsFromEnvironment() =>
+        NormalizeSyncRoots(new[] { "OneDrive", "OneDriveConsumer", "OneDriveCommercial" }.Select(Environment.GetEnvironmentVariable));
+
+    private static IReadOnlyList<string> NormalizeSyncRoots(IEnumerable<string?> roots)
+    {
+        var normalized = new List<string>();
+        foreach (string? root in roots)
+        {
+            if (string.IsNullOrWhiteSpace(root) || !Path.IsPathFullyQualified(root))
+                continue;
+            string win32 = LongPath.NormalizeRoot(root).Win32;
+            if (!normalized.Contains(win32, StringComparer.OrdinalIgnoreCase))
+                normalized.Add(win32);
+        }
+        return normalized;
+    }
 
     internal enum ReadOutcome
     {
@@ -63,18 +106,30 @@ public static class Scanner
         SynchronousIoCancel io) : IDisposable
     {
         private const int RootRow = -1; // the root's own listing, which belongs to no row
+        private const int RemoteProtocolInfoSize = 128; // FILE_REMOTE_PROTOCOL_INFO is 116 bytes
+
+        // What a sync engine sets on folders it manages. Such a folder is listed as before, its last-access time
+        // not kept: a metadata call there could reach the engine (review M6).
+        private const uint CloudFolderAttributes = Kernel32.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | Kernel32.FILE_ATTRIBUTE_RECALL_ON_OPEN
+            | Kernel32.FILE_ATTRIBUTE_OFFLINE | Kernel32.FILE_ATTRIBUTE_PINNED | Kernel32.FILE_ATTRIBUTE_UNPINNED;
+
         private readonly ScanStore _store = new();
         private readonly DirectoryReader _reader = new(io);
+        // The store's one writer. Every change to it after an append, and to the totals, comes through Correct and
+        // Credit, which refuse any other thread (review M2).
+        private readonly ThreadOwner _owner = new("A scan's store and totals");
         // Row: the folder's top-level row in the tracker, inherited from the root child it is under.
         private readonly Stack<(int Entry, string Path, int Row)> _pending = new();
         private readonly TopLevelTracker _topLevel = new(progress, display, options.TopLevelInterval);
         private readonly List<UnreadableFolder> _unreadable = [];
-        private readonly List<DueProbe> _dueProbes = [];
-        private readonly HashSet<UInt128> _settled = [];
+        private readonly IReadOnlyList<string> _syncRoots = options.SyncRoots is { } roots ? NormalizeSyncRoots(roots) : SyncRootsFromEnvironment();
         private readonly Stopwatch _clock = Stopwatch.StartNew();
         private bool _fullClass = options.ForceFullDirectoryClass;
+        private bool _keepLastAccess; // the root's volume is local NTFS: decided once, at the root
+        private string? _lastFolder;
+        private TimeSpan _listingTime, _sizingTime, _longestProbe;
         private long _files, _folders, _links, _bytes, _bytesOnDisk;
-        private int _probes, _probeFailures, _foldersListed, _nextDueProbe;
+        private int _probes, _probeFailures, _probeCorrections, _vanished, _foldersListed, _lastAccessAsked, _lastAccessKept;
 
         public ScanResult Execute()
         {
@@ -97,20 +152,26 @@ public static class Scanner
             while (_pending.Count > 0)
             {
                 (int folder, string path, int row) = _pending.Pop();
-                error = _reader.Read(path, _fullClass);
+                bool keep = KeepsLastAccess(path, (uint)_store.Attributes(folder));
+                error = _reader.Read(path, _fullClass, keep);
+                CountListingOpen(keep);
                 if (FolderDone(folder, path, row, error))
                     return Finish(ScanStatus.Cancelled);
             }
+            _listingTime = _clock.Elapsed;
 
-            return Finish(ScanStatus.Completed);
+            bool sized = SizeFiles();
+            _sizingTime = _clock.Elapsed - _listingTime;
+            return Finish(sized ? ScanStatus.Completed : ScanStatus.Cancelled);
         }
 
-        // Opens the root, checks it is a folder, and picks the listing class from its first call.
-        // Returns the root's entry, or -1 with the error when the root cannot be read at all.
+        // Opens the root, checks it is a folder, decides from its volume whether folders' last-access times are
+        // kept, and picks the listing class from its first call. Returns the root's entry, or -1 with the error
+        // when the root cannot be read at all.
         private int ListRoot(out int rootEntry)
         {
             rootEntry = -1;
-            int error = _reader.Open(win32Root, out SafeFileHandle? handle);
+            int error = _reader.Open(win32Root, keepLastAccess: false, out SafeFileHandle? handle);
             if (error != 0)
                 return error;
 
@@ -122,6 +183,22 @@ public static class Scanner
                 // Checked before the class is picked: error 87 must only ever mean "class unsupported".
                 if ((attributes & Kernel32.FILE_ATTRIBUTE_DIRECTORY) == 0)
                     return Kernel32.ERROR_DIRECTORY;
+
+                error = DecideLastAccess(handle!);
+                if (error != 0)
+                    return error;
+                bool keep = KeepsLastAccess(win32Root, attributes);
+                if (keep)
+                {
+                    // Opened again now that the volume is known, through a handle that keeps the root's last-access
+                    // time. Nothing was listed through the first one, and an open alone moves no time.
+                    error = _reader.Open(win32Root, keepLastAccess: true, out SafeFileHandle? keeping);
+                    if (error != 0)
+                        return error;
+                    io.Close(handle!);
+                    handle = keeping;
+                }
+                CountListingOpen(keep);
 
                 error = _reader.List(handle!, _fullClass);
                 if (!_fullClass && _reader.Count == 0 && error is Kernel32.ERROR_INVALID_FUNCTION
@@ -142,21 +219,63 @@ public static class Scanner
             }
         }
 
-        // Probes what the listing cannot be trusted for, appends the listing as the folder's children,
-        // queues its subfolders, publishes progress, and reports whether the scan must stop. An aborted
-        // listing or probe commits nothing and stops the scan. The one exit of every folder's listing, so
-        // the top-level tracker hears of each committed folder once, here: the root's listing seeds its rows,
-        // and every other folder is credited to its row.
+        // Decides once, from the root's handle, whether this scan keeps folders' last-access times: only on a local
+        // NTFS volume (MayKeepLastAccess). A volume that will not say keeps nothing. 0, or Aborted when Cancel
+        // stopped one of the two queries.
+        private unsafe int DecideLastAccess(SafeFileHandle root)
+        {
+            int error = io.QueryFileSystemName(root, out string? fileSystem);
+            if (io.LastCallAborted)
+                return SynchronousIoCancel.Aborted;
+            bool remote = false;
+            if (error == 0)
+            {
+                // Answered only for a handle on a network file system, which may call itself NTFS.
+                byte* info = stackalloc byte[RemoteProtocolInfoSize];
+                remote = io.Query(root, Kernel32.FileRemoteProtocolInfo, info, RemoteProtocolInfoSize) == 0;
+                if (io.LastCallAborted)
+                    return SynchronousIoCancel.Aborted;
+            }
+            _keepLastAccess = error == 0 && MayKeepLastAccess(fileSystem, remote);
+            return 0;
+        }
+
+        // Whether a folder's listing handle is asked to keep its last-access time: on the volume that allows it, and
+        // not in a folder a sync engine manages (review M6). The folder itself may still refuse (KeptLastAccess).
+        private bool KeepsLastAccess(string folderPath, uint attributes)
+        {
+            if (!_keepLastAccess || (attributes & CloudFolderAttributes) != 0)
+                return false;
+            foreach (string root in _syncRoots)
+            {
+                if (IsAtOrUnder(folderPath, root))
+                    return false;
+            }
+            return true;
+        }
+
+        private void CountListingOpen(bool asked)
+        {
+            if (!asked)
+                return;
+            _lastAccessAsked++;
+            if (io.KeptLastAccess)
+                _lastAccessKept++;
+        }
+
+        // Appends the listing as the folder's children, queues its subfolders, publishes progress, and reports
+        // whether the scan must stop. An aborted listing commits nothing and stops the scan. The one exit of every
+        // folder's listing, so the top-level tracker hears of each committed folder once, here: the root's listing
+        // seeds its rows, and every other folder is credited to its row.
         private bool FolderDone(int folder, string folderPath, int row, int error)
         {
-            if (ClassifyReadError(error, ct.IsCancellationRequested) == ReadOutcome.Cancelled || !ProbeListing(folderPath))
+            if (ClassifyReadError(error, ct.IsCancellationRequested) == ReadOutcome.Cancelled)
                 return true;
 
             int first = _store.Count;
             int count = _reader.Count;
-            _nextDueProbe = 0;
             for (int k = 0; k < count; k++)
-                AddEntry(folder, folderPath, k);
+                AddEntry(folder, k);
             _store.SetChildren(folder, first, count);
 
             if (error != 0)
@@ -182,117 +301,147 @@ public static class Scanner
                 _topLevel.FolderExited(folder, row, error != 0, pushed, Totals);
 
             _foldersListed++;
+            _lastFolder = folderPath;
             progress.Publish(Totals, _unreadable.Count, folderPath);
             options.AfterFolder?.Invoke(_foldersListed);
             return ct.IsCancellationRequested;
         }
 
-        // Reads the true size of every file in the listing that is due a probe (SizeProbe.IsDue), before
-        // anything of the folder is appended, so that an aborted probe aborts the folder whole. A name of a
-        // file already settled by a probe is skipped, as the append would skip it. False when a probe was
-        // aborted by Cancel.
-        private bool ProbeListing(string folderPath)
-        {
-            _dueProbes.Clear();
-            for (int k = 0; k < _reader.Count; k++)
-            {
-                ref readonly RawEntry raw = ref _reader[k];
-                bool isDirectory = (raw.Attributes & Kernel32.FILE_ATTRIBUTE_DIRECTORY) != 0;
-                (EntryKind kind, bool cloudOnly) = EntryClassifier.Classify(raw.Attributes, raw.ReparseTag, isDirectory);
-                if (kind != EntryKind.File
-                        || !SizeProbe.IsDue(raw.AllocationSize, raw.EndOfFile, raw.Attributes, cloudOnly)
-                        || (ScanStore.HasFileId(raw.FileId) && _settled.Contains(raw.FileId)))
-                    continue;
-
-                int error = SizeProbe.Probe(io, LongPath.Child(folderPath, _reader.NameOf(raw)), out long size, out long onDisk);
-                if (ClassifyReadError(error, ct.IsCancellationRequested) == ReadOutcome.Cancelled)
-                    return false;
-                _dueProbes.Add(new DueProbe(k, error, size, onDisk));
-                if (ScanStore.HasFileId(raw.FileId))
-                    _settled.Add(raw.FileId);
-            }
-            return true;
-        }
-
-        private void AddEntry(int parent, string parentPath, int index)
+        private void AddEntry(int parent, int index)
         {
             ref readonly RawEntry raw = ref _reader[index];
             bool isDirectory = (raw.Attributes & Kernel32.FILE_ATTRIBUTE_DIRECTORY) != 0;
             (EntryKind kind, bool cloudOnly) = EntryClassifier.Classify(raw.Attributes, raw.ReparseTag, isDirectory);
-            ReadOnlySpan<char> name = _reader.NameOf(raw);
             // The store applies the counting rule: a folder or a link posts nothing, and a later name of a
-            // file already charged is flagged and posts one file and no bytes.
-            int entry = _store.Append(parent, name, kind, cloudOnly ? EntryFlags.CloudOnly : EntryFlags.None,
-                raw.Attributes, raw.EndOfFile, raw.AllocationSize, raw.FileId, out int charged, out ScanStore.Posted posted);
+            // file already charged is flagged and posts one file and no bytes. A file is charged its listing sizes
+            // here, which SizeFiles replaces with the file's own once every folder is listed.
+            int entry = _store.Append(parent, _reader.NameOf(raw), kind, cloudOnly ? EntryFlags.CloudOnly : EntryFlags.None,
+                raw.Attributes, raw.EndOfFile, raw.AllocationSize, raw.FileId, out _, out ScanStore.Posted posted);
             Credit(entry, posted, inPlace: false);
 
-            switch (kind)
+            if (kind == EntryKind.Link)
+                _links++;
+            else if (kind == EntryKind.Folder)
+                _folders++;
+        }
+
+        // Sizes every file the walk charged from the file itself (SL-056), a batch at a time: this thread builds the
+        // batch's paths from the store, the pass's workers probe them, and this thread applies every reading once
+        // the batch's workers have all finished. A later name of a hardlinked file is never probed: it charges
+        // nothing, and the first name's probe reads the same file (review M4). False when Cancel stopped a batch,
+        // which commits nothing: its files keep their listing sizes, like every file of a batch never reached.
+        private bool SizeFiles()
+        {
+            ProbeRule rule = options.ProbeRule ?? ((kind, flags, _, _, _) => SizeProbe.IsEligible(kind, flags));
+            int due = 0;
+            for (int e = 1; e < _store.Count; e++)
             {
-                case EntryKind.Link:
-                    _links++;
-                    return;
-                case EntryKind.Folder:
-                    _folders++;
-                    return;
+                if (IsDue(rule, e))
+                    due++;
             }
+            progress.PublishSizing(0, due);
+            if (due == 0)
+                return true;
 
-            DueProbe? due = null;
-            if (_nextDueProbe < _dueProbes.Count && _dueProbes[_nextDueProbe].Index == index)
-                due = _dueProbes[_nextDueProbe++];
-
-            if (charged != entry)
+            var pass = new ProbePass(ct, options.Probe ?? SizeProbe.Probe,
+                options.ProbeWorkers > 0 ? options.ProbeWorkers : ProbePass.DefaultWorkers, options.ProbeAbandonAfter);
+            int size = Math.Min(due, options.ProbeBatch > 0 ? options.ProbeBatch : ProbePass.BatchSize);
+            var entries = new int[size];
+            var paths = new string[size];
+            var readings = new ProbeReading[size];
+            int batched = 0, sized = 0, parent = -1;
+            string parentPath = win32Root;
+            try
             {
-                // A later name of a file already charged, which the store found by its ID. The first repeat
-                // corrects the charged record, whose listing may be stale.
-                const EntryFlags settled = EntryFlags.SizeProbed | EntryFlags.ProbeFailed | EntryFlags.CloudOnly;
-                if (!cloudOnly && (_store.Flags(charged) & settled) == 0)
+                for (int e = 1; e < _store.Count; e++)
                 {
-                    if (due is { } read)
-                        Correct(charged, read.Error, read.Size, read.OnDisk);
-                    else
-                        ProbeAndCorrect(charged, LongPath.Child(parentPath, name));
+                    if (!IsDue(rule, e))
+                        continue;
+                    int p = _store.Parent(e);
+                    if (p != parent)
+                    {
+                        parent = p;
+                        parentPath = p == 0 ? win32Root : LongPath.ToExtended(_store.GetPath(p));
+                    }
+                    entries[batched] = e;
+                    paths[batched] = LongPath.Child(parentPath, _store.Name(e));
+                    if (++batched < size)
+                        continue;
+                    if (!SizeBatch(pass, entries, paths, readings, batched))
+                        return false;
+                    sized += batched;
+                    batched = 0;
+                    Sized(sized, due);
                 }
-                return;
+                if (batched > 0)
+                {
+                    if (!SizeBatch(pass, entries, paths, readings, batched))
+                        return false;
+                    sized += batched;
+                    Sized(sized, due);
+                }
+                return true;
             }
-
-            if (due is { } probed)
-                Correct(entry, probed.Error, probed.Size, probed.OnDisk);
-        }
-
-        // The first repeat of a file whose charged record was never probed. An aborted probe changes
-        // nothing: the charged record stays as it would be had this name never been reached.
-        private void ProbeAndCorrect(int charged, string path)
-        {
-            int error = SizeProbe.Probe(io, path, out long size, out long onDisk);
-            if (ClassifyReadError(error, ct.IsCancellationRequested) != ReadOutcome.Cancelled)
-                Correct(charged, error, size, onDisk);
-        }
-
-        // Replaces a charged record's listing sizes with the file's own, which the store posts up its folders
-        // and this credits to the totals, or flags it ProbeFailed and keeps the listing sizes.
-        private void Correct(int charged, int probeError, long size, long onDisk)
-        {
-            _probes++;
-            UInt128 fileId = _store.FileId(charged);
-            if (ScanStore.HasFileId(fileId))
-                _settled.Add(fileId);
-            if (probeError != 0)
+            finally
             {
-                _store.AddFlags(charged, EntryFlags.ProbeFailed);
+                _longestProbe = pass.LongestProbe;
+            }
+        }
+
+        private bool IsDue(ProbeRule rule, int entry) =>
+            rule(_store.Kind(entry), _store.Flags(entry), (uint)_store.Attributes(entry), _store.Size(entry), _store.OnDisk(entry));
+
+        private bool SizeBatch(ProbePass pass, int[] entries, string[] paths, ProbeReading[] readings, int count)
+        {
+            if (pass.Run(paths, readings, count) == BatchOutcome.Cancelled)
+                return false;
+            for (int k = 0; k < count; k++)
+                Correct(entries[k], readings[k]);
+            return true;
+        }
+
+        private void Sized(int sized, int due)
+        {
+            progress.Publish(Totals, _unreadable.Count, _lastFolder ?? win32Root);
+            progress.PublishSizing(sized, due);
+            _topLevel.Corrected(Totals);
+        }
+
+        // Applies one probe's reading. The file's own sizes replace its listing's, which the store posts up its
+        // folders and this credits to the totals; a refusal (ProbeFailed) or a file gone since it was listed keeps
+        // the listing's sizes.
+        private void Correct(int entry, ProbeReading reading)
+        {
+            _owner.Check();
+            _probes++;
+            if (reading.Error != 0)
+            {
+                if (SizeProbe.IsGone(reading.Error))
+                {
+                    _vanished++;
+                    return;
+                }
+                _store.AddFlags(entry, EntryFlags.ProbeFailed);
                 _probeFailures++;
                 return;
             }
 
-            Credit(charged, _store.CorrectSizes(charged, size, onDisk), inPlace: true);
-            _store.AddFlags(charged, EntryFlags.SizeProbed);
+            EntryFlags flags = EntryFlags.SizeProbed;
+            if (_store.Size(entry) != reading.EndOfFile || _store.OnDisk(entry) != reading.AllocationSize)
+            {
+                Credit(entry, _store.CorrectSizes(entry, reading.EndOfFile, reading.AllocationSize), inPlace: true);
+                flags |= EntryFlags.ProbeCorrected;
+                _probeCorrections++;
+            }
+            _store.AddFlags(entry, flags);
         }
 
         // The one way what the store posted reaches the running totals, so the root's rollups stay the
         // totals. An append is always under the folder being listed, whose row the tracker credits when the
-        // listing commits. A correction can land on a record under any row, so that row is credited now,
-        // whatever listing this is.
+        // listing commits. A correction can land on a record under any row, so that row is credited now.
         private void Credit(int entry, ScanStore.Posted posted, bool inPlace)
         {
+            _owner.Check();
             _files += posted.Files;
             _bytes += posted.Size;
             _bytesOnDisk += posted.OnDisk;
@@ -313,9 +462,16 @@ public static class Scanner
             Totals = Totals,
             Unreadable = _unreadable,
             ProbeFailures = _probeFailures,
+            VanishedBeforeProbe = _vanished,
             FileIdsAvailable = status != ScanStatus.RootUnreadable && !_fullClass,
             Elapsed = _clock.Elapsed,
             Probes = _probes,
+            ProbeCorrections = _probeCorrections,
+            ListingTime = _listingTime == TimeSpan.Zero ? _clock.Elapsed : _listingTime,
+            SizingTime = _sizingTime,
+            LongestProbe = _longestProbe,
+            LastAccessAsked = _lastAccessAsked,
+            LastAccessKept = _lastAccessKept,
         };
 
         private unsafe int QueryAttributes(SafeFileHandle handle, out uint attributes)
@@ -328,7 +484,4 @@ public static class Scanner
 
         public void Dispose() => _reader.Dispose();
     }
-
-    /// <summary>A probe run before its folder was appended: the listing index it belongs to and what it read.</summary>
-    private readonly record struct DueProbe(int Index, int Error, long Size, long OnDisk);
 }

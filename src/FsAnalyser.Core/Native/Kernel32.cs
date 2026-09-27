@@ -11,6 +11,7 @@ internal static unsafe partial class Kernel32
     // Access rights
     public const uint FILE_LIST_DIRECTORY = 0x0001;
     public const uint FILE_READ_ATTRIBUTES = 0x0080;
+    public const uint FILE_WRITE_ATTRIBUTES = 0x0100; // asked for only to keep a listed folder's last-access time (SL-056)
     public const uint THREAD_TERMINATE = 0x0001; // the right CancelSynchronousIo needs
 
     // Share modes and creation
@@ -24,6 +25,8 @@ internal static unsafe partial class Kernel32
     public const uint FILE_ATTRIBUTE_REPARSE_POINT = 0x400;
     public const uint FILE_ATTRIBUTE_OFFLINE = 0x1000;
     public const uint FILE_ATTRIBUTE_RECALL_ON_OPEN = 0x40000;
+    public const uint FILE_ATTRIBUTE_PINNED = 0x80000;
+    public const uint FILE_ATTRIBUTE_UNPINNED = 0x100000;
     public const uint FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS = 0x400000;
 
     // Reparse tags, for reference: the first two carry the name-surrogate bit and so are links, DFS does
@@ -42,8 +45,10 @@ internal static unsafe partial class Kernel32
     public const uint SEM_FAILCRITICALERRORS = 0x0001;
 
     // FILE_INFO_BY_HANDLE_CLASS
+    public const int FileBasicInfo = 0;
     public const int FileStandardInfo = 1;
     public const int FileAttributeTagInfo = 9;
+    public const int FileRemoteProtocolInfo = 13; // answered only for a handle on a network file system
     public const int FileFullDirectoryInfo = 14;
     public const int FileFullDirectoryRestartInfo = 15;
     public const int FileIdExtdDirectoryInfo = 19;
@@ -51,6 +56,7 @@ internal static unsafe partial class Kernel32
 
     // Win32 errors the scanner branches on
     public const int ERROR_FILE_NOT_FOUND = 2;
+    public const int ERROR_PATH_NOT_FOUND = 3;
     public const int ERROR_ACCESS_DENIED = 5;
     public const int ERROR_INVALID_FUNCTION = 1;
     public const int ERROR_NO_MORE_FILES = 18;
@@ -76,6 +82,24 @@ internal static unsafe partial class Kernel32
         public uint ReparseTag;
     }
 
+    /// <summary>
+    /// Times are FILETIMEs. Set through a handle, 0 leaves a field as it is, and a LastAccessTime of -1 tells the
+    /// file system not to update the last-access time for anything done through that handle. 40 bytes on x64:
+    /// four 8-byte times, the attributes, and 4 bytes of padding (<see cref="FileBasicInfoSize"/>).
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct FILE_BASIC_INFO
+    {
+        public long CreationTime;
+        public long LastAccessTime;
+        public long LastWriteTime;
+        public long ChangeTime;
+        public uint FileAttributes;
+    }
+
+    /// <summary>The size of FILE_BASIC_INFO in winbase.h on x64, which every use of the struct is checked against.</summary>
+    public const int FileBasicInfoSize = 40;
+
     [LibraryImport("kernel32.dll", EntryPoint = "CreateFileW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     public static partial SafeFileHandle CreateFile(
         string fileName, uint desiredAccess, uint shareMode, nint securityAttributes,
@@ -84,6 +108,16 @@ internal static unsafe partial class Kernel32
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool GetFileInformationByHandleEx(SafeFileHandle file, int infoClass, void* buffer, uint bufferSize);
+
+    /// <summary>Only SynchronousIoCancel's directory open calls this, to keep a listed folder's last-access time (SL-056).</summary>
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool SetFileInformationByHandle(SafeFileHandle file, int infoClass, void* buffer, uint bufferSize);
+
+    [LibraryImport("kernel32.dll", EntryPoint = "GetVolumeInformationByHandleW", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetVolumeInformationByHandle(SafeFileHandle file, char* volumeName, uint volumeNameSize,
+        uint* serialNumber, uint* maximumComponentLength, uint* fileSystemFlags, char* fileSystemName, uint fileSystemNameSize);
 
     [LibraryImport("kernel32.dll")]
     public static partial uint GetCurrentThreadId();

@@ -3,8 +3,8 @@ using FsAnalyser.Core.Native;
 namespace FsAnalyser.Core.Scanning;
 
 /// <summary>
-/// Running counters for a scan in progress. One writer, the scanner, once per folder; any number of
-/// readers poll them. There are no events.
+/// Running counters for a scan in progress. One writer, the scanner's thread, once per folder and then once per
+/// batch of files sized; any number of readers poll them. There are no events.
 /// </summary>
 public sealed class ScanProgress
 {
@@ -16,6 +16,8 @@ public sealed class ScanProgress
     private long _unreadable;
     private string? _currentFolder;
     private TopLevelSnapshot? _topLevel;
+    private long _filesToSize;
+    private long _filesSized;
 
     public long Files => Volatile.Read(ref _files);
     public long Folders => Volatile.Read(ref _folders);
@@ -42,7 +44,22 @@ public sealed class ScanProgress
     /// </summary>
     public TopLevelSnapshot? TopLevel => Volatile.Read(ref _topLevel);
 
+    /// <summary>
+    /// How many files the scan is reading its own size for, once every folder is listed (SL-056); 0 while it is
+    /// still listing. From then on the counters above take each batch's corrections as it is applied.
+    /// </summary>
+    public long FilesToSize => Volatile.Read(ref _filesToSize);
+
+    /// <summary>How many of <see cref="FilesToSize"/> have been sized and applied.</summary>
+    public long FilesSized => Volatile.Read(ref _filesSized);
+
     internal void PublishTopLevel(TopLevelSnapshot snapshot) => Volatile.Write(ref _topLevel, snapshot);
+
+    internal void PublishSizing(long sized, long toSize)
+    {
+        Volatile.Write(ref _filesSized, sized);
+        Volatile.Write(ref _filesToSize, toSize);
+    }
 
     internal void Publish(in ScanTotals totals, long unreadable, string currentFolder)
     {

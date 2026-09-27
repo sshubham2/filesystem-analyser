@@ -5,8 +5,10 @@ namespace FsAnalyser.Core.Tests;
 
 /// <summary>
 /// A folder that Cancel aborts commits nothing, and every folder committed before it is exactly as an
-/// uncancelled scan has it. Cancel is fed in at each guarded call of a real scan in turn: every listing
-/// buffer of a folder that needs several, every open, and every probe.
+/// uncancelled scan has it. Cancel is fed in at each guarded call of the scan thread in turn: every listing
+/// buffer of a folder that needs several, and every open and query. Files are probed on worker threads after
+/// the walk (SL-056), so a cancel anywhere in the walk leaves every file at its listing sizes; a cancel during
+/// the probes is ProbePassTests'.
 /// </summary>
 public class CancelledFolderTests
 {
@@ -25,9 +27,9 @@ public class CancelledFolderTests
         tree.Folder("h1");
         string charged = tree.File(@"h1\x.bin", 1000);
         tree.Folder("h2");
-        TempTree.Hardlink(tree.PathOf(@"h2\y.bin"), charged); // the first repeat: probed while h2 is appended
+        TempTree.Hardlink(tree.PathOf(@"h2\y.bin"), charged); // a later name: charges nothing and is never probed
         tree.Folder("probes");
-        tree.SparseFile(@"probes\large.bin", 64 * TempTree.MiB); // due a probe, which runs before the append
+        tree.SparseFile(@"probes\large.bin", 64 * TempTree.MiB);
         tree.File(@"probes\small.txt", 22);
         tree.Folder("z");
         tree.File(@"z\last.txt", 33);
@@ -53,18 +55,19 @@ public class CancelledFolderTests
             }
         }
         Assert.Equal(ScanStatus.Completed, baseline.Status);
-        Assert.Equal(2, baseline.Probes); // large.bin, and x.bin through its repeat y.bin
+        Assert.Equal(2005, baseline.Probes); // every file but y.bin, on worker threads after the walk
+        Assert.Equal(0, baseline.ProbeCorrections); // every file closed: each probe agreed with its listing
         string[] order = ["", "a", "big", "empty", "h1", "h2", "probes", "z"];
         Assert.Equal(order.Select(tree.PathOf), folderEnds.Select(f => f.Folder));
-        int big = Array.IndexOf(order, "big"), h2 = Array.IndexOf(order, "h2");
+        int big = Array.IndexOf(order, "big");
         int calls = guard!.Calls;
-        Assert.Equal(calls, folderEnds[^1].LastCall);
+        Assert.Equal(calls, folderEnds[^1].LastCall); // the probes are not the scan thread's calls
         int bigBuffers = folderEnds[big].LastCall - folderEnds[big - 1].LastCall - 2; // less its open and the final ERROR_NO_MORE_FILES
         Assert.True(bigBuffers > 1, $"big was listed in {bigBuffers} buffer(s): the between-buffers case needs several");
         Dictionary<string, Scans.EntryState> expected = Scans.Snapshot(baseline.Store);
-        string repeatCharged = tree.PathOf(@"h1\x.bin");
-        Assert.Equal(EntryFlags.SizeProbed, expected[repeatCharged].Flags);
+        Assert.Equal(EntryFlags.SizeProbed, expected[tree.PathOf(@"h1\x.bin")].Flags);
         Assert.Equal(EntryFlags.SizeProbed, expected[tree.PathOf(@"probes\large.bin")].Flags);
+        Assert.Equal(EntryFlags.HardlinkDuplicate, expected[tree.PathOf(@"h2\y.bin")].Flags);
 
         for (int k = 1; k <= calls; k++)
         {
@@ -103,17 +106,12 @@ public class CancelledFolderTests
             }
 
             int inProgress = folderEnds.FindIndex(f => f.LastCall >= k);
-            // x.bin is probed through its repeat y.bin, in the last two calls of h2, after h2's listing was
-            // appended. Cancelled anywhere in h2, x.bin stays as if y.bin had never been reached; cancelled
-            // in that probe, h2 is committed whole.
-            bool repeatNotProbed = inProgress == h2;
-            bool repeatProbe = repeatNotProbed && k > folderEnds[h2].LastCall - 2;
-            int committedCount = repeatProbe ? inProgress + 1 : inProgress;
+            int committedCount = inProgress;
             string at = $"Cancel {(duringTheCall ? "during" : "before")} call {k} of {calls}, in {folderEnds[inProgress].Folder}";
 
             Assert.True(ScanStatus.Cancelled == result.Status, $"{at}: {result.Status}");
             Assert.True(result.Unreadable.Count == 0, $"{at}: an aborted folder was reported unreadable");
-            Assert.True(result.ProbeFailures == 0, $"{at}: an aborted probe was counted as failed");
+            Assert.True(result.Probes == 0, $"{at}: {result.Probes} files were probed, though the walk never finished");
             Scans.AssertChargedBytesAreTheTotals(result);
             if (result.Store.Count > 0)
                 TraversalTests.AssertChildrenAreContiguous(result.Store); // no entry of an aborted folder left behind
@@ -135,8 +133,8 @@ public class CancelledFolderTests
                 Assert.True(expected.TryGetValue(path, out Scans.EntryState want), $"{at}: {path} is not in the uncancelled scan");
                 if (want.Kind == EntryKind.Folder && !committed.Contains(path))
                     want = want with { ChildCount = 0 }; // aborted, or never reached
-                if (repeatNotProbed && path == repeatCharged)
-                    want = want with { Flags = want.Flags & ~EntryFlags.SizeProbed };
+                // Never probed: the sizing comes after the walk. The sizes are the listing's, which every probe agreed with.
+                want = want with { Flags = want.Flags & ~EntryFlags.SizeProbed };
                 Assert.True(want == state, $"{at}: {path} is {state}, expected {want}");
             }
         }
@@ -159,7 +157,7 @@ public class CancelledFolderTests
         using var cts = new CancellationTokenSource();
         using var guard = new SynchronousIoCancel(cts.Token);
         using var reader = new DirectoryReader(guard);
-        Assert.Equal(0, guard.OpenDirectory(tree.ExtendedRoot, out var handle));
+        Assert.Equal(0, guard.OpenDirectory(tree.ExtendedRoot, keepLastAccess: true, out var handle));
         const int ThirdBuffer = 4; // call 1 was the open
         if (duringTheCall)
         {
@@ -203,7 +201,7 @@ public class CancelledFolderTests
         using var cts = new CancellationTokenSource(); // live, never cancelled
         using var guard = new SynchronousIoCancel(cts.Token);
         using var reader = new DirectoryReader(guard);
-        Assert.Equal(0, guard.OpenDirectory(tree.ExtendedRoot, out var handle));
+        Assert.Equal(0, guard.OpenDirectory(tree.ExtendedRoot, keepLastAccess: true, out var handle));
         const int ThirdBuffer = 4; // call 1 was the open
         guard.OverrideQueryError = (call, error) => call == ThirdBuffer ? SynchronousIoCancel.Aborted : error;
 
