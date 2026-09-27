@@ -1,0 +1,201 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-059",
+ "stage": "validate-slice",
+ "attempt": 1,
+ "at": "2026-09-27T15:09:51.622Z",
+ "head": "666f197ee1be38edc4d28a8b94212fc49de4be55",
+ "run_id": 1595,
+ "summary": "Criteria 1 to 4 hold on this machine, checked by commands run here rather than read from earlier stages.\n- The rename is live in StallRig. I built StallRig from its csproj, outside FsAnalyser.slnx, into a scratch folder: 0 warnings, 0 errors. Reflection on the built StallRig.dll shows RigLock has exactly one constant, SessionName = `Local\\FsAnalyser-SmbRig`. No `MachineName` identifier is left anywhere in code.\n- The kernel object is unchanged (O-005). The shell held `[Threading.Mutex]::new($false,'Local\\FsAnalyser-SmbRig')` (createdNew=True). The built StallRig.exe --wait-sec 2 then exited 1 after 2314 ms, with a TimeoutException that names `Local\\FsAnalyser-SmbRig`. There were 0 127.0.0.1 mappings before and after.\n- The three comments are corrected, and WindowCases.ps1 parses with 0 errors under both PowerShell 5.1.26100.9444 and 7.6.6. It has no BOM and 0 bytes >= 0x80, the same as its parent. Its diff is one line.\n- The full default suite passes 373/373. The 21 targeted tests pass: 18 SmbRigTests, 2 parse cases, 1 wording test.\n- The checks catch a regression. Reverting StalledShareTests.cs:17 made RigLockScopeWordingTests fail, naming that line. Putting back the parent commit's three files made Fitness report 4 violations, at Program.cs:13, StalledShareTests.cs:17, and WindowCases.ps1:1333 twice. After restoring them (hashes identical), Fitness reports that all 59 rules hold.\n\nThree things keep this from a full pass:\n- O-006 is owed to this stage and I could not discharge it. Whether one sign-in session's SMB mappings are invisible to another needs a second logon session. The spike showed this sandbox cannot create one, and neither of the elevated operations would create one.\n- Criterion 5 (cross-session exclusion) was deliberately not built. The design marks it non-material. The doc now states the limit and the trigger for a future switch to `Global\\`. But whether `Local\\` fails to span sessions, and whether `Global\\` would span them, is still not measured.\n- O-007, which code-review assigned to build-slice, is still open in the tree. I re-measured its premise: 5.1 parses non-ASCII in a comment with 0 errors and in a string with 2. So WindowScriptParseTests cannot catch the comment case its summary claims, and no test guards the file's ASCII-only invariant.\n\nThis is not a loop: build-slice ran once, with no caused_by.",
+ "payload": {
+  "status": "complete",
+  "verdict": "partial",
+  "contact": "code",
+  "summary": "Criteria 1 to 4 hold on this machine, checked by commands run here rather than read from earlier stages.\n- The rename is live in StallRig. I built StallRig from its csproj, outside FsAnalyser.slnx, into a scratch folder: 0 warnings, 0 errors. Reflection on the built StallRig.dll shows RigLock has exactly one constant, SessionName = `Local\\FsAnalyser-SmbRig`. No `MachineName` identifier is left anywhere in code.\n- The kernel object is unchanged (O-005). The shell held `[Threading.Mutex]::new($false,'Local\\FsAnalyser-SmbRig')` (createdNew=True). The built StallRig.exe --wait-sec 2 then exited 1 after 2314 ms, with a TimeoutException that names `Local\\FsAnalyser-SmbRig`. There were 0 127.0.0.1 mappings before and after.\n- The three comments are corrected, and WindowCases.ps1 parses with 0 errors under both PowerShell 5.1.26100.9444 and 7.6.6. It has no BOM and 0 bytes >= 0x80, the same as its parent. Its diff is one line.\n- The full default suite passes 373/373. The 21 targeted tests pass: 18 SmbRigTests, 2 parse cases, 1 wording test.\n- The checks catch a regression. Reverting StalledShareTests.cs:17 made RigLockScopeWordingTests fail, naming that line. Putting back the parent commit's three files made Fitness report 4 violations, at Program.cs:13, StalledShareTests.cs:17, and WindowCases.ps1:1333 twice. After restoring them (hashes identical), Fitness reports that all 59 rules hold.\n\nThree things keep this from a full pass:\n- O-006 is owed to this stage and I could not discharge it. Whether one sign-in session's SMB mappings are invisible to another needs a second logon session. The spike showed this sandbox cannot create one, and neither of the elevated operations would create one.\n- Criterion 5 (cross-session exclusion) was deliberately not built. The design marks it non-material. The doc now states the limit and the trigger for a future switch to `Global\\`. But whether `Local\\` fails to span sessions, and whether `Global\\` would span them, is still not measured.\n- O-007, which code-review assigned to build-slice, is still open in the tree. I re-measured its premise: 5.1 parses non-ASCII in a comment with 0 errors and in a string with 2. So WindowScriptParseTests cannot catch the comment case its summary claims, and no test guards the file's ASCII-only invariant.\n\nThis is not a loop: build-slice ran once, with no caused_by.",
+  "checks": [
+   {
+    "what": "Repo-local .NET 10 SDK, session and integrity of this shell",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 --version; (Get-Process -Id $PID).SessionId; whoami /groups | Select-String 'Mandatory Level'",
+    "outcome": "passed",
+    "evidence": "10.0.401; SessionId 1; Medium Mandatory Level (unelevated)"
+   },
+   {
+    "what": "No MachineName identifier left; every consumer of the lock string",
+    "command": "Grep MachineName|SessionName|FsAnalyser-SmbRig over the tree excluding .taad/",
+    "outcome": "passed",
+    "evidence": "Code has only SmbRig.cs:176 `public const string SessionName = @\"Local\\FsAnalyser-SmbRig\"` and SmbRig.cs:51 `RigLock.Take(RigLock.SessionName, ...)`, plus the cref at SmbRigTests.cs:8. The one `MachineName` left is the historical sentence at docs/design/SL-020-scanner.md:243, which describes SL-038 build 2 and is accurate as history. SmbRigTests.cs:137 uses GUID-suffixed test names. WindowCases.ps1 never opens this mutex by string: its own are FsAnalyser-WindowCases-*. It matches StallRig's message text 'Another stall-rig run' at :1353, which is unchanged."
+   },
+   {
+    "what": "StallRig builds outside FsAnalyser.slnx after the rename",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build tests/window/StallRig/StallRig.csproj -c Release -o %TEMP%\\sl059-validate-stallrig",
+    "outcome": "passed",
+    "evidence": "Build succeeded, 0 Warning(s), 0 Error(s), exit 0. The build was incremental (1.14 s), so the output was checked by reflection in the next check."
+   },
+   {
+    "what": "The built StallRig.dll carries the renamed constant with the unchanged value",
+    "command": "pwsh -NoProfile -Command [Reflection.Assembly]::LoadFile(StallRig.dll).GetType('FsAnalyser.Core.Tests.RigLock').GetFields(static) | name = GetRawConstantValue()",
+    "outcome": "passed",
+    "evidence": "SessionName = Local\\FsAnalyser-SmbRig (the only static field), runtime 10.0.12"
+   },
+   {
+    "what": "Real contention: the built StallRig.exe opens the same kernel object that PowerShell opens by string (O-005)",
+    "command": "$m=[Threading.Mutex]::new($false,'Local\\FsAnalyser-SmbRig',[ref]$created); $m.WaitOne(0); then StallRig.exe --marker <temp>\\armed.txt --wait-sec 2 with stdin closed; count-only Get-SmbMapping filtered to \\\\127.0.0.1\\* before and after",
+    "outcome": "passed",
+    "evidence": "holder: createdNew=True held=True session=1. StallRig: exit=1 after 2314 ms, stdout empty, stderr 'StallRig: TimeoutException: Another stall-rig run held Local\\FsAnalyser-SmbRig for 2 s, so this run did not start. Two rig runs cannot share 127.0.0.1: the SMB client allows one port per server name.' 127.0.0.1 mappings before=0, after=0. The temp run folder, including the tree StallRig leaves on a lock timeout, was deleted."
+   },
+   {
+    "what": "In one session, a Local\\ name and a Global\\ name with the same suffix are separate objects",
+    "command": "hold Local\\FsAnalyser-SmbRig-sl059probe here; in a second pwsh process open the Local\\ name, then the Global\\ name with the same suffix",
+    "outcome": "passed",
+    "evidence": "Other process: Local\\ createdNew=False, WaitOne(0)=False. Global\\ createdNew=True, WaitOne(0)=True. Session 1 only; this says nothing about behaviour across sessions."
+   },
+   {
+    "what": "Full default suite",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx",
+    "outcome": "passed",
+    "evidence": "Passed! Failed: 0, Passed: 373, Skipped: 0, Total: 373, Duration: 22 s, exit 0"
+   },
+   {
+    "what": "Targeted tests by name: 18 SmbRigTests, both WindowScriptParseTests hosts, and RigLockScopeWordingTests",
+    "command": "eng/dotnet.ps1 test FsAnalyser.slnx --no-build --filter \"FullyQualifiedName~SmbRigTests|FullyQualifiedName~WindowScriptParseTests|FullyQualifiedName~RigLockScopeWordingTests\" --logger console;verbosity=normal",
+    "outcome": "passed",
+    "evidence": "Total tests: 21, all passed: ASecondRunWaitsForTheFirst, ALiveHolderFailsTheNextRunLoudlyAndAKilledOneDoesNotBlockIt, 16 OnlyTheRigsOwnMappingsAreSwept cases, WindowCasesParses(powershell.exe, Desktop), WindowCasesParses(pwsh.exe, Core), NothingSaysTheRigLockSpansTheMachine"
+   },
+   {
+    "what": "WindowCases.ps1 parses under Windows PowerShell 5.1 and pwsh 7",
+    "command": "powershell.exe / pwsh.exe -NoProfile -Command [Parser]::ParseFile('tests/window/WindowCases.ps1',...)",
+    "outcome": "passed",
+    "evidence": "powershell.exe 5.1.26100.9444 errors=0; pwsh.exe 7.6.6 errors=0"
+   },
+   {
+    "what": "WindowCases.ps1 encoding kept: no BOM, pure ASCII, one-line diff",
+    "command": "[IO.File]::ReadAllBytes on the working file and on git show 2d47315c0:tests/window/WindowCases.ps1; git diff --numstat 2d47315c0 HEAD",
+    "outcome": "passed",
+    "evidence": "Working file: bom=False, nonascii=0. Parent: bom=False, nonascii=0. numstat 1/1. The byte counts differ only by CRLF (checkout) versus LF (git show)."
+   },
+   {
+    "what": "Mutation: the wording test fails when a stale comment comes back",
+    "command": "Replace 'in this sign-in session.' with 'on this machine.' in StalledShareTests.cs, run the RigLockScopeWordingTests filter --no-build, then git checkout",
+    "outcome": "passed",
+    "evidence": "Failed! 1 failed, and the failure names tests/FsAnalyser.Core.Tests/StalledShareTests.cs:17. The mutant exited 1. The file was restored with the same hash."
+   },
+   {
+    "what": "Fitness: the declared rules hold on the tree, and fire when the three parent-commit files are put back",
+    "command": "Fitness op=check (rebuild) on the tree; git checkout 2d47315c0 -- the three files; Fitness check; git checkout HEAD -- the three files; Fitness check",
+    "outcome": "passed",
+    "evidence": "Tree: 59 rules, every declared rule holds. With the parent files: 4 violations, at StalledShareTests.cs:17, WindowCases.ps1:1333 (both patterns) and StallRig/Program.cs:13. Restored: hashes identical, 59 rules hold, and git status shows only the engine's .taad records."
+   },
+   {
+    "what": "Residual machine-wide claims about RigLock: read each grep hit",
+    "command": "Grep -i 'machine-wide|on this machine|MachineName' over tests, docs, eng, src; Grep -i 'system-wide|all sessions|every session|across sessions|whole machine|per machine'",
+    "outcome": "passed",
+    "evidence": "Remaining hits, none of which claims RigLock is machine-wide: SL-020-scanner.md:32 (DFS, not measured), SL-020-scanner.md:243 (history of the SL-038 rename), eng/dotnet.ps1:5 (SDK), WindowCases.ps1:1985 and 2118 (measurements), TempTree.cs:150 (Developer Mode), and the wording test quoting itself. All were left unedited. The second grep hit only the wording test."
+   },
+   {
+    "what": "Premise of O-007 re-measured: 5.1 accepts non-ASCII in a comment but not in a string",
+    "command": "UTF-8 no-BOM scratch scripts in %TEMP% with an em dash and curly quotes: one in a comment, one in a double-quoted string; powershell.exe ParseFile",
+    "outcome": "passed",
+    "evidence": "5.1 comment errors=0; 5.1 string errors=2. So WindowScriptParseTests cannot catch the comment case its summary claims (WindowScriptParseTests.cs:8-9). The scratch folder was deleted."
+   },
+   {
+    "what": "O-007 fix present in the tree",
+    "command": "Read tests/FsAnalyser.Core.Tests/WindowScriptParseTests.cs; git status",
+    "outcome": "failed",
+    "evidence": "The summary still says it catches 'a non-ASCII dash or quote in an edited comment'. There is no byte >= 0x80 or BOM assertion. The tree is unchanged since 666f197. O-007 is owed to build-slice."
+   },
+   {
+    "what": "O-006: are SMB mappings from one sign-in session invisible to the rig's sweep in another?",
+    "outcome": "not-run",
+    "evidence": "Needs a second logon session. Spike 1 recorded the sandbox refusing Register-ScheduledTask (S4U). runas and self-elevation are forbidden. Neither registered elevated operation (whoami, read-denied-folders) creates a session or reads SMB mappings."
+   },
+   {
+    "what": "Cross-session mutual exclusion under Local\\ or Global\\ (criterion 5)",
+    "outcome": "not-run",
+    "evidence": "No second sign-in session is reachable (same reason as O-006). The design marks the case non-material and deferred. Spike 2 cases (a), (b) and (c) never ran."
+   },
+   {
+    "what": "Person-run network pass (WindowCases.ps1 -Case All -IncludeNetwork; Core.Tests with Network=SMB-LOOPBACK)",
+    "outcome": "not-run",
+    "evidence": "Opt-in. It changes this machine's SMB client mappings and is run by a person, not by an engine stage. StallRig was run only as far as the lock timeout, before any mapping step."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "1. Rename RigLock's public scope constant, including when StallRig is built outside FsAnalyser.slnx",
+    "met": "yes",
+    "how": "StallRig built from its csproj outside the slnx: 0 warnings, 0 errors. Reflection on the built StallRig.dll shows RigLock.SessionName = Local\\FsAnalyser-SmbRig as its only static field. No MachineName identifier in code. The built exe contends with a PowerShell holder of the same string (exit 1, TimeoutException naming the lock)."
+   },
+   {
+    "criterion": "2. Correct the stale 'on this machine' comments, with WindowCases.ps1 still parsing under Windows PowerShell 5.1",
+    "met": "yes",
+    "how": "The diff shows the three comments now say 'in this sign-in session' or 'per sign-in session'. ParseFile gives 0 errors under 5.1.26100.9444 and 7.6.6. No BOM, 0 non-ASCII bytes (same as the parent), numstat 1/1. The suite's parse test alone would not catch a non-ASCII comment (see O-007); the byte check here was run directly."
+   },
+   {
+    "criterion": "3. Sweep for residual machine-wide claims about RigLock, leaving unrelated hits alone",
+    "met": "yes",
+    "how": "Read every grep hit: none claims RigLock is machine-wide, and the unrelated hits (SDK, measurements, Developer Mode, DFS, the history sentence) are unedited. RigLockScopeWordingTests passes, and fails naming StalledShareTests.cs:17 when that comment is reverted. Fitness: 0 violations on the tree, 4 with the parent's files."
+   },
+   {
+    "criterion": "4. RigLock's existing in-session serialisation, covered by the 18 existing SmbRigTests",
+    "met": "yes",
+    "how": "18/18 SmbRigTests pass by name. The real built StallRig.exe also fails loudly (exit 1 in 2314 ms, lock named) while another process in session 1 holds Local\\FsAnalyser-SmbRig. Full suite 373/373."
+   },
+   {
+    "criterion": "5. Cross-session mutual exclusion of RigLock, when two processes in different sign-in sessions both hold a Global\\ named mutex",
+    "met": "not-checked",
+    "how": "The design's handling is there: there is no Global\\ anywhere, and SL-020-scanner.md:255-262 says runs from different sessions are NOT serialised and gives the trigger (switch to Global\\ and prove it in both orders, with a person running it). The behaviour itself was never measured: no second session is reachable from here."
+   }
+  ],
+  "planned": [
+   {
+    "ordinal": 1,
+    "met": "yes",
+    "evidence": "StallRig csproj built outside the slnx with 0 warnings and 0 errors. Reflection on StallRig.dll: SessionName = Local\\FsAnalyser-SmbRig. Grep finds no MachineName identifier in code. The live exe contends on the same kernel object."
+   },
+   {
+    "ordinal": 2,
+    "met": "yes",
+    "evidence": "The three comment lines are changed. WindowCases.ps1 ParseFile gives 0 errors under 5.1 and 7.6.6, no BOM, 0 bytes >= 0x80, and a one-line diff."
+   },
+   {
+    "ordinal": 3,
+    "met": "yes",
+    "evidence": "I read every grep hit for machine-wide, on this machine and MachineName over tests, docs, eng and src; the unrelated hits are unedited. Wording test mutation fails at StalledShareTests.cs:17. Fitness: 0 violations on the tree, 4 on the parent's files."
+   },
+   {
+    "ordinal": 4,
+    "met": "yes",
+    "evidence": "18/18 SmbRigTests pass by name (2 lock tests plus 16 sweep cases). Full suite 373/373. The real StallRig.exe times out loudly against a held Local\\FsAnalyser-SmbRig."
+   },
+   {
+    "ordinal": 5,
+    "met": "not-checked",
+    "evidence": "Deferred by the design (material:false), and the doc states the limit and the trigger. Cross-session behaviour is unmeasured: spike 1 showed the sandbox cannot create a second session, and no registered elevated operation creates one."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-005",
+    "verified": "yes",
+    "evidence": "Grep: the only code references are SmbRig.cs:51 and :176 (SessionName) and the cref at SmbRigTests.cs:8. MachineName survives only in the historical doc sentence at SL-020-scanner.md:243. StallRig was built outside the slnx (0/0), and reflection on its dll gives SessionName = Local\\FsAnalyser-SmbRig. Live: this shell held [Threading.Mutex]::new($false,'Local\\FsAnalyser-SmbRig') (createdNew=True), and the built StallRig.exe --wait-sec 2 exited 1 after 2314 ms with 'Another stall-rig run held Local\\FsAnalyser-SmbRig for 2 s'. WindowCases.ps1 does not open this mutex by string; it checks StallRig's unchanged message text (:1353)."
+   },
+   {
+    "key": "O-006",
+    "verified": "cannot-tell",
+    "evidence": "Not measurable from this run. It needs a second logon or sign-in session with an SMB mapping made in one and Get-SmbMapping read in the other. Spike 1 recorded the sandbox vetoing Register-ScheduledTask (S4U). runas and self-elevation are forbidden. The registered elevated operations (whoami, read-denied-folders) create no session and read no mappings, so asking for one would not settle it. A person has to run it."
+   },
+   {
+    "key": "O-007",
+    "verified": "no",
+    "evidence": "Owed to build-slice and still open in the tree. WindowScriptParseTests.cs:8-9 still claims it catches a non-ASCII dash or quote in an edited comment, and there is no byte >= 0x80 or BOM assertion. Premise re-measured: 5.1 ParseFile gives 0 errors on non-ASCII in a comment and 2 in a string. The file itself is ASCII today (0 bytes >= 0x80), but nothing in the suite keeps it that way."
+   }
+  ],
+  "not_reached": [
+   "O-006: whether an SMB mapping made in one sign-in session is visible to Get-SmbMapping, and so to the rig's sweep, in another. That needs a second session, which a person has to create (Fast User Switching, or an S4U task registered by hand).",
+   "Cross-session behaviour of the lock itself. The doc now states that Local\\FsAnalyser-SmbRig is not seen from another session, and that Global\\ would be. Both come from recalled Microsoft semantics; spike 2 cases (a), (b) and (c) never ran.",
+   "Whether the SMB client's 'one port per server name' limit for 127.0.0.1 applies per logon session or across the whole machine. If it is machine-wide, two rig runs in different sessions could still clash at the redirector even though the lock does not serialise them. The doc names the lock's scope but not this.",
+   "The person-run network pass (WindowCases.ps1 -Case All -IncludeNetwork, then Core.Tests with Network=SMB-LOOPBACK) at this HEAD. StallRig was run only as far as the lock timeout, never through a real mapping.",
+   "A machine without pwsh.exe on PATH: the default suite now launches pwsh.exe (WindowScriptParseTests), which is present here (7.6.6) but not guaranteed elsewhere."
+  ]
+ }
+}

@@ -3,15 +3,33 @@ using System.Diagnostics;
 namespace FsAnalyser.Core.Tests;
 
 /// <summary>
-/// tests/window/WindowCases.ps1 still parses under Windows PowerShell 5.1 and under pwsh 7 (SL-059). The window
-/// cases run under pwsh, but tests/window/HookCases.ps1 loads WindowCases.ps1 through the parser of whichever
-/// PowerShell runs it, and 5.1 reads a file with no byte-order mark in the ANSI code page: a dropped BOM or a
-/// non-ASCII dash or quote in an edited comment can break 5.1 where 7 still reads the file. Each PowerShell parses
-/// the file itself, reading it as it reads a script it runs, and names its own edition, so the test cannot pass on
-/// the wrong host.
+/// tests/window/WindowCases.ps1 is read the same by Windows PowerShell 5.1 and by pwsh 7 (SL-059). The window cases
+/// run under pwsh, but tests/window/HookCases.ps1 loads WindowCases.ps1 through the parser of whichever PowerShell
+/// runs it, and 5.1 reads a file with no byte-order mark in the ANSI code page, where 7 reads UTF-8. The two checks
+/// cover different places. The parse check covers code and string literals: a curly quote or dash inside a
+/// double-quoted string gave 5.1 two parse errors (SL-059 review). It cannot cover comments: the same characters
+/// in a comment gave 5.1 no error, so the byte check does. The file stays ASCII, with no BOM, as SL-059's
+/// design asked of every edit to it ("write ASCII only"), and then both editions read the same text.
+/// Each PowerShell parses the file itself, reading it as it reads a script it runs, and names its own edition, so
+/// the parse check cannot pass on the wrong host.
 /// </summary>
 public class WindowScriptParseTests
 {
+    [Fact]
+    public void WindowCasesIsAscii()
+    {
+        byte[] bytes = File.ReadAllBytes(Path.Combine(FindRepo(), "tests", "window", "WindowCases.ps1"));
+        Assert.True(bytes.Length > 0, "tests/window/WindowCases.ps1 is empty.");
+        Assert.False(bytes is [0xEF, 0xBB, 0xBF, ..], "tests/window/WindowCases.ps1 starts with a UTF-8 byte-order mark; it is ASCII with none.");
+        int at = Array.FindIndex(bytes, b => b >= 0x80);
+        if (at >= 0)
+        {
+            int line = 1 + bytes.Take(at).Count(b => b == (byte)'\n');
+            Assert.Fail($"tests/window/WindowCases.ps1 has byte 0x{bytes[at]:X2} at offset {at} (line {line}); " +
+                "5.1 reads it in the ANSI code page and pwsh as UTF-8, so the file stays ASCII.");
+        }
+    }
+
     [Theory]
     [InlineData("powershell.exe", "Desktop")]
     [InlineData("pwsh.exe", "Core")]
