@@ -1,0 +1,94 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-062",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-09-27T16:59:06.791Z",
+ "head": "07481358c2d7ccba6c2a85f1c11e288d3a825a1b",
+ "run_id": 1644,
+ "summary": "SL-062 flipped SL-038's O-030 obligation from done:true to done:false in .taad/slices/SL-038/build-slice-2.json (a one-line, byte-anchored edit) and added an O-030 entry to docs/design/SL-020-scanner.md's person-run network-check record, next to N-001..N-004, so the obligation is now recorded as owed to a person rather than silently discharged. A single-designer blind design was found to have five major gaps by critique (it didn't locate the actual person-facing record, contradicted its own future discharge path, over-scoped its mirror check, and didn't report that the risk-spike had itself crossed the 'no engine stage runs SMB-LOOPBACK' rule), all fixed in build. One minor gap in the build's own new test tooling (C-004 doesn't recognise the `verified` obligation shape) was found by code-review and left owed (O-016), unresolved at the end of this slice.",
+ "payload": {
+  "candidates": [
+   {
+    "title": "Run the person-run SMB-LOOPBACK sitting and record StalledShareTests/N-001..N-004 results",
+    "urgency": "now",
+    "why": "This is the actual act the whole slice exists to route: docs/design/SL-020-scanner.md now carries the O-030 entry, the exact command, and the ~70s estimate. Nothing downstream discharges O-030 until a person runs it and records a pass/fail next to N-001..N-004."
+   },
+   {
+    "title": "Extend SL-062-LedgerCases.ps1's C-004 to detect the 'verified' obligation shape",
+    "urgency": "soon",
+    "why": "O-016 (code-review R2-m1), accepted-pending but never built: C-004 only recognises `done`/`discharged` fields, not the `verified` field validate-slice records use, so the mirror-check this slice's own new test performs is narrower than its stated guarantee."
+   },
+   {
+    "title": "Give the SMB rig a mechanical person-sitting guard for Network=SMB-LOOPBACK",
+    "urgency": "soon",
+    "why": "The project rule 'no engine stage runs this trait' (SL-020-scanner.md:228) is enforced only by convention. This slice's own risk-spike stage broke it (ran New-SmbMapping via the loopback test), and critique caught it only after the fact."
+   },
+   {
+    "title": "Decide whether the engine's own obligation store (outside the worktree) needs a mechanism to reopen a discharged obligation on a merged slice",
+    "urgency": "soon",
+    "why": "Build's own follow-up: every stage record here carries a database row id (e.g. reviews#147, builds#156), implying obligation state also lives in a store this worktree edit cannot reach. A re-export of SL-038 would silently put O-030's done back to true, which would also turn this slice's own repro and C-003 red."
+   },
+   {
+    "title": "Sweep .taad for other 'discharged but its own evidence admits it never ran' obligations",
+    "urgency": "someday",
+    "why": "This is the second occurrence of this exact shape (O-008 last round, O-030 this round). A one-off fix each time one surfaces is slower than a systematic check across slices."
+   }
+  ],
+  "estimate_error": "Risk tier (medium) was roughly right given how much engine-semantics reasoning the slice actually required, but the brief's framing ('Change the ledger only; no code changes') undersold the footprint: the accepted design still needed a new test script (tests/bugs/SL-062-LedgerCases.ps1, 3 shapes of ledger record to check) and an 11-line docs/design/SL-020-scanner.md edit, plus two extra rounds each of build-check, critique and code-review to settle where the obligation actually routes. A 'ledger-only' bug fix in this project is not a trivial one-line-diff slice once you have to prove the edit reaches something downstream.",
+  "learned": [
+   {
+    "kind": "codebase",
+    "lesson": "This project's obligation records come in at least three distinct shapes across engine stages: build-slice uses {key, done, how}, code-review uses {key, discharged}, validate-slice uses {key, verified}. Any checker meant to confirm 'every copy of this obligation's state says X' must check all three shapes explicitly or it silently passes a mismatched one.",
+    "evidence": "R2-m1 / O-016: SL-062-LedgerCases.ps1's C-004 only matched `done`/`discharged`, missing the `verified` shape used in validate-slice-1..4.json; caught only in code-review's second pass, not by critique which invented the mirror-check concept."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "Obligation keys (O-nnn) are scoped per-slice, not globally unique across .taad. A grep for a key across the whole tree will hit unrelated obligations in other slices' directories.",
+    "evidence": "M4 finding: 'O-030' also appears as an unrelated obligation in SL-024, SL-044, SL-047 and SL-056; SL-059 fixed an unrelated 'O-007'."
+   },
+   {
+    "kind": "risk",
+    "lesson": "The rule 'no engine stage runs Network=SMB-LOOPBACK' has no mechanical enforcement in this project -- it holds only because each stage remembers it, and an engine stage already forgot once.",
+    "evidence": "spike#55 ran the SMB-LOOPBACK command itself (New-SmbMapping side effect), crossing docs/design/SL-020-scanner.md:228's stated rule; nothing before critique's M5 caught it."
+   },
+   {
+    "kind": "process",
+    "lesson": "A hand-edit to a merged slice's worktree JSON (build-slice-2.json) cannot be shown to affect the engine's own obligation store -- every stage account here carries a database row id, implying routing may read a store the tree doesn't expose, and a re-export of the fixed slice would silently revert the edit.",
+    "evidence": "Build's own admission: 'I do not claim this edit routes anything there'; M1 finding; build's follow_ups note a re-export of SL-038 would put done:true back and turn the repro and C-003 red."
+   },
+   {
+    "kind": "process",
+    "lesson": "For a medium-risk slice designed by a single blind designer, critique-review runs as a recorded no-op ('a medium-risk slice designed by 1 designer in a minimal project does not get its review reviewed'). Don't expect a second layer of scrutiny beyond the first critique on slices sized like this one.",
+    "evidence": "critique-review #1 account: 'it recorded no account'; the single-designer design still needed 5 major findings fixed by the first critique with nobody double-checking that critique."
+   },
+   {
+    "kind": "process",
+    "lesson": "An 'accepted-pending' disposition at code-review (a fix still owed to build-slice) does not automatically route the slice back through another build pass before validate-slice runs.",
+    "evidence": "O-016 was disposed accepted-pending in code-review #2, then validate-slice #1 ran directly and merely noted 'Still open: O-016, owed to build-slice' rather than looping back."
+   }
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "what": "The critique invented the 'mirror check' concept for O-030 (M1/M4: confirm no other .taad record independently carries O-030's discharged state) but never enumerated the obligation-record shapes the engine itself already uses in this repo (done/discharged/verified). It scoped the check to done/discharged only, missing the validate-slice `verified` shape that was sitting in 183 existing records under .taad/slices.",
+    "dimension": "contract-gaps",
+    "severity": "minor",
+    "caught_by": "code-review (R2-m1 / O-016), and it is still unresolved at the end of this slice"
+   }
+  ],
+  "reason": "The slice's ledger correction and person-facing hand-off are validated and in place; one minor test-coverage gap in the slice's own new tooling (O-016) remains explicitly owed to build-slice and was carried forward rather than fixed in this pass.",
+  "status": "complete",
+  "summary": "SL-062 flipped SL-038's O-030 obligation from done:true to done:false in .taad/slices/SL-038/build-slice-2.json (a one-line, byte-anchored edit) and added an O-030 entry to docs/design/SL-020-scanner.md's person-run network-check record, next to N-001..N-004, so the obligation is now recorded as owed to a person rather than silently discharged. A single-designer blind design was found to have five major gaps by critique (it didn't locate the actual person-facing record, contradicted its own future discharge path, over-scoped its mirror check, and didn't report that the risk-spike had itself crossed the 'no engine stage runs SMB-LOOPBACK' rule), all fixed in build. One minor gap in the build's own new test tooling (C-004 doesn't recognise the `verified` obligation shape) was found by code-review and left owed (O-016), unresolved at the end of this slice.",
+  "unknowns": [
+   "Does the engine's own obligation store (separate from this worktree's JSON, evidenced by per-stage database row ids) actually get updated by this hand-edit, or would a re-export of SL-038 silently revert O-030 to done:true?",
+   "Does anything actually read docs/design/SL-020-scanner.md's person-run network-check record to schedule or remind a person to run it, or does it only work if a person happens to open the file?",
+   "Is there a person-facing 'obligations owed to me' queue anywhere in this project, or does every such obligation depend on a person reading the right markdown file at the right time?"
+  ],
+  "what_went_wrong": [
+   "A single-designer blind design (no adversarial second voice, critique-review a policy no-op) produced 5 major + 4 minor critique findings on what the brief framed as a one-line ledger fix -- it assumed the flip alone routes the obligation to a person, never located the actual person-facing record, contained a self-contradicting future re-discharge path, and used an over-broad cross-slice grep for its mirror check.",
+   "The risk-spike stage itself ran `--filter Network=SMB-LOOPBACK`, crossing the project's own recorded rule that no engine stage runs it (SL-020-scanner.md:228); nothing before critique's M5 caught this, and the spike's own account doesn't mention the conflict.",
+   "code-review's second pass raised O-016 (accepted-pending, owed to build-slice: the new SL-062-LedgerCases.ps1 test's mirror check doesn't cover the `verified` obligation shape), but the loop proceeded straight to validate-slice and then reflect without another build pass to implement it -- it is still open."
+  ]
+ }
+}
