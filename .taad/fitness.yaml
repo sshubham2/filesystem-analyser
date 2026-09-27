@@ -142,20 +142,24 @@ rules:
     except_files:
       - 'src/FsAnalyser.Core/Native/**'
       - 'tests/FsAnalyser.Core.Tests/TestNative.cs'
+      - 'tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs'
+      - 'tests/CfProvider/**'
     must_not_match:
       - '(?m)(Library|Dll)Import'
     including_comments: true
-    because: 'Interop lives only in Native (O-003). Every Win32 call goes through Native, where paths are \\?\ and built by LongPath. Fixture-only interop lives in TestNative.cs.'
+    because: 'Interop lives only in Native (O-003). Every Win32 call goes through Native, where paths are \\?\ and built by LongPath. Fixture-only interop lives in TestNative.cs, and the opt-in cloud rig''s in its two files (SL-049): the Trait-gated CloudPlaceholderTests.cs, and the provider process under tests/CfProvider.'
 
   - name: 'InteropLivesOnlyInNative (tests)'
     files: 'tests/**/*.cs'
     except_files:
       - 'src/FsAnalyser.Core/Native/**'
       - 'tests/FsAnalyser.Core.Tests/TestNative.cs'
+      - 'tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs'
+      - 'tests/CfProvider/**'
     must_not_match:
       - '(?m)(Library|Dll)Import'
     including_comments: true
-    because: 'Interop lives only in Native (O-003). Every Win32 call goes through Native, where paths are \\?\ and built by LongPath. Fixture-only interop lives in TestNative.cs.'
+    because: 'Interop lives only in Native (O-003). Every Win32 call goes through Native, where paths are \\?\ and built by LongPath. Fixture-only interop lives in TestNative.cs, and the opt-in cloud rig''s in its two files (SL-049): the Trait-gated CloudPlaceholderTests.cs, and the provider process under tests/CfProvider.'
 
   - name: 'FileSystemCallsGoThroughTheCancelGuard (*.cs)'
     files: 'src/**/*.cs'
@@ -602,6 +606,51 @@ rules:
       SL-043 refreshed it by hand. No gate runs RuleCases (O-005), so this fitness rule is the
       only place a re-pin can fail visibly. The expected count must come from the Fitness rule
       count minus the twinned count.
+
+  # settled by SL-049
+  # Widened at build (SL-049 review M3, m2): cldapi and every cloud-files verb, not five names; the rig and the
+  # provider by name; and the provider's own files may not name Core at all.
+  - name: shipped code never registers, serves or hydrates through the cloud-files API
+    files: src/**/*.cs
+    must_not_match:
+    - '(?i)cldapi'
+    - '\bCf(Register|Unregister|Connect|Disconnect|Execute|Hydrate|Dehydrate|Create|Convert|Update|SetInSyncState)\w*'
+    because: The app is a reader. Code that registers a sync root, answers callbacks or hydrates
+      would download the person's online-only files and put a fake provider on their PC. The
+      spike shipped-scan-hydrates-nothing measured 0 FETCH_DATA for the shipped scanner. The
+      only sanctioned use of these calls is the opt-in test provider under tests/.
+  - name: cloud-files calls in Core.Tests live only in the Trait-gated class
+    files: tests/FsAnalyser.Core.Tests/**/*.cs
+    must_not_match:
+    - '(?i)cldapi'
+    - '\bCf(Register|Unregister|Connect|Disconnect|Execute|Hydrate|Dehydrate|Create|Convert|Update|SetInSyncState)\w*'
+    - 'CfProvider'
+    - 'SyncRootRig'
+    because: A cloud-files call, a start of the provider or a rig built in any other test file is not
+      behind Cloud=CF-SYNC-ROOT. Every default run would then register a real sync root under the
+      person's %TEMP%. The guard Fact only checks Traits that exist, so a file with no Trait would
+      pass it. The rig is a private class of the Trait-gated class, so the compiler keeps other
+      classes from building one; this keeps other files from starting the provider or calling
+      cldapi themselves. The pure parts every file may use (CloudRig.cs, ScanDeadline.cs) name
+      none of these. ArchitectureRulesTests.cs is excepted because InteropLivesOnlyInNative names
+      the provider's folder, tests\CfProvider\, to exempt it; eng/rules-parity.ps1 holds every Fact
+      there to one AssertNoMatch call, so none of them can start a provider. Review covers the rest
+      of that file.
+    except_files:
+    - tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs
+    - tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs
+  - name: the provider does not use the code it checks
+    files: tests/CfProvider/**
+    must_not_import:
+    - FsAnalyser.Core*
+    must_not_match:
+    - <ProjectReference
+    - 'FsAnalyser\.Core'
+    because: The provider is the independent source of declared sizes and callback behaviour.
+      If it shared Core code, a counting or guard defect would sit on both sides of the assertion
+      and the test would agree with the bug. The SL-024 harness it was lifted from reached Core
+      through a HintPath Reference, which no ProjectReference or import rule sees, and a fully
+      qualified name needs no import, so the name itself is refused in every file there.
 
   # settled by SL-055
   # Its design also declared 'Only the cancel guard issues CancelSynchronousIo'. That was SL-024's rule

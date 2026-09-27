@@ -1,0 +1,229 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-049",
+ "stage": "code-review",
+ "attempt": 2,
+ "at": "2026-09-26T22:34:14.774Z",
+ "head": "91dfe9c05dadf9cc1c64ba9dab0afd55e99d9a56",
+ "run_id": 1430,
+ "summary": "Nothing new to file on attempt 2. The only changes since b331eb1 are the two accepted fixes from my first round (m1, now O-024, and m2, now O-025), in CloudPlaceholderTests.cs and CloudRigTests.cs. Nothing else in the tree moved, and nothing else departs from the design.\n\n**What I ran**\n- Rebuilt the solution: 0 warnings, 0 errors. The test DLL (04:04) is newer than both edited sources (04:00 and 04:01), so the runs below used the current code.\n- Default suite: 332 passed, and the trx lists no CloudPlaceholderTests. TheSweepRemovesOnlyTheRootOfARunThatIsGone, which now includes the junction, passed.\n- The two AProviderThatCannotStart Facts, by name: both passed. Each teardown now writes the 'teardown shape: none pending … the test held no listing' line and the provider's captured output. Teardown took 1–4 ms, and no fsa-cf-* folder was left.\n- Fitness op=check: all 50 rules hold, including the SL-049 confinement rule against the edited CloudRigTests.cs.\n\n**O-024: teardown with a pending request (C-006)**\nAfter its assertions, the stall Fact calls rig.HoldListing(\"stall\", 10 s) (CloudPlaceholderTests.cs:121-131, 391-424):\n- It lists 'stall' again on a background thread through Scans.Listing and DirectoryReader.\n- It waits for a FETCH_PLACEHOLDERS from this process on 'stall', counting only provider lines printed after that second listing started.\n- It records whether the listing is still blocked on that request.\n\nDispose (:457-497) then:\n- writes the 'teardown shape:' line from ShapeAtKill (:576-601) and everything the provider printed, before the kill;\n- joins the held listing for up to 10 s after the kill, before it unregisters and deletes, so the listing's handle on 'stall' is closed first;\n- records a teardown failure if the kill does not free the listing, which fails the Fact because Passed() has been called.\n\nThe premise in the new comment at :121-123 is supported by a real run on this PC. SL-024's provider1.log (lines 22-47) shows:\n- a CancelSynchronousIo on a listing blocked on FETCH_PLACEHOLDERS draws a CANCEL_FETCH_PLACEHOLDERS;\n- a further query on the same folder draws a fresh FETCH_PLACEHOLDERS about 1 ms later (ung1, scan1, scan2).\n\nSo a request raised by the second listing is expected to show as PENDING. When none arrives, the line says so honestly, which the disposition accepted.\n\n**O-025: sweep and a junction named like a root**\nThe sweep test now adds a junction named CloudRig.RootName(gone, …) that points outside the swept folder, with a file in the target. The existing `Assert.Equal([stale], swept)` and `Assert.Equal([tree.PathOf(stale)], unregistered)` already catch a sweep that goes through the junction. The new assertions add that the junction and the target's file survive. TempTree.Junction returns the PathOf form, so the DoesNotContain checks compare like with like.\n\n**Checked for breakage in the new code, none found**\n- **Start and stop races:** Thread.Start returns only once IsAlive is true, and the stop predicate is polled every 100 ms.\n- **Line window:** `from` is read under the lock before the listing thread starts, so only lines from the second listing count.\n- **Pending recheck:** the pending flag is recomputed at the kill from the listing thread's IsAlive.\n- **ShapeAtKill:** no member it touches can throw, so it cannot pre-empt the teardown.\n- **Failure paths:** an early assertion failure leaves no held listing, and the teardown runs as before. A held listing that the kill does not free is bounded to 10 s and reported.\n\n**Still not run**\nThe stall and tree Facts were not run: they would register a real sync root, and open question 1 is still unanswered. So C-006's PENDING line has not yet appeared on a real root.\n\nSecond round: Nothing new to file this round, and the obligation and case readings are the same as the first round of this attempt. The attempt-2 changes add no new parser: HoldListing reuses the pid-filtered callback regex, which I already probed with CR, LF, BOM, empty-path and oversized inputs. So I walked the boundaries and failure paths of the new code instead:\n\n- **Held listing's own guard (`Scans.Listing`).** It builds its SynchronousIoCancel with CancellationToken.None. That guard opens no thread handle, never sets `_aborted`, and so closes its handle synchronously (SynchronousIoCancel.cs:58-75, 159-165). When the listing thread has been joined, its handle on 'stall' is closed, so the unregister and delete that follow cannot trip over it.\n- **Thread and guard ownership.** The listing's guard is created on the listing thread, so the owner-thread check in `Enter` holds. `Created` is `[ThreadStatic]` and null there, so no test seam fires.\n- **Errors from the listing.** A listing error (XunitException) and a duplicate name (ArgumentException) are both caught into `Outcome`.\n- **Provider already dead when HoldListing starts.** WaitForLine returns at once on stdout end, or through `stop` when the listing thread finishes.\n- **Which lines count.** `from` is read under the lock before the listing thread starts, so only that listing can supply the matching line from this pid on 'stall'.\n- **Pending flag.** It is re-checked against `IsAlive` both in HoldListing and in ShapeAtKill. The pattern arms in ShapeAtKill are ordered most-specific first. Nothing in ShapeAtKill can throw ahead of the kill, because `_provider` is only set after `Start`.\n- **Dispose bounds.** If the kill step times out, the listing join adds at most another 10 s. A listing the kill does not free becomes a recorded failure, which fails the Fact only after `Passed()`.\n- **Scan's own close.** The scan's handed-off close of 'stall' happens on a pool thread and does not block the second listing.\n- **Junction test.** `TempTree.Junction` returns the `PathOf` form, the same form the sweep hands to `unregister`, so the equality assertions compare like with like. .NET removes a junction without recursing into it, so even without the LinkTarget guard the target's file survives. The mutation is still caught by the assertions on `swept` and `unregistered`.\n\nDefault suite (332 passed, no gated test run), the two non-registering gated Facts, and Fitness were all green on the current DLL in the first round of this attempt.",
+ "payload": {
+  "status": "complete",
+  "verdict": "clean",
+  "summary": "Nothing new to file on attempt 2. The only changes since b331eb1 are the two accepted fixes from my first round (m1, now O-024, and m2, now O-025), in CloudPlaceholderTests.cs and CloudRigTests.cs. Nothing else in the tree moved, and nothing else departs from the design.\n\n**What I ran**\n- Rebuilt the solution: 0 warnings, 0 errors. The test DLL (04:04) is newer than both edited sources (04:00 and 04:01), so the runs below used the current code.\n- Default suite: 332 passed, and the trx lists no CloudPlaceholderTests. TheSweepRemovesOnlyTheRootOfARunThatIsGone, which now includes the junction, passed.\n- The two AProviderThatCannotStart Facts, by name: both passed. Each teardown now writes the 'teardown shape: none pending … the test held no listing' line and the provider's captured output. Teardown took 1–4 ms, and no fsa-cf-* folder was left.\n- Fitness op=check: all 50 rules hold, including the SL-049 confinement rule against the edited CloudRigTests.cs.\n\n**O-024: teardown with a pending request (C-006)**\nAfter its assertions, the stall Fact calls rig.HoldListing(\"stall\", 10 s) (CloudPlaceholderTests.cs:121-131, 391-424):\n- It lists 'stall' again on a background thread through Scans.Listing and DirectoryReader.\n- It waits for a FETCH_PLACEHOLDERS from this process on 'stall', counting only provider lines printed after that second listing started.\n- It records whether the listing is still blocked on that request.\n\nDispose (:457-497) then:\n- writes the 'teardown shape:' line from ShapeAtKill (:576-601) and everything the provider printed, before the kill;\n- joins the held listing for up to 10 s after the kill, before it unregisters and deletes, so the listing's handle on 'stall' is closed first;\n- records a teardown failure if the kill does not free the listing, which fails the Fact because Passed() has been called.\n\nThe premise in the new comment at :121-123 is supported by a real run on this PC. SL-024's provider1.log (lines 22-47) shows:\n- a CancelSynchronousIo on a listing blocked on FETCH_PLACEHOLDERS draws a CANCEL_FETCH_PLACEHOLDERS;\n- a further query on the same folder draws a fresh FETCH_PLACEHOLDERS about 1 ms later (ung1, scan1, scan2).\n\nSo a request raised by the second listing is expected to show as PENDING. When none arrives, the line says so honestly, which the disposition accepted.\n\n**O-025: sweep and a junction named like a root**\nThe sweep test now adds a junction named CloudRig.RootName(gone, …) that points outside the swept folder, with a file in the target. The existing `Assert.Equal([stale], swept)` and `Assert.Equal([tree.PathOf(stale)], unregistered)` already catch a sweep that goes through the junction. The new assertions add that the junction and the target's file survive. TempTree.Junction returns the PathOf form, so the DoesNotContain checks compare like with like.\n\n**Checked for breakage in the new code, none found**\n- **Start and stop races:** Thread.Start returns only once IsAlive is true, and the stop predicate is polled every 100 ms.\n- **Line window:** `from` is read under the lock before the listing thread starts, so only lines from the second listing count.\n- **Pending recheck:** the pending flag is recomputed at the kill from the listing thread's IsAlive.\n- **ShapeAtKill:** no member it touches can throw, so it cannot pre-empt the teardown.\n- **Failure paths:** an early assertion failure leaves no held listing, and the teardown runs as before. A held listing that the kill does not free is bounded to 10 s and reported.\n\n**Still not run**\nThe stall and tree Facts were not run: they would register a real sync root, and open question 1 is still unanswered. So C-006's PENDING line has not yet appeared on a real root.\n\nSecond round: Nothing new to file this round, and the obligation and case readings are the same as the first round of this attempt. The attempt-2 changes add no new parser: HoldListing reuses the pid-filtered callback regex, which I already probed with CR, LF, BOM, empty-path and oversized inputs. So I walked the boundaries and failure paths of the new code instead:\n\n- **Held listing's own guard (`Scans.Listing`).** It builds its SynchronousIoCancel with CancellationToken.None. That guard opens no thread handle, never sets `_aborted`, and so closes its handle synchronously (SynchronousIoCancel.cs:58-75, 159-165). When the listing thread has been joined, its handle on 'stall' is closed, so the unregister and delete that follow cannot trip over it.\n- **Thread and guard ownership.** The listing's guard is created on the listing thread, so the owner-thread check in `Enter` holds. `Created` is `[ThreadStatic]` and null there, so no test seam fires.\n- **Errors from the listing.** A listing error (XunitException) and a duplicate name (ArgumentException) are both caught into `Outcome`.\n- **Provider already dead when HoldListing starts.** WaitForLine returns at once on stdout end, or through `stop` when the listing thread finishes.\n- **Which lines count.** `from` is read under the lock before the listing thread starts, so only that listing can supply the matching line from this pid on 'stall'.\n- **Pending flag.** It is re-checked against `IsAlive` both in HoldListing and in ShapeAtKill. The pattern arms in ShapeAtKill are ordered most-specific first. Nothing in ShapeAtKill can throw ahead of the kill, because `_provider` is only set after `Start`.\n- **Dispose bounds.** If the kill step times out, the listing join adds at most another 10 s. A listing the kill does not free becomes a recorded failure, which fails the Fact only after `Passed()`.\n- **Scan's own close.** The scan's handed-off close of 'stall' happens on a pool thread and does not block the second listing.\n- **Junction test.** `TempTree.Junction` returns the `PathOf` form, the same form the sweep hands to `unregister`, so the equality assertions compare like with like. .NET removes a junction without recursing into it, so even without the LinkTarget guard the target's file survives. The mutation is still caught by the assertions on `swept` and `unregistered`.\n\nDefault suite (332 passed, no gated test run), the two non-registering gated Facts, and Fitness were all green on the current DLL in the first round of this attempt.",
+  "matches_design": true,
+  "findings": [],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "cannot-tell",
+    "evidence": "CloudPlaceholderTests.cs:68-132 feeds the shape, and the VOID guards at :80-85 prevent a pass without it. Never executed: open question 1."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "CloudRigTests.OnlyThisProcesssCallbacksCountAsTheScans, and IsOwnCallback (CloudPlaceholderTests.cs:548-551), now shared by WaitForCallback and HoldListing, filter on exact pid. Ran green."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "CloudRigTests.AScanCancelDoesNotFreeIsFreedByForceAndFails with ScanDeadline. Unchanged and ran green."
+   },
+   {
+    "key": "O-004",
+    "discharged": "cannot-tell",
+    "evidence": "CloudPlaceholderTests.cs:113-119 characterization. Never executed."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "I re-ran both AProviderThatCannotStart Facts: both pass, each with its teardown shape line and captured output."
+   },
+   {
+    "key": "O-006",
+    "discharged": "cannot-tell",
+    "evidence": "HoldListing (:391-424) now feeds the pending-at-kill shape on a passing run when a fresh request arrives, and Dispose (:465-482) records the shape and joins the held listing after the kill. SL-024 provider1.log:36-47 shows a re-query after a CANCEL draws a fresh FETCH_PLACEHOLDERS. Never executed on a real root."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "CloudRig.Sweep with CloudRigTests.TheSweepRemovesOnlyTheRootOfARunThatIsGone, which now also has a junction. Ran green."
+   },
+   {
+    "key": "O-008",
+    "discharged": "cannot-tell",
+    "evidence": "Tree Fact unchanged. Never executed."
+   },
+   {
+    "key": "O-009",
+    "discharged": "cannot-tell",
+    "evidence": "Tree Fact's UNMEASURED section unchanged. Never executed."
+   },
+   {
+    "key": "O-010",
+    "discharged": "cannot-tell",
+    "evidence": "Tree Fact's FETCH_DATA and RECALL checks unchanged. Never executed."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "Default run on the current DLL: 332 passed, 0 CloudPlaceholderTests executed."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "OptInTraitTests Theory unchanged. Ran green."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "csproj unchanged since my earlier check of the baked DefaultTestFilter metadata."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "RunScan through ScanDeadline is unchanged (:368-385). The held listing is not a scan, and it is bounded by the kill plus a 10 s join in Dispose."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "SyncRootRig is still private nested. HeldListing is private nested inside it. Fitness op=check holds on the edited files."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "Class remarks (:27-31) unchanged in substance."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "tests/CfProvider is untouched and Fitness holds."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "OptInTraitTests.Unfiltered unchanged."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "CloudRig.cs unchanged since HEAD b331eb1."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "CloudRig.cs and CloudRigTests default-suite coverage, now including the link branch."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "Tree Fact ordering unchanged."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "MuxerFor and the three messages unchanged."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "Dispose still catches each step and bounds it to 10 s, and throws only after Passed(). The new held-listing join is bounded and adds to the same failure list (:476-482)."
+   },
+   {
+    "key": "O-024",
+    "discharged": "yes",
+    "evidence": "CloudPlaceholderTests.cs:121-131 (HoldListing after the assertions, outcome logged), :391-424 (HoldListing counts only lines printed after the second listing started, and stops if the listing ends), :465-482 (shape line and Captured() before the kill, then a 10 s join of the held listing before unregister and delete, and a failure if it is not freed), :576-601 (ShapeAtKill). I saw the shape line in my run of the two non-registering Facts. The PENDING branch has not run on a real root."
+   },
+   {
+    "key": "O-025",
+    "discharged": "yes",
+    "evidence": "CloudRigTests.cs:71-73 adds the junction via tree.Junction(CloudRig.RootName(gone, …), tree.Outside(\"target\")) with not-ours.txt. :89-92 asserts the junction is neither swept nor unregistered, still exists, and its target's file survives. The existing Equal assertions on swept and unregistered also catch the mutation. Ran green."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "Stall Fact VOID guards (:80-85). Not yet executed."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "CloudRigTests.OnlyThisProcesssCallbacksCountAsTheScans. The rig uses the same pid filter via IsOwnCallback."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "CloudRigTests.AScanCancelDoesNotFreeIsFreedByForceAndFails."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "Stall Fact :116-119. Not yet executed."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "Both AProviderThatCannotStart Facts re-run green here."
+   },
+   {
+    "key": "C-006",
+    "exercised": "cannot-tell",
+    "evidence": "The stall Fact now holds a second listing of 'stall' so the provider is killed with a fresh request pending (:127). SL-024 provider1.log shows a re-query after a cancel draws a fresh FETCH_PLACEHOLDERS. By the accepted m1 disposition the Fact passes even when no fresh request arrives, and records which shape it tore down in the 'teardown shape:' line. Never executed on a real root; validate reads that line."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "TheSweepRemovesOnlyTheRootOfARunThatIsGone: a dead-pid root, a live root, six look-alikes, a file named like a root, and now a junction named like a dead-pid root pointing outside. Unregister is injected. Ran green."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "Tree Fact unchanged. Not yet executed."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "Tree Fact unchanged. Not yet executed."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "The FETCH_DATA counting logic is fed in CloudRigTests. The RECALL-loss half is fed by no test."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "Default run on the current DLL: 332 passed, 0 CloudPlaceholderTests."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "OptInTraitTests Theory."
+   },
+   {
+    "key": "C-013",
+    "exercised": "no",
+    "evidence": "Deliberately not built. The provider still has no CfExecute, so the reason holds."
+   },
+   {
+    "key": "C-014",
+    "exercised": "no",
+    "evidence": "Deliberately not built. There is still no uncancelled-stall Fact, so the reason holds."
+   }
+  ],
+  "drift": [
+   "The class remarks (CloudPlaceholderTests.cs:22-26) say the stall Fact's second listing means 'a request of this process is pending at the kill'. The code only logs whether one was (:127-130, and ShapeAtKill), and the Fact passes either way, as the m1 disposition accepted. Validate should take PENDING from the 'teardown shape:' line, not from the remark.",
+   "The stall Fact now runs up to 10 s longer (HoldListing's wait), and its pass does not depend on C-006's shape being fed. This is by the accepted m1 disposition, but a green stall Fact is not by itself evidence for C-006.",
+   "Unchanged from attempt 1: OptInTraitTests pins the three known Trait pairs; ScanDeadline auto-cancels after 5 minutes; the tests/rules/RuleCases.ps1 '28 settled' pin was stale before this slice.",
+   "Nothing new departed this round. The drift notes from the first round of this attempt stand: the class remark states the pending shape as fact while the code only logs it; the stall Fact's pass does not depend on C-006 being fed; the Known Trait pin, the 5-minute auto-cancel and the stale RuleCases pin are unchanged."
+  ],
+  "unreviewed": [
+   ".taad/slices/SL-049/build-slice-1.json, build-slice-2.json, code-review-1.json, validate-slice-1.json, index.json: stage records, not code. Not opened for this pass."
+  ],
+  "second_round": {
+   "run_id": 1431,
+   "filed": 0
+  }
+ }
+}

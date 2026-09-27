@@ -3,11 +3,20 @@
   <PropertyGroup>
     <!-- The share tests (Trait Network) are opt-in (SL-024). TEST-NET-1 (m5): a UNC path by IP address signs
          in with NTLM, and a network that fails fast turns them red. SMB-LOOPBACK (O-018): a local SMB server
-         reached through a New-SmbMapping on another port, which needs the Windows 11 24H2 client. This
-         default filter leaves them out of every run that names no filter; an explicit filter replaces it
-         and runs whatever it names. -->
-    <VSTestTestCaseFilter Condition="'$(VSTestTestCaseFilter)' == ''">Network!=TEST-NET-1&amp;Network!=SMB-LOOPBACK</VSTestTestCaseFilter>
+         reached through a New-SmbMapping on another port, which needs the Windows 11 24H2 client. The cloud
+         tests (Trait Cloud) are opt-in too (SL-049): CF-SYNC-ROOT registers a real cldflt sync root under
+         %TEMP%. This default filter leaves them out of every run that names no filter; an explicit filter
+         replaces it and runs whatever it names. -->
+    <!-- The default lives in a property of its own (SL-049, M1): a filter named to `dotnet test` sets
+         VSTestTestCaseFilter for the whole build, so only this one still holds the default when a filter is named.
+         OptInTraitTests reads it from the assembly and fails when a Trait has no Name!=Value clause here. -->
+    <FsaDefaultTestFilter>Network!=TEST-NET-1&amp;Network!=SMB-LOOPBACK&amp;Cloud!=CF-SYNC-ROOT</FsaDefaultTestFilter>
+    <VSTestTestCaseFilter Condition="'$(VSTestTestCaseFilter)' == ''">$(FsaDefaultTestFilter)</VSTestTestCaseFilter>
   </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="DefaultTestFilter" Value="$(FsaDefaultTestFilter)" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
@@ -22,6 +31,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\FsAnalyser.Core\FsAnalyser.Core.csproj" />
+    <!-- The cloud tests' provider (SL-049), built with this project so that CfProvider.dll sits beside the tests,
+         which start it through the running runtime's dotnet.exe. No test code uses its types. -->
+    <ProjectReference Include="..\CfProvider\CfProvider.csproj" />
   </ItemGroup>
 
   <ItemGroup>

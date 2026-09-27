@@ -181,9 +181,11 @@ public class SynchronousIoCancelTests
 
     /// <summary>
     /// Attempts that may cancel but have not called CancelSynchronousIo yet when the call leaves, as on a
-    /// busy machine: the first waits 200 ms before its call, so the next ones are started meanwhile, and they
-    /// wait until Exit has begun and 100 ms more. Exit returns only once they have ended, so none lands on
-    /// the thread's next wait. An Exit that did not wait for them lets that wait be aborted (measured, SL-055).
+    /// busy machine: the first waits until four are live and 200 ms more before its call, so the next ones
+    /// are started meanwhile, and they wait until Exit has begun and 100 ms more. Exit returns only once they
+    /// have ended, so none lands on the thread's next wait. An Exit that did not wait for them lets that wait
+    /// be aborted (measured, SL-055). Those 200 ms are eight of the canceller's ticks with the cap reached, so
+    /// a canceller with no cap, or a higher one, starts a fifth (SL-055 review m2).
     /// </summary>
     [Fact]
     public void ExitWaitsForAttemptsAboutToCancelSoNoneLandsAfterIt()
@@ -207,6 +209,8 @@ public class SynchronousIoCancelTests
             {
                 if (attempt == 1)
                 {
+                    // Waited for, not timed: on a busy machine three ticks can take longer than any fixed hold.
+                    SpinWait.SpinUntil(() => g.PeakAttemptsInKernel >= 4, TimeSpan.FromSeconds(5));
                     Thread.Sleep(200);
                     return;
                 }
@@ -247,15 +251,18 @@ public class SynchronousIoCancelTests
         Assert.NotNull(waitError);
         Assert.True(issued);
         Assert.True(liveAtExit >= 2, $"{liveAtExit} attempt(s) live when Exit was called: none was about to cancel");
+        Assert.Equal(4, guard!.PeakAttemptsInKernel); // the cap on live attempts, reached and never passed
         Assert.Null(afterExit); // an attempt that outlived Exit aborted the next wait
         Assert.Equal(2, listedAfterExit!.Length);
-        Assert.Equal(attemptsAtExit, guard!.CancelAttempts);
+        Assert.Equal(attemptsAtExit, guard.CancelAttempts);
     }
 
     /// <summary>
     /// An exception unwinds through the guard's using while a cancel is issued, so Dispose is reached with
     /// no Exit and the canceller still sending. Dispose stops it and waits for its attempts before it closes
-    /// the thread handle: none is made after, and none lands on the thread's next wait.
+    /// the thread handle: none is made after, and none lands on the thread's next wait. The attempts made
+    /// after the interruption are held until the exception is thrown and 250 ms more, so they are still live
+    /// when Dispose drains; a Dispose that did not wait for them returns while they are held (SL-055 review m1).
     /// </summary>
     [Fact]
     public void DisposeWithoutExitWhileCancellingEndsEveryAttemptFirst()
@@ -264,14 +271,24 @@ public class SynchronousIoCancelTests
         using var inCall = new ManualResetEventSlim();
         SynchronousIoCancel? guard = null;
         Exception? waitError = null, unwound = null, afterDispose = null;
-        bool resent = false;
-        int attemptsAtDispose = 0;
+        bool resent = false, unwinding = false;
+        int first = int.MaxValue, held = 0, released = 0;
+        int attemptsAtDispose = 0, heldAtDispose = 0, releasedAtDispose = 0;
         var blocked = new Thread(() =>
         {
             try
             {
                 using var g = new SynchronousIoCancel(cts.Token);
                 guard = g;
+                g.BeforeCancelCall = attempt =>
+                {
+                    if (attempt <= Volatile.Read(ref first))
+                        return;
+                    Interlocked.Increment(ref held);
+                    SpinWait.SpinUntil(() => Volatile.Read(ref unwinding), TimeSpan.FromSeconds(5));
+                    Thread.Sleep(250);
+                    Interlocked.Increment(ref released);
+                };
                 g.Enter();
                 inCall.Set();
                 using NamedPipeServerStream server = NewPipe(out _);
@@ -284,8 +301,9 @@ public class SynchronousIoCancelTests
                     waitError = e;
                 }
                 // Still cancelling: attempts go on, finding nothing, until the guard is disposed.
-                int first = g.CancelAttempts;
+                Volatile.Write(ref first, g.CancelAttempts);
                 resent = SpinWait.SpinUntil(() => g.CancelAttempts >= first + 2, TimeSpan.FromSeconds(5));
+                Volatile.Write(ref unwinding, true);
                 throw new InvalidOperationException("unwinds through the using with no Exit");
             }
             catch (InvalidOperationException e)
@@ -293,6 +311,8 @@ public class SynchronousIoCancelTests
                 unwound = e;
             }
             attemptsAtDispose = guard!.CancelAttempts;
+            heldAtDispose = Volatile.Read(ref held);
+            releasedAtDispose = Volatile.Read(ref released);
             afterDispose = Record.Exception(() => AssertNoCancelLandsOnThisThread(clientDelayMilliseconds: 300));
         }) { IsBackground = true };
         blocked.Start();
@@ -306,6 +326,9 @@ public class SynchronousIoCancelTests
         Assert.True(resent, "the canceller stopped sending before Dispose, so Dispose had nothing to stop");
         Assert.NotNull(unwound);
         Assert.True(guard!.CancelIsIssued, "Dispose was not reached while the call was still marked cancelled");
+        Assert.True(heldAtDispose >= 1, "no attempt made after the interruption was held, so Dispose had none to wait for");
+        Assert.True(guard.AttemptsLiveAtLastDrain >= 1, $"{guard.AttemptsLiveAtLastDrain} attempt(s) live when Dispose drained: none was in flight");
+        Assert.Equal(heldAtDispose, releasedAtDispose); // Dispose returned while an attempt it had to wait for was still held
         Assert.Null(afterDispose);
         Thread.Sleep(100); // longer than the canceller's interval
         Assert.Equal(attemptsAtDispose, guard.CancelAttempts);
