@@ -1,0 +1,237 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-055",
+ "stage": "code-review",
+ "attempt": 4,
+ "at": "2026-09-27T09:25:54.142Z",
+ "head": "",
+ "run_id": 1526,
+ "summary": "Build attempt 3 (bb3b011) touched two files; the product source is unchanged (SynchronousIoCancel.cs is still C4E31B83…).\n\n**Rule 2 in .taad/fitness.yaml (O-028).**\n- The ThreadPool pattern now exempts only Close's `ThreadPool.UnsafeQueueUserWorkItem(static aborted =>`, and `\\bnew\\s+Task\\s*[(<]` was added. The `because` names the one exempt call site.\n- I read the patterns back from the YAML and ran them with Python `re`, the engine's dialect.\n  - The current file gets 0 hits.\n  - A pool-queued attempt (`static g => g.CancelOnce()`) is caught by the ThreadPool pattern.\n  - `new Task(CancelOnce).Start()` is caught by the new pattern.\n  - A fully qualified Close still passes.\n  - Reformatting Close's call (a line break or a space after `UnsafeQueueUserWorkItem`) fires the rule on legitimate code. That fails loudly, not silently, so I noted it as drift rather than a finding.\n  - Only a pool attempt whose lambda parameter is also named `aborted` evades the rule, which is contrived.\n- The Fitness engine re-parsed all 52 rules and every one holds, and rules-parity says AGREE.\n\n**CancelIsResentUntilACallThatHadNotReachedTheKernelIsInterrupted.**\n- The fixed 200 ms sleep is gone. The worker now waits until `CancelAttempts >= 2` (up to 5 s), then 100 ms more, before it blocks, and asserts that those attempts were sent. The Join is raised to 10 s.\n- `CancelAttempts` counts attempts that passed the gate, not calls made. The 100 ms makes that gap irrelevant, and the assertion only needs one miss.\n- I ran three mutants in a temp copy, since deleted:\n  - A canceller that stops resending once it gets FALSE/1168: red 2 of 2 ('the wait was never interrupted'). This is the shape design case C-004 says would bring back the lost cancel.\n  - A canceller with no resend: red 2 of 2.\n  - Every attempt delayed 300 ms: green 2 of 2, so the test no longer depends on how fast the first attempt arrives.\n- No other test depends on the first attempt arriving within a fixed sleep; I grepped every `Cancel();` site in tests/.\n\n**What I ran on the current tree.**\n- Build: 0 warnings, 0 errors.\n- Acceptance command: exit 0, 2 of 2 passed.\n- Both guard classes, 5 idle runs: 30 of 30 each.\n- Full suite: 337 of 337.\n- Concentrated loaded pass (4 busy processes and the test host pinned to CPUs 14–15): 3 of 3 runs, 30 of 30 each. The reworked test took 0.87–0.93 s. Afterwards no busy loops or testhosts were left.\n\nThe working tree is as I found it: only the engine's index.json and build-slice-3.json differ.\n\nSecond round: Round 2 found nothing to file.\n\n**Rule 2 regexes, probed with Python `re` on patterns read back from the YAML.** The attempt-3 patterns catch the forms they target. Four other forms still slip past:\n- `ThreadPool` + newline + `.UnsafeQueueUserWorkItem(static g => …)`\n- `Task.Factory` + newline + `.StartNew(`\n- `using static System.Threading.ThreadPool` followed by a bare `UnsafeQueueUserWorkItem(`\n- `Task.Run<int>(`\n\nThe last two are the same slips my attempt-1 review accepted for a name tripwire. The first two are new instances of that same family. This is the second time a rule-2 evasion has come up after R2-m1, and a regex can always be dodged one step further out. So I recorded it as drift with the approach-level fix: a behavioural check that no attempt runs on a pool thread. I did not send it back again.\n\n**fitness.yaml.** It still has no BOM, 678 CRLF line endings, no bare LF, no lone CR and no tabs. The multi-line plain `because` is valid YAML, and the engine parses all 52 rules. No rule-harness plant row or parity entry names rule 2, so changing its patterns shifts no count.\n\n**The reworked C-004 test (SynchronousIoCancelTests.cs:66-109).**\n- The worker spins with `SpinWait.SpinUntil`, which yields and sleeps, so it does not starve the canceller or the attempt threads.\n- Early attempts land on a non-I/O wait and get FALSE.\n- The 100 ms margin covers the gap between an attempt passing the gate and it actually calling CancelSynchronousIo.\n- The failure path of a canceller that never resends leaves a background thread blocked on a pipe that is disposed. The old version of this test had the same failure path; it is not new here.\n- My round-1 mutants still stand: terminal-on-FALSE and no-resend go red, and the 300 ms late-attempt mutant stays green.\n\nBoth changed files keep consistent CRLF line endings. The working tree is as I found it.",
+ "payload": {
+  "status": "complete",
+  "verdict": "clean",
+  "matches_design": true,
+  "summary": "Build attempt 3 (bb3b011) touched two files; the product source is unchanged (SynchronousIoCancel.cs is still C4E31B83…).\n\n**Rule 2 in .taad/fitness.yaml (O-028).**\n- The ThreadPool pattern now exempts only Close's `ThreadPool.UnsafeQueueUserWorkItem(static aborted =>`, and `\\bnew\\s+Task\\s*[(<]` was added. The `because` names the one exempt call site.\n- I read the patterns back from the YAML and ran them with Python `re`, the engine's dialect.\n  - The current file gets 0 hits.\n  - A pool-queued attempt (`static g => g.CancelOnce()`) is caught by the ThreadPool pattern.\n  - `new Task(CancelOnce).Start()` is caught by the new pattern.\n  - A fully qualified Close still passes.\n  - Reformatting Close's call (a line break or a space after `UnsafeQueueUserWorkItem`) fires the rule on legitimate code. That fails loudly, not silently, so I noted it as drift rather than a finding.\n  - Only a pool attempt whose lambda parameter is also named `aborted` evades the rule, which is contrived.\n- The Fitness engine re-parsed all 52 rules and every one holds, and rules-parity says AGREE.\n\n**CancelIsResentUntilACallThatHadNotReachedTheKernelIsInterrupted.**\n- The fixed 200 ms sleep is gone. The worker now waits until `CancelAttempts >= 2` (up to 5 s), then 100 ms more, before it blocks, and asserts that those attempts were sent. The Join is raised to 10 s.\n- `CancelAttempts` counts attempts that passed the gate, not calls made. The 100 ms makes that gap irrelevant, and the assertion only needs one miss.\n- I ran three mutants in a temp copy, since deleted:\n  - A canceller that stops resending once it gets FALSE/1168: red 2 of 2 ('the wait was never interrupted'). This is the shape design case C-004 says would bring back the lost cancel.\n  - A canceller with no resend: red 2 of 2.\n  - Every attempt delayed 300 ms: green 2 of 2, so the test no longer depends on how fast the first attempt arrives.\n- No other test depends on the first attempt arriving within a fixed sleep; I grepped every `Cancel();` site in tests/.\n\n**What I ran on the current tree.**\n- Build: 0 warnings, 0 errors.\n- Acceptance command: exit 0, 2 of 2 passed.\n- Both guard classes, 5 idle runs: 30 of 30 each.\n- Full suite: 337 of 337.\n- Concentrated loaded pass (4 busy processes and the test host pinned to CPUs 14–15): 3 of 3 runs, 30 of 30 each. The reworked test took 0.87–0.93 s. Afterwards no busy loops or testhosts were left.\n\nThe working tree is as I found it: only the engine's index.json and build-slice-3.json differ.\n\nSecond round: Round 2 found nothing to file.\n\n**Rule 2 regexes, probed with Python `re` on patterns read back from the YAML.** The attempt-3 patterns catch the forms they target. Four other forms still slip past:\n- `ThreadPool` + newline + `.UnsafeQueueUserWorkItem(static g => …)`\n- `Task.Factory` + newline + `.StartNew(`\n- `using static System.Threading.ThreadPool` followed by a bare `UnsafeQueueUserWorkItem(`\n- `Task.Run<int>(`\n\nThe last two are the same slips my attempt-1 review accepted for a name tripwire. The first two are new instances of that same family. This is the second time a rule-2 evasion has come up after R2-m1, and a regex can always be dodged one step further out. So I recorded it as drift with the approach-level fix: a behavioural check that no attempt runs on a pool thread. I did not send it back again.\n\n**fitness.yaml.** It still has no BOM, 678 CRLF line endings, no bare LF, no lone CR and no tabs. The multi-line plain `because` is valid YAML, and the engine parses all 52 rules. No rule-harness plant row or parity entry names rule 2, so changing its patterns shifts no count.\n\n**The reworked C-004 test (SynchronousIoCancelTests.cs:66-109).**\n- The worker spins with `SpinWait.SpinUntil`, which yields and sleeps, so it does not starve the canceller or the attempt threads.\n- Early attempts land on a non-I/O wait and get FALSE.\n- The 100 ms margin covers the gap between an attempt passing the gate and it actually calling CancelSynchronousIo.\n- The failure path of a canceller that never resends leaves a background thread blocked on a pipe that is disposed. The old version of this test had the same failure path; it is not new here.\n- My round-1 mutants still stand: terminal-on-FALSE and no-resend go red, and the 300 ms late-attempt mutant stays green.\n\nBoth changed files keep consistent CRLF line endings. The working tree is as I found it.",
+  "findings": [],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "I ran the acceptance command on the current tree: exit 0, 2 of 2 passed."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "Both repro tests (one CPU, worker at Highest, 3 and 8 waits) are green idle and in 3 of 3 loaded runs. Each attempt runs on its own thread (SynchronousIoCancel.cs:359-408, unchanged)."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "The unbounded drain (SynchronousIoCancel.cs:422-431) never hung in 5 idle class runs, the full suite or 3 loaded runs, all with blame-hang 60 s. Proven for local pipes only."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "The post-Exit pending pipe wait is still in the repro (lines 108-112) and in ExitWaits (SynchronousIoCancelTests.cs:241-246). It went red against the no-wait Drain mutant in my attempt-2 run; src is unchanged since."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "The working premise holds: the repro, red before the fix, is green."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "The drain is still unbounded, there is no bounded drain, the handle is still a SafeThreadHandle, and the ObjectDisposedException catch is kept (SynchronousIoCancel.cs:60, 399-403, 419-431)."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "C-001: CancelFreesACallThatBlocksAgainBeforeTheCancelCallHasReturned passes."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "C-002: CancelIsResentWhileACallBlocksAgainAfterACancel is unchanged with its 2 s bar and was green in 3 of 3 concentrated loaded runs."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "C-003: CancelInterruptsACallBlockedInTheKernel passes idle and loaded. Its first attempt always goes through a thread start."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "C-004: the reworked test (SynchronousIoCancelTests.cs:66-109) still asserts attempts > delivered and a delivered resend. It is red on the terminal-on-FALSE and no-resend mutants and green on the 300 ms late-attempt mutant."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "C-005: ExitWithNoCancelMakesNoAttemptAndWaitsForNone is unchanged and passes."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "C-006: ExitWaits asserts liveAtExit >= 2 and the repro asserts >= 1. Both pass."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "C-007: the post-Exit listing and pending wait are unchanged in both files."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "C-008: DisposeWithoutExitWhileCancellingEndsEveryAttemptFirst is unchanged since attempt 2, where both Dispose mutants made it red."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "C-009: the repro is in the ResendRace DisableParallelization collection with affinity restored. Full suite 337 of 337."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "M1: `~SynchronousIoCancel` ran 30 tests covering both classes, idle and loaded."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "M2: the post-Exit witness is a pending WaitForConnection with its client at 300 ms (SynchronousIoCancelTests.cs AssertNoCancelLandsOnThisThread)."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "M3: the 8-wait repro with a 10 s bar and the peak printed is unchanged (SynchronousIoCancelResendRaceTests.cs:53-55, 122-123)."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "M4: the _disposed and state checks under _gate (SynchronousIoCancel.cs:363, 390) and the Dispose ordering (265-282) are unchanged. The no-growth-after-Dispose assertion is at SynchronousIoCancelTests.cs:337-338."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "Critique m1: the slot is reserved under _gate before Start, and released in the catch and in the finally (SynchronousIoCancel.cs:361-376, 404-407)."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "Critique m3: the rule exempts the Close hand-off and adds the Task.Factory, System.Timers and PeriodicTimer patterns. It is now narrowed further by O-028. Fitness: all 52 rules hold."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "m4: the drain comment at SynchronousIoCancel.cs:419-421 records that there is no watchdog. Every loop I ran used blame-hang."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "m5: Kernel32.cs:94-99 and SynchronousIoCancel.cs:23-27 describe the behaviour as observed on Windows 11 26200, against the documented Remarks."
+   },
+   {
+    "key": "O-024",
+    "discharged": "cannot-tell",
+    "evidence": "m6 is a measurement report (loaded and idle full-suite runs reported apart), not code. Nothing in the tree can show it, and validate lists the concentrated full-suite run as not reached."
+   },
+   {
+    "key": "O-025",
+    "discharged": "yes",
+    "evidence": "m7: there is one SL-055 rule in fitness.yaml, with a comment explaining why the SL-024 duplicate was dropped."
+   },
+   {
+    "key": "O-026",
+    "discharged": "yes",
+    "evidence": "The Dispose test with held attempts and its three assertions (SynchronousIoCancelTests.cs:287-295, 333-335) is unchanged since my attempt-2 mutant runs, where it went red."
+   },
+   {
+    "key": "O-027",
+    "discharged": "yes",
+    "evidence": "Assert.Equal(4, PeakAttemptsInKernel) at SynchronousIoCancelTests.cs:258 is unchanged. It was red with cap 5 in attempt 2."
+   },
+   {
+    "key": "O-028",
+    "discharged": "yes",
+    "evidence": ".taad/fitness.yaml:663 reads `\\bThreadPool\\.(?!UnsafeQueueUserWorkItem\\(static aborted\\b)`, and :666 reads `\\bnew\\s+Task\\s*[(<]`. The `because` (lines 671-678) names Close's call site. Python `re` on the patterns read back from the YAML: 0 hits on the current SynchronousIoCancel.cs, and a hit on each of the pool-queued-attempt and new-Task mutants. Fitness holds; rules-parity says AGREE."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "The repro pins the process to its lowest CPU, runs the worker at Highest and re-blocks 3 times. Red before the fix, green now."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "CancelIsResentWhileACallBlocksAgainAfterACancel feeds 3 re-blocks. Load was concentrated on 2 CPUs, not the design's 32 jobs on 16 CPUs (validate's recorded gap)."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "Single pipe wait. The first attempt always goes through a new `scan-cancel-attempt` thread."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "The reworked test keeps the worker in managed code until 2 attempts have passed the gate, plus 100 ms, so the early attempts return FALSE/1168. It then blocks and needs a resend. Red when FALSE ends the resend and when there is no resend at all; green with 300 ms attempt latency."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "The token is never cancelled. Asserts attempts, peak and live-at-drain are all 0."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "ExitWaits holds attempts 2 to 4 across Exit and asserts liveAtExit >= 2."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "After Exit, a listing and then a pending 300 ms pipe wait, in the repro and in ExitWaits."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "The Dispose test throws through the using with attempts held past the throw. Unchanged since the mutants that turned it red."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "Serialized collection with affinity restored and asserted. Full suite 337 of 337 with the repro included."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "ExitWaits drives the attempts to the cap and asserts Peak == 4."
+   },
+   {
+    "key": "C-011",
+    "exercised": "no",
+    "evidence": "Non-material and deliberately untested. The reason still holds: the spike measured 500 of 500 under 622 ms, and a latency assert would flake. Recorded at SynchronousIoCancel.cs:39-44."
+   },
+   {
+    "key": "C-012",
+    "exercised": "no",
+    "evidence": "Non-material; there is no seam to make Thread.Start throw. The catch calls EndAttempt (SynchronousIoCancel.cs:373-376) and CancelOnce never runs after a failed Start."
+   }
+  ],
+  "drift": [
+   "Nothing undeclared departed. The reworked C-004 test (wait for 2 attempts plus 100 ms instead of a fixed 200 ms sleep) is declared, and the design's case C-004 is unchanged.",
+   "Rule 2's exemption now depends on how Close's call is written. A reformat that puts a line break or a space between `UnsafeQueueUserWorkItem` and `(static aborted` makes the rule fire on legitimate code (checked with Python re). It fails loudly and the `because` explains why, but whoever edits Close must keep that call on one line.",
+   "SL-049's opt-in CloudPlaceholderTests stall Fact is still the only test that would run SL-055's unbounded drain against a real redirector (cldflt). Its 5 s bar was justified on the pre-SL-055 guard, and it has not run on the new guard, because registering a sync root is still SL-049's open question for a person.",
+   "Nothing undeclared departed. The reworked C-004 test is a declared departure, and the design's case C-004 is unchanged.",
+   "Rule 2 is a name tripwire, and after O-028 it still has ways around it. Python `re` against the current patterns shows a pool-queued attempt written as `ThreadPool` + newline + `.UnsafeQueueUserWorkItem(static g => …)`, `Task.Factory` + newline + `.StartNew(`, `using static System.Threading.ThreadPool` with a bare `UnsafeQueueUserWorkItem(`, or `Task.Run<int>(` all pass. The same patterns fail on legitimate code if Close's call is wrapped after `(`. This is the second instance of this family after R2-m1, and a regex can always be dodged one step further out, so it is noted here rather than sent back. Two fixes, for whoever picks it up. First, the approach-level one: in an existing guard test, record `Thread.CurrentThread.IsThreadPoolThread` inside BeforeCancelCall and assert it is false. That catches every form, because the pool-queued mutant from round 2 of attempt 2 passed all 70 guard tests. Second, the smaller regex-only one: replace pattern 1 with `\\bUnsafeQueueUserWorkItem\\s*\\((?!\\s*static\\s+aborted\\b)` plus `\\bThreadPool\\s*\\.\\s*(?!UnsafeQueueUserWorkItem\\b)`. The lookahead must include the `\\s*`; a bare `\\(\\s*(?!…)` backtracks and still fires on a wrapped Close.",
+   "SL-049's opt-in CloudPlaceholderTests stall Fact is still the only test that would run SL-055's unbounded drain against a real redirector (cldflt). It has not been run on the new guard, because registering a sync root is still SL-049's open question for a person."
+  ],
+  "unreviewed": [
+   ".taad/slices/SL-055/validate-slice-2.json, build-slice-2.json and code-review-3.json: other stages' accounts. I left them unopened, as the brief directs; they are records, not code.",
+   "The SL-049 files merged in attempt 2 (tests/CfProvider/*, CloudPlaceholderTests.cs beyond lines 1-135, CloudRig.cs, ScanDeadline.cs, OptInTraitTests.cs) are unchanged since then and were not re-reviewed."
+  ],
+  "second_round": {
+   "run_id": 1527,
+   "filed": 0
+  }
+ }
+}

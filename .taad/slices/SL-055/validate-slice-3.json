@@ -1,0 +1,272 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-055",
+ "stage": "validate-slice",
+ "attempt": 3,
+ "at": "2026-09-27T09:39:12.329Z",
+ "head": "bb3b0115f40bee3613f19daa8be312903dbf85d8",
+ "run_id": 1528,
+ "summary": "Judged bb3b011. Build attempt 3 changed only .taad/fitness.yaml rule 2 and the C-004 test. SynchronousIoCancel.cs still hashes to C4E31B83…, the bytes attempts 1 and 2 judged.\n\n**Both defects sent back to build are fixed, and I checked each myself**\n- **O-028 (rule 2).** I read the 8 patterns back from the yaml and ran them with Python `re`. They match nothing in the current file, and Close's call still passes. They catch a pool-queued attempt (plain or fully qualified), `new Task(…)`, `new Task<bool>(…)`, Task.Run, Task.Factory, the Timer forms and RegisterWaitForSingleObject. The one way around it is a pool attempt whose lambda parameter is also named `aborted`, which is contrived and already noted by code review. Fitness: all 52 rules hold. rules-parity: AGREE in both shells.\n- **The C-004 test's fixed 200 ms window.** I built mutant Core DLLs in scratch and ran the tree's own test binary against them.\n  - Every attempt delayed 300 ms: the old test body was red 5 of 5 with my attempt-2 message ('1 attempts, 1 delivered'), and the reworked test was green 5 of 5.\n  - No resend: the reworked test was red 2 of 2.\n  - Under pinned load the reworked test was green 150 of 150. That green is weak evidence: the old body was also 0 of 200 in isolation today, so the mutant is what discriminates.\n\n**What passes**\n- Build: 0 warnings, 0 errors.\n- The acceptance command, verbatim: exit 0, 2 of 2 passed.\n- Idle: full suite 2 of 2 green (337 of 337), guard classes 10 of 10 green.\n- Thread.Start failing on the first 2 dispatches (injected): 15 of 15 green, about 65 ms slower, which fits two skipped ticks.\n\n**The lost cancel is gone**\nUnder the same pinned two-CPU load (test process plus 4 busy loops on CPUs 14-15):\n- Pre-fix guard: CancelIsResentWhileACallBlocksAgainAfterACancel red 20 of 20, every time 'interrupted 1 time(s)'.\n- Fixed guard: green 80 of 80, max 1473 ms. An instrumented copy was freed within 2 s in 150 of 150, max 894 ms, and every run was 3 of 3 interrupted and delivered.\n\n**The class still goes red under load (why this is partial)**\nIn 6 loaded class runs, 2 went red on the slice's own test with its exact message, 'the call was still blocked 2 s after Cancel', but reading 'interrupted 3 time(s)'. Every wait was interrupted, so these are slow cancels, not lost ones. The test ran alone each time (TRX start/end times), and the machine had heavy background load (35-86% total CPU). One run also hit the 250 ms Cancel() bar at 255 ms, which predates the fix.\n\nPushed harder (8 busy loops on the same 2 CPUs), the instrumented copy took more than 2 s in 41 of 100 runs, max 4.35 s. Every cancel was still delivered. The time goes to:\n- Cancel() itself: up to about 800 ms.\n- Starting each new attempt thread: about 300-960 ms per round.\n- Exit returning: up to 1.3 s with nothing left to drain.\n\nSo the design's premise that 'a delivered cancel is ~3x inside 2 s' was measured on the old single-thread loop. It does not hold for a call that blocks again 3 times on the per-attempt-thread path under concentrated contention. Whether to change the bar, raise the attempt threads' priority, or use long-lived attempt threads is a design (or person) decision. I have raised it against design-slice.\n\n**This is a loop risk.** Build attempts 2 and 3 changed no src, and validate has now found the load-sensitive reds twice. Another build lap cannot settle a bar-versus-mechanism question.\n\n**Not run:** the real cldflt test (needs a person's decision under SL-049), the SMB loopback test, Windows 10, the design's literal 32-job load, the full suite under load, and the published app (src is unchanged since build attempt 3 ran it). The SpikeVerdict lookup for 'delivered-cancel-latency-under-load' returned no such key, so I relied on the clipped evidence in the brief.\n\nScratch work was in %TEMP%\\sl055-v3 and has been deleted. No project file was changed. No busy loops, harnesses, test hosts or dumps remain.",
+ "payload": {
+  "status": "complete",
+  "verdict": "partial",
+  "contact": "code",
+  "summary": "Judged bb3b011. Build attempt 3 changed only .taad/fitness.yaml rule 2 and the C-004 test. SynchronousIoCancel.cs still hashes to C4E31B83…, the bytes attempts 1 and 2 judged.\n\n**Both defects sent back to build are fixed, and I checked each myself**\n- **O-028 (rule 2).** I read the 8 patterns back from the yaml and ran them with Python `re`. They match nothing in the current file, and Close's call still passes. They catch a pool-queued attempt (plain or fully qualified), `new Task(…)`, `new Task<bool>(…)`, Task.Run, Task.Factory, the Timer forms and RegisterWaitForSingleObject. The one way around it is a pool attempt whose lambda parameter is also named `aborted`, which is contrived and already noted by code review. Fitness: all 52 rules hold. rules-parity: AGREE in both shells.\n- **The C-004 test's fixed 200 ms window.** I built mutant Core DLLs in scratch and ran the tree's own test binary against them.\n  - Every attempt delayed 300 ms: the old test body was red 5 of 5 with my attempt-2 message ('1 attempts, 1 delivered'), and the reworked test was green 5 of 5.\n  - No resend: the reworked test was red 2 of 2.\n  - Under pinned load the reworked test was green 150 of 150. That green is weak evidence: the old body was also 0 of 200 in isolation today, so the mutant is what discriminates.\n\n**What passes**\n- Build: 0 warnings, 0 errors.\n- The acceptance command, verbatim: exit 0, 2 of 2 passed.\n- Idle: full suite 2 of 2 green (337 of 337), guard classes 10 of 10 green.\n- Thread.Start failing on the first 2 dispatches (injected): 15 of 15 green, about 65 ms slower, which fits two skipped ticks.\n\n**The lost cancel is gone**\nUnder the same pinned two-CPU load (test process plus 4 busy loops on CPUs 14-15):\n- Pre-fix guard: CancelIsResentWhileACallBlocksAgainAfterACancel red 20 of 20, every time 'interrupted 1 time(s)'.\n- Fixed guard: green 80 of 80, max 1473 ms. An instrumented copy was freed within 2 s in 150 of 150, max 894 ms, and every run was 3 of 3 interrupted and delivered.\n\n**The class still goes red under load (why this is partial)**\nIn 6 loaded class runs, 2 went red on the slice's own test with its exact message, 'the call was still blocked 2 s after Cancel', but reading 'interrupted 3 time(s)'. Every wait was interrupted, so these are slow cancels, not lost ones. The test ran alone each time (TRX start/end times), and the machine had heavy background load (35-86% total CPU). One run also hit the 250 ms Cancel() bar at 255 ms, which predates the fix.\n\nPushed harder (8 busy loops on the same 2 CPUs), the instrumented copy took more than 2 s in 41 of 100 runs, max 4.35 s. Every cancel was still delivered. The time goes to:\n- Cancel() itself: up to about 800 ms.\n- Starting each new attempt thread: about 300-960 ms per round.\n- Exit returning: up to 1.3 s with nothing left to drain.\n\nSo the design's premise that 'a delivered cancel is ~3x inside 2 s' was measured on the old single-thread loop. It does not hold for a call that blocks again 3 times on the per-attempt-thread path under concentrated contention. Whether to change the bar, raise the attempt threads' priority, or use long-lived attempt threads is a design (or person) decision. I have raised it against design-slice.\n\n**This is a loop risk.** Build attempts 2 and 3 changed no src, and validate has now found the load-sensitive reds twice. Another build lap cannot settle a bar-versus-mechanism question.\n\n**Not run:** the real cldflt test (needs a person's decision under SL-049), the SMB loopback test, Windows 10, the design's literal 32-job load, the full suite under load, and the published app (src is unchanged since build attempt 3 ran it). The SpikeVerdict lookup for 'delivered-cancel-latency-under-load' returned no such key, so I relied on the clipped evidence in the brief.\n\nScratch work was in %TEMP%\\sl055-v3 and has been deleted. No project file was changed. No busy loops, harnesses, test hosts or dumps remain.",
+  "checks": [
+   {
+    "what": "What build attempt 3 changed; product source untouched",
+    "command": "git diff 2ff34ba bb3b011 --stat; git diff 2ff34ba bb3b011 -- .taad/fitness.yaml tests/.../SynchronousIoCancelTests.cs; Get-FileHash src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs",
+    "outcome": "passed",
+    "evidence": "Only fitness.yaml (rule 2: new ThreadPool lookahead plus \\bnew\\s+Task\\s*[(<]) and the C-004 test (SpinUntil CancelAttempts>=2 plus 100 ms instead of Sleep(200); Join 10 s; sentBeforeWait assert) changed. No src diff. Hash C4E31B831F5F…, same as attempts 1 and 2."
+   },
+   {
+    "what": "Build the solution",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build FsAnalyser.slnx -nologo -v q",
+    "outcome": "passed",
+    "evidence": "Build succeeded, 0 warnings, 0 errors."
+   },
+   {
+    "what": "Acceptance command, verbatim and with detailed logging",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj -nologo --filter FullyQualifiedName~SynchronousIoCancelResendRaceTests",
+    "outcome": "passed",
+    "evidence": "EXIT 0 both times, 2 of 2 passed. 3 waits: left 96 ms after Cancel, 3 attempts, 3 delivered, at most 2 live, 2 live at Exit. 8 waits: 222 ms, 8 delivered, at most 2 live."
+   },
+   {
+    "what": "Architecture rules",
+    "command": "mcp Fitness op=check rebuild=true",
+    "outcome": "passed",
+    "evidence": "52 rules checked against 85 parsed files; every declared rule holds."
+   },
+   {
+    "what": "O-028: rule 2's patterns (read from the yaml) against the current file and mutant lines, Python re",
+    "command": "python rule2.py (scratch): 8 patterns from fitness.yaml vs SynchronousIoCancel.cs with // comments stripped, and 15 lines",
+    "outcome": "passed",
+    "evidence": "0 hits on the file. Caught: ThreadPool.UnsafeQueueUserWorkItem(static g => g.CancelOnce()…), the System.Threading-qualified form, ThreadPool.QueueUserWorkItem, RegisterWaitForSingleObject, new Task(CancelOnce).Start(), new Task<bool>(…), Task.Run, Task.Factory.StartNew, new Timer / new System.Threading.Timer, PeriodicTimer. Not caught (correct): Close's `ThreadPool.UnsafeQueueUserWorkItem(static aborted =>` (plain and fully qualified) and `new Thread(CancelOnce)…`. Not caught (evasion): a pool attempt whose lambda parameter is also named `aborted`."
+   },
+   {
+    "what": "rules-parity in both shells",
+    "command": "pwsh … -File eng/rules-parity.ps1 ; powershell … -File eng/rules-parity.ps1",
+    "outcome": "passed",
+    "evidence": "AGREE 11 facts <- 15 twinned entries, 27 patterns; EXIT 0 in both."
+   },
+   {
+    "what": "Idle full suite",
+    "command": "x2: pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx -nologo --no-build --blame-hang-timeout 60s --blame-hang-dump-type mini",
+    "outcome": "passed",
+    "evidence": "2 of 2 exit 0, 337 passed, 0 failed, 0 skipped, 22 s each."
+   },
+   {
+    "what": "Idle guard classes, repeated",
+    "command": "x10: eng/dotnet.ps1 test …Core.Tests.csproj --no-build --filter FullyQualifiedName~SynchronousIoCancel --blame-hang-timeout 60s",
+    "outcome": "passed",
+    "evidence": "0 of 10 runs red, 30 of 30 tests each, 9 s per run."
+   },
+   {
+    "what": "Reworked C-004 test (the tree's own test DLL, via a scratch reflection runner) under pinned load",
+    "command": "loaded.ps1 -Busy 4 -Mask 0xC000: rep.dll SynchronousIoCancelTests CancelIsResentUntilACallThatHadNotReachedTheKernelIsInterrupted 150",
+    "outcome": "passed",
+    "evidence": "0 of 150 red; per-iteration p50 695, p90 789, max 1314 ms. Idle 0 of 20. Weak as a discriminator: the old body was also 0 of 200 under the same load (next check)."
+   },
+   {
+    "what": "Old (2ff34ba) C-004 body, reflection replica, same pinned load: does today's load discriminate for this test?",
+    "command": "loaded.ps1 -Busy 4 -Mask 0xC000: ab.dll old 200",
+    "outcome": "failed",
+    "evidence": "0 of 200 red. The load did not reproduce my attempt-2 rate for the old test (3 of 143, which ran inside the test host). So load runs alone cannot show the test fix; the mutant below is the evidence."
+   },
+   {
+    "what": "Late-attempt mutant (Thread.Sleep(300) at the top of CancelOnce, scratch Core build): old body vs the reworked test",
+    "command": "rep.dll … CancelIsResentUntil… 5 and ab.dll old 5, against the mutant FsAnalyser.Core.dll",
+    "outcome": "passed",
+    "evidence": "Reworked test (the tree's DLL): 0 of 5 red. Old body: 5 of 5 red, '1 attempts, 1 delivered: the cancels sent before the wait should have found nothing', my attempt-2 message exactly."
+   },
+   {
+    "what": "No-resend mutant (CancelLoop returns after its first StartAttempt): does the reworked test still catch a lost resend?",
+    "command": "rep.dll SynchronousIoCancelTests CancelIsResentUntilACallThatHadNotReachedTheKernelIsInterrupted 2, against the mutant Core",
+    "outcome": "passed",
+    "evidence": "Red 2 of 2, 'the wait was never interrupted: a cancel that missed was not sent again' (10.1 s each). This was the expected red."
+   },
+   {
+    "what": "Loaded guard-class pass A: test host plus 4 busy loops pinned to CPUs 14-15",
+    "command": "loaded.ps1 -Runs 3 -Busy 4 -Mask 0xC000: eng/dotnet.ps1 test … --no-build --filter FullyQualifiedName~SynchronousIoCancel --blame-hang-timeout 60s --logger trx",
+    "outcome": "failed",
+    "evidence": "1 of 3 runs red. Run 1: CancelIsResentWhileACallBlocksAgainAfterACancel 'the call was still blocked 2 s after Cancel, interrupted 3 time(s)', test 2635 ms, the only test running at the time (TRX). Repro 3-wait left 2088 / 694 / 1582 ms (from before Cancel()); 8-wait 4445 / 1565 / 3059 ms. CancelAtRandomMoments 38.8-46.1 s. Runs took 88-117 s. Busy loops stopped, 0 left."
+   },
+   {
+    "what": "Loaded guard-class pass B: same load",
+    "command": "loaded.ps1 -Runs 3 -Busy 4 -Mask 0xC000 (same filter, trx2)",
+    "outcome": "failed",
+    "evidence": "1 of 3 runs red. Run 1: CancelIsResentWhileACallBlocksAgainAfterACancel 'still blocked 2 s after Cancel, interrupted 3 time(s)' (3458 ms, alone in its window), and CancelInterruptsACallBlockedInTheKernel 'Cancel() took 255 ms on the calling thread' (the pre-existing 250 ms bar). Runs 2 and 3 green. The C-004 test passed 6 of 6 across both passes. Busy loops stopped, 0 left."
+   },
+   {
+    "what": "Flaky class test in isolation under pinned load: fixed guard vs pre-fix guard (1922131 built from git archive in scratch)",
+    "command": "loaded.ps1 -Busy 4 -Mask 0xC000: rep.dll SynchronousIoCancelTests CancelIsResentWhileACallBlocksAgainAfterACancel 80 (tree Core) and 20 (pre-fix Core)",
+    "outcome": "passed",
+    "evidence": "Fixed: 0 of 80 red, p50 942, p90 991, max 1473 ms. Pre-fix: 20 of 20 red, every one 'still blocked 2 s after Cancel, interrupted 1 time(s)' (lost cancel). The load discriminates for this test."
+   },
+   {
+    "what": "Instrumented replica of the flaky test (3 waits), timestamps per attempt, interruption and Exit, under pinned load",
+    "command": "loaded.ps1 -Busy 4 -Mask 0xC000: tr.dll 150",
+    "outcome": "passed",
+    "evidence": "0 of 150 over 2000 ms from Cancel to Exit returning; p50 567, p90 598, max 894 ms. Every run: interrupted 3, delivered = attempts, no hang. Idle: about 60 ms, 3 attempts 25-30 ms apart."
+   },
+   {
+    "what": "Same replica under heavier concentrated contention: 8 busy loops pinned to the same 2 CPUs",
+    "command": "loaded.ps1 -Busy 8 -Mask 0xC000: tr.dll 100 (275 s)",
+    "outcome": "failed",
+    "evidence": "41 of 100 over 2000 ms; p50 1406, p90 3029, max 4354 ms. None lost: every run was interrupted 3 times with every attempt delivered. Slowest (#63): Cancel() returned at 611 ms, first attempt ran at 1229, interruptions at 1487 / 2087 / 3065, Exit took 1289 ms with 0 live attempts. The time goes to scheduling of Cancel(), each new attempt thread (300-960 ms per round) and the worker, not to a held attempt."
+   },
+   {
+    "what": "C-012: Thread.Start throws (OutOfMemoryException injected on the first 2 dispatches per guard, scratch Core build)",
+    "command": "rep.dll x5 each: CancelInterruptsACallBlockedInTheKernel, CancelIsResentWhileACallBlocksAgainAfterACancel, CancelIsResentUntilACallThatHadNotReachedTheKernelIsInterrupted",
+    "outcome": "passed",
+    "evidence": "15 of 15 green. p50 303 / 368 / 254 ms vs 237 / 305 on the tree guard: about 65 ms more, consistent with two skipped 25 ms ticks before a later tick delivers. The mutant DLL hash differs from the tree's (A59D5B… vs 40235F…)."
+   },
+   {
+    "what": "Background load on the machine during the loaded passes",
+    "command": "Get-Counter Processor(_Total/14/15) % Processor Time; per-process CPU deltas",
+    "outcome": "passed",
+    "evidence": "With none of my load running: 86% total (CPU 14 88%, CPU 15 84%) in one 5 s sample, 35% in another. Visible processes account for only 1.3-2.6 cores (OneDrive.Sync.Service, several python, chrome). The loaded passes ran on a machine that was busy for other reasons, and that load varied."
+   },
+   {
+    "what": "Full account of spike 'delivered-cancel-latency-under-load' before extending its conclusion",
+    "command": "mcp SpikeVerdict key=delivered-cancel-latency-under-load",
+    "outcome": "failed",
+    "evidence": "'there is no unknown DELIVERED-CANCEL-LATENCY-UNDER-LOAD on this project'. The slice spikes have no U-key I could find, so I relied on the brief's clipped evidence: measured on the pre-fix single-thread loop, 16 spin threads across all CPUs, max 622 ms."
+   },
+   {
+    "what": "Real cldflt redirector: opt-in CloudPlaceholderTests (Cloud=CF-SYNC-ROOT)",
+    "outcome": "not-run",
+    "evidence": "It registers a real sync root under %TEMP%. SL-049's question (may validate do that on this PC) is still unanswered. That needs a person's decision, not an administrator."
+   },
+   {
+    "what": "Real SMB client: opt-in Network=SMB-LOOPBACK test",
+    "outcome": "not-run",
+    "evidence": "It creates a New-SmbMapping, which changes the machine's SMB client network state. That is outside what this stage may do."
+   },
+   {
+    "what": "Design case 2's literal load (32 busy-loop jobs on 16 logical CPUs), and the full suite under any load",
+    "outcome": "not-run",
+    "evidence": "The machine rule caps load at half the logical processors, so pinned two-CPU contention was used instead. A loaded class run takes 88-147 s, so a 337-test suite under load would overrun a few-minute pass. Build attempt 1 reported 30 of 30 green at the literal load; I cannot re-run that here."
+   },
+   {
+    "what": "Published app run",
+    "outcome": "not-run",
+    "evidence": "src is byte-identical to what build attempt 3 published and ran (EXIT 0) and to what validate attempt 1 ran through WindowCases C-006."
+   },
+   {
+    "what": "Cleanup",
+    "command": "count busy loops, harness processes, this tree's testhosts and dumps; Remove-Item %TEMP%\\sl055-v3; git status",
+    "outcome": "passed",
+    "evidence": "0 busy loops, 0 harness processes, 0 testhosts from this tree, 0 dumps. Scratch folder deleted. git status shows only the engine's slice-record changes present at start. SynchronousIoCancel.cs hash still C4E31B83…."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "(slice) The flake is removed by a fix or a quarantine",
+    "met": "yes",
+    "how": "By a fix. The flaky test is unchanged and not skipped. The spikes showed the flake's cause, a lost cancel, and that cause is gone. Under pinned two-CPU load the pre-fix guard failed 20 of 20 with 'interrupted 1 time(s)'. The fixed guard was 80 of 80 green, 150 of 150 in the instrumented copy, and 0 lost in 100 runs at 8 loops. Every red in the loaded class runs showed all 3 waits interrupted. But the test's own 2 s bar still goes red under heavy contention through slow delivery (next criterion)."
+   },
+   {
+    "criterion": "(slice) Repeated class and full-suite runs no longer go red (was about 3 of 50 class runs, 1 of 2 full-suite runs)",
+    "met": "no",
+    "how": "Idle, yes: guard classes 10 of 10 green, full suite 2 of 2 (337 of 337). Under pinned two-CPU load (4 busy loops plus the machine's own 35-86% background) the classes were red in 2 of 6 runs. Both reds were CancelIsResentWhileACallBlocksAgainAfterACancel with the slice's own message, 'still blocked 2 s after Cancel', but 'interrupted 3 time(s)'. One run also hit the pre-existing 250 ms Cancel() bar (255 ms). At 8 loops on 2 CPUs the instrumented copy went over 2 s in 41 of 100 runs, with every cancel delivered. The full suite was not run under load. The load behind the original 3-of-50 rate was never recorded."
+   },
+   {
+    "criterion": "(slice) An answer to whether local cancel can really exceed 2 s under load",
+    "met": "yes",
+    "how": "Recorded at SynchronousIoCancel.cs:39-44: a landed cancel does not, a lost one does, without bound. Measured today on the shipped mechanism, that answer needs a refinement. A call that blocks again 3 times, with every cancel landing, took more than 2 s from Cancel to Exit in 41 of 100 runs at 8 busy loops on 2 CPUs (max 4.35 s) and in 2 of 6 loaded class runs. The time went to Cancel() itself, each new attempt thread getting scheduled, and the worker, not to held attempts. At 4 loops in isolation: max 894 ms over 150 runs."
+   },
+   {
+    "criterion": "1. Cancel a guarded call that blocks again when the worker re-blocks before the first CancelSynchronousIo returns (one CPU, worker at highest priority)",
+    "met": "yes",
+    "how": "The acceptance command exits 0 (run twice). Both repro tests passed in all 6 loaded class runs and 10 idle runs. The 3-wait case left 694-2088 ms after the clock started before Cancel(); the bar is measured after Cancel() returns, so the margin under load is thin. The pre-fix guard fails it (repro stage: exit 1)."
+   },
+   {
+    "criterion": "2. Cancel a guarded call that blocks again after each interruption: the existing class test run 30 times while 32 busy-loop jobs occupy 16 logical CPUs",
+    "met": "no",
+    "how": "Graded on a substitute load, because the literal 32-job load is barred by the machine rule (build attempt 1 reported 30 of 30 green at it). Under pinned two-CPU contention the test was red 2 of 6 class runs, 'still blocked 2 s after Cancel, interrupted 3 time(s)': every wait was interrupted, but the thread had not returned within 2 s. In isolation at the same load it was green 80 of 80 (max 1473 ms), where the pre-fix guard is red 20 of 20. So the lost cancel is fixed, but the 2 s bar is not held under concentrated contention."
+   },
+   {
+    "criterion": "3. Cancel a call blocked in the kernel with a single wait, first attempt on a newly started thread, under full CPU load",
+    "met": "yes",
+    "how": "CancelInterruptsACallBlockedInTheKernel's 2 s join held in 6 of 6 loaded class runs (test 0.7-2.9 s), 10 of 10 idle runs and 5 of 5 with Thread.Start injected. Its separate 250 ms Cancel() bar went red once (255 ms). That bar is on StartCanceller, which starts one thread as it did before the fix, and it is the design's unanswered question."
+   },
+   {
+    "criterion": "4. Cancel before the worker is in a synchronous call (FALSE/1168 ignored, the resend lands)",
+    "met": "yes",
+    "how": "The reworked test was green in 6 of 6 loaded class runs, 150 of 150 in the pinned harness and 10 of 10 idle. With every attempt delayed 300 ms, the tree's test stays green 5 of 5 while the old body is red 5 of 5 with my attempt-2 message. The no-resend mutant turns it red 2 of 2."
+   },
+   {
+    "criterion": "5. Exit when no cancel happened",
+    "met": "yes",
+    "how": "ExitWithNoCancelMakesNoAttemptAndWaitsForNone passed in 10 idle class runs, 2 idle full suites and 6 loaded class runs. Leave() returns before Drain unless the state was CancelIssued (SynchronousIoCancel.cs:287-293)."
+   },
+   {
+    "criterion": "6. Exit after a cancel, with an attempt still inside CancelSynchronousIo",
+    "met": "yes",
+    "how": "The repro tests report 2 live at Exit and pass in every run, idle and loaded. ExitWaits passed in every run. No hang under blame-hang anywhere. Attempt 2's no-wait-drain mutant, on byte-identical src and the same test file lines, turned it red 3 of 3."
+   },
+   {
+    "criterion": "7. Synchronous I/O after Exit returns is not aborted",
+    "met": "yes",
+    "how": "The repro's post-Exit listing (2 entries) and its pending pipe wait with a client 300 ms later passed in every idle and loaded run, and ExitWaits passed in every run. That check's teeth were shown by attempt 2's mutant on identical src."
+   },
+   {
+    "criterion": "8. Dispose while still Cancelling with no prior Exit",
+    "met": "yes",
+    "how": "DisposeWithoutExitWhileCancellingEndsEveryAttemptFirst passed in every idle and loaded run (1.7-2.9 s loaded). Its mutants (skip Drain, Drain without wait) were red 3 of 3 in attempt 2; neither src nor that test has changed since."
+   },
+   {
+    "criterion": "9. Full suite with the repro included",
+    "met": "yes",
+    "how": "Idle: 2 of 2 runs, 337 of 337, no hang, with the repro's affinity pinning and SL-049's tests together. Under load: not run (see not_reached)."
+   },
+   {
+    "criterion": "10. Cap on attempts inside the kernel (4)",
+    "met": "yes",
+    "how": "ExitWaitsForAttemptsAboutToCancelSoNoneLandsAfterIt asserts PeakAttemptsInKernel == 4 and passed in every run. The cap-5 mutant was red 3 of 3 in attempt 2 on identical src. Peak in the loaded repro runs was 2-3; the 8-loop replica reached 4 without stalling."
+   },
+   {
+    "criterion": "11. Delivered cancel latency: a landed cancel that takes more than 2 s under load",
+    "met": "not-checked",
+    "how": "No test exercises it, and the design marked it non-material. I saw no single landed cancel take over 2 s: in the slowest 8-loop replica run the first interruption came 1487 ms after the clock started, before Cancel(). But calls that block again 3 times did exceed 2 s in total (41 of 100)."
+   },
+   {
+    "criterion": "12. Thread.Start throws under resource exhaustion",
+    "met": "yes",
+    "how": "Checked this attempt in a scratch build that throws OutOfMemoryException on the first 2 dispatches per guard: 15 of 15 green across three guard tests, about 65 ms slower (two skipped ticks). The slot was given back and a later tick delivered the cancel. No test in the tree pins this."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-028",
+    "verified": "yes",
+    "evidence": "fitness.yaml rule 2 now reads \\bThreadPool\\.(?!UnsafeQueueUserWorkItem\\(static aborted\\b) and adds \\bnew\\s+Task\\s*[(<]. In Python re, patterns read from the yaml match nothing in SynchronousIoCancel.cs. They catch the pool-queued attempt, the fully qualified pool form, new Task(CancelOnce).Start() and new Task<bool>(…), and let Close's call through. Fitness: 52 of 52 hold. rules-parity AGREE in both shells. One evasion remains: a pool attempt whose lambda parameter is also named `aborted`. It is contrived and already recorded as drift by code review."
+   },
+   {
+    "key": "validate-2 NEW -> build-slice: CancelIsResentUntilACallThatHadNotReachedTheKernelIsInterrupted relied on a fixed 200 ms window",
+    "verified": "yes",
+    "evidence": "The worker now waits for CancelAttempts >= 2 plus 100 ms, and asserts it. With every attempt delayed 300 ms (scratch Core), the tree's own test DLL was green 5 of 5 while the old body was red 5 of 5 with my attempt-2 message. The no-resend mutant is red 2 of 2. Green 150 of 150 pinned, 6 of 6 loaded class runs, 10 of 10 idle."
+   },
+   {
+    "key": "NEW -> design-slice: the per-attempt-thread guard does not hold the 2 s bar for a call that blocks again 3 times under concentrated CPU contention",
+    "verified": "no",
+    "evidence": "The design kept the 2 s bar because delivered cancels were fast (max 622 ms, '~3x headroom'). That spike measured the old single-thread loop with load spread over 16 CPUs. On the shipped mechanism under pinned two-CPU contention: CancelIsResentWhileACallBlocksAgainAfterACancel was red in 2 of 6 class runs, 'still blocked 2 s after Cancel, interrupted 3 time(s)', every wait interrupted. The instrumented copy went over 2 s in 41 of 100 runs at 8 loops (max 4.35 s) and 0 of 150 at 4 loops (max 894 ms), with every cancel delivered. The time goes to scheduling: Cancel() up to ~800 ms, each new attempt thread 300-960 ms, and Exit up to 1.3 s with 0 live attempts. The build cannot settle this. It needs a design or person decision: the bar and the load envelope it must hold under, higher attempt-thread priority, or the design's open alternative of long-lived attempt threads. It also bears on design question 1 and the unanswered 250 ms Cancel() bar question."
+   }
+  ],
+  "not_reached": [
+   "The shipped guard against a real cloud-files redirector: CloudPlaceholderTests (Cloud=CF-SYNC-ROOT) registers a real cldflt sync root, and SL-049's question whether that is allowed on this PC is unanswered. It is the only test that runs the unbounded Exit/Dispose drain against a real redirector. This needs a person's decision, not an administrator.",
+   "A real SMB client or share: SMB-LOOPBACK needs New-SmbMapping, which this stage may not do.",
+   "Windows 10: the held-in-kernel CancelSynchronousIo behaviour the fix rests on, which contradicts Microsoft's documented remarks, was measured only on Windows 11 26200.",
+   "The design's literal load for case 2 (32 busy-loop jobs on 16 logical CPUs): barred by the half-the-CPUs rule. Pinned two-CPU contention was used, and it is heavier per CPU. Build attempt 1's 30 of 30 at the literal load could not be re-run.",
+   "The full suite under load: too slow for a few-minute loaded pass, so whether the whole suite goes red under the load that still reddens the class is unknown.",
+   "The person's normal machine load: the conditions behind the original 3-of-50 class and 1-of-2 suite rates were never recorded, so the post-fix rate at that load is unknown. Today the machine carried 35-86% background CPU from other processes.",
+   "Where the time went in the 2 red loaded class runs themselves. The split (scheduling of Cancel(), attempt-thread start, worker) was measured only in the scratch copy, not inside the test host during those runs.",
+   "The cancel classes run together under load (CancellationTests, CancelledFolderTests, CloudRigTests beside SynchronousIoCancel*): not re-run this attempt. In attempt 2, on identical src, it reddened CancelAtRandomMoments and the 250 ms Cancel() bar.",
+   "A redirector that holds CancelSynchronousIo after the scan thread has left all I/O: never observed or ruled out on real network or cloud storage, and the production drain has no watchdog.",
+   "The published app: not re-run this attempt. src is byte-identical to what build attempt 3 published and ran with EXIT 0."
+  ],
+  "planned": [],
+  "elevation": []
+ }
+}

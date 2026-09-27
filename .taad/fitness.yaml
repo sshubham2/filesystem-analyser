@@ -651,3 +651,28 @@ rules:
       and the test would agree with the bug. The SL-024 harness it was lifted from reached Core
       through a HintPath Reference, which no ProjectReference or import rule sees, and a fully
       qualified name needs no import, so the name itself is refused in every file there.
+
+  # settled by SL-055
+  # Its design also declared 'Only the cancel guard issues CancelSynchronousIo'. That was SL-024's rule
+  # above to the letter (same files, pattern and except_files), so its build dropped the copy (review m7).
+  # SL-024's rule now also stands for this: a CancelSynchronousIo made outside the guard skips its gate and
+  # drain, and can land after Exit on later I/O, listing a readable folder as unreadable (PS-006).
+  - name: Cancel attempts never run on the thread pool or a timer
+    files: src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs
+    must_not_match:
+    - \bThreadPool\.(?!UnsafeQueueUserWorkItem\(static aborted\b)
+    - \bTask\.Run\s*\(
+    - \bTask\.Factory\.StartNew\b
+    - \bnew\s+Task\s*[(<]
+    - \bQueueUserWorkItem\b
+    - \bnew\s+(System\.Threading\.)?Timer\s*\(
+    - \bSystem\.Timers\.Timer\b
+    - \bPeriodicTimer\b
+    because: A CancelSynchronousIo call held in the kernel would pin a pool thread the scanner
+      shares, and slow pool thread injection under load would bring back the same lost resend
+      this slice removes. Attempts need dedicated threads. One pool call is allowed, and only at
+      its call site - Close's hand-off of an aborted call's handle, ThreadPool.UnsafeQueueUserWorkItem(static
+      aborted => ...), which is on purpose (SL-024, review m3). The exemption is tied to that
+      lambda's parameter, so reusing the same API to queue an attempt still fails (review
+      R2-m1), as does a Task constructed and started by hand; \bQueueUserWorkItem\b does not
+      match the Close call. Matched against code only, so a comment can say why without failing it.

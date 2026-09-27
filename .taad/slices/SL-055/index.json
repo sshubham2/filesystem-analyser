@@ -1,0 +1,511 @@
+{
+ "schema": "slice-record@1",
+ "slice": "SL-055",
+ "title": "Fix or quarantine the flaky SynchronousIoCancelTests",
+ "status": "active",
+ "branch": "slice/SL-055",
+ "opened_at": "2026-09-27T00:44:03.485Z",
+ "merge_commit": null,
+ "how_to_read": "Each attempt is one line and a `details` filename in this same directory. Open a detail file ONLY when this index points you at one -- the summaries are here so you do not have to. `caused_by` is what sent the stage back; `changed` is what the attempt then touched, counted by kind. Several attempts in a row that were caused by the same stage and changed no `src` is a loop, not progress.",
+ "open": [
+  {
+   "stage": "repro",
+   "issue": "observed: CancelFreesACallThatBlocksAgainBeforeTheCancelCallHasReturned [FAIL]: \"the call was still blocked 2 s after Cancel, interrupted 1 time(s), 1 cancel attempt(s) made\" at SynchronousIoCancelResendRaceTests.cs:line 77"
+  },
+  {
+   "stage": "build-check",
+   "issue": "The flake is removed by a fix or a quarantine: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "Repeated class and full-suite runs no longer go red (was about 3 of 50 class runs, 1 of 2 full-suite runs): missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "The answer to whether local cancel can really exceed 2 s under load: partial"
+  },
+  {
+   "stage": "risk-spike",
+   "issue": "flake-is-lost-cancel-not-slow-cancel: 4 of 300 runs stalled, all lost cancels (canceller stuck in CSIO), none slow; 12/12 under load"
+  },
+  {
+   "stage": "risk-spike",
+   "issue": "retry-cancel-loop-clears-flake-without-collateral: needs first: Something has to keep the resend alive while one CancelSynchronousIo call is held in the kernel: for example, each attempt issued from its own short-lived thread or timer callback, so a …"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "If SynchronousIoCancelTests.CancelInterruptsACallBlockedInTheKernel (failed once in a full-suite run beside the unserialized repro, message never captured) recurs after the fix and the serialization, is it part of SL-055 or a separate slice?"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "If a second concurrent CancelSynchronousIo turns out not to free a re-blocked wait, no fix inside the current design can make the repro pass. Is quarantining the flaky test and the repro, with a tracked lost-cancel defect left open, an accepted outcome for this slice, or does it stay blocked until a real fix exists?"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "A fresh dedicated thread per attempt versus a small fixed set of long-lived attempt threads. Uncontested here; the proposal chose the simpler per-attempt thread."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Cap of 4 in-kernel attempts versus 2 or unbounded. 4 was chosen as margin over the theoretical 2."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Gate and drain as a Monitor-based lock versus a counted event or SemaphoreSlim. Left to the build."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Recording the '>2 s under load' answer as a code comment and slice record versus a docs page or ADR."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The repro stays its own test class with its own serialized collection, rather than being folded into SynchronousIoCancelTests."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "C-011 (delivered-cancel latency over 2 s) and C-012 (Thread.Start throwing) still have no dedicated test. The design marked both non-material, and nothing owed asks for them."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "The decider's reason reached this stage cut off at 'The test depends on ti…', and the index's validate entry says only 'criterion not met'. The second defect could be identified only by opening validate-slice-2.json (its NEW obligation against build-slice). The engine should carry a validate-raised build obligation into 'STILL OWED' the way it carries review findings, not leave it inside a clipped reason."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "Validate's remaining reds under pinned load predate this slice and are the design's open question for a person: the 250 ms Cancel() bar in CancelInterruptsACallBlockedInTheKernel and CancellationTests, and CancelAtRandomMoments' calibration when cancel classes run in parallel. Both passed 3 of 3 in this attempt's pinned pass."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: Validate's NEW finding against CancelIsResentUntilACallThatHadNotReachedTheKernelIsInterrupted was fixed in the test only, as validate suggested: wait for the guard's own attempt count, not a fixed s…"
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: Nothing undeclared departed. The reworked C-004 test (wait for 2 attempts plus 100 ms instead of a fixed 200 ms sleep) is declared, and the design's case C-004 is unchanged."
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: Rule 2's exemption now depends on how Close's call is written. A reformat that puts a line break or a space between `UnsafeQueueUserWorkItem` and `(static aborted` makes the rule fire on legitimate c…"
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: SL-049's opt-in CloudPlaceholderTests stall Fact is still the only test that would run SL-055's unbounded drain against a real redirector (cldflt). Its 5 s bar was justified on the pre-SL-055 guard, …"
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: Nothing undeclared departed. The reworked C-004 test is a declared departure, and the design's case C-004 is unchanged."
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: Rule 2 is a name tripwire, and after O-028 it still has ways around it. Python `re` against the current patterns shows a pool-queued attempt written as `ThreadPool` + newline + `.UnsafeQueueUserWorkI…"
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: SL-049's opt-in CloudPlaceholderTests stall Fact is still the only test that would run SL-055's unbounded drain against a real redirector (cldflt). It has not been run on the new guard, because regis…"
+  },
+  {
+   "stage": "code-review",
+   "issue": "not reviewed: .taad/slices/SL-055/validate-slice-2.json, build-slice-2.json and code-review-3.json: other stages' accounts. I left them unopened, as the brief directs; they are records, not code."
+  },
+  {
+   "stage": "code-review",
+   "issue": "not reviewed: The SL-049 files merged in attempt 2 (tests/CfProvider/*, CloudPlaceholderTests.cs beyond lines 1-135, CloudRig.cs, ScanDeadline.cs, OptInTraitTests.cs) are unchanged since then and were not re-revie…"
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The shipped guard against a real cloud-files redirector: CloudPlaceholderTests (Cloud=CF-SYNC-ROOT) registers a real cldflt sync root, and SL-049's question whether that is allowed on this PC is unanswered. It is the only test that runs the unbounded Exit/Dispose drain against a real redirector. This needs a person's decision, not an administrator."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A real SMB client or share: SMB-LOOPBACK needs New-SmbMapping, which this stage may not do."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Windows 10: the held-in-kernel CancelSynchronousIo behaviour the fix rests on, which contradicts Microsoft's documented remarks, was measured only on Windows 11 26200."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The design's literal load for case 2 (32 busy-loop jobs on 16 logical CPUs): barred by the half-the-CPUs rule. Pinned two-CPU contention was used, and it is heavier per CPU. Build attempt 1's 30 of 30 at the literal load could not be re-run."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The full suite under load: too slow for a few-minute loaded pass, so whether the whole suite goes red under the load that still reddens the class is unknown."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The person's normal machine load: the conditions behind the original 3-of-50 class and 1-of-2 suite rates were never recorded, so the post-fix rate at that load is unknown. Today the machine carried 35-86% background CPU from other processes."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Where the time went in the 2 red loaded class runs themselves. The split (scheduling of Cancel(), attempt-thread start, worker) was measured only in the scratch copy, not inside the test host during those runs."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The cancel classes run together under load (CancellationTests, CancelledFolderTests, CloudRigTests beside SynchronousIoCancel*): not re-run this attempt. In attempt 2, on identical src, it reddened CancelAtRandomMoments and the 250 ms Cancel() bar."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A redirector that holds CancelSynchronousIo after the scan thread has left all I/O: never observed or ruled out on real network or cloud storage, and the production drain has no watchdog."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The published app: not re-run this attempt. src is byte-identical to what build attempt 3 published and ran with EXIT 0."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "criterion not met: (slice) Repeated class and full-suite runs no longer go red (was about 3 of 50 class runs, 1 of 2 full-suite runs)"
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "criterion not met: 2. Cancel a guarded call that blocks again after each interruption: the existing class test run 30 times while 32 busy-loop jobs occupy 16 logical CPUs"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The design's proof protocol specified 32 busy-loop jobs on 16 logical CPUs as the load for proving the fix, without checking whether the environment that would run it could actually sustain that load. Critique reviewed the protocol's filter coverage (M1) and idle-vs-loaded distinction (m6) in fine …"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: Critique required a hang-timeout and dump (m4) for the guard's own drain hanging, but did not anticipate that the loaded test runner itself could stall on test discovery or VSTest protocol negotiation, unrelated to the guard."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does CancelSynchronousIo exhibit the same held-in-kernel-until-target-completes behavior on Windows 10, or only on the Windows 11 26200 build this was measured on?"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Is the pre-existing 250 ms 'Cancel() took N ms' timing-bar failure under load its own defect needing a separate slice, or an accepted limitation? The design raised this and no person has answered it."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does the acceptance repro's 2 s bar have enough margin under real contention on other machines, given it reached 1780-2051 ms under validate's pinned-2-CPU load?"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Will validate's load cap ever be raised (or worked around) so the design's actual specified load shape (32 jobs / 16 CPUs) can be run directly instead of substituted?"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: risk-spike ran 3 times: round 1 halted with no experiment deciding anything; round 2 halted with 1 held and 2 no-go verdicts; round 3 proceeded to design despite the standing no-go on 'retry-cancel-loop-clears-flake-without-collateral', with a model…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: design-slice ran twice: round 1 halted on 2 questions that are still open on the project's list today; round 2 was accepted by a model while the project owner was away, so this design never got the owner's actual sign-off."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: A single, uncontested design shipped 4 major and 7 minor findings at critique, including a cap-of-4 rationale ('in theory 2 suffice') directly contradicted by the failing test's own captured output that was available before the design was written (M…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: code-review's second pass found 2 more test-coverage gaps (C-008's Dispose test never has an attempt in flight; C-010's cap test never asserts the peak) after critique had already passed the design; these were accepted-pending as O-026/O-027 but no …"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The design's proof protocol specified a load shape (32 busy-loop jobs on 16 logical CPUs) that validate's own machine rules disallow (capped at 8), discovered only when validate tried to run it; validate substituted differently-shaped contention (2 …"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Loaded test runs hit two unrelated infrastructure stalls (a 2-minute test-discovery hang and a 90-second VSTest protocol-negotiation failure) that had to be manually classified as infra failures rather than real results."
+  }
+ ],
+ "stages": [
+  {
+   "stage": "repro",
+   "title": "Repro",
+   "order": 1,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "build-check",
+   "title": "Build check",
+   "order": 2,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "risk-spike",
+   "title": "Risk spike",
+   "order": 3,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "design-slice",
+   "title": "Design",
+   "order": 4,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-27T03:11:20.236Z",
+     "head": "192213183ef7b96165a88a62419d7c1f3a055df1",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique",
+   "title": "Critique",
+   "order": 5,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-27T04:06:51.006Z",
+     "head": "192213183ef7b96165a88a62419d7c1f3a055df1",
+     "summary": "The core mechanism is sound and follows from the spikes: each CancelSynchronousIo runs on its own dedicated thread, and Exit waits under a gate until no attempt is left in flight.",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique-review",
+   "title": "Critique review",
+   "order": 6,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-27T04:16:44.317Z",
+     "head": "192213183ef7b96165a88a62419d7c1f3a055df1",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-review-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "build-slice",
+   "title": "Build",
+   "order": 7,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-27T04:18:05.450Z",
+     "head": "5654d9b2979db5964482574059927f0595467ba1",
+     "summary": "Each CancelSynchronousIo now runs on its own short-lived dedicated thread (`scan-cancel-attempt`), so a call the kernel holds can no longer stop the resend.",
+     "caused_by": null,
+     "changed": {
+      "src": 2,
+      "tests": 2,
+      "config": 1,
+      "listed": 5,
+      "measured_by_git": 9
+     },
+     "details": "build-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-27T07:48:53.433Z",
+     "head": "2ff34ba1e9f4ec4b500835c24af386c9e76036c0",
+     "summary": "I finished the uat→SL-055 merge that had stopped on .taad/fitness.yaml.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "uat was merged into SL-055's branch before the merge out and CONFLICTED on 1 file(s): .taad/fitness.yaml. The merge is left IN PROGRESS in this slice's own tree; nothing on uat has moved. This verdict judged 5654d9b29, and nothing has yet been checked against the two slices' work TOGETHER, which is what the merge produces. Open each conflicted file, keep what BOTH sides meant -- this slice's change and the work uat brought -- and remove every conflict marker; the engine commits the merge when you finish. Do not abort the merge and do not take one side wholesale.",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-026",
+       "O-027"
+      ]
+     },
+     "changed": {
+      "config": 1,
+      "tests": 1,
+      "listed": 2,
+      "measured_by_git": 29
+     },
+     "details": "build-slice-2.json"
+    },
+    {
+     "n": 3,
+     "state": "passed",
+     "at": "2026-09-27T09:13:41.475Z",
+     "head": "bb3b0115f40bee3613f19daa8be312903dbf85d8",
+     "summary": "Fixed both defects the decider sent back; the product code is untouched.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "validation partial this build: The validation is right: two defects owned by build-slice are still in the tree, and running the checks again will not change either one. This is the slice's first rebuild. Build attempt 2 was caused by the merge's stale revoke, not by validate. WHAT I CHECKED MYSELF (contact code, by reading the tree and git; I ran no tests): - O-028 is unfixed. .taad/fitness.yaml:663 still reads `\\bThreadPool\\.(?!UnsafeQueueUserWorkItem\\b)`, and lines 660-669 have no Task-constructor pattern. That exemption covers every UnsafeQueueUserWorkItem in SynchronousIoCancel.cs, not on…",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {
+      "config": 1,
+      "tests": 1,
+      "listed": 2,
+      "measured_by_git": 7
+     },
+     "details": "build-slice-3.json"
+    }
+   ]
+  },
+  {
+   "stage": "code-review",
+   "title": "Code review",
+   "order": 8,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-27T06:22:55.256Z",
+     "head": "5654d9b2979db5964482574059927f0595467ba1",
+     "summary": "The guard does what the design says, apart from departures the build declared.",
+     "caused_by": null,
+     "changed": {},
+     "details": "code-review-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-27T08:12:30.213Z",
+     "head": "2ff34ba1e9f4ec4b500835c24af386c9e76036c0",
+     "summary": "process gone without reporting",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "uat was merged into SL-055's branch before the merge out and CONFLICTED on 1 file(s): .taad/fitness.yaml. The merge is left IN PROGRESS in this slice's own tree; nothing on uat has moved. This verdict judged 5654d9b29, and nothing has yet been checked against the two slices' work TOGETHER, which is what the merge produces. The builder finishes the merge first; what you read next is both slices' work, and how the builder reconciled them.",
+      "cause": "integration",
+      "stage": "merge",
+      "from": [
+       "merge"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-2.json"
+    },
+    {
+     "n": 3,
+     "state": "passed",
+     "at": "2026-09-27T08:12:33.238Z",
+     "head": "bb3b0115f40bee3613f19daa8be312903dbf85d8",
+     "summary": "Build attempt 2 did two things.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "code-review passed on 2026-09-27T08:30:09.683Z, and build-slice has judged since (2026-09-27T09:25:53.888Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "cause": "knock-on",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-3.json"
+    },
+    {
+     "n": 4,
+     "state": "unrecorded",
+     "at": "2026-09-27T09:25:54.142Z",
+     "head": "",
+     "summary": "Build attempt 3 (bb3b011) touched two files; the product source is unchanged (SynchronousIoCancel.cs is still C4E31B83…).",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "code-review passed on 2026-09-27T08:30:09.683Z, and build-slice has judged since (2026-09-27T09:25:53.888Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "cause": "knock-on",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-4.json"
+    }
+   ]
+  },
+  {
+   "stage": "validate-slice",
+   "title": "Validate",
+   "order": 9,
+   "state": "waiting",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-27T06:37:58.697Z",
+     "head": "5654d9b2979db5964482574059927f0595467ba1",
+     "summary": "The fix holds against everything this machine could reach.",
+     "caused_by": null,
+     "changed": {},
+     "details": "validate-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "failed",
+     "at": "2026-09-27T08:30:46.098Z",
+     "head": "2ff34ba1e9f4ec4b500835c24af386c9e76036c0",
+     "summary": "This run judged the merged tree (2ff34ba), which is SL-055's work plus uat's SL-049.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "uat was merged into SL-055's branch before the merge out and CONFLICTED on 1 file(s): .taad/fitness.yaml. The merge is left IN PROGRESS in this slice's own tree; nothing on uat has moved. This verdict judged 5654d9b29, and nothing has yet been checked against the two slices' work TOGETHER, which is what the merge produces. The builder finishes the merge first; what you read next is both slices' work, and how the builder reconciled them.",
+      "cause": "integration",
+      "stage": "merge",
+      "from": [
+       "merge"
+      ]
+     },
+     "changed": {},
+     "details": "validate-slice-2.json"
+    },
+    {
+     "n": 3,
+     "state": "waiting",
+     "at": "2026-09-27T09:39:12.329Z",
+     "head": "bb3b0115f40bee3613f19daa8be312903dbf85d8",
+     "summary": "Judged bb3b011.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "uat was merged into SL-055's branch before the merge out and CONFLICTED on 1 file(s): .taad/fitness.yaml. The merge is left IN PROGRESS in this slice's own tree; nothing on uat has moved. This verdict judged 5654d9b29, and nothing has yet been checked against the two slices' work TOGETHER, which is what the merge produces. The builder finishes the merge first; what you read next is both slices' work, and how the builder reconciled them.",
+      "cause": "integration",
+      "stage": "merge",
+      "from": [
+       "merge"
+      ]
+     },
+     "changed": {},
+     "details": "validate-slice-3.json"
+    }
+   ]
+  },
+  {
+   "stage": "reflect",
+   "title": "Reflect",
+   "order": 10,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-27T07:42:35.458Z",
+     "head": "5654d9b2979db5964482574059927f0595467ba1",
+     "summary": "This slice fixed a genuine lost-cancel race in SynchronousIoCancel.CancelLoop: the single canceller thread could get stuck inside a blocking CancelSynchronousIo call once the target thread re-blocked, silently killing the 25 ms resend and leaving guarded I/O blocked indefinitely under load.",
+     "caused_by": null,
+     "changed": {},
+     "details": "reflect-1.json"
+    }
+   ]
+  }
+ ]
+}
