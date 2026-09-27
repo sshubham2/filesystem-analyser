@@ -1,0 +1,190 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-062",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-27T16:26:18.919Z",
+ "head": "6c57f0ca438315b7761315d7d134b64ad5686f9b",
+ "run_id": 1636,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "The build-check already measured the exact defect (done:true sitting next to how-text admitting the test \"has NEVER run... by me or anyone\" and \"remains owed to the person\"), and the risk spike already confirmed the recorded command runs the right one test through the SMB-LOOPBACK filter (1/1 Passed, 66.2s) without discharging anything, since the contract is person-run. Given those two measurements, the only design question left is how to edit the ledger without breaking anything else in the file, and the practice proposal's answer -- a targeted one-line text edit anchored on the unique \"key\": \"O-030\" line, never a ConvertFrom-Json/ConvertTo-Json round-trip -- matches how PowerShell actually mangles JSON (re-escaping, -Depth 2 truncation, BOM injection) rather than an idealized \"just edit the object\" view. It also correctly declines to let the spike's agent-run pass double as a discharge, honoring both the acceptance test's requirement (done:false) and the recorded constraint that no engine stage runs Network=SMB-LOOPBACK. This is adopted as the whole design, tightened only by making one of its named risks (a possible mirrored O-030 record elsewhere in .taad) an explicit build-time check rather than a side note, since it is the one thing that could make the repro pass while still failing the slice's actual purpose (routing this to the person's sitting).",
+  "components": [
+   {
+    "name": "O-030 ledger entry",
+    "responsibility": "The only tracked file changed. In payload.obligations[key=O-030] (lines 106-110), flip done from true to false. key, how-text, the other obligations, the tests array, and follow_ups are untouched byte-for-byte.",
+    "lives_at": ".taad/slices/SL-038/build-slice-2.json",
+    "key_interactions": "Read by tests/bugs/O-030-ledger-discharge.Tests.ps1 and by whatever engine routing sends done:false obligations to the person's sitting."
+   },
+   {
+    "name": "Repro acceptance test",
+    "responsibility": "Unmodified acceptance oracle. Passes only when O-030 exists, its how-text still contains 'NEVER run' and 'remains owed to the person', and done == false.",
+    "lives_at": "tests/bugs/O-030-ledger-discharge.Tests.ps1",
+    "key_interactions": "Parses the ledger with ConvertFrom-Json; a malformed edit or a paraphrased how-text also fails it, so it double-checks the edit's shape as well as its value."
+   },
+   {
+    "name": "SL-062 build-record hand-off note",
+    "responsibility": "Written by the build stage itself, not the ledger file: states O-030 is re-opened as owed to the person-run network sitting, names the command, notes the spike's 66.2s agent pass as informational only, and records that the person's result belongs alongside N-001..N-004.",
+    "lives_at": ".taad/slices/SL-062/",
+    "key_interactions": "Gives the person's sitting a known-good starting point: the filter, the trait, and the SDK bootstrap already work per the spike, so a failure there points at the rig, not at setup."
+   },
+   {
+    "name": "Untouched code under test",
+    "responsibility": "Explicitly out of scope; neither the test class, the rig, nor the repro script changes in this slice.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/StalledShareTests.cs",
+    "key_interactions": "Uses tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs through LoopbackShare/RigLock; the spike confirmed the single [Fact] carries Trait Network=SMB-LOOPBACK and the default filter excludes it."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Change exactly one value: O-030's done from true to false. The how-text stays byte-identical; nothing is added, reworded, or annotated in SL-038's record.",
+    "reversibility": "cheap",
+    "rationale": "The repro's guards require both phrases to remain, and the how-text is another slice's dated attestation -- rewriting it muddies who said what and when. A one-line diff is reviewable at a glance and git history keeps the original."
+   },
+   {
+    "decision": "Make the edit as a targeted text edit anchored on the unique \"key\": \"O-030\" line followed by \"done\": true. Never run a ConvertFrom-Json / ConvertTo-Json round-trip or a full Set-Content rewrite of the file.",
+    "reversibility": "cheap",
+    "rationale": "\"done\": true appears many times in the file, so the anchor must include the key line. A round-trip re-escapes characters, truncates nested objects past PowerShell's default -Depth 2, and can add a BOM -- damage that would hide inside a whole-file diff instead of the intended one-line change."
+   },
+   {
+    "decision": "Before editing, run `git grep -n \"O-030\" -- .taad` and flip any other record found carrying O-030's own done/discharged state the same way, in the same commit.",
+    "reversibility": "cheap",
+    "rationale": "If routing reads an obligation's state from a record other than build-slice-2.json (e.g. an index or cache), fixing only this file turns the repro green while the person's sitting never gets routed the obligation, which is the entire point of the slice."
+   },
+   {
+    "decision": "The risk spike's agent run of the SMB-LOOPBACK command (1/1 Passed, 66.2s) does not discharge O-030; it is recorded as informational in SL-062's own build record only.",
+    "reversibility": "cheap",
+    "rationale": "The obligation is person-run by contract and the recorded stack says no engine stage runs Network=SMB-LOOPBACK. The acceptance test also requires done:false regardless. The pass is still useful evidence that the command and SDK bootstrap work."
+   },
+   {
+    "decision": "No code changes: StalledShareTests.cs, Rig/SmbRig.cs, and tests/bugs/O-030-ledger-discharge.Tests.ps1 are not touched, and the SMB-LOOPBACK test is not run again by build.",
+    "reversibility": "cheap",
+    "rationale": "The brief scopes this to the ledger only (measured present in the build-check). Running the network test again from an agent would repeat a state change (New-SmbMapping) that the same record says only a person may make."
+   },
+   {
+    "decision": "Do not hand-edit SL-038's code-review-2.json (m1) or validate-slice-4.json (O-038) to mark them resolved; O-038's own discharge is carried by SL-062 passing through the engine, since SL-062 is the slice it was deferred into.",
+    "reversibility": "cheap",
+    "rationale": "Those are other stages' historical findings about the contradiction and stay true as a record of what was noticed and when; only the live obligation (O-030 in build-slice-2.json, plus any mirror) needs to change."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "SL-038 obligation record O-030",
+    "kind": "event",
+    "notes": "Shape stays {key, done, how}. After the edit: {key:'O-030', done:false, how:<unchanged>}. If a mirror of this object exists elsewhere under .taad, it must carry the same fields and the same edit.",
+    "error_cases": "done still true after edit: repro exits 1. how-text altered: an earlier repro guard throws instead of the line-52 exception. File re-encoded by a round-trip: whole-file diff, possible damage to unrelated obligations in the same file.",
+    "auth_model": "Engine-owned record under .taad/, hand-edited only because the brief instructs it and only in the narrow way the accepted O-008 correction was made."
+   },
+   {
+    "name": "Acceptance command (repro)",
+    "kind": "cli",
+    "notes": "`pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/O-030-ledger-discharge.Tests.ps1` must exit 0. `git diff --stat HEAD` should list exactly .taad/slices/SL-038/build-slice-2.json (plus any confirmed mirror) with a 1-line change each.",
+    "error_cases": "Exit 1 with the line-52 exception: the done flip did not land. Exit 1 with an earlier exception: the how-text or key was disturbed."
+   },
+   {
+    "name": "Person-run network sitting command (owed, not run by build)",
+    "kind": "cli",
+    "notes": "`eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter Network=SMB-LOOPBACK` from repo root, ~70s (spike measured 66.2s). Result goes in the same record as N-001..N-004; once a person runs it and it passes, O-030 can then be set done:true with the person's own evidence, in a later slice.",
+    "error_cases": "Creates a non-persistent New-SmbMapping on 127.0.0.1; a leftover mapping from the spike's earlier run could collide, so `Get-SmbMapping` should show none before the sitting starts.",
+    "auth_model": "Person-run only, as an ordinary unelevated user; not run by build or validate agents."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "flip O-030's ledger discharge state",
+    "shape": "obligation object with done:true whose own how-text admits the test never ran and remains owed to the person",
+    "why": "this exact contradiction is what tests/bugs/O-030-ledger-discharge.Tests.ps1 pins at line 52; nothing is fixed until this specific object flips to done:false"
+   },
+   {
+    "behaviour": "flip O-030's ledger discharge state",
+    "shape": "the how-text must survive the edit byte-identical, still containing 'NEVER run' and 'remains owed to the person'",
+    "why": "the repro's earlier guards depend on these exact phrases; a paraphrase trips an earlier exception and masks whether the real flip landed, and silently rewrites another slice's dated attestation"
+   },
+   {
+    "behaviour": "flip O-030's ledger discharge state",
+    "shape": "the rest of the file (other obligations, the tests array, follow_ups) is byte-identical -- git diff shows exactly one changed line",
+    "why": "a ConvertFrom-Json/ConvertTo-Json round-trip on this file re-escapes characters, truncates nested objects past PowerShell's default -Depth 2, and can add a BOM, corrupting unrelated engine records living in the same file"
+   },
+   {
+    "behaviour": "confirm the fix actually reaches the person's sitting",
+    "shape": "a second copy of O-030's done/discharged state exists elsewhere under .taad (an index file or a routing cache)",
+    "why": "if routing reads an obligation's state from a record other than build-slice-2.json, this fix turns the repro green without the obligation ever reaching the person, which is the entire purpose of the slice; build must `git grep -n \"O-030\" -- .taad` and flip any true mirror in the same commit"
+   },
+   {
+    "behaviour": "leave code and the SMB rig untouched",
+    "shape": "StalledShareTests.cs, Rig/SmbRig.cs, and the repro test itself remain unmodified by this slice",
+    "why": "the brief scopes this to a ledger-only fix; touching the rig or re-running the network test from an agent would repeat a machine SMB state change the record itself says only a person may make"
+   }
+  ],
+  "channeled_experts": [
+   "release sign-off tracking for manual/quarantined tests (a manual item stays open until its named owner signs)",
+   "PowerShell JSON tooling pitfalls (ConvertTo-Json round-trips on engine records)"
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Double-entry bookkeeping: correcting a posted entry with a reversing entry instead of editing it",
+   "pattern": "Leave the original entry intact and append a reversing/correcting entry, so the audit trail shows both the mistake and the fix.",
+   "transfer_found": false,
+   "rationale": "Rejected. Both consumers here (the repro test, and per the brief, downstream routing) read the O-030 object itself, so an appended correction elsewhere would leave the contradiction live and the acceptance test red. The audit-trail benefit the pattern exists for is already provided by git history on the tracked ledger file, so forcing the analogy would only add a second, competing source of truth for O-030's state.",
+   "invariants": [
+    {
+     "precondition": "Consumers resolve an entry's state from the latest correction rather than from the original entry",
+     "status": "fails",
+     "evidence": "tests/bugs/O-030-ledger-discharge.Tests.ps1 reads payload.obligations[key=O-030].done in .taad/slices/SL-038/build-slice-2.json directly (repro line 52 exception)."
+    },
+    {
+     "precondition": "The original entry must stay unmodified for audit",
+     "status": "fails",
+     "evidence": "The file is tracked (git diff --stat HEAD is empty before this slice, so it is under version control); the prior done:true survives in history without needing to stay live in the tree."
+    }
+   ]
+  },
+  "decidable_disagreements": [],
+  "open_questions": [],
+  "prior_art": [
+   {
+    "pattern": "Avoid ConvertTo-Json round-trips when editing an existing JSON document. Windows PowerShell 5.1 escapes ', <, >, & as \\u00xx, the default -Depth 2 silently truncates nested objects to type-name strings, and Set-Content -Encoding UTF8 writes a BOM. Production scripts make targeted text edits or use -Depth 100 with an explicit no-BOM writer instead.",
+    "where": "Windows PowerShell 5.1 / PowerShell 7 ConvertTo-Json behaviour",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Manual or environment-gated tests (quarantined or opt-in by tag) are tracked as open sign-off items owned by a named human. Automation may run them for information, but only the owner's run closes the item, so a green automated run can never quietly stand in for the sign-off that needs the real environment.",
+    "where": "Common release-checklist practice alongside tag-filtered test suites (e.g. xUnit Trait / VSTest --filter opt-in sets)",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "This project already corrected an obligation of the same shape: O-008, 'recorded discharged but never fed', was accepted last round as a ledger-only correction. It is the in-repo precedent for this class of fix.",
+    "where": "filesystem-analyser-v2 .taad ledger history (git log -S '\"O-008\"' -- .taad)",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "architecture_rules": [],
+  "stack_chosen": [],
+  "taste_disagreements": [],
+  "whats_new": [
+   "One changed value in .taad/slices/SL-038/build-slice-2.json: O-030's done flips from true to false; how-text and every other field stay byte-identical",
+   "A build-time check (`git grep -n \"O-030\" -- .taad`) confirming no other engine record independently mirrors O-030's discharged state, with any true mirror flipped the same way in the same commit",
+   "An SL-062 build-record note handing O-030 to the person-run network sitting: the command, ~70s expected, the spike's 66.2s agent pass marked informational only, and the result to be filed alongside N-001..N-004"
+  ],
+  "whats_reused": [
+   "tests/bugs/O-030-ledger-discharge.Tests.ps1 as the acceptance oracle, unmodified",
+   "O-030's existing how-text, which already names the command and 'remains owed to the person'",
+   "The recorded command `eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter Network=SMB-LOOPBACK`, verified by the risk spike to select exactly the one StalledShareTests [Fact]",
+   "eng/dotnet.ps1's existing argument forwarding and repo-local SDK bootstrap",
+   "The default VSTestTestCaseFilter exclusion of Network=SMB-LOOPBACK in FsAnalyser.Core.Tests.csproj",
+   "The accepted O-008 ledger-only correction as in-repo precedent",
+   "Git history on the tracked ledger file as the audit trail for the original done:true value"
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "Adopted essentially unchanged: a single targeted text-edit flipping O-030's done to false, byte-identical how-text, spike's agent pass recorded as informational only, no code touched. Tightened by promoting its own flagged risk (a possible mirrored O-030 record elsewhere under .taad) from a side-note into an explicit build-time check, since that is the one thing that could make the repro pass while still failing the slice's actual purpose of routing the obligation to the person."
+   }
+  ],
+  "coherence_check": "Single proposal; there is no second design to compose against, so nothing here has yet survived a disagreement. What was checked instead was the proposal against the two things already measured on this slice: the build-check's direct read of the ledger (done:true beside how-text that admits the test never ran) and the risk spike's confirmation that the recorded command runs exactly the one StalledShareTests case via SMB-LOOPBACK without discharging anything. The proposal's edit (one boolean flip, byte-identical how-text, no round-trip) is consistent with both measurements and with the constraint that no engine stage may run Network=SMB-LOOPBACK. One gap in the proposal was tightened rather than left as prose: its own named risk that another .taad record might independently mirror O-030's discharged state is now a build-time obligation (`git grep -n \"O-030\" -- .taad`, flip any true mirror) instead of a note that a build attempt could skip. architecture_rules is left empty because this slice writes no source code and touches no import graph -- its entire scope is a single field in one data file, and a rule invented to fill the field would either match nothing or be arbitrary; the actual constraint on how the edit is made (no ConvertFrom-Json/ConvertTo-Json round-trip) is recorded as a key_decision instead, since it governs a one-time hand edit, not a pattern future code must keep obeying. stack_chosen is empty: nothing at project scope (language, runtime, UI, storage, testing, build, packaging) was left open by this slice for someone to choose."
+ }
+}

@@ -1,0 +1,131 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-062",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-09-27T16:30:55.471Z",
+ "head": "6c57f0ca438315b7761315d7d134b64ad5686f9b",
+ "run_id": 1637,
+ "summary": "The core edit is sound, and nothing blocks it. Flipping O-030's done from true to false with a targeted text edit, leaving the how-text byte-identical, makes the repro exit 0. The spike's agent run is correctly kept from discharging the obligation. The problems sit around the slice's actual purpose, which is getting O-030 in front of the person's network sitting.\n\n(1) Nothing verifies that done:false in a merged slice's build-slice-2.json is what routes anything. Every stage record carries a database row id (repro_tests#66, spikes#55, designs#64), so routing may read a store that `git grep` cannot see.\n\n(2) The brief says the result \"goes in the same record as N-001..N-004\". The design never finds that record and puts its hand-off note in SL-062's own directory instead.\n\n(3) The repro test the design keeps unmodified pins O-030 undischarged forever. That contradicts the design's own later path of setting done:true once a person runs the test.\n\n(4) `git grep \"O-030\" -- .taad` searches every slice. Obligation ids look per-slice: SL-059, which came later, fixed an O-007. So the \"flip any mirror\" step relies on the builder telling other slices' O-030s apart from this one.\n\n(5) spike#55 already ran Network=SMB-LOOPBACK, an engine stage crossing the recorded rule that no engine stage runs it. The design uses that run as evidence and never reports the crossing. The brief's \"(validate or the person)\" also conflicts with that rule and is not named.\n\nChecked citations: the ConvertTo-Json rationale is partly stale for pwsh 7. The decision still stands.\n\nThe bug report was only a title. I assumed the slice brief is the report, and that \"the ledger\" means the obligation record plus whichever record the network sitting works from.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The core edit is sound, and nothing blocks it. Flipping O-030's done from true to false with a targeted text edit, leaving the how-text byte-identical, makes the repro exit 0. The spike's agent run is correctly kept from discharging the obligation. The problems sit around the slice's actual purpose, which is getting O-030 in front of the person's network sitting.\n\n(1) Nothing verifies that done:false in a merged slice's build-slice-2.json is what routes anything. Every stage record carries a database row id (repro_tests#66, spikes#55, designs#64), so routing may read a store that `git grep` cannot see.\n\n(2) The brief says the result \"goes in the same record as N-001..N-004\". The design never finds that record and puts its hand-off note in SL-062's own directory instead.\n\n(3) The repro test the design keeps unmodified pins O-030 undischarged forever. That contradicts the design's own later path of setting done:true once a person runs the test.\n\n(4) `git grep \"O-030\" -- .taad` searches every slice. Obligation ids look per-slice: SL-059, which came later, fixed an O-007. So the \"flip any mirror\" step relies on the builder telling other slices' O-030s apart from this one.\n\n(5) spike#55 already ran Network=SMB-LOOPBACK, an engine stage crossing the recorded rule that no engine stage runs it. The design uses that run as evidence and never reports the crossing. The brief's \"(validate or the person)\" also conflicts with that rule and is not named.\n\nChecked citations: the ConvertTo-Json rationale is partly stale for pwsh 7. The decision still stands.\n\nThe bug report was only a title. I assumed the slice brief is the report, and that \"the ledger\" means the obligation record plus whichever record the network sitting works from.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "claim": "The design assumes flipping done in .taad/slices/SL-038/build-slice-2.json routes O-030 to the person's sitting. Nothing in the design or the stage records shows that. SL-038 is already merged, so routing may never re-read a closed slice's attempt file. Every stage account also carries a database row id (repro_tests#66, surveys#52, spikes#55, designs#64, reviews#147), which suggests the engine's obligation state lives in a store. The design's mirror check (`git grep -n \"O-030\" -- .taad`) cannot see that store. The repro would then go green while the obligation reaches nobody, which is the exact failure the design's own case list names as the one that defeats the slice.",
+    "evidence": "Design component 'O-030 ledger entry', key_interactions: 'Read by ... whatever engine routing sends done:false obligations to the person's sitting.' Case 'confirm the fix actually reaches the person's sitting' checks only .taad files.",
+    "fix": "Before the edit, find out where the person's-sitting queue gets its obligations. After the edit, show O-030 in that queue. That is what would have to be run to settle this. If routing does not read this JSON, record it in SL-062's build record and raise an engine-side obligation. Do not claim the flip routes the item."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "drift-from-design",
+    "claim": "The brief says to record O-030 as owed to the person-run network sitting, with its result going 'in the same record as N-001..N-004'. The design never finds that record and never adds O-030 to it. Its hand-off note goes in .taad/slices/SL-062/, which is not where the person's sitting items live. If the sitting works from the N-record, O-030 is still not on it after this slice ships.",
+    "evidence": "Contract 'Person-run network sitting command': 'Result goes in the same record as N-001..N-004' with no path. Component 'SL-062 build-record hand-off note' lives_at '.taad/slices/SL-062/'.",
+    "fix": "Locate the N-record (`git grep -n \"N-004\" -- .taad docs`). Add an O-030 entry there with the command, the ~70 s estimate and 'owed to the person'. Name that path in the design as a changed ledger file."
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "contract-gaps",
+    "claim": "The acceptance oracle and the design's future discharge path contradict each other. The repro throws at an earlier guard if the how-text loses 'NEVER run' or 'remains owed to the person', and it throws at line 52 if done is true. The design's contract says that once a person runs the test, 'O-030 can then be set done:true with the person's own evidence, in a later slice'. That later slice fails tests/bugs/O-030-ledger-discharge.Tests.ps1 whichever way it does it. It must either rewrite SL-038's how-text, which the design itself forbids as another slice's attestation, or leave the how-text and trip line 52. A permanent tests/bugs regression test would then turn red on the correct fix.",
+    "evidence": "Contract 'Person-run network sitting command' notes. Contract 'SL-038 obligation record O-030' error_cases: 'how-text altered: an earlier repro guard throws'. Key decision 1: the how-text is 'another slice's dated attestation'.",
+    "fix": "Drop 'O-030 can then be set done:true ... in a later slice'. Say instead that SL-038's O-030 stays done:false as history and the discharge is recorded in the N-001..N-004 record (M2). Alternatively, state that the discharging slice retires this repro test in the same commit."
+   },
+   {
+    "id": "M4",
+    "severity": "major",
+    "dimension": "missing-edge-cases",
+    "claim": "The mirror check greps O-030 across every slice under .taad. Obligation keys look numbered per slice: SL-059, which postdates SL-038's O-030 and O-038, fixed an 'O-007'. So hits in other slice directories are likely unrelated obligations. The instruction to 'flip any other record found carrying O-030's own done/discharged state' leaves the builder to tell them apart. The grep also hits SL-038's code-review-2.json (m1) and validate-slice-4.json (O-038), which the design says must not be edited. One wrong judgement reopens another slice's obligation. The contract's 'plus any confirmed mirror' allows exactly that collateral edit.",
+    "evidence": "Key decision 3: 'run `git grep -n \"O-030\" -- .taad` and flip any other record found'. Git log: 'SL-059 build attempt 2: Fixed O-007'.",
+    "fix": "Scope the search to `.taad/slices/SL-038/`. Report hits elsewhere in SL-062's build record and do not edit them. Make the contract mechanical: `git diff --name-only HEAD` may list only files under .taad/slices/SL-038/, plus the N-record from M2."
+   },
+   {
+    "id": "M5",
+    "severity": "major",
+    "dimension": "cross-cutting-conformance",
+    "claim": "The recorded stack says of Network=SMB-LOOPBACK that 'no engine stage runs it'. spike#55, an engine stage, ran it on this machine, including the New-SmbMapping state change the build-check refused as not permitted. The design uses that run as evidence ('verified by the risk spike') and treats its pass as 'informational'. It never reports that a decided rule was crossed. The rule holds only because each stage remembers it, and on this slice one already forgot. The design's own 'build does not run it again' is the same kind of remembering. The brief's '(validate or the person)' openly invites the validate stage to run it, which conflicts with the stack. The design silently picks the stack's side without naming the conflict.",
+    "evidence": "Stack: 'opt-in through Trait Network=SMB-LOOPBACK ... and no engine stage runs it.' Spike: 'Recorded command ran ... Passed, 66.2s'. Build-check: 'a machine network-state change I'm not permitted to make'. whats_reused: 'verified by the risk spike'.",
+    "fix": "In SL-062's build record, state that spike#55 crossed the recorded rule. Check that `Get-SmbMapping` shows no 127.0.0.1 mapping now, not only before the sitting. Name the conflict between the brief and the stack, with the stack winning. File a follow-up obligation for a mechanical guard, for example the rig refusing to map unless a person-sitting marker is set. That guard is code, so it is out of scope here."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "After this slice, SL-038's O-030 reads done:false beside 'It has NEVER run on the extracted rig, by me or anyone'. spike#55 has since run it and it passed, so the one record the person is pointed at states something the engine has measured as false. The correction lives only in SL-062's directory.",
+    "evidence": "Key decision 1 (how-text byte-identical). Key decision 4 (spike pass recorded 'in SL-062's own build record only').",
+    "fix": "Cite spike#55 as an agent run that does not discharge the obligation in the sitting item (M2), where the person will actually read it."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "The O-008 precedent is labelled authority 'official' but basis 'recalled'. The contract's auth_model rests on it ('only in the narrow way the accepted O-008 correction was made'), yet nobody ran the git log the design itself names. If O-008 was corrected some other way, for example by also adding it to a sitting record, this design is not following its own precedent.",
+    "evidence": "prior_art[2]: where 'git log -S '\"O-008\"' -- .taad', basis 'recalled'. Contract auth_model.",
+    "fix": "Build runs `git log -S '\"O-008\"' -p -- .taad`, records the commit hash, and matches that correction's shape, including any N-record entry."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "The ConvertTo-Json rationale is partly stale for pwsh 7, which is what the repro runs under. Microsoft's docs say: 'As of PowerShell 7.1, ConvertTo-Json emits a warning if the depth of the input object exceeds the depth specified', so truncation is not silent. Escaping ' < > & as \\u00xx is Windows PowerShell 5.1 behaviour only: GitHub issue #7693 shows PS Core returning \"'def'\" where 5.1 returned \"'def'\". The decision still holds, because a round-trip still reformats whitespace and indentation into a whole-file diff. The stated reasons, though, would not survive someone checking them on pwsh 7.",
+    "evidence": "prior_art[0], key decision 2. https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/convertto-json?view=powershell-7.6 ; https://github.com/PowerShell/PowerShell/issues/7693",
+    "fix": "Restate the rationale as: 'a round-trip rewrites formatting file-wide under either PowerShell and truncates or re-escapes under 5.1'. Keep the decision."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "'Exactly one changed line' is the design's main guard against collateral damage, but it appears only as a 'should' in the contract. The repro passes just as well after a whole-file rewrite that preserves meaning, so nothing mechanical enforces the one-line diff.",
+    "evidence": "Contract 'Acceptance command (repro)': '`git diff --stat HEAD` should list exactly ... with a 1-line change each'.",
+    "fix": "Build records `git diff --numstat HEAD` and requires `1\\t1\\t.taad/slices/SL-038/build-slice-2.json`, plus only the N-record entry from M2."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M1: routing is assumed to read the JSON, while row ids point to a database-backed store. m2: the O-008 precedent is recalled, not checked. m3: the ConvertTo-Json rationale is partly stale for pwsh 7. The spike's command and filter behaviour are measured, so I did not reopen them."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "M4: the unscoped O-030 grep picks up other slices' per-slice O-030s and SL-038's own review files. m1: the how-text is left saying 'never run by anyone' after a measured run."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "The mirror flip and the ban on agents running the test both rest on builder judgement and memory. Covered under M4 and M5, whose fixes move each rule into a mechanical scope or guard."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none: a one-value edit, a scoped check and a short hand-off note are proportionate. No new code, rules or tools are proposed."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "M3: the unmodified repro oracle makes the design's own later discharge path (done:true) impossible without breaking a tests/bugs regression test."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "none beyond the findings: a missed anchor or a disturbed how-text is caught by the repro's line-52 exception or an earlier guard, and the design lists both. The error path that matters, a flip that routes nothing, is M1."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "M2: the brief's 'same record as N-001..N-004' is never located or written. The conflict between the brief's '(validate or the person)' and the stack's 'no engine stage runs it' is unnamed (folded into M5)."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "M5: spike#55 broke the recorded 'no engine stage runs Network=SMB-LOOPBACK' rule, and the design adopts the result without reporting the breach. The rule is enforced only by remembering."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "m4: the one-line-diff guard is not mechanical. The repro covers the done flip and how-text preservation. Nothing tests routing (M1). tests/bugs/ is untracked and the design does not say it gets committed; I assume the engine commits it."
+   },
+   {
+    "dimension": "security",
+    "result": "none: no code, credentials or new privileges. The SDK download was already decided by Q-003. The unrequested machine SMB state change by an agent stage is recorded as M5."
+   }
+  ]
+ }
+}
