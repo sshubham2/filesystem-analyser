@@ -1330,7 +1330,7 @@ function Test-N002 {
 }
 
 # N-003 (-IncludeNetwork, SL-038, M1): two rig runs at once. The SMB client allows one port per server
-# name, so rig runs are serialised by one lock on this machine (RigLock): a second run either fails at once,
+# name, so rig runs are serialised by one lock per sign-in session (RigLock): a second run either fails at once,
 # saying so (--wait-sec 2), or waits and starts when the first has ended. The first run's mapping survives
 # both, and neither run's mapping outlives it.
 function Test-N003 {

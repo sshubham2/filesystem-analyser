@@ -1,0 +1,182 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-059",
+ "stage": "build-slice",
+ "attempt": 1,
+ "at": "2026-09-27T14:48:03.969Z",
+ "head": "666f197ee1be38edc4d28a8b94212fc49de4be55",
+ "run_id": 1591,
+ "summary": "RigLock.MachineName is renamed to RigLock.SessionName. The value is still `Local\\FsAnalyser-SmbRig`, and the references in SmbRig.cs and in SmbRigTests' cref are updated. The three stale \"on this machine\" comments are fixed: StallRig/Program.cs:13, StalledShareTests.cs:17 and WindowCases.ps1:1333. docs/design/SL-020-scanner.md now says outright that runs from different sign-in sessions are not serialised, and gives the trigger for a future switch to Global\\. The three architecture rules the engine appended from the design could never fire, because they cover comment text but lacked `including_comments: true`. I added the flag to all three and narrowed the WindowCases.ps1 pattern. The engine's own Fitness now reports 0 violations on the tree and fires on all three stale lines at HEAD. Two small default-suite tests cover O-002 and O-003. The full default suite passes 373/373, StallRig builds outside the .slnx, and the built StallRig.exe, run for real, contends on the same kernel object as a PowerShell process that opens `Local\\FsAnalyser-SmbRig` by its string name.",
+ "payload": {
+  "status": "complete",
+  "summary": "RigLock.MachineName is renamed to RigLock.SessionName. The value is still `Local\\FsAnalyser-SmbRig`, and the references in SmbRig.cs and in SmbRigTests' cref are updated. The three stale \"on this machine\" comments are fixed: StallRig/Program.cs:13, StalledShareTests.cs:17 and WindowCases.ps1:1333. docs/design/SL-020-scanner.md now says outright that runs from different sign-in sessions are not serialised, and gives the trigger for a future switch to Global\\. The three architecture rules the engine appended from the design could never fire, because they cover comment text but lacked `including_comments: true`. I added the flag to all three and narrowed the WindowCases.ps1 pattern. The engine's own Fitness now reports 0 violations on the tree and fires on all three stale lines at HEAD. Two small default-suite tests cover O-002 and O-003. The full default suite passes 373/373, StallRig builds outside the .slnx, and the built StallRig.exe, run for real, contends on the same kernel object as a PowerShell process that opens `Local\\FsAnalyser-SmbRig` by its string name.",
+  "files": [
+   {
+    "path": "tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs",
+    "change": "modified",
+    "why": "public const MachineName renamed to SessionName (value unchanged); LoopbackShare's RigLock.Take call updated"
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/SmbRigTests.cs",
+    "change": "modified",
+    "why": "<see cref=\"RigLock.MachineName\"/> updated to SessionName"
+   },
+   {
+    "path": "tests/window/StallRig/Program.cs",
+    "change": "modified",
+    "why": "line 13: 'another rig run on this machine' -> 'another rig run in this sign-in session' (ASCII)"
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/StalledShareTests.cs",
+    "change": "modified",
+    "why": "line 17: 'any other rig run on this machine' -> 'any other rig run in this sign-in session'"
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "change": "modified",
+    "why": "line 1333: 'one lock on this machine (RigLock)' -> 'one lock per sign-in session (RigLock)'; comment only, no BOM added, CRLF kept, 0 non-ASCII bytes"
+   },
+   {
+    "path": "docs/design/SL-020-scanner.md",
+    "change": "modified",
+    "why": "Explicit statement that runs from different sign-in sessions are NOT serialised (second user via FUS/RDP, session-0 task or service), that nothing runs the rig that way today, and the trigger for a future Global\\ switch: proven in both creation orders, with a person running the check, because the sandbox cannot start a second session. Also one sentence in the SL-038 exemption paragraph: the rename changes SmbRig.cs's blob, so that exemption no longer applies."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "change": "modified",
+    "why": "The engine had already appended the three SL-059 entries. I added including_comments: true to all three, and narrowed the WindowCases.ps1 entry's pattern to a lock, serialisation, rig run or RigLock named on the same line as a machine scope (see deviations)."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/WindowScriptParseTests.cs",
+    "change": "added",
+    "why": "O-002/C-002: a Theory that makes powershell.exe (Desktop 5.1) and pwsh.exe (Core 7) each ParseFile tests/window/WindowCases.ps1 and name their edition. It fails on any parse error or on the wrong host."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/RigLockScopeWordingTests.cs",
+    "change": "added",
+    "why": "O-003/C-003: the sweep as a Fact. It checks that the claim regex matches the three SL-038 stale lines and does NOT match the unrelated hits (eng/dotnet.ps1 and .gitignore machine-wide SDK, WindowCases.ps1 1985/2118 measurements). It then reads every text file under tests/, docs/ and eng/ and asserts zero claims."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "done": true,
+    "how": "`pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build tests/window/StallRig/StallRig.csproj -c Release -o artifacts/stall-rig` is exactly Update-StallRig's build, and it builds StallRig outside FsAnalyser.slnx: exit 0, 0 warnings. StallRig compiles SmbRig.cs by link, so the rename is compiled there. Mutation check: I temporarily added `RigLock.MachineName` to Program.cs, the same build failed with CS0117 ('RigLock' does not contain a definition for 'MachineName'), and I restored the file byte-identical (hash verified). The built StallRig.exe was also run through its real entry point (see tests)."
+   },
+   {
+    "key": "O-002",
+    "done": true,
+    "how": "Added FsAnalyser.Core.Tests.WindowScriptParseTests.WindowCasesParses (Theory: powershell.exe/Desktop and pwsh.exe/Core). Each host ParseFiles the edited WindowCases.ps1 and prints its edition. Both pass (PS 5.1.26100.9444 and 7.6.6, 0 errors). Mutation check: I added `$null ?? 1` (pwsh-7-only syntax) to the file. The 5.1 case failed and the 7 case passed. The file was then restored byte-identical. The edited line is ASCII, the file has no BOM before or after, and its CRLF count is unchanged (3341)."
+   },
+   {
+    "key": "O-003",
+    "done": true,
+    "how": "Added FsAnalyser.Core.Tests.RigLockScopeWordingTests.NothingSaysTheRigLockSpansTheMachine. It feeds the unrelated shape in directly: the regex must NOT match eng/dotnet.ps1's 'A machine-wide 10.0.x SDK', .gitignore's 'no machine-wide 10.0 SDK', or WindowCases.ps1:1985 and :2118. It must match the three SL-038 stale lines. It then scans tests/, docs/ and eng/ and requires zero claims. It passes, and it failed when line 1333's old wording was put back (mutation, reverted). A manual read of every grep hit for machine-wide|on this machine|MachineName left alone the ones not about RigLock: .gitignore:1, eng/dotnet.ps1:5, SL-020-scanner.md:32 and :216, TempTree.cs:150, WindowCases.ps1:22/627/1985/2118/3331. SL-020-scanner.md:243 is the historical record of SL-038 build 2 and is annotated with the rename in the same paragraph."
+   },
+   {
+    "key": "O-004",
+    "done": true,
+    "how": "`pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.SmbRigTests\"` passes 18/18: ASecondRunWaitsForTheFirst, ALiveHolderFailsTheNextRunLoudlyAndAKilledOneDoesNotBlockIt, and 16 OnlyTheRigsOwnMappingsAreSwept cases. RigLock.Take is byte-for-byte unchanged; only the constant's identifier changed. The full default suite passes 373/373."
+   },
+   {
+    "key": "O-005",
+    "done": true,
+    "how": "Owed to validate-slice; evidence gathered here. The unit tests do not use the renamed constant, so this came from a real run. This shell opened the mutex by the string `Local\\FsAnalyser-SmbRig` and held it (WaitOne(0)=True, session 1). StallRig.exe, freshly built from the renamed source, was then run with --wait-sec 2. It exited 1 after 2422 ms with 'StallRig: TimeoutException: Another stall-rig run held Local\\FsAnalyser-SmbRig for 2 s', with nothing on stdout and no mapping made. So PowerShell-by-string and StallRig contend for the same kernel object. `git grep MachineName` outside .taad now finds only the historical doc sentence at SL-020-scanner.md:243, not code."
+   },
+   {
+    "key": "O-006",
+    "done": false,
+    "how": "Owed to validate-slice and not measurable here. Showing whether one sign-in session's SMB mappings are invisible to another needs a second logon session. Spike 1 showed this agent cannot create one: the sandbox refuses Register-ScheduledTask. The precondition stays recalled, not measured. A person would map a share in session A and run Get-SmbMapping in session B (a second user via Fast User Switching, or an S4U task). The doc's new statement only claims the lock's per-session scope, which holds either way."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "test_name": "tests/window/StallRig/StallRig.csproj build (WindowCases.ps1 Update-StallRig's build, outside FsAnalyser.slnx; the compiler is the assertion)",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build tests/window/StallRig/StallRig.csproj -c Release -o artifacts/stall-rig"
+   },
+   {
+    "key": "C-002",
+    "test_name": "FsAnalyser.Core.Tests.WindowScriptParseTests.WindowCasesParses",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.WindowScriptParseTests\""
+   },
+   {
+    "key": "C-003",
+    "test_name": "FsAnalyser.Core.Tests.RigLockScopeWordingTests.NothingSaysTheRigLockSpansTheMachine",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.RigLockScopeWordingTests\""
+   },
+   {
+    "key": "C-004",
+    "test_name": "FsAnalyser.Core.Tests.SmbRigTests",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.SmbRigTests\""
+   }
+  ],
+  "deviations": [
+   "The design's three architecture_rules, as the engine appended them, could never fire. Their pattern is comment text, and the entries have no `including_comments: true`. Fitness blanks // in .cs and # in .ps1 by default (taad3/fitness.py strip_comments; the fitness.yaml header warns that the engine's append omits this flag). Measured with the engine's own content_hits on the HEAD text of the three files: 0 violations, with the stale lines only counted as skipped_in_comments (1, 1, 3). I added `including_comments: true` to all three entries.",
+   "With comments included, the design's literal `on this machine` over the whole of WindowCases.ps1 fires on two true, unrelated measurement comments: line 1985 (B-008 title lengths) and line 2118 (4 KiB clusters). This contradicts the design's own claim that the rule would never fire on correct code, and its case C-003 (leave unrelated hits alone). I narrowed only that entry to two patterns: a lock, serialisation, rig run or RigLock on the same line as `on this machine` or `machine-wide`, in either order. Verified with the engine: quiet on the edited tree, fires on HEAD's line 1333. The StallRig and StalledShareTests entries keep the design's literal pattern, because those files have no other hit. All 59 rules: 0 violations, none unmatched.",
+   "The design said no new test infrastructure. O-002 and O-003 require a test that feeds the shape and runs from a command. So I added two small default-suite tests to the existing Core.Tests project, following RuleCopiesAgreeTests' precedent of launching powershell.exe. They are the design's own verification contracts (3) and (4) made executable. RigLockScopeWordingTests reads tests/, docs/ and eng/ broadly. The design rejected broad globs because the literal phrase would hit unrelated text; the narrow same-line regex does not, and it has zero hits on the current tree.",
+   "Not in the design's component list: one sentence in the SL-020-scanner.md SL-038 exemption paragraph. It records that the rename changes SmbRig.cs's blob, so the exemption keyed on blob 8fdf6e87 no longer applies. The person-run network pass was already stale through src/FsAnalyser.Core/Scanning/** and WindowCases.ps1, measured with git diff --name-only eafb1c3 HEAD. Without the sentence, a reader could believe the exemption still covers SmbRig.cs."
+  ],
+  "not_built": [
+   "The design deliberately left out the Global\\ switch and the cross-session test. The build-check's two 'missing' items are the rejected branch of an either/or slice, not unfinished work. A cross-session test cannot run unattended here (spike 1: the sandbox refuses the S4U scheduled task)."
+  ],
+  "follow_ups": [
+   "Engine: a design's architecture_rules append writes neither `including_comments` nor `(?m)`. So any declared rule about comment or prose text is dead on arrival, and SL-059's design fell into exactly this. Either the design schema carries including_comments, or design-slice is told that comment-only patterns never fire by default.",
+   "O-006 needs a person. With a second sign-in session (Fast User Switching or an S4U task started by hand), check whether an SMB mapping made in one session appears in Get-SmbMapping in the other. Only then is 'a per-session lock covers everything the sweep can touch' measured rather than recalled.",
+   "The person-run network pass (WindowCases.ps1 -Case All -IncludeNetwork, then Core.Tests filtered to Network=SMB-LOOPBACK) is stale. It already was since eafb1c3, and SL-059 touches SmbRig.cs, StallRig, StalledShareTests and WindowCases.ps1 again. A person should re-run it and record the HEAD.",
+   "Several comments call the SMB mappings 'the machine's' or 'this machine's': SmbRig.cs:16, WindowCases.ps1:22/627/3331, SL-020-scanner.md:216. If O-006's recalled premise holds (mappings belong to a logon session), these overstate scope in the same way the RigLock comments did. They are not about RigLock and were left alone per C-003. They are a candidate for a small wording slice once O-006 is measured."
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 --version",
+    "outcome": "passed",
+    "note": "10.0.401 from the repo-local .dotnet/ that the build-check stage already bootstrapped."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~SmbRigTests|FullyQualifiedName~WindowScriptParseTests|FullyQualifiedName~RigLockScopeWordingTests|FullyQualifiedName~RuleCopiesAgreeTests\" --logger \"console;verbosity=normal\"",
+    "outcome": "passed",
+    "note": "22/22: 18 SmbRigTests, 2 WindowCasesParses (powershell.exe Desktop, pwsh.exe Core), 1 wording Fact, and RuleCopiesAgreeTests (rules-parity still AGREE, since SL-059 entries are settled, not twinned). The first build raised three xUnit1031 warnings (blocking .Result in the test). I made the Theory async, and every later build shows no warnings."
+   },
+   {
+    "command": "(mutation) WindowCases.ps1 with line 1333 reverted to 'one lock on this machine' plus a `$null ?? 1` line, then the WindowScriptParseTests|RigLockScopeWordingTests filter",
+    "outcome": "failed",
+    "note": "Failed as intended: the wording Fact named WindowCases.ps1:1334, the powershell.exe (5.1) parse case failed, and the pwsh case passed. The file was restored byte-identical (Get-FileHash equal)."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build tests/window/StallRig/StallRig.csproj -c Release -o artifacts/stall-rig",
+    "outcome": "passed",
+    "note": "Build succeeded, 0 warnings, 0 errors, outside FsAnalyser.slnx. I re-ran it after the mutation below so artifacts/ holds the restored source's build."
+   },
+   {
+    "command": "(mutation) StallRig/Program.cs with `string mutantLockName = RigLock.MachineName;` built with the same command into a scratch output",
+    "outcome": "failed",
+    "note": "Failed as intended: CS0117 'RigLock' does not contain a definition for 'MachineName'. Program.cs was restored byte-identical."
+   },
+   {
+    "command": "artifacts/stall-rig/StallRig.exe --marker <temp>\\armed.txt --wait-sec 2, while this shell holds [Threading.Mutex]::new($false,'Local\\FsAnalyser-SmbRig')",
+    "outcome": "passed",
+    "note": "Real entry point of what changed. It exited 1 after 2422 ms with stderr 'StallRig: TimeoutException: Another stall-rig run held Local\\FsAnalyser-SmbRig for 2 s, so this run did not start...' and empty stdout. The renamed constant still opens the kernel object PowerShell opens by string. It never reached the mapping step. A count-only read of Get-SmbMapping filtered to \\\\127.0.0.1 confirmed 0 rig mappings afterwards. The temp tree was deleted. I did not run it past the lock, because a full run changes the machine's SMB mappings, which is a person-run opt-in."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx",
+    "outcome": "passed",
+    "note": "Full default suite (default VSTest filter excludes SMB-LOOPBACK, TEST-NET-1 and CF-SYNC-ROOT): 373 passed, 0 failed, 0 skipped, 24 s."
+   },
+   {
+    "command": "powershell.exe / pwsh -NoProfile -Command [Parser]::ParseFile(tests/window/WindowCases.ps1) (edited file, and HEAD's copy under 5.1)",
+    "outcome": "passed",
+    "note": "PSVersion 5.1.26100.9444: 0 errors; 7.6.6: 0 errors; HEAD copy under 5.1: 0 errors."
+   },
+   {
+    "command": "python3.13 (Windows Store install, which has PyYAML) importing C:\\Users\\sshub\\projets\\taad_v3\\backend\\taad3\\fitness.py read-only: load() + content_hits() over this tree and over HEAD copies of the three files",
+    "outcome": "passed",
+    "note": "Final tree: 59 rules loaded, 0 violations, no unmatched rule. HEAD copies: SL-059 rules fire at StallRig/Program.cs:13, StalledShareTests.cs:17 and WindowCases.ps1:1333 (twice, once per pattern). With the rules as the engine appended them (no including_comments), the HEAD text gave 0 violations and skipped_in_comments 1/1/3, which is the evidence for the first deviation. I read the engine source outside the worktree only to learn how Fitness treats comments. The scratch folder in %TEMP% was deleted."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.SmbRigTests\" (and the same for WindowScriptParseTests and RigLockScopeWordingTests)",
+    "outcome": "passed",
+    "note": "Each obligation's exact command run alone: 18/18, 2/2 and 1/1, all exit 0. None of the filters is empty."
+   }
+  ]
+ }
+}

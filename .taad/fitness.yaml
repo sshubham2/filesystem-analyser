@@ -743,3 +743,33 @@ rules:
     except_files:
     - src/FsAnalyser.Core/Scanning/DirectoryReader.cs
     - src/FsAnalyser.Core/Native/Kernel32.cs
+
+  # settled by SL-059
+  - name: RigLock's scope is not re-claimed as machine-wide in StallRig
+    files: tests/window/StallRig/Program.cs
+    must_not_match:
+    - on this machine
+    including_comments: true
+    because: this exact phrase claiming machine-wide scope for RigLock was already flagged by
+      SL-038's own final code review and stayed unfixed for a full slice; SmbRig.cs and SL-020-scanner.md
+      were corrected in SL-038 build 2 while this file was not
+  - name: RigLock's scope is not re-claimed as machine-wide in StalledShareTests
+    files: tests/FsAnalyser.Core.Tests/StalledShareTests.cs
+    must_not_match:
+    - on this machine
+    including_comments: true
+    because: 'same drift as StallRig/Program.cs: SL-038''s code review named this exact file
+      and line and it has stayed wrong since'
+  - name: RigLock's scope is not re-claimed as machine-wide in the window test driver
+    files: tests/window/WindowCases.ps1
+    must_not_match:
+    - '(?mi)\b(?:lock|serialised|serialized|RigLock|rig runs?)\b[^\n]*\b(?:on this machine|machine-wide)\b'
+    - '(?mi)\b(?:on this machine|machine-wide)\b[^\n]*\b(?:lock|RigLock|rig runs?)\b'
+    including_comments: true
+    because: 'the comment at line 1333 described RigLock as a machine-wide lock; the rig only
+      ever serialises runs inside one sign-in session. The claim lives in comments, so every SL-059
+      entry says including_comments: true, without which Fitness blanks the comment and the rule
+      can never fire. This one is narrowed to a lock, serialisation or rig run named on the same
+      line, because the file also says "on this machine" about measurements that are true and stay
+      (B-008''s title lengths, the 4 KiB clusters above the folder-tree cases), and the design
+      leaves unrelated hits alone (SL-059 C-003).'

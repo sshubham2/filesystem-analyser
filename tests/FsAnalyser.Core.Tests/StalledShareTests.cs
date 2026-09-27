@@ -14,7 +14,7 @@ namespace FsAnalyser.Core.Tests;
 /// SMBLibrary server on 127.0.0.1 on a spare port, with a test user, and reaches it through a
 /// non-persistent New-SmbMapping -TcpPort (Windows 11 24H2 and later). It needs no elevation and changes
 /// nothing that outlives it: the mapping is removed and the server stopped when the test ends. The rig is
-/// Rig/SmbRig.cs, shared with tests/window/StallRig; it waits for any other rig run on this machine.
+/// Rig/SmbRig.cs, shared with tests/window/StallRig; it waits for any other rig run in this sign-in session.
 /// <para>Measured on this PC (SL-024 build 3): this is the one shape Cancel cannot cut short. The SMB
 /// client holds the unanswered listing, and the CancelSynchronousIo aimed at it, until it gives up on the
 /// server: the scan returned 61.9 and 66.0 s after Cancel in two runs, the canceller's single CancelSynchronousIo blocked
