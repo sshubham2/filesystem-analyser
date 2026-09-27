@@ -20,10 +20,13 @@
 #                     with exit 1 and the compiler's error, and no case runs on the old dll.
 #   HookLocked        The hook's source changed while its dll is held open, as an app left behind by a
 #                     timed-out run holds it. The same.
+#   EndingObeysSkip   ShowFinalTopLevel skips the final snapshot while a refresh skip is armed, as RefreshTopLevel
+#                     does mid-scan (SL-064). L-002 ends with the skip armed, so it fails on topLevel.final: the
+#                     list still shows a snapshot from before the ending.
 
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('All', 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'CancelThrows', 'HookFailsAfterActing', 'HookCompileError', 'HookLocked')]
+    [ValidateSet('All', 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'CancelThrows', 'HookFailsAfterActing', 'HookCompileError', 'HookLocked', 'EndingObeysSkip')]
     [string] $Mutant
 )
 
@@ -39,7 +42,8 @@ $script:Failures = [System.Collections.Generic.List[string]]::new()
 
 # Each change is a regex that must match exactly once, so a mutant the source has moved away from fails
 # here instead of quietly running the real app. Fail is every FAIL line the case must print, in order, and
-# Expect any other line the run must show.
+# Expect any other line the run must show. MayFail is any FAIL line the case may print besides, and is set
+# aside before Fail is compared: a symptom that follows from the mutant on some runs and not on others.
 $CaseMutants = @{
     StopDisabled   = @{
         File = $MainWindow; Find = [regex]::Escape('CancelButton.IsEnabled = true;'); Replace = 'CancelButton.IsEnabled = false;'
@@ -68,6 +72,15 @@ $CaseMutants = @{
         File = $HookSource; Find = [regex]::Escape('acted = true;')
         Replace = 'acted = true; throw new InvalidOperationException("hook mutant: failed after acting");'
         Case = 'C-006'; Fail = '^  FAIL  the hook did not fail after it acted '
+    }
+    # The ending's snapshot is always non-final, so topLevel.final is the one FAIL line every run prints. The
+    # stale rows' reading, bytes and files differ from core's on most runs, not all (19 of 20 in SL-064's spike).
+    EndingObeysSkip = @{
+        File = $MainWindow; Find = [regex]::Escape('else if (!ReferenceEquals(final, _shownTopLevel))')
+        Replace = 'else if (!ReferenceEquals(final, _shownTopLevel) && !_skipNextRefresh)'
+        Case = 'L-002'; Fail = '^  FAIL  topLevel.final against core \(the ending showed the final snapshot\)$'
+        MayFail = '^  FAIL  topLevel\.(reading|bytes|files) against core \(the ending showed the final snapshot\)$'
+        Expect = '^          actual   ''False''$'
     }
 }
 
@@ -178,10 +191,14 @@ function Test-CaseMutant([string] $name) {
         CheckEqualExit 1 $run.Exit $mutant.Case
         Check ($run.Lines -contains "FAILED: $($mutant.Case)") "$($mutant.Case) is reported FAILED"
         $expected = @($mutant.Fail)
-        $failures = @($run.Lines | Where-Object { $_ -match '^  FAIL  ' })
+        $allowed = @($mutant.MayFail | Where-Object { $_ })
+        $failures = @(foreach ($line in $run.Lines) {
+                if ($line -match '^  FAIL  ' -and @($allowed | Where-Object { $line -match $_ }).Count -eq 0) { $line }
+            })
+        $besides = if ($allowed.Count -gt 0) { " besides /$($allowed -join '/, /')/" } else { '' }
         $matched = $failures.Count -eq $expected.Count
         for ($i = 0; $matched -and $i -lt $expected.Count; $i++) { $matched = $failures[$i] -match $expected[$i] }
-        Check $matched "$($mutant.Case) failed on /$($expected -join '/, /')/ and nothing else (got $($failures.Count): $($failures -join ' | '))"
+        Check $matched "$($mutant.Case) failed on /$($expected -join '/, /')/ and nothing else$besides (got $($failures.Count): $($failures -join ' | '))"
         foreach ($line in @($mutant.Expect)) {
             if ($line) { Check (@($run.Lines -match $line).Count -gt 0) "the run shows /$line/" }
         }
@@ -234,7 +251,7 @@ function Test-HookLocked {
 
 # ---- Run ----
 
-$names = if ($Mutant -eq 'All') { 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'CancelThrows', 'HookFailsAfterActing', 'HookCompileError', 'HookLocked' } else { @($Mutant) }
+$names = if ($Mutant -eq 'All') { 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'CancelThrows', 'HookFailsAfterActing', 'HookCompileError', 'HookLocked', 'EndingObeysSkip' } else { @($Mutant) }
 Use-RepoSdk
 $failed = @()
 foreach ($name in $names) {

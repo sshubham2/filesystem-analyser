@@ -1,0 +1,136 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-064",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-09-27T22:26:31.409Z",
+ "head": "4cf607ad9c389b32eb33aaee14bf0c69bee34ed0",
+ "run_id": 1709,
+ "summary": "The slice adds the EndingObeysSkip mutant to tests/window/WindowMutants.ps1. It is in the ValidateSet (line 29), the hard-coded All roster (line 254), and a $CaseMutants entry (lines 78-84) that uses the spike's Find/Replace word for word. Test-CaseMutant gets one optional MayFail key (lines 194-201). A new case script, tests/bugs/SL-064-MutantCases.ps1, goes with it. App code, WindowCases.ps1 and the acceptance test were not changed. I re-ran the checks myself instead of relying on the builder's account:\n- The acceptance test exits 0.\n- Cases C-001 to C-006 each exit 0.\n- `-Mutant EndingObeysSkip` exits 0 in 50 s. It published the mutated app in a scratch copy, and L-002 failed on reading 1/0, bytes 393216/524288, files 6/8 and final 'False'. The real MainWindow.xaml.cs hash was unchanged afterwards.\n- `-Mutant All` exits 0 in 337 s, with all 9 mutants killed. The 8 older mutants still match their own exact Fail lists, so the shared MayFail change did not break them.\n- C-008, the unmutated control run through the harness's own New-Scratch and Invoke-ScratchCase, exits 0: L-002 PASSED with the skip armed.\n\nFor O-010, which the design left must-verify and which C-005 only covers with made-up output, I sent two real broken mutations through the harness's own Test-CaseMutant, using a temp driver that loads WindowMutants.ps1 the way the case script does:\n- A Replace that names a field that does not exist: publish failed with CS0103, and the mutant was NOT counted killed (no 'FAILED: L-002', no matching Fail line).\n- A Replace that throws at the ending while the skip is armed: exit 70, no report, and NOT counted killed. The fake crash and publish-failure outputs in C-005 have the same shape as the real ones.\n\nOther checks:\n- Every declared fitness rule holds.\n- No scratch copies or FsAnalyser.App processes were left behind.\n- The working tree is unchanged.\n\nMayFail is set on the new entry and read by Test-CaseMutant, so nothing is half-wired. The Fail and MayFail patterns depend on the wording 'against core (the ending showed the final snapshot)' at WindowCases.ps1:1171. That is safe: rewording it makes the mutant fail (red) rather than pass quietly, and the older mutants depend on their case wording the same way.\n\nThe bug report was only a title. The slice title, the repro test and the design make the intent clear (a standing mutant, no app change), and that is what was built.\n\nThe slice history shows no loop: one build attempt, not sent back. The critique and critique-review stages recorded no account. That is why the design's wrong premise about Test-CaseMutant was only caught at build (see drift).\n\nSecond round: Round two turned up one new defect, and it is minor. It is a false failure in the slice's own case script, not in the harness or the app. C-007 decides whether its scratch copy was cleaned up by listing the shared %TEMP%\\fsa-window-mutants folder before and after the run. Any other mutant run on the machine that creates a copy there in the meantime makes C-007 fail. That could be another worktree running WindowMutants.ps1, or C-008 run alongside it. I showed this by running C-007 while a stand-in folder appeared 10 s in. Every real check passed, then it reported 'FAIL the scratch copy was removed (...\\review-concurrent-run-stand-in)' and exit 1. The stand-in folder is gone and the tree is unchanged.\n\nI also went through the harness change as someone trying to break it, and found nothing else:\n- **Empty or missing MayFail:** `Where-Object { $_ }` drops a '' or $null value, so an empty MayFail cannot match every line, and entries without MayFail behave as before.\n- **Overlapping patterns:** MayFail cannot hide the topLevel.final line. If an entry's MayFail were set too broad, it would drop the required Fail line and the mutant would show as not killed: a false failure, not a false pass.\n- **Line endings and wording:** the Find anchor contains no line breaks and the Replace contains no `$`. A child process's output reaches the harness one line per string with no trailing CR, and the anchored `$` patterns matched in every real run. If the label wording in WindowCases.ps1 changes, the mutant shows as not killed rather than passing quietly.\n- **Expect line:** it matches anywhere in the run. Any other `actual 'False'` line would come with a FAIL line outside MayFail, which already stops a kill.\n- **Broken mutations:** a compile error and a crash at the ending were already run for real in round one, and neither was counted killed.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "matches_design": true,
+  "summary": "The slice adds the EndingObeysSkip mutant to tests/window/WindowMutants.ps1. It is in the ValidateSet (line 29), the hard-coded All roster (line 254), and a $CaseMutants entry (lines 78-84) that uses the spike's Find/Replace word for word. Test-CaseMutant gets one optional MayFail key (lines 194-201). A new case script, tests/bugs/SL-064-MutantCases.ps1, goes with it. App code, WindowCases.ps1 and the acceptance test were not changed. I re-ran the checks myself instead of relying on the builder's account:\n- The acceptance test exits 0.\n- Cases C-001 to C-006 each exit 0.\n- `-Mutant EndingObeysSkip` exits 0 in 50 s. It published the mutated app in a scratch copy, and L-002 failed on reading 1/0, bytes 393216/524288, files 6/8 and final 'False'. The real MainWindow.xaml.cs hash was unchanged afterwards.\n- `-Mutant All` exits 0 in 337 s, with all 9 mutants killed. The 8 older mutants still match their own exact Fail lists, so the shared MayFail change did not break them.\n- C-008, the unmutated control run through the harness's own New-Scratch and Invoke-ScratchCase, exits 0: L-002 PASSED with the skip armed.\n\nFor O-010, which the design left must-verify and which C-005 only covers with made-up output, I sent two real broken mutations through the harness's own Test-CaseMutant, using a temp driver that loads WindowMutants.ps1 the way the case script does:\n- A Replace that names a field that does not exist: publish failed with CS0103, and the mutant was NOT counted killed (no 'FAILED: L-002', no matching Fail line).\n- A Replace that throws at the ending while the skip is armed: exit 70, no report, and NOT counted killed. The fake crash and publish-failure outputs in C-005 have the same shape as the real ones.\n\nOther checks:\n- Every declared fitness rule holds.\n- No scratch copies or FsAnalyser.App processes were left behind.\n- The working tree is unchanged.\n\nMayFail is set on the new entry and read by Test-CaseMutant, so nothing is half-wired. The Fail and MayFail patterns depend on the wording 'against core (the ending showed the final snapshot)' at WindowCases.ps1:1171. That is safe: rewording it makes the mutant fail (red) rather than pass quietly, and the older mutants depend on their case wording the same way.\n\nThe bug report was only a title. The slice title, the repro test and the design make the intent clear (a standing mutant, no app change), and that is what was built.\n\nThe slice history shows no loop: one build attempt, not sent back. The critique and critique-review stages recorded no account. That is why the design's wrong premise about Test-CaseMutant was only caught at build (see drift).\n\nSecond round: Round two turned up one new defect, and it is minor. It is a false failure in the slice's own case script, not in the harness or the app. C-007 decides whether its scratch copy was cleaned up by listing the shared %TEMP%\\fsa-window-mutants folder before and after the run. Any other mutant run on the machine that creates a copy there in the meantime makes C-007 fail. That could be another worktree running WindowMutants.ps1, or C-008 run alongside it. I showed this by running C-007 while a stand-in folder appeared 10 s in. Every real check passed, then it reported 'FAIL the scratch copy was removed (...\\review-concurrent-run-stand-in)' and exit 1. The stand-in folder is gone and the tree is unchanged.\n\nI also went through the harness change as someone trying to break it, and found nothing else:\n- **Empty or missing MayFail:** `Where-Object { $_ }` drops a '' or $null value, so an empty MayFail cannot match every line, and entries without MayFail behave as before.\n- **Overlapping patterns:** MayFail cannot hide the topLevel.final line. If an entry's MayFail were set too broad, it would drop the required Fail line and the mutant would show as not killed: a false failure, not a false pass.\n- **Line endings and wording:** the Find anchor contains no line breaks and the Replace contains no `$`. A child process's output reaches the harness one line per string with no trailing CR, and the anchored `$` patterns matched in every real run. If the label wording in WindowCases.ps1 changes, the mutant shows as not killed rather than passing quietly.\n- **Expect line:** it matches anywhere in the run. Any other `actual 'False'` line would come with a FAIL line outside MayFail, which already stops a kill.\n- **Broken mutations:** a compile error and a crash at the ending were already run for real in round one, and neither was counted killed.",
+  "findings": [
+   {
+    "id": "R2-m1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "C-007's cleanup check fails whenever any other process creates a scratch copy during its ~50 s run. The check compares two listings of the shared %TEMP%\\fsa-window-mutants folder instead of looking at the copy this run made. Every WindowMutants.ps1 run on the machine uses that folder: another slice's worktree, a -Mutant All run, or C-008 run at the same time. Any of them turns C-007 red even though its own copy was removed, and at validate that sends the slice back for nothing. I reproduced it: with a stand-in folder created 10 s into C-007, all real checks passed, then 'FAIL the scratch copy was removed (C:\\Users\\sshub\\AppData\\Local\\Temp\\fsa-window-mutants\\review-concurrent-run-stand-in)', FAILED: C-007, exit 1.",
+    "evidence": "tests/bugs/SL-064-MutantCases.ps1:354 ($scratches = Get-Scratches) and :367-368 ($left = @(Get-Scratches | Where-Object { $_ -notin $scratches }); Check ($left.Count -eq 0) ...). Get-Scratches (:348-350) lists every folder under $ScratchParent, which is the same folder New-Scratch in tests/window/WindowMutants.ps1:123 uses for every run, from every worktree.",
+    "fix": "Take this run's own copy from its output: match the first `fsa-window-mutants\\\\([0-9a-f]{32})\\\\` in $lines (the 'Restored ...' and '-> ...' lines carry it). Check that exactly one such path appeared and that Test-Path on it is false. Then drop the before/after listing."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "I ran `pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-064-EndingObeysSkipMutant.Tests.ps1`: exit 0, 'OK: WindowMutants.ps1 has a standing EndingObeysSkip mutant for L-002...'. The test was untracked before the build commit, so git cannot show whether it was edited. However, its throw is still at line 64 with the exact message the repro captured, and it still checks all four items build-check listed."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "tests/window/WindowMutants.ps1:29, the ValidateSet includes 'EndingObeysSkip'. C-001 passed when I ran it (binds; 'EndingObeysSkipX' is refused with ParameterBindingValidationException). The real `-Mutant EndingObeysSkip` run bound and ran."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "tests/window/WindowMutants.ps1:78-84: Case='L-002', File=$MainWindow. The run loop at :261 sends $CaseMutants keys to Test-CaseMutant. C-002 passed when I ran it."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "The Find at :79 is [regex]::Escape('else if (!ReferenceEquals(final, _shownTopLevel))'). It matches once in MainWindow.xaml.cs, at offset 15197, inside ShowFinalTopLevel (15067-15515, source line 338). RefreshTopLevel (:320-331) has no such text. C-003 passed: Set-Mutation refuses the anchor when it appears twice or reformatted."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "The Replace at :80 adds '&& !_skipNextRefresh'. C-004 passed: it compiles the method text word for word, and with the skip armed the mutant leaves the earlier snapshot on screen. In my real mutant run the hook logged armed=True, and L-002 showed topLevel.final 'False' and reading 1."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "Fail at :81 is the anchored topLevel.final line. MayFail (:82) sets aside the reading/bytes/files lines in Test-CaseMutant (:194-201). Expect (:83) pins actual 'False'. In my real run the harness matched 'got 1: FAIL topLevel.final...', and C-005 passed."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "tests/window/WindowMutants.ps1:254, the All roster includes 'EndingObeysSkip'. I ran `-Mutant All`: exit 0 in 337 s, 'PASSED: StopDisabled, ..., HookLocked, EndingObeysSkip'. C-006 passed."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "I ran `tests/window/WindowMutants.ps1 -Mutant EndingObeysSkip` myself: 'publishing the app' ran in %TEMP%\\fsa-window-mutants\\<guid>, L-002 printed 'FAILED: L-002', PASSED: EndingObeysSkip, exit 0 in 50 s, and the real source hash was unchanged. The -Mutant All run killed it again."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "I ran `tests/bugs/SL-064-MutantCases.ps1 -Case C-008`: New-Scratch's copy has the same hash as the real file, Invoke-ScratchCase L-002 exits 0 with PASSED and no FAIL line, the skip was armed at the ending, topLevel.final held, and Remove-Scratch removed the copy."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "Checked for real, not only with C-005's made-up lines. From a temp driver that loads WindowMutants.ps1's own definitions, I ran Test-CaseMutant 'EndingObeysSkip' with two broken Replaces. (1) '_skipNextRefreshNoSuchField': the publish failed with CS0103 at MainWindow.xaml.cs(338,62) and WindowCases threw 'publish failed with exit 1'. The harness said FAIL 'L-002 is reported FAILED' and 'got 0' Fail lines: KILLED=False. (2) A throw expression when the skip is armed: the app exited 70 and wrote no report. The harness said 'got 2: FAIL exit code | FAIL a report was written': KILLED=False. The real mutant is killed only on the topLevel.final 'False' signal. Validate still owns re-running it."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "Test-C001 (tests/bugs/SL-064-MutantCases.ps1:129) builds a scriptblock from WindowMutants.ps1's real param block and binds -Mutant EndingObeysSkip, All, and a name the ValidateSet does not list. The C-007 run and my real run also invoked it by name."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "Test-C002 (:141) loads the harness's own definitions into a module, reads $CaseMutants['EndingObeysSkip'], and checks Case, File and routing."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "Test-C003 (:156) counts anchor matches in the real MainWindow.xaml.cs, runs the harness's own Set-Mutation, compares the text before and after ShowFinalTopLevel byte for byte, and supplies the anchor twice (count 2) and reformatted (count 0)."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "Test-C004 (:190) compiles the real and the mutated ShowFinalTopLevel text word for word with Add-Type, sets _skipNextRefresh=true and passes a new final snapshot. The real run's hook logged armed=True at Cancel."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "Test-C005 (:278) runs the real Test-CaseMutant with the real Set-Mutation, handing it L-002 output whose lines match what I captured from the real run word for word. It covers final alone, the full signature, final held, and final '<null>'. My real run matched the topLevel.final line through the harness."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "Test-C006 (:335) evaluates WindowMutants.ps1's own $names statement with $Mutant='All' and compares it with the ValidateSet. My real -Mutant All run (exit 0, 337 s) reached EndingObeysSkip."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "Test-C007 (:352) runs the real WindowMutants.ps1 -Mutant EndingObeysSkip and requires the 'publishing the app' line inside the scratch copy. I ran the same entry point myself: the mutated app was published and L-002 failed on topLevel.final 'False'."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "Test-C008 (:371) uses the harness's own New-Scratch and Invoke-ScratchCase on an unmutated copy with a hash check. I ran it: L-002 PASSED with the skip armed."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "C-005 hands the real Test-CaseMutant made-up publish-failure and crash output, and both are correctly not killed. The design marked this case non-material. I also ran both shapes for real through Test-CaseMutant: a compile error (CS0103, publish failed) and a crash at the ending (exit 70, no report). Neither was counted killed."
+   }
+  ],
+  "drift": [
+   "Declared: Test-CaseMutant in tests/window/WindowMutants.ps1:194-201 was changed (an optional MayFail key). The design listed it under whats_reused as unchanged, and its contract said the harness 'exits 0 only when L-002 fails specifically on the topLevel.final line'. The design was wrong about the existing harness: Test-CaseMutant already required the FAIL lines to equal the Fail list exactly. The real run prints four FAIL lines, so the design's single Fail pattern alone could never be counted killed. The critique stage recorded no account and did not catch this. The builder declared the departure, and -Mutant All shows the other 8 mutants behave as before.",
+   "Declared: Expect = actual 'False' (:83) is not in the design. It uses the existing Expect mechanism. It matches anywhere in the run, not only next to the topLevel.final line, but any other 'False' actual would come with a FAIL line outside MayFail, which already stops a kill. So it pins the final field in practice.",
+   "Not a departure, noted for the next reader: tests/bugs/SL-064-MutantCases.ps1 is not in the design's whats_new. It is the slice's case script, following the tests/bugs/SL-062-LedgerCases.ps1 precedent, and nothing runs it routinely. The All-roster sync check (C-006) therefore only guards this slice; the builder raised this as a follow-up.",
+   "Unchanged from round one. The MayFail change to the shared Test-CaseMutant, and the Expect line, are declared departures. The design's premise that Test-CaseMutant could be reused unchanged with one Fail pattern was wrong about the existing exact-match comparison, and the critique recorded no account."
+  ],
+  "unreviewed": [],
+  "second_round": {
+   "run_id": 1710,
+   "filed": 1
+  }
+ }
+}
