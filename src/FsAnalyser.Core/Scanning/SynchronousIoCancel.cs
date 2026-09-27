@@ -10,8 +10,9 @@ namespace FsAnalyser.Core.Scanning;
 /// waiting on a cloud provider (measured never to return by itself).
 /// </summary>
 /// <remarks>
-/// One per scan, created on the scan thread and used only there. A later slice that lists on several
-/// threads gives each its own: CancelSynchronousIo interrupts one named thread's call.
+/// One per thread that makes the scan's calls, created on that thread and used only there: the scan thread's
+/// own, and one for each of its probe workers (SL-056, <see cref="ProbePass"/>). CancelSynchronousIo interrupts
+/// one named thread's call.
 /// <para>Every call is bracketed. Enter publishes that the thread is in a call, then refuses once the
 /// token is cancelled, so no call starts after Cancel. Exit reports whether a cancel was issued during the
 /// call, and if one was, the call is aborted: its result is discarded and reported as
@@ -50,6 +51,12 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
     private const int MaxAttemptsInKernel = 4;
 
     private static int s_pendingCloses;
+
+    // What a listing handle is given before anything is listed through it: LastAccessTime -1, "do not update it
+    // through this handle", and 0, "leave it as it is", in every other field (SL-056). The one payload the scanner
+    // ever sets, built once and checked when the type loads: a wrong size or field order would write wrong times
+    // into every folder a scan lists (review m7).
+    private static readonly Kernel32.FILE_BASIC_INFO KeepLastAccessInfo = CheckedKeepLastAccessInfo();
 
     /// <summary>Test seam: set on a thread before it runs a scan, and handed the guard that scan creates.</summary>
     [ThreadStatic]
@@ -163,17 +170,62 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
 
     /// <summary>
     /// Opens a directory for listing: FILE_LIST_DIRECTORY, every share mode, backup semantics, and no
-    /// OPEN_REPARSE_POINT, so a link a person chose as the root is opened through to its target.
+    /// OPEN_REPARSE_POINT, so a link a person chose as the root is opened through to its target. The one way the
+    /// scanner gets a listing handle.
     /// </summary>
+    /// <remarks>
+    /// With <paramref name="keepLastAccess"/> the listing leaves the folder's last-access time alone (SL-056): the
+    /// open also asks for FILE_WRITE_ATTRIBUTES, and before the handle is handed out it is given LastAccessTime -1
+    /// and 0 in every other field, which changes nothing and tells the file system not to update that time for
+    /// anything done through the handle. Measured on local NTFS to leave a listed folder's four times, attributes
+    /// and USN as they were (spike folder-atime-suspend-on-list-handle, 3 of 3). A folder that refuses the
+    /// write-attributes open or the set, as most of C:\Windows does to an ordinary user, is opened plainly
+    /// instead and listed as before, its last-access time moving: the open fails only when the plain open fails.
+    /// All of it is one bracketed call. <see cref="KeptLastAccess"/> says which way it went.
+    /// </remarks>
     /// <returns>0 with the handle, or the Win32 error with none. An aborted open hands out no handle,
     /// even one Windows returned.</returns>
-    public int OpenDirectory(string win32Path, out SafeFileHandle? handle) =>
-        Open(win32Path, Kernel32.FILE_LIST_DIRECTORY, Kernel32.FILE_FLAG_BACKUP_SEMANTICS, out handle);
+    public int OpenDirectory(string win32Path, bool keepLastAccess, out SafeFileHandle? handle) =>
+        Open(win32Path, Kernel32.FILE_LIST_DIRECTORY, Kernel32.FILE_FLAG_BACKUP_SEMANTICS, keepLastAccess, out handle);
 
     /// <summary>Opens a file with FILE_READ_ATTRIBUTES only, never data, and without OPEN_REPARSE_POINT.</summary>
     /// <returns>As <see cref="OpenDirectory"/>.</returns>
     public int OpenForAttributes(string win32Path, out SafeFileHandle? handle) =>
-        Open(win32Path, Kernel32.FILE_READ_ATTRIBUTES, 0, out handle);
+        Open(win32Path, Kernel32.FILE_READ_ATTRIBUTES, 0, keepLastAccess: false, out handle);
+
+    /// <summary>
+    /// Whether the last open that handed out a handle gave one through which the folder's last-access time is
+    /// not updated. False after any open that asked for nothing of the kind, or that failed.
+    /// </summary>
+    internal bool KeptLastAccess { get; private set; }
+
+    /// <summary>The name of the file system that holds <paramref name="handle"/>: GetVolumeInformationByHandleW.</summary>
+    /// <returns>0 with the name (NTFS, ReFS, FAT32, exFAT, and a share's own answer), or the Win32 error with none.</returns>
+    public int QueryFileSystemName(SafeFileHandle handle, out string? name)
+    {
+        name = null;
+        const int Length = 261; // MAX_PATH + 1, as the documentation asks
+        char* buffer = stackalloc char[Length];
+        if (!Enter())
+            return Aborted;
+        int error = 0;
+        bool issued;
+        try
+        {
+            if (Kernel32.GetVolumeInformationByHandle(handle, null, 0, null, null, null, buffer, Length))
+                name = new string(buffer);
+            else
+                error = LastError();
+            AfterCall?.Invoke(_calls);
+        }
+        finally
+        {
+            issued = Exit();
+        }
+        if (issued)
+            name = null;
+        return Settle(error, issued);
+    }
 
     /// <summary>GetFileInformationByHandleEx.</summary>
     /// <returns>0, or the Win32 error. After <see cref="Aborted"/> the buffer holds nothing to read.</returns>
@@ -292,19 +344,26 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
         return true;
     }
 
-    private int Open(string win32Path, uint access, uint flags, out SafeFileHandle? handle)
+    private int Open(string win32Path, uint access, uint flags, bool keepLastAccess, out SafeFileHandle? handle)
     {
         handle = null;
+        KeptLastAccess = false;
         if (!Enter())
             return Aborted;
         SafeFileHandle? opened = null;
+        bool kept = false;
         int error = 0;
         bool issued;
         try
         {
-            opened = Kernel32.CreateFile(win32Path, access, Kernel32.FILE_SHARE_ALL, 0, Kernel32.OPEN_EXISTING, flags, 0);
-            if (opened.IsInvalid)
-                error = LastError();
+            if (keepLastAccess)
+                kept = TryOpenKeepingLastAccess(win32Path, access, flags, out opened);
+            if (!kept)
+            {
+                opened = Kernel32.CreateFile(win32Path, access, Kernel32.FILE_SHARE_ALL, 0, Kernel32.OPEN_EXISTING, flags, 0);
+                if (opened.IsInvalid)
+                    error = LastError();
+            }
             AfterCall?.Invoke(_calls);
         }
         finally
@@ -314,11 +373,43 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
 
         if (error != 0 || issued)
         {
-            Close(opened);
+            Close(opened!);
             return Settle(error, issued);
         }
         handle = opened;
+        KeptLastAccess = kept;
         return 0;
+    }
+
+    // Inside Open's bracket. True with a handle whose last-access time the file system will not update; false, with
+    // nothing left open, when the write-attributes open or the set is refused, and the caller opens plainly.
+    private static bool TryOpenKeepingLastAccess(string win32Path, uint access, uint flags, out SafeFileHandle? opened)
+    {
+        opened = Kernel32.CreateFile(win32Path, access | Kernel32.FILE_WRITE_ATTRIBUTES, Kernel32.FILE_SHARE_ALL, 0,
+            Kernel32.OPEN_EXISTING, flags, 0);
+        if (!opened.IsInvalid)
+        {
+            Kernel32.FILE_BASIC_INFO keep = KeepLastAccessInfo;
+            if (Kernel32.SetFileInformationByHandle(opened, Kernel32.FileBasicInfo, &keep, (uint)sizeof(Kernel32.FILE_BASIC_INFO)))
+                return true;
+        }
+        opened.Dispose();
+        opened = null;
+        return false;
+    }
+
+    private static Kernel32.FILE_BASIC_INFO CheckedKeepLastAccessInfo()
+    {
+        if (sizeof(Kernel32.FILE_BASIC_INFO) != Kernel32.FileBasicInfoSize
+            || Marshal.SizeOf<Kernel32.FILE_BASIC_INFO>() != Kernel32.FileBasicInfoSize
+            || Marshal.OffsetOf<Kernel32.FILE_BASIC_INFO>(nameof(Kernel32.FILE_BASIC_INFO.LastAccessTime)) != 8
+            || Marshal.OffsetOf<Kernel32.FILE_BASIC_INFO>(nameof(Kernel32.FILE_BASIC_INFO.FileAttributes)) != 32)
+        {
+            throw new PlatformNotSupportedException(
+                $"FILE_BASIC_INFO is {sizeof(Kernel32.FILE_BASIC_INFO)} bytes here, not the {Kernel32.FileBasicInfoSize} with LastAccessTime at 8 " +
+                "that SetFileInformationByHandle reads: setting it would write the wrong times into every folder listed.");
+        }
+        return new Kernel32.FILE_BASIC_INFO { LastAccessTime = -1 };
     }
 
     private static int LastError()

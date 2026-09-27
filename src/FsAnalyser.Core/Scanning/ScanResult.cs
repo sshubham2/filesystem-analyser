@@ -48,14 +48,41 @@ public sealed class ScanResult
     /// </summary>
     public required TopLevelSnapshot? TopLevel { get; init; }
 
-    /// <summary>Files whose true size was due to be read from the file but could not be; their listing sizes were kept.</summary>
+    /// <summary>Files that refused to have their true size read (ProbeFailed); their listing sizes were kept.</summary>
     public int ProbeFailures { get; init; }
+
+    /// <summary>
+    /// Files gone by the time their size was read: deleted, or their folder was, after being listed. Their listing
+    /// sizes were kept. Not counted in <see cref="ProbeFailures"/>, which are refusals (SL-056, review m5).
+    /// </summary>
+    public int VanishedBeforeProbe { get; init; }
 
     /// <summary>False when the volume gave no FileIds, so hardlinks could not be counted once.</summary>
     public bool FileIdsAvailable { get; init; }
 
     public TimeSpan Elapsed { get; init; }
 
-    /// <summary>How many files were opened to read their true size. Visible to tests only.</summary>
+    /// <summary>How many files were opened to read their true size, whatever came of it. Visible to tests only.</summary>
     internal int Probes { get; init; }
+
+    /// <summary>How many of those probes changed the figure a file is charged (ProbeCorrected). Visible to tests only.</summary>
+    internal int ProbeCorrections { get; init; }
+
+    /// <summary>The listing walk's share of <see cref="Elapsed"/>: the scan thread's time before any file was sized.</summary>
+    internal TimeSpan ListingTime { get; init; }
+
+    /// <summary>The time spent sizing files after the walk, applying included; zero when the scan never got there.</summary>
+    internal TimeSpan SizingTime { get; init; }
+
+    /// <summary>The longest single probe.</summary>
+    internal TimeSpan LongestProbe { get; init; }
+
+    /// <summary>Folders whose listing was asked to keep their last-access time: local NTFS, not in a sync root.</summary>
+    internal int LastAccessAsked { get; init; }
+
+    /// <summary>
+    /// Of <see cref="LastAccessAsked"/>, the folders whose listing handle did keep it. The rest refused the
+    /// write-attributes open, were listed plainly, and their last-access time may have moved.
+    /// </summary>
+    internal int LastAccessKept { get; init; }
 }

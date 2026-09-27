@@ -15,9 +15,9 @@ public class HardlinkTests
     /// <param name="names">How many names the file has, one per folder, visited in folder order.</param>
     /// <param name="writtenThrough">Which name the 63 MiB were appended through; every other name is stale.</param>
     [Theory]
-    [InlineData(2, 1)] // the stale name is seen first: the first repeat probes and corrects it
-    [InlineData(3, 2)] // three names in three folders: the third adds a file and 0 bytes, and is not probed
-    [InlineData(2, 0)] // the reverse order: the current name is seen first and stays at its true size
+    [InlineData(2, 1)] // the stale name is seen first: its own probe corrects it, and the repeat is never probed
+    [InlineData(3, 2)] // three names in three folders: each later name adds a file and 0 bytes, and is not probed
+    [InlineData(2, 0)] // the reverse order: the current name is seen first, and its probe agrees with its listing
     public void AFileWithSeveralNamesIsChargedOnceAtItsTrueSize(int names, int writtenThrough)
     {
         using var tree = new TempTree();
@@ -43,7 +43,8 @@ public class HardlinkTests
         int charged = Scans.Find(result, paths[0]); // the first name the scan meets charges the bytes
         Assert.Equal(64 * MiB, store.Size(charged));
         Assert.True(store.OnDisk(charged) >= 64 * MiB, $"the charged name takes {store.OnDisk(charged)} bytes on disk");
-        Assert.Equal(EntryFlags.SizeProbed, store.Flags(charged));
+        // The probe, not the listing, supplied the figure exactly when the first name met was a stale one.
+        Assert.Equal(writtenThrough > 0 ? EntryFlags.SizeProbed | EntryFlags.ProbeCorrected : EntryFlags.SizeProbed, store.Flags(charged));
         Assert.Equal(64 * MiB, store.ChargedSize(charged));
         for (int i = 1; i < names; i++)
         {
@@ -55,8 +56,8 @@ public class HardlinkTests
             Assert.Equal(0, store.ChargedOnDisk(repeat));
         }
         Assert.Equal(new ScanTotals(Files: names, Folders: names, Links: 0, Bytes: 64 * MiB, BytesOnDisk: store.OnDisk(charged)), result.Totals);
-        // One probe per file: the first repeat, or, when the current name is seen first, the large-file
-        // rule, after which the repeat has nothing left to correct.
+        // One probe per file, through the first name met: every name reads the same handle-reported sizes
+        // (U-010), so a later name is never probed (SL-056, review M4).
         Assert.Equal(1, result.Probes);
         Assert.Equal(0, result.ProbeFailures);
 
@@ -89,24 +90,28 @@ public class HardlinkTests
     }
 
     /// <summary>
-    /// The recorded limitation: the listing has no link count, so a name whose other names all lie
-    /// outside the root looks like an ordinary file and is charged at its listing size, stale or not.
-    /// Fixing it would mean probing every file.
+    /// Once the recorded limitation, now fixed by probing every file (SL-056): the listing has no link count, so
+    /// a name whose other names all lie outside the root looks like an ordinary small file, listed here at a
+    /// stale 1 MiB, well under the 64 MiB and not a WOF suspect. The rule SL-056 replaced trusted that listing and
+    /// charged 1 MiB with no probe; the file's own size is 64 MiB.
     /// </summary>
     [Fact]
-    public void ALoneNameUnderTheRootIsChargedAtItsListingSize()
+    public void ALoneNameUnderTheRootIsChargedAtItsOwnSize()
     {
         using var tree = new TempTree();
         string outside = tree.Outside("other-name");
         string written = TempTree.WriteFile(Path.Combine(outside, "a.bin"), 1 * MiB);
         string lone = TempTree.Hardlink(tree.PathOf("b.bin"), written);
         TempTree.Append(written, 63 * MiB);
+        RawEntry listed = Scans.Listing(tree.Root)["b.bin"];
+        Assert.True(listed.EndOfFile == 1 * MiB, $"precondition: b.bin should be listed at a stale 1 MiB, but shows {listed.EndOfFile}");
 
         ScanResult result = Scans.Run(tree.Root);
 
         int entry = Scans.Find(result, lone);
-        Assert.Equal(EntryFlags.None, result.Store.Flags(entry));
-        Assert.Equal(1 * MiB, result.Totals.Bytes);
-        Assert.Equal(0, result.Probes);
+        Assert.Equal(EntryFlags.SizeProbed | EntryFlags.ProbeCorrected, result.Store.Flags(entry));
+        Assert.Equal(64 * MiB, result.Store.Size(entry));
+        Assert.Equal(64 * MiB, result.Totals.Bytes);
+        Assert.Equal((1, 1), (result.Probes, result.ProbeCorrections));
     }
 }

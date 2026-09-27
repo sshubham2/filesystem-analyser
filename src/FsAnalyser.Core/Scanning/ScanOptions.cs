@@ -25,4 +25,31 @@ internal sealed class ScanOptions
 
     /// <summary>Read the volume whatever the root, so a folder scan can be shown to complete while the read is stalled.</summary>
     public bool ReadVolumeOfAnyRoot { get; init; }
+
+    /// <summary>
+    /// What each probe worker runs for a file; <see cref="SizeProbe.Probe"/> when null. Tests pass one that
+    /// blocks, throws, records the paths it is given or reports sizes of its own.
+    /// </summary>
+    public ProbeFile? Probe { get; init; }
+
+    /// <summary>
+    /// Which appended files are probed; <see cref="SizeProbe.IsEligible"/> when null. A test passes the rule
+    /// SL-056 replaced, to show that its fixture fails under it.
+    /// </summary>
+    public ProbeRule? ProbeRule { get; init; }
+
+    /// <summary>How many worker threads probe; <see cref="ProbePass.DefaultWorkers"/> when 0.</summary>
+    public int ProbeWorkers { get; init; }
+
+    /// <summary>Files per batch of probes; <see cref="ProbePass.BatchSize"/> when 0. Tests make it small to see several.</summary>
+    public int ProbeBatch { get; init; }
+
+    /// <summary>How long a cancelled scan waits for probe workers stuck in a call before it returns without them.</summary>
+    public TimeSpan ProbeAbandonAfter { get; init; } = ProbePass.DefaultAbandonAfter;
+
+    /// <summary>
+    /// Folders a sync engine manages, under which no folder's last-access time is kept (review M6); null for the
+    /// OneDrive folders the environment names (<see cref="Scanner.SyncRootsFromEnvironment"/>).
+    /// </summary>
+    public IReadOnlyList<string>? SyncRoots { get; init; }
 }

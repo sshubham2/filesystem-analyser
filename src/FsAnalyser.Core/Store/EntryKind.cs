@@ -31,9 +31,18 @@ public enum EntryFlags : byte
     /// <summary>RECALL_ON_DATA_ACCESS, RECALL_ON_OPEN or OFFLINE: the data is not local. Never opened.</summary>
     CloudOnly = 4,
 
-    /// <summary>Size and OnDisk were read from the file itself because the listing could not be trusted.</summary>
+    /// <summary>
+    /// Size and OnDisk were read from the file itself. Since SL-056 every file the scan charges is probed, so this
+    /// marks every such file whose probe succeeded, whether or not the listing agreed.
+    /// </summary>
     SizeProbed = 8,
 
-    /// <summary>A probe was due but the file could not be opened, so the listing values were kept.</summary>
+    /// <summary>A probe was made but the file refused the open or the query, so the listing values were kept.</summary>
     ProbeFailed = 16,
+
+    /// <summary>
+    /// Set with SizeProbed when the file's own Size or OnDisk differed from its listing, so the probe, not the
+    /// listing, supplied the figure the file is charged (SL-056, review m2).
+    /// </summary>
+    ProbeCorrected = 32,
 }

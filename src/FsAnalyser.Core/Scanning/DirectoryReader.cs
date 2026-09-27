@@ -58,16 +58,20 @@ internal sealed unsafe class DirectoryReader(SynchronousIoCancel io) : IDisposab
 
     public ReadOnlySpan<char> NameOf(in RawEntry entry) => _names.AsSpan(entry.NameStart, entry.NameLength);
 
-    /// <summary>Opens a directory for listing; see <see cref="SynchronousIoCancel.OpenDirectory"/>.</summary>
+    /// <summary>
+    /// Opens a directory for listing, keeping its last-access time when asked and when the folder allows it; see
+    /// <see cref="SynchronousIoCancel.OpenDirectory"/>.
+    /// </summary>
     /// <returns>0, or the Win32 error.</returns>
-    public int Open(string win32Path, out SafeFileHandle? handle) => io.OpenDirectory(win32Path, out handle);
+    public int Open(string win32Path, bool keepLastAccess, out SafeFileHandle? handle) =>
+        io.OpenDirectory(win32Path, keepLastAccess, out handle);
 
-    /// <summary>Opens and lists one directory. See <see cref="List"/>.</summary>
-    public int Read(string win32Path, bool fullClass)
+    /// <summary>Opens and lists one directory. See <see cref="Open"/> and <see cref="List"/>.</summary>
+    public int Read(string win32Path, bool fullClass, bool keepLastAccess)
     {
         _count = 0;
         _namesUsed = 0;
-        int error = Open(win32Path, out SafeFileHandle? handle);
+        int error = Open(win32Path, keepLastAccess, out SafeFileHandle? handle);
         if (error != 0)
             return error;
         try

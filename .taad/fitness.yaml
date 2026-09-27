@@ -144,10 +144,11 @@ rules:
       - 'tests/FsAnalyser.Core.Tests/TestNative.cs'
       - 'tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs'
       - 'tests/CfProvider/**'
+      - 'tests/HoldRig/**'
     must_not_match:
       - '(?m)(Library|Dll)Import'
     including_comments: true
-    because: 'Interop lives only in Native (O-003). Every Win32 call goes through Native, where paths are \\?\ and built by LongPath. Fixture-only interop lives in TestNative.cs, and the opt-in cloud rig''s in its two files (SL-049): the Trait-gated CloudPlaceholderTests.cs, and the provider process under tests/CfProvider.'
+    because: 'Interop lives only in Native (O-003). Every Win32 call goes through Native, where paths are \\?\ and built by LongPath. Fixture-only interop lives in TestNative.cs, and the opt-in cloud rig''s in its two files (SL-049): the Trait-gated CloudPlaceholderTests.cs, and the provider process under tests/CfProvider. The held-open rig under tests/HoldRig (SL-056) is a process of its own that observes metadata through handles, independent of Native on purpose.'
 
   - name: 'InteropLivesOnlyInNative (tests)'
     files: 'tests/**/*.cs'
@@ -156,10 +157,11 @@ rules:
       - 'tests/FsAnalyser.Core.Tests/TestNative.cs'
       - 'tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs'
       - 'tests/CfProvider/**'
+      - 'tests/HoldRig/**'
     must_not_match:
       - '(?m)(Library|Dll)Import'
     including_comments: true
-    because: 'Interop lives only in Native (O-003). Every Win32 call goes through Native, where paths are \\?\ and built by LongPath. Fixture-only interop lives in TestNative.cs, and the opt-in cloud rig''s in its two files (SL-049): the Trait-gated CloudPlaceholderTests.cs, and the provider process under tests/CfProvider.'
+    because: 'Interop lives only in Native (O-003). Every Win32 call goes through Native, where paths are \\?\ and built by LongPath. Fixture-only interop lives in TestNative.cs, and the opt-in cloud rig''s in its two files (SL-049): the Trait-gated CloudPlaceholderTests.cs, and the provider process under tests/CfProvider. The held-open rig under tests/HoldRig (SL-056) is a process of its own that observes metadata through handles, independent of Native on purpose.'
 
   - name: 'FileSystemCallsGoThroughTheCancelGuard (*.cs)'
     files: 'src/**/*.cs'
@@ -676,3 +678,68 @@ rules:
       lambda's parameter, so reusing the same API to queue an attempt still fails (review
       R2-m1), as does a Task constructed and started by hand; \bQueueUserWorkItem\b does not
       match the Close call. Matched against code only, so a comment can say why without failing it.
+
+  # settled by SL-056
+  # As its design declared them, then changed at build by the review findings the person accepted: rule 1 names the
+  # file the probes now live in (ProbePass.cs, list-then-probe, M-add-1) and every store write (M2); rule 2 fences every
+  # timestamp setter, not one API name, and excepts the files the interop and cancel-guard rules put the one call in
+  # (M8); rule 3 covers all of Scanning (m3); rule 4 is new (M8). None has an xUnit twin.
+  - name: probe results are applied only on the listing thread, never inside a worker
+    files: src/FsAnalyser.Core/Scanning/ProbePass.cs
+    must_not_match:
+    - '(?m)\.Correct\s*\('
+    - '(?m)\.Credit\s*\('
+    - '(?m)\bCorrectSizes\b'
+    - '(?m)\bAddFlags\b'
+    because: 'SL-042 measured 16-worker parallel attribution swinging folder totals by more than 10 MiB across 5
+      runs (WinSxS by 587 MiB). The scan lists everything, then its workers probe a batch of paths and hand back
+      readings, and the scan thread applies them once the batch''s workers have finished (review M-add-1). A worker
+      gets nothing to apply with, ProbePass cannot name the store (the rule that Core publishes no live ScanStore),
+      and Scanner''s Correct and Credit refuse any other thread through ThreadOwner (review M2). This rule is the
+      tripwire under those: no store write is spelled where the workers run.'
+  - name: only the directory-listing open path may write a file-system timestamp
+    files: src/FsAnalyser.Core/**/*.cs
+    must_not_match:
+    - '(?m)\bSetFileInformationByHandle\b'
+    - '(?m)\bSetFileTime\b'
+    - '(?m)\bNtSetInformationFile\b'
+    - '(?m)\bSetFileAttributes\w*'
+    - '(?m)\b(File|Directory)\.Set(LastAccess|LastWrite|Creation)Time'
+    - '(?m)\.(LastAccess|LastWrite|Creation)Time(Utc)?\s*=(?!=)'
+    because: 'Criterion 6 forbids the scan changing any timestamp. The folder-atime-suspend-on-list-handle spike
+      proved the one set the scanner makes, LastAccessTime -1 and 0 everywhere else on a listing handle, leaves a
+      folder unchanged, but only while it is the one place that writes metadata: a second call site could set a
+      wrong field and nobody would notice (review M8). So every way to write a time or an attribute is fenced, not
+      one API name. The declaration lives in Native/Kernel32.cs (InteropLivesOnlyInNative) and the one call inside
+      SynchronousIoCancel.OpenDirectory, the one function that hands out a listing handle, bracketed by the cancel
+      guard (FileSystemCallsGoThroughTheCancelGuard); those two files are excepted, and review is what holds them.'
+    except_files:
+    - src/FsAnalyser.Core/Native/Kernel32.cs
+    - src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs
+  - name: the size probe's open stays on CreateFileW, not a parent-relative NtOpenFile
+    files: src/FsAnalyser.Core/Scanning/*.cs
+    must_not_match:
+    - '(?m)\bNtOpenFile\b'
+    because: 'SL-045 measured that a SYNCHRONIZE-deny ACE refuses CreateFileW''s implicit SYNCHRONIZE request but
+      not a parent-relative NtOpenFile with FILE_READ_ATTRIBUTES only. Moving the probe''s open to NtOpenFile, the
+      route U-014''s census used and the likely one for a drive-time optimisation in ProbePass.cs or SizeProbe.cs,
+      turns criterion 5''s refusal test (OnDiskSizeTests, wof-denied.txt asserted ProbeFailed) red; the risk is
+      that someone then "fixes" the fixture and the refusal case goes untested (review m3).'
+  - name: only DirectoryReader lists a directory
+    files: src/FsAnalyser.Core/**/*.cs
+    must_not_match:
+    - '(?m)\bFindFirstFile\w*'
+    - '(?m)\bNtQueryDirectoryFile\w*'
+    - '(?m)\bFile\w*Directory(Restart)?Info\b'
+    - '(?m)\bDirectory\.(Enumerate\w*|GetFiles|GetDirectories|GetFileSystemEntries)\b'
+    - '(?m)\.(EnumerateFiles|EnumerateDirectories|EnumerateFileSystemInfos|GetFileSystemInfos)\s*\('
+    - '(?m)\bFileSystemEnumerable\b'
+    because: 'A listing moves a folder''s last-access time unless its handle was given LastAccessTime -1 first
+      (SL-045, and the folder-atime spike). DirectoryReader lists only through SynchronousIoCancel.OpenDirectory,
+      which does that where the volume and the folder allow it. A second listing anywhere else in Core, a folder
+      refresh or a child count, would move last-access times while HeldOpenTreeTests, which runs only the scan,
+      stayed green (review M8). The directory-information classes of GetFileInformationByHandleEx are fenced by
+      their names; Kernel32.cs declares them.'
+    except_files:
+    - src/FsAnalyser.Core/Scanning/DirectoryReader.cs
+    - src/FsAnalyser.Core/Native/Kernel32.cs

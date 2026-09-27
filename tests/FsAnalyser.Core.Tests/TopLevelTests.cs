@@ -67,14 +67,14 @@ public class TopLevelTests
         Assert.Equal((1L, 1L), (charged.Files, charged.Folders));
         Assert.Equal((0L, 0L, 1L, 1L), (repeat.Bytes, repeat.OnDisk, repeat.Files, repeat.Folders));
         Assert.Equal(scan.Result.Totals.Bytes, charged.Bytes + repeat.Bytes);
-        Assert.Equal(1, scan.Result.Probes); // the first repeat's probe, which found the charged size current
+        Assert.Equal(1, scan.Result.Probes); // the first name's probe, which found its listing current; b.bin is never probed
     }
 
     /// <summary>
     /// HardlinkTests' stale shape across two rows: 1-folder's name is met first and charged at its stale
-    /// 1 MiB, and 1-folder's row is Done. Listing 2-folder probes the current name and corrects the FIRST
-    /// name's record in place. The 63 MiB belong to 1-folder's row, not to the listing they arrived in.
-    /// This is the one change a Done row can still take.
+    /// 1 MiB, and 1-folder's row is Done. Once every folder is listed, that name's own probe reads the file's
+    /// current size and corrects its record in place (SL-056). The 63 MiB belong to 1-folder's row, not to
+    /// 2-folder's, whose name is a later one. This is the one change a Done row can still take.
     /// </summary>
     [Fact]
     public void AnInPlaceCorrectionOfAnEarlierNameIsCreditedToThatNamesRow()
@@ -91,9 +91,9 @@ public class TopLevelTests
         Assert.Equal(ScanStatus.Completed, scan.Result.Status);
         Assert.Equal(1, scan.Result.Probes);
         int stale = Scans.Find(scan.Result, tree.PathOf(@"1-folder\stale.bin"));
-        Assert.Equal(EntryFlags.SizeProbed, scan.Result.Store.Flags(stale));
+        Assert.Equal(EntryFlags.SizeProbed | EntryFlags.ProbeCorrected, scan.Result.Store.Flags(stale));
 
-        // Done at the stale size first, then corrected in place while 2-folder was listed.
+        // Done at the stale size first, then corrected in place once every folder was listed.
         TopLevelSnapshot before = scan.Snapshots.First(s => Named(s, "1-folder").State == TopLevelState.Done);
         Assert.Equal(1 * MiB, Named(before, "1-folder").Bytes);
         Assert.Equal(TopLevelState.NotRead, Named(before, "2-folder").State);
@@ -238,9 +238,9 @@ public class TopLevelTests
     }
 
     /// <summary>
-    /// Cancel fed in at each guarded call of a real scan in turn, as CancelledFolderTests does, before the
+    /// Cancel fed in at each guarded call of the scan thread in turn, as CancelledFolderTests does, before the
     /// call or during it (SynchronousIoCancel then discards what it returned). That includes every buffer of
-    /// d\big, a deeper listing that takes several, and the repeat's probe. A folder Cancel aborts commits
+    /// d\big, a deeper listing that takes several; the probes run after the walk (SL-056). A folder Cancel aborts commits
     /// nothing, so it changes no total and no row: the final snapshot holds exactly the figures of the last
     /// one published before the stop, and adds up to the totals. Cancelled in the root's own listing, the
     /// scan never had a row to show.
