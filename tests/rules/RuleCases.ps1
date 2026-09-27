@@ -31,6 +31,9 @@ $Utf8 = [System.Text.UTF8Encoding]::new($false)
 $Shells = @('powershell.exe', 'pwsh')
 $script:Failures = [System.Collections.Generic.List[string]]::new()
 $script:Temps = [System.Collections.Generic.List[string]]::new()
+# The twinned entries the AGREE line pins. Every other entry of the yaml is settled (Get-ExpectedSettled).
+$Twinned = 15
+$script:ExpectedSettled = $null
 
 # ---- Checks ----
 
@@ -196,13 +199,45 @@ function Test-Rows($run, [string[]] $ids, [string] $verdict, [string] $xunit = '
     }
 }
 
+# ---- The settled count ----
+
+# Every item of the yaml's rules: list, counted here line by line, less the twinned entries: what C-001 and
+# C-003 expect rules-parity to print as settled. Never read from its output, and never per '# settled by'
+# marker, since one slice can append several entries under one. Worked out on first use and kept for the
+# run, so a yaml it cannot count fails only the cases that ask, never the script or a lone -Case run.
+# tests/rules/SettledCountProbe.ps1 feeds C-001 and C-003 grown yamls and broken summary lines.
+function Get-ExpectedSettled {
+    if ($null -eq $script:ExpectedSettled) {
+        $path = Join-Path $Repo $YamlRel
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "ExpectedSettled: fitness rule count unavailable: no $YamlRel under $Repo" }
+        $lines = [System.IO.File]::ReadAllLines($path, $Utf8)
+        [int] $rules = -1
+        [int] $indent = -1
+        [int] $count = 0
+        for ($i = 0; $i -lt $lines.Length; $i++) {
+            if ($rules -lt 0) {
+                if ($lines[$i] -cmatch '^rules:') { $rules = $i }
+                continue
+            }
+            $item = [regex]::Match($lines[$i], '^( *)-( |$)')
+            if (-not $item.Success) { continue }
+            if ($indent -lt 0) { $indent = $item.Groups[1].Length }
+            if ($item.Groups[1].Length -eq $indent) { $count++ }
+        }
+        if ($rules -lt 0 -or $count -eq 0) { throw "ExpectedSettled: fitness rule count unavailable: no rules: list in $path" }
+        [int] $settled = $count - $Twinned
+        if ($settled -lt 1) { throw "ExpectedSettled: derived count $settled < 1 ($count rules, $Twinned twinned)" }
+        $script:ExpectedSettled = $settled
+    }
+    [int] $script:ExpectedSettled
+}
+
 # ---- The cases ----
 
 function Case-C001 {
     Write-Output 'C-001 the clean tree: 11 Facts, 15 twinned entries, 27 patterns, the settled entries below the marker'
-    # 28 settled: SL-023 and SL-024 (4), SL-031 (3), SL-033 (3), SL-038 (5), SL-039 (3), SL-042 (3), SL-043 (3) and
-    # SL-044 (4). SL-040's rule is twinned (8th Fact), and so are SL-043's three (9th to 11th Facts, 4 twinned entries).
-    $agree = 'rules-parity: AGREE 11 facts <- 15 twinned entries, 27 patterns; 28 settled entries not compared'
+    # The settled count moves with every slice that appends rules, so it comes from Get-ExpectedSettled.
+    $agree = "rules-parity: AGREE 11 facts <- $Twinned twinned entries, 27 patterns; $(Get-ExpectedSettled) settled entries not compared"
     foreach ($shell in $Shells) {
         CheckRun (Invoke-Parity $shell $Repo) 0 "the repo [$shell]" @($agree)
         CheckRun (Invoke-Parity $shell $Repo @('-ExpectFacts', '11')) 0 "the repo with -ExpectFacts 11 [$shell]" @($agree)
@@ -261,11 +296,13 @@ function Case-C003 {
         "yaml entry 'ANewRuleInTheWrongPlace (*.cs)' (.taad/fitness.yaml:$(Get-LineOf $root $YamlRel "name: 'ANewRuleInTheWrongPlace (*.cs)'")) pairs with no Fact"
     } 1 @('rules-parity: DRIFT 1 unpaired')
 
+    # One more than this repo's own yaml, counted before the copy is appended to.
+    $settled = (Get-ExpectedSettled) + 1
     Test-Parity 'the same entry appended below the marker, as the engine appends' {
         param($root)
         $path = Join-Path $root $YamlRel
         [System.IO.File]::AppendAllText($path, "`r`n  # settled by SL-999`r`n" + $newEntry.Replace("`n", "`r`n"), $Utf8)
-    } 0 @('rules-parity: AGREE 11 facts <- 15 twinned entries, 27 patterns; 29 settled entries not compared')
+    } 0 @("rules-parity: AGREE 11 facts <- $Twinned twinned entries, 27 patterns; $settled settled entries not compared")
 }
 
 function Case-C004 {
