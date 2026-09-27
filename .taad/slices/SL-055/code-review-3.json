@@ -1,0 +1,243 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-055",
+ "stage": "code-review",
+ "attempt": 3,
+ "at": "2026-09-27T08:12:33.238Z",
+ "head": "",
+ "run_id": 1520,
+ "summary": "Build attempt 2 did two things. It resolved the uat merge, and it strengthened the two tests owed as O-026 and O-027. It did not touch the product: `git diff 5654d9b 2ff34ba -- src` and the repro file are both empty, and SynchronousIoCancel.cs hashes to C4E31B83…, the builder's recorded value. My attempt-1 walk of the guard therefore still stands.\n\n**Merge.** In .taad/fitness.yaml, SL-049's three cloud-files rules and InteropLivesOnlyInNative exceptions are kept word for word, with SL-055's corrected rule 2 after them. There are no conflict markers. The engine has since committed the merge (2ff34ba has parents 858fc9c and f49efbf), so the builder's 'still UU' follow-up is moot.\n\n**What I ran on the merged tree:**\n- Build: 0 warnings, 0 errors.\n- Acceptance command: exit 0, 2 of 2 passed.\n- Both guard classes (`~SynchronousIoCancel`, blame-hang 60 s), 5 idle runs: 30 of 30 tests each time.\n- Full suite: 337 of 337.\n- Fitness: all 52 rules hold.\n- rules-parity: AGREE.\n- Concentrated loaded pass: 4 busy processes and the test host pinned to CPUs 14–15. 3 of 3 runs green, covering the Dispose test, the ExitWaits test, the flaky class test and both repro tests. Afterwards 0 busy loops and 0 testhosts were left.\n\n**Mutants.** I ran these in a temp copy, since deleted, and the repo's .dotnet is intact:\n- Drain() removed from Dispose: the Dispose test was red 3 of 3 ('0 attempt(s) live when Dispose drained').\n- Drain without `_noAttempts.Wait()`: both tests were red 3 of 3. The Dispose test failed with 'Expected 2, Actual 0' released. The ExitWaits test failed because the post-Exit pipe wait was aborted with OperationCanceledException.\n- MaxAttemptsInKernel = 5: ExitWaits was red 3 of 3 (Expected 4, Actual 5).\n\nBoth findings from my attempt 1 (C-008 unproven by its test; the cap unpinned) are now closed by tests that fail on the defect they name. I found nothing new worth filing.\n\n**Cross-slice interaction.** SL-049's merged tests drive the shipped guard. The default-suite CloudRigTests (AScanCancelFreesIsReturnedWithNothingForced, AScanCancelDoesNotFreeIsFreedByForceAndFails) pass against the new dispatcher and drain. The opt-in CloudPlaceholderTests stall Fact is the only test in the tree that would put SL-055's unbounded drain against a real redirector (cldflt). I did not run it, because registering a sync root is SL-049's open question for a person. It stays behind the default filter, and `~SynchronousIoCancel` cannot match it.\n\nSecond round: Round 2 found one new defect (m1). Rule 2 ('Cancel attempts never run on the thread pool or a timer') is the only guard against moving cancel attempts onto the thread pool, and it misses the most likely way of doing it. `\\bThreadPool\\.(?!UnsafeQueueUserWorkItem\\b)` exempts every use of that API in the file, not just the Close hand-off it was written for. I replaced `new Thread(CancelOnce){…}.Start()` with `ThreadPool.UnsafeQueueUserWorkItem(static g => g.CancelOnce(), this, preferLocal: false)`, the same call Close already makes 150 lines above. That mutant matched none of the rule's 7 patterns under .NET regex or Python `re`, which is the engine's dialect. A `new Task(CancelOnce).Start()` mutant also matched none. In a temp copy the pool mutant passed all 70 guard-related tests 3 of 3 (SynchronousIoCancel, CancellationTests, CloudRigTests, CancelledFolderTests), so the rule is the only thing that would catch that regression. My attempt-1 note that 'every obvious wrong implementation is caught' was wrong on exactly this point.\n\nEverything else I checked held:\n- **fitness.yaml:** no BOM, CRLF throughout (675 CRLF, 0 bare LF), no tabs. The Fitness engine reads all 52 rules with the SL-055 and SL-049 patterns intact.\n- **The two strengthened tests:** nothing new.\n  - The seams cannot throw, so no exception escapes onto a raw attempt thread.\n  - Held-attempt counters are read only after Dispose's drain, which orders them.\n  - `first` read as int.MaxValue only lets an early attempt go unheld; it never produces a false count.\n  - Peak == 4 is reached by waiting, not by timing.\n  - The 250 ms hold outlasts the canceller Join under the concentrated load I ran, 3 of 3.\n\nRound-1 results stand:\n- Acceptance command: exit 0.\n- Idle runs: 5 of 5 at 30 of 30 tests.\n- Full suite: 337 of 337.\n- Fitness: 52 of 52 rules hold.\n- rules-parity: AGREE.\n- Mutants: Dispose without Drain, Drain without wait and cap 5 are all red.\n\nThe working tree is exactly as I found it, and both temp copies are deleted.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "matches_design": true,
+  "summary": "Build attempt 2 did two things. It resolved the uat merge, and it strengthened the two tests owed as O-026 and O-027. It did not touch the product: `git diff 5654d9b 2ff34ba -- src` and the repro file are both empty, and SynchronousIoCancel.cs hashes to C4E31B83…, the builder's recorded value. My attempt-1 walk of the guard therefore still stands.\n\n**Merge.** In .taad/fitness.yaml, SL-049's three cloud-files rules and InteropLivesOnlyInNative exceptions are kept word for word, with SL-055's corrected rule 2 after them. There are no conflict markers. The engine has since committed the merge (2ff34ba has parents 858fc9c and f49efbf), so the builder's 'still UU' follow-up is moot.\n\n**What I ran on the merged tree:**\n- Build: 0 warnings, 0 errors.\n- Acceptance command: exit 0, 2 of 2 passed.\n- Both guard classes (`~SynchronousIoCancel`, blame-hang 60 s), 5 idle runs: 30 of 30 tests each time.\n- Full suite: 337 of 337.\n- Fitness: all 52 rules hold.\n- rules-parity: AGREE.\n- Concentrated loaded pass: 4 busy processes and the test host pinned to CPUs 14–15. 3 of 3 runs green, covering the Dispose test, the ExitWaits test, the flaky class test and both repro tests. Afterwards 0 busy loops and 0 testhosts were left.\n\n**Mutants.** I ran these in a temp copy, since deleted, and the repo's .dotnet is intact:\n- Drain() removed from Dispose: the Dispose test was red 3 of 3 ('0 attempt(s) live when Dispose drained').\n- Drain without `_noAttempts.Wait()`: both tests were red 3 of 3. The Dispose test failed with 'Expected 2, Actual 0' released. The ExitWaits test failed because the post-Exit pipe wait was aborted with OperationCanceledException.\n- MaxAttemptsInKernel = 5: ExitWaits was red 3 of 3 (Expected 4, Actual 5).\n\nBoth findings from my attempt 1 (C-008 unproven by its test; the cap unpinned) are now closed by tests that fail on the defect they name. I found nothing new worth filing.\n\n**Cross-slice interaction.** SL-049's merged tests drive the shipped guard. The default-suite CloudRigTests (AScanCancelFreesIsReturnedWithNothingForced, AScanCancelDoesNotFreeIsFreedByForceAndFails) pass against the new dispatcher and drain. The opt-in CloudPlaceholderTests stall Fact is the only test in the tree that would put SL-055's unbounded drain against a real redirector (cldflt). I did not run it, because registering a sync root is SL-049's open question for a person. It stays behind the default filter, and `~SynchronousIoCancel` cannot match it.\n\nSecond round: Round 2 found one new defect (m1). Rule 2 ('Cancel attempts never run on the thread pool or a timer') is the only guard against moving cancel attempts onto the thread pool, and it misses the most likely way of doing it. `\\bThreadPool\\.(?!UnsafeQueueUserWorkItem\\b)` exempts every use of that API in the file, not just the Close hand-off it was written for. I replaced `new Thread(CancelOnce){…}.Start()` with `ThreadPool.UnsafeQueueUserWorkItem(static g => g.CancelOnce(), this, preferLocal: false)`, the same call Close already makes 150 lines above. That mutant matched none of the rule's 7 patterns under .NET regex or Python `re`, which is the engine's dialect. A `new Task(CancelOnce).Start()` mutant also matched none. In a temp copy the pool mutant passed all 70 guard-related tests 3 of 3 (SynchronousIoCancel, CancellationTests, CloudRigTests, CancelledFolderTests), so the rule is the only thing that would catch that regression. My attempt-1 note that 'every obvious wrong implementation is caught' was wrong on exactly this point.\n\nEverything else I checked held:\n- **fitness.yaml:** no BOM, CRLF throughout (675 CRLF, 0 bare LF), no tabs. The Fitness engine reads all 52 rules with the SL-055 and SL-049 patterns intact.\n- **The two strengthened tests:** nothing new.\n  - The seams cannot throw, so no exception escapes onto a raw attempt thread.\n  - Held-attempt counters are read only after Dispose's drain, which orders them.\n  - `first` read as int.MaxValue only lets an early attempt go unheld; it never produces a false count.\n  - Peak == 4 is reached by waiting, not by timing.\n  - The 250 ms hold outlasts the canceller Join under the concentrated load I ran, 3 of 3.\n\nRound-1 results stand:\n- Acceptance command: exit 0.\n- Idle runs: 5 of 5 at 30 of 30 tests.\n- Full suite: 337 of 337.\n- Fitness: 52 of 52 rules hold.\n- rules-parity: AGREE.\n- Mutants: Dispose without Drain, Drain without wait and cap 5 are all red.\n\nThe working tree is exactly as I found it, and both temp copies are deleted.",
+  "findings": [
+   {
+    "id": "R2-m1",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "Rule 2 is meant to stop cancel attempts running on the pool, but its exemption covers every `ThreadPool.UnsafeQueueUserWorkItem` in SynchronousIoCancel.cs, not only the Close hand-off it was written for (review m3). The most likely regression is to reuse the pool call Close already makes (line 215) to issue each attempt, and that passes the rule. A cancel held in the kernel would then pin a pool thread the scanner shares, which is the failure the rule's own `because` names. `new Task(CancelOnce).Start()` also passes. No test catches either: with attempts on `ThreadPool.UnsafeQueueUserWorkItem(static g => g.CancelOnce(), this, preferLocal: false)`, all 70 tests in the SynchronousIoCancel, CancellationTests, CloudRigTests and CancelledFolderTests classes passed 3 of 3.",
+    "evidence": ".taad/fitness.yaml, SL-055 block, rule 'Cancel attempts never run on the thread pool or a timer': must_not_match `\\bThreadPool\\.(?!UnsafeQueueUserWorkItem\\b)` … `\\bPeriodicTimer\\b`. The exempted call is src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs:215 `ThreadPool.UnsafeQueueUserWorkItem(static aborted =>`. A Python `re` run of all 7 patterns against the pool mutant and the new-Task mutant matched nothing.",
+    "fix": "Tie the exemption to the Close call site and add the Task constructor. Replace the first pattern with `\\bThreadPool\\.(?!UnsafeQueueUserWorkItem\\(static aborted\\b)` and add `\\bnew\\s+Task\\s*[(<]`. I checked both in Python and .NET: they match nothing in the current file and match each mutant. Update the rule's `because` to name the one exempt call site."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "I ran the command on the merged tree: `pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj -nologo --filter FullyQualifiedName~SynchronousIoCancelResendRaceTests`. It exited 0 with 2 of 2 passed."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "The repro (tests/FsAnalyser.Core.Tests/SynchronousIoCancelResendRaceTests.cs) pins one CPU and runs the worker at Highest. Its 3-wait and 8-wait tests were green in 5 idle runs and in 3 concentrated loaded runs. In my attempt 1 the pre-fix guard was red 3 of 3 against this same file. src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs:359-408 issues each attempt on its own thread."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "The drain at SynchronousIoCancel.cs:422-431 is unbounded. No hang occurred in 5 idle class runs, 1 full-suite run or 3 loaded runs, all with --blame-hang-timeout 60s. This is proven for local pipes only; validate records real redirectors as not reached."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "After Exit, the tests list a folder and then wait on a pipe that stays pending for 300 ms (SynchronousIoCancelResendRaceTests.cs:108-112 and SynchronousIoCancelTests.cs:238-242). A mutant whose Drain does not wait makes ExitWaitsForAttemptsAboutToCancelSoNoneLandsAfterIt fail 3 of 3 with an aborted wait (OperationCanceledException)."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "The working premise was that a second concurrent CancelSynchronousIo frees a re-blocked wait. The repro, which was red before the fix, is now green."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "The drain stays unbounded, and the comment at SynchronousIoCancel.cs:419-421 says nothing watches it. No bounded drain and no new SafeHandle were added; the handle is the existing SafeThreadHandle (line 60). The ObjectDisposedException catch is kept at lines 399-403."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "C-001: CancelFreesACallThatBlocksAgainBeforeTheCancelCallHasReturned (SynchronousIoCancelResendRaceTests.cs:43-45, 57-139) passes: one CPU, Highest priority, 3 waits, 2 s bar."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "C-002: CancelIsResentWhileACallBlocksAgainAfterACancel (SynchronousIoCancelTests.cs:112-157) is unchanged, with its 2 s bar. It was green in my 3 concentrated loaded runs. The design's 32-jobs-on-16-CPUs load shape itself was never run; validate's open list already records that."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "C-003: CancelInterruptsACallBlockedInTheKernel (SynchronousIoCancelTests.cs:15-57). Every first attempt now starts a new thread (StartAttempt, line 371). It was green in 5 idle class runs and in the full suite."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "C-004: CancelIsResentUntilACallThatHadNotReachedTheKernelIsInterrupted (SynchronousIoCancelTests.cs:64-105) asserts CancelAttempts > CancelsDelivered. FALSE is ignored at SynchronousIoCancel.cs:396-397."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "C-005: ExitWithNoCancelMakesNoAttemptAndWaitsForNone (SynchronousIoCancelTests.cs:163-180). Leave (SynchronousIoCancel.cs:287-293) takes one Interlocked.Exchange and no lock on the hot path."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "C-006: ExitWaitsForAttemptsAboutToCancelSoNoneLandsAfterIt asserts liveAtExit >= 2, and the repro asserts liveAtExit >= 1. A mutant whose Drain does not wait turns ExitWaits red."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "C-007: in both files, the post-Exit listing (2 entries) and the pending pipe wait run before Dispose. The witness bites: the no-wait Drain mutant fails it."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "C-008: DisposeWithoutExitWhileCancellingEndsEveryAttemptFirst (SynchronousIoCancelTests.cs:267-335) now holds attempts until the throw plus 250 ms. With Dispose's Drain() removed it was red 3 of 3; with a Drain that does not wait it was red 3 of 3 (Expected 2, Actual 0)."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "C-009: the repro is in [Collection(nameof(ResendRace))] with DisableParallelization = true (SynchronousIoCancelResendRaceTests.cs:37-41). Affinity is restored in finally and asserted afterwards (lines 132-138). The full suite, repro included, was 337 of 337."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "M1: `FullyQualifiedName~SynchronousIoCancel` matches both classes; my runs of it executed 30 tests, repro included. No SL-049 opt-in test name matches it."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "M2: the post-Exit witness is a pending WaitForConnection whose client connects 300 ms later (SynchronousIoCancelTests.cs:532-543, called with clientDelayMilliseconds: 300). It goes red against the no-wait mutant."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "M3: CancelFreesACallThatBlocksAgainMoreTimesThanTheCapOfLiveAttempts uses 8 waits and a 10 s bar (SynchronousIoCancelResendRaceTests.cs:53-55). The peak is in the failure message and in the output (lines 122-123). It was green idle and loaded."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "M4: StartAttempt and CancelOnce refuse under _gate when _disposed is set or the state is not CancelIssued (SynchronousIoCancel.cs:363, 390). Dispose sets _disposed under the gate, joins, drains, disposes the event and only then disposes the handle (lines 265-282). The test asserts CancelAttempts does not grow after Dispose (SynchronousIoCancelTests.cs:333-334)."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "m1: the slot is reserved under _gate before Thread.Start (SynchronousIoCancel.cs:361-368). It is given back in the catch if Start throws (373-376) and in CancelOnce's finally on every path (404-407)."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "m3: the rule in .taad/fitness.yaml (the SL-055 block) uses `\\bThreadPool\\.(?!UnsafeQueueUserWorkItem\\b)` and adds Task.Factory.StartNew, System.Timers.Timer and PeriodicTimer. The Fitness check reports all 52 rules hold on the merged tree."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "m4: the comment at SynchronousIoCancel.cs:419-421 records that the drain has no watchdog. Every loop I ran used --blame-hang-timeout 60s, and the builder's recorded commands carry it too."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "m5: the Kernel32.cs:94-99 remarks say 'Observed on Windows 11 26200, against the documented Remarks', quote those Remarks and name the spikes. The class remarks at SynchronousIoCancel.cs:23-27 word it as observed behaviour."
+   },
+   {
+    "key": "O-024",
+    "discharged": "cannot-tell",
+    "evidence": "m6 asks for loaded and idle full-suite runs to be reported separately. That is a measurement, not code. Build 1's account and validate report it, and validate lists 'a full suite under concentrated contention was not run'. Nothing in the tree can prove it. My own full-suite run was idle."
+   },
+   {
+    "key": "O-025",
+    "discharged": "yes",
+    "evidence": "m7: .taad/fitness.yaml holds one SL-055 rule, and its YAML comment explains why the duplicate of SL-024's 'Only the cancel guard issues CancelSynchronousIo' was dropped. The merge kept SL-049's block ahead of it with nothing lost (git diff f49efbf 2ff34ba and 858fc9c 2ff34ba)."
+   },
+   {
+    "key": "O-026",
+    "discharged": "yes",
+    "evidence": "SynchronousIoCancelTests.cs:283-291 and 329-331 hold attempts and assert AttemptsLiveAtLastDrain >= 1 and released == held. My own mutants: Dispose without Drain was red 3 of 3; Drain without wait was red 3 of 3. The restored code was green in 5 idle and 3 loaded runs."
+   },
+   {
+    "key": "O-027",
+    "discharged": "yes",
+    "evidence": "SynchronousIoCancelTests.cs:210-215 holds attempt 1 until the peak reaches 4, plus 200 ms, and line 254 asserts Assert.Equal(4, PeakAttemptsInKernel). My mutant with MaxAttemptsInKernel = 5 was red 3 of 3 (Actual 5). The restored code was green idle and loaded."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "SynchronousIoCancelResendRaceTests.CancelFreesACallThatBlocksAgainBeforeTheCancelCallHasReturned pins the process to its lowest CPU (`original & -original`), runs the worker at ThreadPriority.Highest and re-blocks 3 times on fresh pipes. It was red 3 of 3 on the pre-fix guard (my attempt 1) and is green now."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "CancelIsResentWhileACallBlocksAgainAfterACancel feeds 3 re-blocks with a 2 s bar. The loaded part of the shape is a protocol, not test code. My loaded runs, like validate's, used contention pinned to 2 CPUs, not the design's 32 jobs on 16 CPUs, which the machine rules forbid; validate records this as not reached."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "CancelInterruptsACallBlockedInTheKernel: one pipe wait. The product always issues the first attempt on a new `scan-cancel-attempt` thread, so every run goes through the thread-start hop. Asserts return within 2 s and CancelsDelivered >= 1."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "CancelIsResentUntilACallThatHadNotReachedTheKernelIsInterrupted cancels, then sleeps 200 ms in managed code before waiting, so early attempts find nothing. Asserts CancelAttempts > CancelsDelivered and that a later attempt landed."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "ExitWithNoCancelMakesNoAttemptAndWaitsForNone: Enter, then Exit and Dispose on a token that is never cancelled. Asserts CancelAttempts, PeakAttemptsInKernel and AttemptsLiveAtLastDrain are all 0."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "ExitWaitsForAttemptsAboutToCancelSoNoneLandsAfterIt holds attempts 2 to 4 until Exit has begun. liveAtExit >= 2 is asserted. The no-wait Drain mutant turns it red."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "After Exit and before Dispose: Directory.GetFileSystemEntries (2 entries), then a pending pipe wait whose client connects at 300 ms. This runs in both repro tests and in ExitWaits. The no-wait mutant aborts that wait, so the witness bites."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "DisposeWithoutExitWhileCancellingEndsEveryAttemptFirst throws through the using with no Exit, while attempts after the interruption are held past the throw by 250 ms. Red on both Dispose mutants, which it was not before this attempt."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "The repro is in a DisableParallelization collection, restores affinity in finally and asserts it after. The full suite, repro included, was 337 of 337 idle. The loaded full suite is a validate-side gap already on the list."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "The design marked this non-material. ExitWaits now drives live attempts to the cap through the BeforeCancelCall seam and asserts Peak == 4. With cap 5 it is red (Actual 5). The cap counts reserved live slots, not calls actually held in the kernel by a redirector."
+   },
+   {
+    "key": "C-011",
+    "exercised": "no",
+    "evidence": "Non-material and deliberately untested. The reason still holds: the spike measured 500 of 500 under 622 ms, and a latency assertion would itself flake. The answer is recorded at SynchronousIoCancel.cs:39-44."
+   },
+   {
+    "key": "C-012",
+    "exercised": "no",
+    "evidence": "Non-material; there is no seam that can make Thread.Start throw. The reason still holds. By review: StartAttempt's catch calls EndAttempt (SynchronousIoCancel.cs:373-376), and CancelOnce never runs when Start fails, so the slot cannot be released twice."
+   }
+  ],
+  "drift": [
+   "Nothing new departed from the design in this attempt. The two departures (O-026 holds until the test's unwinding flag plus 250 ms and counts held and released attempts; O-027 waits for Peak >= 4 plus 200 ms) are declared and match the code.",
+   "The uat merge brought in SL-049's CloudPlaceholderTests.StalledFetchIsFreedByCancelThroughTheShippedGuard. It is the only test in the tree that puts SL-055's unbounded Exit/Dispose drain against a real redirector (cldflt). Its 5 s bar is justified by 'SL-049 spike 1: 32 ms', which was measured on the pre-SL-055 single-canceller guard. It has never run against the new guard, because registering a sync root waits on a person (SL-049 open question 1). Until it runs, validate's 'no real cloud provider whose redirector ignores cancel' gap stays open, even though the test that would close it now exists.",
+   "Nothing new departed from the design. The O-026 and O-027 deviations are declared and match the code.",
+   "Rule 2 (fitness.yaml) follows critique m3's suggested pattern word for word. That pattern exempts every UnsafeQueueUserWorkItem in the file, not only the Close hand-off the decision was about; see finding m1.",
+   "SL-049's opt-in CloudPlaceholderTests stall Fact, merged from uat, is the only test that would run SL-055's unbounded drain against a real redirector (cldflt). Its 5 s bar was justified on the pre-SL-055 guard (spike 1: 32 ms). It has never run on the new guard, because registering a sync root is still SL-049's open question for a person."
+  ],
+  "unreviewed": [
+   "tests/CfProvider/Program.cs and tests/CfProvider/CfProvider.csproj: SL-049's work from uat, already reviewed in SL-049. Not re-reviewed; checked only that no Core type or guard is used from it.",
+   "tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs: SL-049, opt-in. I read only lines 1-135 (the stall Fact that drives the guard); the rig body was not reviewed.",
+   "tests/FsAnalyser.Core.Tests/CloudRigTests.cs: SL-049. I read the Facts that drive SynchronousIoCancel (lines 170-294) and the header; the sweep and name Theories were not reviewed.",
+   "tests/FsAnalyser.Core.Tests/CloudRig.cs, ScanDeadline.cs, OptInTraitTests.cs: SL-049, not re-reviewed. OptInTraitTests passes in the full suite.",
+   ".taad/slices/SL-049/*.json and FsAnalyser.slnx: uat's slice records and the solution entry for CfProvider. Records, not code; not reviewed."
+  ],
+  "second_round": {
+   "run_id": 1521,
+   "filed": 1
+  }
+ }
+}

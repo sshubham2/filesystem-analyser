@@ -58,8 +58,10 @@ public class SynchronousIoCancelTests
 
     /// <summary>
     /// A cancel that reaches the thread before its call reaches the kernel finds nothing (ERROR_NOT_FOUND)
-    /// and is lost unless it is sent again. Here the thread sleeps 200 ms in managed code between Enter and
-    /// its wait, so the first cancels all miss.
+    /// and is lost unless it is sent again. Here the thread stays in managed code between Enter and its wait
+    /// until two cancels were sent and 100 ms more, so the first cancels all miss. Waited for, not timed: each
+    /// attempt starts a thread of its own, and under load the first came more than 200 ms after Cancel
+    /// (SL-055 validate), so a fixed sleep let it land on the wait.
     /// </summary>
     [Fact]
     public void CancelIsResentUntilACallThatHadNotReachedTheKernelIsInterrupted()
@@ -67,7 +69,7 @@ public class SynchronousIoCancelTests
         using var cts = new CancellationTokenSource();
         using NamedPipeServerStream server = NewPipe(out _);
         SynchronousIoCancel? guard = null;
-        bool entered = false, issued = false;
+        bool entered = false, issued = false, sentBeforeWait = false;
         Exception? waitError = null;
         TimeSpan waited = default;
         var blocked = new Thread(() =>
@@ -76,7 +78,8 @@ public class SynchronousIoCancelTests
             guard = g;
             entered = g.Enter();
             cts.Cancel();
-            Thread.Sleep(200);
+            sentBeforeWait = SpinWait.SpinUntil(() => g.CancelAttempts >= 2, TimeSpan.FromSeconds(5));
+            Thread.Sleep(100);
             var clock = Stopwatch.StartNew();
             try
             {
@@ -94,8 +97,9 @@ public class SynchronousIoCancelTests
         }) { IsBackground = true };
         blocked.Start();
 
-        Assert.True(blocked.Join(TimeSpan.FromSeconds(5)), "the wait was never interrupted: a cancel that missed was not sent again");
+        Assert.True(blocked.Join(TimeSpan.FromSeconds(10)), "the wait was never interrupted: a cancel that missed was not sent again");
         Assert.True(entered);
+        Assert.True(sentBeforeWait, $"{guard!.CancelAttempts} cancel(s) sent in 5 s before the wait: a cancel that missed was not sent again");
         Assert.True(waited < TimeSpan.FromSeconds(2), $"the wait returned {waited.TotalMilliseconds:F0} ms after it started");
         Assert.NotNull(waitError);
         Assert.True(issued);

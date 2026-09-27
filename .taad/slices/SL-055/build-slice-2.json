@@ -1,0 +1,168 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-055",
+ "stage": "build-slice",
+ "attempt": 2,
+ "at": "2026-09-27T07:48:53.433Z",
+ "head": "2ff34ba1e9f4ec4b500835c24af386c9e76036c0",
+ "run_id": 1517,
+ "summary": "I finished the uat→SL-055 merge that had stopped on .taad/fitness.yaml. Both sides had only added text after the SL-053 block, so I kept both whole, uat's SL-049 block first and then SL-055's rule, and removed every conflict marker. I also closed the two owed test gaps. For O-026, DisposeWithoutExitWhileCancellingEndsEveryAttemptFirst now holds each attempt made after the interruption until the exception is thrown plus 250 ms. It asserts that AttemptsLiveAtLastDrain >= 1, and that every held attempt had been released by the time Dispose returned. For O-027, ExitWaitsForAttemptsAboutToCancelSoNoneLandsAfterIt now holds attempt 1 until four attempts are live, then 200 ms more, and asserts PeakAttemptsInKernel == 4. I ran each strengthened test against mutants of the product and it went red every time, then restored the source byte for byte (same hash, no src diff). The acceptance command, the rule checks, two idle full-suite runs (337 of 337), a concentrated loaded pass (6 of 6 green) and a real app run all passed.",
+ "payload": {
+  "status": "complete",
+  "summary": "I finished the uat→SL-055 merge that had stopped on .taad/fitness.yaml. Both sides had only added text after the SL-053 block, so I kept both whole, uat's SL-049 block first and then SL-055's rule, and removed every conflict marker. I also closed the two owed test gaps. For O-026, DisposeWithoutExitWhileCancellingEndsEveryAttemptFirst now holds each attempt made after the interruption until the exception is thrown plus 250 ms. It asserts that AttemptsLiveAtLastDrain >= 1, and that every held attempt had been released by the time Dispose returned. For O-027, ExitWaitsForAttemptsAboutToCancelSoNoneLandsAfterIt now holds attempt 1 until four attempts are live, then 200 ms more, and asserts PeakAttemptsInKernel == 4. I ran each strengthened test against mutants of the product and it went red every time, then restored the source byte for byte (same hash, no src diff). The acceptance command, the rule checks, two idle full-suite runs (337 of 337), a concentrated loaded pass (6 of 6 green) and a real app run all passed.",
+  "files": [
+   {
+    "path": ".taad/fitness.yaml",
+    "change": "modified",
+    "why": "Resolved the uat merge conflict and kept both sides: uat's '# settled by SL-049' block (3 cloud-files rules) and then SL-055's '# settled by SL-055' block (the corrected 'Cancel attempts never run on the thread pool or a timer' rule), both word for word, with only a blank line between. No conflict markers are left. The file is still marked unmerged (UU) in the index, because I did not run git add; the engine commits the merge."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/SynchronousIoCancelTests.cs",
+    "change": "modified",
+    "why": "O-026: DisposeWithoutExitWhileCancellingEndsEveryAttemptFirst sets BeforeCancelCall so that attempts after the interruption are held until the throw plus 250 ms, with held/released counters. It asserts AttemptsLiveAtLastDrain >= 1, at least one attempt held, and released == held when Dispose returned. O-027: ExitWaitsForAttemptsAboutToCancelSoNoneLandsAfterIt holds attempt 1 until PeakAttemptsInKernel >= 4 (up to 5 s) plus 200 ms, and asserts Assert.Equal(4, PeakAttemptsInKernel). The doc comments on both tests are updated to match."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-026",
+    "done": true,
+    "how": "DisposeWithoutExitWhileCancellingEndsEveryAttemptFirst now holds every attempt numbered above the count read after the interruption: SpinUntil for the test's 'unwinding' flag, then Sleep(250), with Interlocked held/released counters. After the using unwinds it records both counters, then asserts heldAtDispose >= 1, guard.AttemptsLiveAtLastDrain >= 1 and releasedAtDispose == heldAtDispose. I proved it bites with two mutants. With Drain() deleted from Dispose it was red 3 of 3 ('0 attempt(s) live when Dispose drained: none was in flight'). With Drain keeping its count but not waiting it was red 3 of 3 (Expected 2, Actual 0 released). The restored code passes 5 of 5 idle runs and 6 of 6 concentrated loaded runs (2.1 to 2.4 s under load)."
+   },
+   {
+    "key": "O-027",
+    "done": true,
+    "how": "ExitWaitsForAttemptsAboutToCancelSoNoneLandsAfterIt now asserts Assert.Equal(4, guard!.PeakAttemptsInKernel). Attempt 1's hold waits until the peak reaches 4 (SpinUntil, up to 5 s) and then 200 ms more, so reaching the cap does not depend on load. The 8 further ticks are what a missing or raised cap would use to start a fifth attempt. Mutants: cap 1000 was red 3 of 3 (Actual 11), cap 5 red 2 of 2 (Actual 5), cap 3 red 2 of 2 (Actual 3). The restored code passes 5 of 5 idle runs and 6 of 6 concentrated loaded runs (2.8 to 4.5 s against its 10 s bar)."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "test_name": "FsAnalyser.Core.Tests.SynchronousIoCancelResendRaceTests.CancelFreesACallThatBlocksAgainBeforeTheCancelCallHasReturned",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj -nologo --filter FullyQualifiedName~FsAnalyser.Core.Tests.SynchronousIoCancelResendRaceTests.CancelFreesACallThatBlocksAgainBeforeTheCancelCallHasReturned"
+   },
+   {
+    "key": "C-002",
+    "test_name": "FsAnalyser.Core.Tests.SynchronousIoCancelTests.CancelIsResentWhileACallBlocksAgainAfterACancel",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj -nologo --filter FullyQualifiedName~FsAnalyser.Core.Tests.SynchronousIoCancelTests.CancelIsResentWhileACallBlocksAgainAfterACancel"
+   },
+   {
+    "key": "C-003",
+    "test_name": "FsAnalyser.Core.Tests.SynchronousIoCancelTests.CancelInterruptsACallBlockedInTheKernel",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj -nologo --filter FullyQualifiedName~FsAnalyser.Core.Tests.SynchronousIoCancelTests.CancelInterruptsACallBlockedInTheKernel"
+   },
+   {
+    "key": "C-004",
+    "test_name": "FsAnalyser.Core.Tests.SynchronousIoCancelTests.CancelIsResentUntilACallThatHadNotReachedTheKernelIsInterrupted",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj -nologo --filter FullyQualifiedName~FsAnalyser.Core.Tests.SynchronousIoCancelTests.CancelIsResentUntilACallThatHadNotReachedTheKernelIsInterrupted"
+   },
+   {
+    "key": "C-005",
+    "test_name": "FsAnalyser.Core.Tests.SynchronousIoCancelTests.ExitWithNoCancelMakesNoAttemptAndWaitsForNone",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj -nologo --filter FullyQualifiedName~FsAnalyser.Core.Tests.SynchronousIoCancelTests.ExitWithNoCancelMakesNoAttemptAndWaitsForNone"
+   },
+   {
+    "key": "C-006",
+    "test_name": "FsAnalyser.Core.Tests.SynchronousIoCancelTests.ExitWaitsForAttemptsAboutToCancelSoNoneLandsAfterIt",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj -nologo --filter FullyQualifiedName~FsAnalyser.Core.Tests.SynchronousIoCancelTests.ExitWaitsForAttemptsAboutToCancelSoNoneLandsAfterIt"
+   },
+   {
+    "key": "C-007",
+    "test_name": "FsAnalyser.Core.Tests.SynchronousIoCancelTests.ExitWaitsForAttemptsAboutToCancelSoNoneLandsAfterIt",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj -nologo --filter FullyQualifiedName~FsAnalyser.Core.Tests.SynchronousIoCancelTests.ExitWaitsForAttemptsAboutToCancelSoNoneLandsAfterIt"
+   },
+   {
+    "key": "C-008",
+    "test_name": "FsAnalyser.Core.Tests.SynchronousIoCancelTests.DisposeWithoutExitWhileCancellingEndsEveryAttemptFirst",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj -nologo --filter FullyQualifiedName~FsAnalyser.Core.Tests.SynchronousIoCancelTests.DisposeWithoutExitWhileCancellingEndsEveryAttemptFirst"
+   },
+   {
+    "key": "C-009",
+    "test_name": "FsAnalyser.Core.Tests.SynchronousIoCancelResendRaceTests.CancelFreesACallThatBlocksAgainMoreTimesThanTheCapOfLiveAttempts",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj -nologo --filter FullyQualifiedName~FsAnalyser.Core.Tests.SynchronousIoCancelResendRaceTests.CancelFreesACallThatBlocksAgainMoreTimesThanTheCapOfLiveAttempts"
+   },
+   {
+    "key": "C-010",
+    "test_name": "FsAnalyser.Core.Tests.SynchronousIoCancelTests.ExitWaitsForAttemptsAboutToCancelSoNoneLandsAfterIt",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj -nologo --filter FullyQualifiedName~FsAnalyser.Core.Tests.SynchronousIoCancelTests.ExitWaitsForAttemptsAboutToCancelSoNoneLandsAfterIt"
+   }
+  ],
+  "deviations": [
+   "O-026: the review's fix said to hold attempts 'about 150 ms' and set a single 'finished' flag. I hold them until the test's own 'unwinding' flag is set just before the throw, then 250 ms more, and count held and released attempts instead of using one flag. Dispose joins the canceller (a 25 ms tick plus scheduling) before it drains, so a fixed hold timed from the attempt's start can end before Drain on a busy machine, which would make a new load flake. Several attempts are held at once, so one flag would only report the first to finish. The assertions are the ones the review asked for: AttemptsLiveAtLastDrain >= 1, and every hold ended before Dispose returned.",
+   "O-027: the review's fix said to lengthen attempt 1's fixed hold. I made it wait for PeakAttemptsInKernel >= 4 (up to 5 s) and then hold 200 ms more. A fixed hold cannot guarantee that three dispatcher ticks happen under load, which is exactly the flake the review warned about. The extra 200 ms (8 ticks) is what makes a missing or raised cap visible: mutants with cap 5 and cap 1000 went red."
+  ],
+  "not_built": [
+   "C-011 (delivered-cancel latency over 2 s) and C-012 (Thread.Start throwing) have no dedicated test. The design marked both non-material. That is unchanged by this attempt, and nothing owed asks for them."
+  ],
+  "follow_ups": [
+   ".taad/fitness.yaml has no conflict markers left but is still marked UU in the index, because this build does not stage or commit. The engine has to `git add` it when it commits the merge.",
+   "The concentrated loaded pass takes about 100 s per class run (test process and 4 busy threads pinned to CPUs 14-15). So the design's 30-run loaded protocol cannot fit the 'a few minutes per loaded pass' machine rule in one pass. Validate needs to split it across several passes, or run fewer."
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build FsAnalyser.slnx -nologo -v q",
+    "outcome": "passed",
+    "note": "0 warnings, 0 errors on the merged tree."
+   },
+   {
+    "command": "x5: eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj -nologo --no-build --filter FullyQualifiedName~SynchronousIoCancel --blame-hang-timeout 60s --blame-hang-dump-type mini (idle)",
+    "outcome": "passed",
+    "note": "5 of 5 runs, 30 of 30 tests each (both classes), about 10 s per run."
+   },
+   {
+    "command": "MUTANT (Drain() removed from Dispose): x3 eng/dotnet.ps1 test ... --filter FullyQualifiedName~DisposeWithoutExitWhileCancellingEndsEveryAttemptFirst",
+    "outcome": "failed",
+    "note": "Expected red, and it was: 3 of 3 failed with '0 attempt(s) live when Dispose drained: none was in flight'. Shows O-026's test now catches a missing drain; before this change it passed 8 of 8 on the same mutant."
+   },
+   {
+    "command": "MUTANT (Drain records the live count but does not wait): x3 eng/dotnet.ps1 test ... --filter FullyQualifiedName~DisposeWithoutExitWhileCancellingEndsEveryAttemptFirst",
+    "outcome": "failed",
+    "note": "Expected red, and it was: 3 of 3 failed with Assert.Equal Expected 2 (held), Actual 0 (released). Dispose returned while held attempts were still live."
+   },
+   {
+    "command": "MUTANT (MaxAttemptsInKernel = 1000, then 5, then 3): eng/dotnet.ps1 test ... --filter FullyQualifiedName~ExitWaitsForAttemptsAboutToCancelSoNoneLandsAfterIt",
+    "outcome": "failed",
+    "note": "Expected red, and it was every time. Cap 1000: 3 of 3 failed with Actual 11. Cap 5: 2 of 2 with Actual 5. Cap 3: 2 of 2 with Actual 3, after the 5 s wait. Source then restored: SHA-256 C4E31B83... identical to before the mutants, and git diff HEAD -- src is empty."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj -nologo --filter FullyQualifiedName~SynchronousIoCancelResendRaceTests",
+    "outcome": "passed",
+    "note": "Acceptance command on the merged tree: exit 0, 2 of 2 passed."
+   },
+   {
+    "command": "eng/dotnet.ps1 test ... --no-build --filter FullyQualifiedName~ArchitectureRulesTests|FullyQualifiedName~RuleCopiesAgreeTests|FullyQualifiedName~OptInTraitTests",
+    "outcome": "passed",
+    "note": "22 of 22 passed on the merged fitness.yaml and ArchitectureRulesTests.cs."
+   },
+   {
+    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File eng/rules-parity.ps1 ; pwsh -NoProfile -ExecutionPolicy Bypass -File eng/rules-parity.ps1",
+    "outcome": "passed",
+    "note": "Both shells report 'AGREE 11 facts <- 15 twinned entries, 27 patterns; 37 settled entries' (33 before, plus SL-049's 3 and SL-055's 1)."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-001 (then C-002, C-003, C-004, C-005)",
+    "outcome": "passed",
+    "note": "All 5 exit 0 with 'All checks held.' C-006 to C-014 need the TAAD engine's python and were not run."
+   },
+   {
+    "command": "PowerShell regex check of every merged fitness pattern (SL-049's 3 rules, SL-055's rule) against its governed files",
+    "outcome": "passed",
+    "note": "0 matches. SL-055's new test code names nothing the SL-049 Core.Tests rule forbids."
+   },
+   {
+    "command": "x2: pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx -nologo --no-build --blame-hang-timeout 60s --blame-hang-dump-type mini",
+    "outcome": "passed",
+    "note": "Idle full suite on the merged tree: 2 of 2 runs, 337 of 337 tests each, 22 s."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File %TEMP%/sl055-b2/loaded.ps1 -Runs 8 -Busy 4 -Mask 0xC000 (4 busy-loop jobs and the test process pinned to CPUs 14-15; filter ~SynchronousIoCancel; blame-hang 60 s; trx)",
+    "outcome": "passed",
+    "note": "6 of 6 completed runs green, 30 of 30 tests each, 92 to 128 s per run. I stopped the pass during run 7 because 8 runs would have kept the load well past a few minutes. I killed the process tree I had started (taskkill /T), and 0 processes were left. Under load: Dispose test 2.09 to 2.37 s; ExitWaits test 2.79 to 4.49 s (10 s bar); repro 'left 527-682 ms after Cancel', with 2 to 3 attempts live at once; 8-wait repro 1263-1404 ms."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o artifacts/publish ; pwsh -NoProfile -ExecutionPolicy Bypass -File eng/read-window.ps1 -Root <repo>\\src -TimeoutSec 120",
+    "outcome": "passed",
+    "note": "The published single-file app ran on the real src folder: EXIT 0. The schema-1 report showed 'Finished: ...\\src', 970 files and 64 folders, 0 links not followed, 291.0 MB in files, 292.7 MB on disk, and the largest-files panel visible."
+   }
+  ]
+ }
+}

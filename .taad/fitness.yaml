@@ -660,16 +660,19 @@ rules:
   - name: Cancel attempts never run on the thread pool or a timer
     files: src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs
     must_not_match:
-    - \bThreadPool\.(?!UnsafeQueueUserWorkItem\b)
+    - \bThreadPool\.(?!UnsafeQueueUserWorkItem\(static aborted\b)
     - \bTask\.Run\s*\(
     - \bTask\.Factory\.StartNew\b
+    - \bnew\s+Task\s*[(<]
     - \bQueueUserWorkItem\b
     - \bnew\s+(System\.Threading\.)?Timer\s*\(
     - \bSystem\.Timers\.Timer\b
     - \bPeriodicTimer\b
     because: A CancelSynchronousIo call held in the kernel would pin a pool thread the scanner
       shares, and slow pool thread injection under load would bring back the same lost resend
-      this slice removes. Attempts need dedicated threads. Close hands an aborted call's handle
-      to the pool with ThreadPool.UnsafeQueueUserWorkItem on purpose (SL-024), which is why that
-      one call is allowed (review m3); \bQueueUserWorkItem\b does not match it. Matched against
-      code only, so a comment can say why without failing it.
+      this slice removes. Attempts need dedicated threads. One pool call is allowed, and only at
+      its call site - Close's hand-off of an aborted call's handle, ThreadPool.UnsafeQueueUserWorkItem(static
+      aborted => ...), which is on purpose (SL-024, review m3). The exemption is tied to that
+      lambda's parameter, so reusing the same API to queue an attempt still fails (review
+      R2-m1), as does a Task constructed and started by hand; \bQueueUserWorkItem\b does not
+      match the Close call. Matched against code only, so a comment can say why without failing it.
