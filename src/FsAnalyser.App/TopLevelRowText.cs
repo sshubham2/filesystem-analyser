@@ -8,7 +8,9 @@ namespace FsAnalyser.App;
 /// The two lines of a results row (SL-039): the name with how far it has been read, and its figures. A
 /// converter, so only the rows on screen are ever put into words: the list virtualizes, and a root with
 /// 100,000 entries formats a screenful per refresh, not 100,000 rows. No percentages: mid-scan and after
-/// Cancel a share would be of an incomplete whole.
+/// Cancel a share would be of an incomplete whole. A Done row is its bare name unless a correction moved its
+/// figures after it settled, which it says (SL-063): Done promises the row was listed and measured, and the
+/// mark is how a figure that changed since is told apart.
 /// </summary>
 public sealed class TopLevelRowText : IValueConverter
 {
@@ -28,6 +30,7 @@ public sealed class TopLevelRowText : IValueConverter
         TopLevelState.StoppedPartway => $"{row.Name}  (stopped partway)",
         TopLevelState.Unreadable => $"{row.Name}  (could not be opened)",
         TopLevelState.NotFollowed => $"{row.Name}  (link, not followed)",
+        TopLevelState.Done when row.Revised => $"{row.Name}  (revised)",
         _ => row.Name,
     };
 
