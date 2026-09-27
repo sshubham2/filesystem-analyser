@@ -1,0 +1,238 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-049",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-09-26T22:05:38.910Z",
+ "head": "b331eb1cbc2595374786cd1f69d10de1726f913e",
+ "run_id": 1424,
+ "summary": "The code matches the design, and every departure from it was declared. I built the solution with the repo-local SDK 10.0.401: 0 warnings, 0 errors.\n\n**Test runs**\n- Default suite: 332 passed. The trx shows no CloudPlaceholderTests executed, so the Trait gate plus the csproj filter excludes them.\n- I ran the two gated Facts that register nothing (the two AProviderThatCannotStart Facts) by name. Both passed:\n  - Windows answered 'ERR CfRegisterSyncRoot hr=0x80070002', exit 2.\n  - The silent provider was killed at 2 s and its stderr was in the failure.\n  - Teardown took 1–2 ms, and no fsa-cf-* folder was left in %TEMP%.\n- I did not run the stall and tree Facts. They register a real sync root, and open question 1 (may that happen on this PC) is still unanswered.\n\n**M1 check:** I rebuilt under `--filter FullyQualifiedName~OptInTraitTests` and read the assembly. The baked value is `DefaultTestFilter=Network!=TEST-NET-1&Network!=SMB-LOOPBACK&Cloud!=CF-SYNC-ROOT`, the ad-hoc filter is absent, and the guard passed.\n\n**Rule checks**\n- Fitness op=check: all 50 rules hold.\n- rules-parity: AGREE, 11 facts from 15 twinned entries, 35 settled entries not compared. At base there were 32, so the '28' pin in RuleCases.ps1 was already stale before this slice.\n\n**What I checked by reading**\n- **Stall Fact vs the shipped Scanner.** The Scanner lists depth-first in name order, so 'ok' is read before 'stall'. A 995 (operation aborted) under a requested cancel commits nothing, so 'stall' stays an empty Folder and is not in Unreadable. The root is not counted in Totals.Folders.\n- **Tree Fact vs the shipped Scanner.** A cloud-only file is never probed, and a later name of a hardlinked file posts one file and no bytes. So the tree Fact's measured and unmeasured assertions are consistent with Scanner.cs and EntryClassifier.cs.\n- **Can the stall Fact pass without the stall?** No. Its VOID checks require a FETCH_PLACEHOLDERS from this process on 'stall', and the scan still running 3 s in.\n- **Provider structs and constants.** They match cldapi.h. The callback table is stackalloc'd only for the duration of the CfConnectSyncRoot call, the same lifetime as the SL-024 re-spike's marshalled array, which worked.\n\n**Findings: two minors, no blocker**\n- The passing stall Fact cannot show which teardown shape it went through for C-006. The listing is already cancelled before the provider is killed, and the provider's CANCEL lines reach the output only on failure.\n- The sweep's check that skips a link named like a sync root is untested. That check is what keeps the real CfUnregisterSyncRoot off a junction under %TEMP%.\n\nSecond round: Second round, adversarial pass over the same tree: nothing new to file. The two first-round minors (m1, C-006 teardown shape not observable; m2, the sweep's link-skip branch untested) still stand. This round adds nothing to them.\n\nWhat I tried to break:\n- **Callback line regex (CloudRig.cs:103).** I ran it on edge inputs: a path with spaces and no offset, an empty path, a trailing LF, a trailing CR, a leading BOM, and a 20-digit offset. The only misparses need input the provider cannot produce:\n  - The reader already splits lines on CR, LF and CRLF.\n  - The provider writes UTF-8 with no BOM (Program.cs:55), and Encoding.UTF8 would strip one anyway.\n  - The offset and length are printed from a C# long (Program.cs:247), so long.Parse cannot overflow.\n- **Root-name regex (CloudRig.cs:23).** It accepts a name ending in LF, because .NET `$` matches before a final newline. NTFS folder names cannot contain LF, so this is unreachable.\n- **Unfiltered() (OptInTraitTests.cs:60-68).** Whitespace, a newline inside the MSBuild property, a trailing or doubled '&', and case differences all fail safe: the guard complains, or VSTest refuses the filter. None makes the guard pass while a Trait runs by default.\n- **TraitsOf.** A class derived from CloudPlaceholderTests inherits the class Trait at run time, and the pair is already counted. The private nested SyncRootRig is not reachable from a derived class.\n- **Launch outcomes.** Covered: READY, ERR then exit, silent, and exit without READY. Also a provider crash with no ERR line, such as cldapi.dll missing or an entry point not found: the unhandled exception goes to stderr, and the rig fails with the exit code and the captured stderr.\n- **ScanDeadline and teardown.** A throwing whileRunning, a call that throws, and a Dispose step that times out are all bounded or caught. Every Step's exception stays on its own thread and becomes a failure line.\n- **Provider interop.** CfCreatePlaceholders with STOP_ON_ERROR fails on the overall hr before per-entry Results are read. The stackalloc'd callback table only needs to live for the CfConnectSyncRoot call, the same lifetime as SL-024's marshalled array, which worked.\n\nI did not execute the stall and tree Facts, for the same reason as round 1 (open question 1 unanswered). Obligation and case readings are unchanged from round 1.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The code matches the design, and every departure from it was declared. I built the solution with the repo-local SDK 10.0.401: 0 warnings, 0 errors.\n\n**Test runs**\n- Default suite: 332 passed. The trx shows no CloudPlaceholderTests executed, so the Trait gate plus the csproj filter excludes them.\n- I ran the two gated Facts that register nothing (the two AProviderThatCannotStart Facts) by name. Both passed:\n  - Windows answered 'ERR CfRegisterSyncRoot hr=0x80070002', exit 2.\n  - The silent provider was killed at 2 s and its stderr was in the failure.\n  - Teardown took 1–2 ms, and no fsa-cf-* folder was left in %TEMP%.\n- I did not run the stall and tree Facts. They register a real sync root, and open question 1 (may that happen on this PC) is still unanswered.\n\n**M1 check:** I rebuilt under `--filter FullyQualifiedName~OptInTraitTests` and read the assembly. The baked value is `DefaultTestFilter=Network!=TEST-NET-1&Network!=SMB-LOOPBACK&Cloud!=CF-SYNC-ROOT`, the ad-hoc filter is absent, and the guard passed.\n\n**Rule checks**\n- Fitness op=check: all 50 rules hold.\n- rules-parity: AGREE, 11 facts from 15 twinned entries, 35 settled entries not compared. At base there were 32, so the '28' pin in RuleCases.ps1 was already stale before this slice.\n\n**What I checked by reading**\n- **Stall Fact vs the shipped Scanner.** The Scanner lists depth-first in name order, so 'ok' is read before 'stall'. A 995 (operation aborted) under a requested cancel commits nothing, so 'stall' stays an empty Folder and is not in Unreadable. The root is not counted in Totals.Folders.\n- **Tree Fact vs the shipped Scanner.** A cloud-only file is never probed, and a later name of a hardlinked file posts one file and no bytes. So the tree Fact's measured and unmeasured assertions are consistent with Scanner.cs and EntryClassifier.cs.\n- **Can the stall Fact pass without the stall?** No. Its VOID checks require a FETCH_PLACEHOLDERS from this process on 'stall', and the scan still running 3 s in.\n- **Provider structs and constants.** They match cldapi.h. The callback table is stackalloc'd only for the duration of the CfConnectSyncRoot call, the same lifetime as the SL-024 re-spike's marshalled array, which worked.\n\n**Findings: two minors, no blocker**\n- The passing stall Fact cannot show which teardown shape it went through for C-006. The listing is already cancelled before the provider is killed, and the provider's CANCEL lines reach the output only on failure.\n- The sweep's check that skips a link named like a sync root is untested. That check is what keeps the real CfUnregisterSyncRoot off a junction under %TEMP%.\n\nSecond round: Second round, adversarial pass over the same tree: nothing new to file. The two first-round minors (m1, C-006 teardown shape not observable; m2, the sweep's link-skip branch untested) still stand. This round adds nothing to them.\n\nWhat I tried to break:\n- **Callback line regex (CloudRig.cs:103).** I ran it on edge inputs: a path with spaces and no offset, an empty path, a trailing LF, a trailing CR, a leading BOM, and a 20-digit offset. The only misparses need input the provider cannot produce:\n  - The reader already splits lines on CR, LF and CRLF.\n  - The provider writes UTF-8 with no BOM (Program.cs:55), and Encoding.UTF8 would strip one anyway.\n  - The offset and length are printed from a C# long (Program.cs:247), so long.Parse cannot overflow.\n- **Root-name regex (CloudRig.cs:23).** It accepts a name ending in LF, because .NET `$` matches before a final newline. NTFS folder names cannot contain LF, so this is unreachable.\n- **Unfiltered() (OptInTraitTests.cs:60-68).** Whitespace, a newline inside the MSBuild property, a trailing or doubled '&', and case differences all fail safe: the guard complains, or VSTest refuses the filter. None makes the guard pass while a Trait runs by default.\n- **TraitsOf.** A class derived from CloudPlaceholderTests inherits the class Trait at run time, and the pair is already counted. The private nested SyncRootRig is not reachable from a derived class.\n- **Launch outcomes.** Covered: READY, ERR then exit, silent, and exit without READY. Also a provider crash with no ERR line, such as cldapi.dll missing or an entry point not found: the unhandled exception goes to stderr, and the rig fails with the exit code and the captured stderr.\n- **ScanDeadline and teardown.** A throwing whileRunning, a call that throws, and a Dispose step that times out are all bounded or caught. Every Step's exception stays on its own thread and becomes a failure line.\n- **Provider interop.** CfCreatePlaceholders with STOP_ON_ERROR fails on the overall hr before per-entry Results are read. The stackalloc'd callback table only needs to live for the CfConnectSyncRoot call, the same lifetime as SL-024's marshalled array, which worked.\n\nI did not execute the stall and tree Facts, for the same reason as round 1 (open question 1 unanswered). Obligation and case readings are unchanged from round 1.",
+  "matches_design": true,
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "C-006's shape is 'the provider is killed while stall is unpopulated and its FETCH_PLACEHOLDERS is pending'. On the stall Fact's passing path, the pending request is withdrawn before the kill. cts.Cancel() frees the listing through CancelSynchronousIo, and the scan returns before Dispose kills the provider. The provider registers CANCEL_FETCH_PLACEHOLDERS for exactly this case. The kill-while-pending shape is only reached on the missed-deadline failure path. The Fact never records which shape it tore down: provider lines appear only inside failure messages, because Captured() is called only from asserts. So validate's three runs in a row, if the person allows them, would pass without showing that the case's shape was fed. The builder's O-006 account says the request 'is still pending in cldflt' at Dispose. Nothing in the code establishes or observes that.",
+    "evidence": "tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs:84-87 (cancel inside whileRunning), :405-425 (Dispose kills after the scan returned), :382-389 (Captured() used only in failure messages); tests/CfProvider/Program.cs:164 and :233 (CANCEL_FETCH_PLACEHOLDERS registered and reported)",
+    "fix": "Before killing, have Dispose write to the test output how many CANCEL_FETCH_PLACEHOLDERS lines came from this pid, or all of rig.Captured(). Then each passing run states whether the request was still pending at the kill. Correct the O-006 account to match. If the pending-at-kill shape itself must be fed on a passing run, add a stall variant that kills the provider while the listing is still blocked and asserts the teardown. That is the path spike 4's kill arm measured."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "The sweep skips any folder that is a link (`new DirectoryInfo(folder).LinkTarget is not null`). That check is the only thing that keeps the real CfUnregisterSyncRoot, then a recursive delete, off a junction under %TEMP% that carries a dead-pid root's name. This shape is not on the case matrix and no test feeds it. TheSweepRemovesOnlyTheRootOfARunThatIsGone has look-alike folders and a FILE named like a root, but no junction or symlink. If the check is dropped or broken, the default suite stays green, and the opt-in rig would call CfUnregisterSyncRoot on whatever the junction resolves to.",
+    "evidence": "tests/FsAnalyser.Core.Tests/CloudRig.cs:76; tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs:264 and :456-461 (the real unregister passed to Sweep); tests/FsAnalyser.Core.Tests/CloudRigTests.cs:54-68 (no link among the inputs); TempTree.Junction exists at tests/FsAnalyser.Core.Tests/TempTree.cs:112",
+    "fix": "In TheSweepRemovesOnlyTheRootOfARunThatIsGone, add `tree.Junction(CloudRig.RootName(gone, Guid.NewGuid()), tree.Outside(\"target\"))` with a file inside the target. Assert that the junction is neither in `swept` nor in `unregistered`, and that the target's file still exists."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "cannot-tell",
+    "evidence": "tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs:65-118 feeds the shape. tests/CfProvider/Program.cs:98-107 makes 'ok' population-disabled with f1/f2/f3.txt, and 'stall' flags NONE, never answered. The VOID asserts at :77-82 stop the Fact passing unless this process's FETCH_PLACEHOLDERS on stall was seen and the scan was still running 3 s in. It has never been executed: it registers a real sync root, and open question 1 is unanswered. Validate owns the run."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "tests/FsAnalyser.Core.Tests/CloudRigTests.cs:114-145 feeds lines from pid+1, pid*10+1, pid*10, pid+2 and pid 0. CloudRig.CallbacksFrom and TryParseCallback (CloudRig.cs:103-134) filter on exact pid equality. The rig's WaitForCallback and Callbacks (CloudPlaceholderTests.cs:369-379) use the same parser and filter. Ran green in my default run."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "CloudRigTests.AScanCancelDoesNotFreeIsFreedByForceAndFails (CloudRigTests.cs:169-213) blocks the shipped Scanner's first guarded call on an event CancelSynchronousIo cannot interrupt. ScanDeadline.Run (ScanDeadline.cs:82-93) calls free, then throws. Ran green. The rig passes KillProvider as its free (CloudPlaceholderTests.cs:364). Killing the provider to free a pending FETCH_DATA stays unmeasured, as declared."
+   },
+   {
+    "key": "O-004",
+    "discharged": "cannot-tell",
+    "evidence": "CloudPlaceholderTests.cs:110-116 pins 'stall' as EntryKind.Folder with 0 children, not in Unreadable, with a comment naming spike 1 constraint 2. This matches Scanner.cs:19-23 and :152: 995 under a cancel commits nothing. Never executed, for the open question 1 reason."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "CloudPlaceholderTests.cs:198-234. I ran both by name: 'ERR CfRegisterSyncRoot hr=0x80070002', exit 2, Registered false. The silent provider was killed at 2 s, with 'silent: registering nothing' from its stderr in the failure. Teardown took 1-2 ms and left no fsa-cf-* folder."
+   },
+   {
+    "key": "O-006",
+    "discharged": "cannot-tell",
+    "evidence": "Dispose (CloudPlaceholderTests.cs:405-433) kills, unregisters only if REGISTERED was printed, then deletes, each step bounded to 10 s. Never executed. On the passing path the listing was already cancelled before the kill, so the pending-at-kill shape is neither established nor observable (finding m1)."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "CloudRig.cs:23-97: strict regex ^fsa-cf-(?<pid>[1-9][0-9]{0,9})-[0-9a-f]{32}$ plus a pid-liveness check. CloudRigTests.cs:17-101 feeds 15 names and a real TempTree with a dead-pid root, a live root, six look-alikes and a file named like a root. Unregister is injected there, so the real CfUnregisterSyncRoot on a dead-provider root is not exercised. The link branch is untested (finding m2)."
+   },
+   {
+    "key": "O-008",
+    "discharged": "cannot-tell",
+    "evidence": "CloudPlaceholderTests.cs:126-158, with the provider's CreateTree at Program.cs:111-128 (5 MiB, 12345 B, nested 3 MiB, 1 MiB, all population-disabled). The assertions are consistent with EntryClassifier.cs:33-42 and Scanner.cs (cloud-only files are never probed; the root is not in Totals.Folders). Never executed."
+   },
+   {
+    "key": "O-009",
+    "discharged": "cannot-tell",
+    "evidence": "CloudPlaceholderTests.cs:171-189 is marked UNMEASURED. It checks the shared FileId, exactly one HardlinkDuplicate, b charging 1 MiB over 2 files, and Files == 5. That matches Scanner.cs:243-256. Never executed."
+   },
+   {
+    "key": "O-010",
+    "discharged": "cannot-tell",
+    "evidence": "The tree Fact runs through RunScan with CancelAfter 30 s plus the ScanDeadline kill (:131-137). It asserts zero FETCH_DATA from this pid (:160-161), and re-reads RECALL_ON_DATA_ACCESS under its own deadline (:165-169). The FETCH_DATA counting logic is fed a testhost-pid FETCH_DATA line in CloudRigTests.cs:130,138. No test feeds a placeholder that has lost RECALL. Never executed."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "The csproj FsaDefaultTestFilter includes Cloud!=CF-SYNC-ROOT (FsAnalyser.Core.Tests.csproj:13-14). My default run: 332 passed, and the trx lists no CloudPlaceholderTests."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "The OptInTraitTests.cs:40-53 Theory feeds Unfiltered() a missing clause, a longer value, a shorter value, OR, parentheses, an opt-in run's own filter, an ad-hoc filter and an empty filter. Ran green."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "FsAnalyser.Core.Tests.csproj:13-18 bakes FsaDefaultTestFilter. I rebuilt under --filter FullyQualifiedName~OptInTraitTests: the dll holds 'DefaultTestFilter=Network!=TEST-NET-1&Network!=SMB-LOOPBACK&Cloud!=CF-SYNC-ROOT', not the ad-hoc filter, and the guard passed."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "SyncRootRig.RunScan (CloudPlaceholderTests.cs:349-366) runs every scan through ScanDeadline.Run with KillProvider as the free. The stall Fact uses cancel + 5 s (:75). The tree Fact uses 30 s CancelAfter + 5 s (:131-133), and its attribute re-read is bounded too (:166-168)."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "SyncRootRig is `private sealed class` nested in the Trait-gated class (:246), and the cldapi import is a private nested CloudFiles class (:507-511). .taad/fitness.yaml carries the widened src and Core.Tests patterns (cldapi, the Cf verb set, CfProvider, SyncRootRig). Fitness op=check: all 50 rules hold. ArchitectureRulesTests.cs is also excepted, as declared."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "The class remarks at CloudPlaceholderTests.cs:24-28 say the run is a person's decision, and that a declined run is not reached and never counted as a pass."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "The fitness.yaml provider rule has must_not_match 'FsAnalyser\\.Core' beside <ProjectReference and must_not_import. tests/CfProvider/CfProvider.csproj and Program.cs do not name it. Fitness holds."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "OptInTraitTests.cs:60-68 refuses '|', '(' and ')', splits on '&' and requires exact equality. The OR and prefix (CF-SYNC-ROOT2) cases are in the Theory."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "CloudRig.RootName and RootPattern (CloudRig.cs:19-39) name roots fsa-cf-<pid>-<32hex>. IsRunning treats Win32Exception as running (:57-60)."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "The predicate and Sweep live in CloudRig.cs, outside the gated class, with default-suite tests in CloudRigTests.cs:17-101. The kill-on-deadline branch is exercised through ScanDeadline (:169-213). The three-reruns duty is assigned to validate in the remarks (:26-28)."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "CloudPlaceholderTests.cs:171-189: every hardlink-dependent assertion comes after the size, on-disk, totals, FETCH_DATA and RECALL checks, and carries the UNMEASURED prefix."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "CloudRig.MuxerFor (CloudRig.cs:141-147) trims the trailing separator and goes up three Parents. The Theory covers both separator forms, and TheRunningRuntimesMuxerExists passes. Launch gives the muxer, CfProvider.dll and the runtimeconfig separate messages (CloudPlaceholderTests.cs:299-304)."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "Dispose (CloudPlaceholderTests.cs:405-433) runs each step on a bounded thread (Step, :435-454), logs failures, and throws only when Passed() was called. Every Fact calls rig.Passed() last."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "StalledFetchIsFreedByCancelThroughTheShippedGuard, with CfProvider 'stall' (Program.cs:98-107). The VOID asserts (CloudPlaceholderTests.cs:77-82) make it impossible to pass without this process's FETCH_PLACEHOLDERS on stall and a scan still blocked 3 s in. Not yet executed (open question 1)."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "CloudRigTests.OnlyThisProcesssCallbacksCountAsTheScans feeds foreign-pid lines, including the prefix and multiple forms pid*10 and pid*10+1, and asserts only pid == Environment.ProcessId counts. Ran green."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "CloudRigTests.AScanCancelDoesNotFreeIsFreedByForceAndFails blocks the shipped Scanner's first call on an event CancelSynchronousIo cannot free. The scan is still running past the grace after Cancel, and ScanDeadline frees it and fails. Grace is 0.5 s rather than 5 s, and the free is a stand-in for KillProvider."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "The same stall Fact asserts 'stall' is an empty Folder, not in Unreadable, in a Cancelled result (:113-116). Not yet executed."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "AProviderThatCannotStartFailsWithItsOwnError: a real ERR from CfRegisterSyncRoot on a missing folder, exit 2. AProviderThatCannotStartSilentlyIsKilledAndFails: the 'silent' scenario with a 2 s deadline. I ran both; both passed."
+   },
+   {
+    "key": "C-006",
+    "exercised": "cannot-tell",
+    "evidence": "Only the stall Fact's Dispose feeds this, and it has never run. On its passing path the scan's listing is cancelled before the kill, so FETCH_PLACEHOLDERS is likely withdrawn (the provider logs CANCEL_FETCH_PLACEHOLDERS) rather than pending. Nothing records which shape was torn down (finding m1)."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "TheSweepRemovesOnlyTheRootOfARunThatIsGone uses a real TempTree with a dead-pid root holding content, a live root, six near-miss names and a file named like a root. It asserts only the stale root is swept, in under 10 s. Unregister is injected, so a real dead-provider sync root is not fed. A link named like a root is not fed either (finding m2)."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "Tree Fact with CreateTree (5 MiB, 12345 B, 3 MiB under a\\sub, all population-disabled). It asserts Size equals the declared size, OnDisk 0, and RECALL_ON_DATA_ACCESS still set, so it cannot pass on ordinary files. Not yet executed."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "The provider makes b\\f4-link.bin with CreateHardLinkW (Program.cs:125-127). The Fact asserts a shared FileId and exactly one HardlinkDuplicate (:181-185). Not yet executed."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "The FETCH_DATA-from-testhost-pid shape is fed to the shared counting logic in CloudRigTests.cs:130,138. The tree Fact asserts zero such lines and RECALL present after the scan. The 'placeholder lost RECALL' half is fed by no test."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "My default run: `eng/dotnet.ps1 test` with no --filter gave 332 passed, and the trx shows 0 CloudPlaceholderTests executed."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "The OptInTraitTests.AFilterThatLeavesATraitInIsCaught Theory: missing clause, OR, prefix, shorter value, parenthesised, opt-in filter, ad-hoc filter, empty filter. Ran green."
+   },
+   {
+    "key": "C-013",
+    "exercised": "no",
+    "evidence": "Deliberately not built. The reason still holds: tests/CfProvider/Program.cs imports no CfExecute and never answers FETCH_DATA, so it cannot produce a partly hydrated placeholder."
+   },
+   {
+    "key": "C-014",
+    "exercised": "no",
+    "evidence": "Deliberately not built. The reason still holds: no Fact leaves a stalled scan uncancelled. ScanDeadline.cs:18,80-81 cancels any token still uncancelled after 5 minutes, so there is no timeout arm."
+   }
+  ],
+  "drift": [
+   "OptInTraitTests.cs:19-20 and :31-32 pin the three known Trait pairs (TEST-NET-1, SMB-LOOPBACK, CF-SYNC-ROOT). The design did not ask for this, and the build did not declare it. A later slice that deletes or renames one of those opt-in tests will fail the default-suite guard until Known is edited.",
+   "ScanDeadline.cs:18 and :80-81 cancel any token left uncancelled after 5 minutes. This is an undeclared addition to the design's per-Fact deadlines. It is harmless, but it is a second bound nobody designed.",
+   "The builder's O-006 account says the stall Fact kills the provider while FETCH_PLACEHOLDERS is 'still pending in cldflt'. The code cancels the listing first, so the claim departs from what the code does. The code itself matches the design's teardown order. See finding m1.",
+   "tests/rules/RuleCases.ps1:203-205 pins '28 settled entries'. Base 0647ead already had 32 (rules-parity now reports 35 with SL-049's three), so C-001 and C-003 of RuleCases were failing before this slice and still fail. Not SL-049's defect.",
+   "Nothing new departed from the design in this round. Round 1's drift notes stand: the Known Trait pin in OptInTraitTests, ScanDeadline's 5-minute auto-cancel, the O-006 account overstating a pending request at kill time, and the RuleCases.ps1 '28 settled' pin that was already stale before this slice."
+  ],
+  "unreviewed": [
+   ".taad/slices/SL-049/design-slice-1.json, critique-1.json, critique-review-1.json, build-slice-1.json: these are stage records, not code. I relied on the design and dispositions quoted in the brief and did not open these files.",
+   ".taad/slices/SL-049/index.json: read only for attempt history (one build attempt, so no loop)."
+  ],
+  "second_round": {
+   "run_id": 1425,
+   "filed": 0
+  }
+ }
+}

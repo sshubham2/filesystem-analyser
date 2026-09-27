@@ -1,0 +1,331 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-049",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-26T21:13:57.481Z",
+ "head": "0647ead17aa99f2aace803624966ca4b1edab65b",
+ "run_id": 1417,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "One proposal (practice), taken as its core with three edits, chosen against the measured record and not for elegance. (1) Each Fact maps to a spike verdict: stall then cancel (conditional, with its three constraints), traversal with true sizes (go), zero FETCH_DATA (go), and kill-then-unregister teardown (go). Nothing is built on an unmeasured behaviour. (2) It uses seams the survey found already in the tree: InternalsVisibleTo for Core.Tests, the SynchronousIoCancel.Created seam with its counters, and the Trait plus csproj VSTestTestCaseFilter gate. That gate is the only one available, because CountingRuleTestsAreNeverSkipped forbids Skip and Explicit. (3) It is the simplest thing that meets the five derived criteria: one provider mode that never answers a callback, two Facts, no production code change. It also refuses two things reality warns against. One is a no-cancel timeout Fact, because the stall never ends by itself (cldflt re-issues at 60.48 s). The other is a partial-hydration arm, because a never-answering provider cannot produce one and the spike's own run1 setup defect came from that arm. The survey could not build here because SDK 10 is absent. Q-003 authorises eng/dotnet.ps1 to bootstrap it, so validate runs the opt-in filter once through the repo's own build. My three edits: (a) the cldapi import moves out of TestNative.cs into CloudPlaceholderTests.cs, so cloud calls are confined to one Trait-gated file that an architecture rule can name; (b) the guard Fact's core is a pure function, so its failure branch can be exercised; (c) the stale-root sweep matches a strict name pattern and not a bare glob, because it deletes under the person's %TEMP%.",
+  "components": [
+   {
+    "name": "CfProvider helper console",
+    "lives_at": "tests/CfProvider/CfProvider.csproj, tests/CfProvider/Program.cs",
+    "responsibility": "Framework-dependent net10.0-windows Exe (IsTestProject=false, IsPackable=false, AllowUnsafeBlocks only if function-pointer callbacks are used). Given `<stall|tree> <absoluteRoot>` it does the following. CfRegisterSyncRoot with flag 2 (DISABLE_ON_DEMAND_POPULATION_ON_ROOT), population FULL, hydration PARTIAL, HardLink policy ALLOWED, fixed ProviderName 'FsAnalyserCfTest' and a fixed ProviderId GUID. Then CfConnectSyncRoot with flags 6 (REQUIRE_PROCESS_INFO|REQUIRE_FULL_FILE_PATH), registering FETCH_PLACEHOLDERS and FETCH_DATA callbacks. Then it creates the scenario's placeholders and prints READY. It never calls CfExecute, so it never answers any callback. It exits when stdin reaches EOF. P/Invoke structs, policies and placeholder-create flags are lifted from .taad/slices/SL-024/build-slice-2-respike/Program.cs. That file's ListReal (265-328), control arm, Scanner arms and verdict machinery are dropped. Callback delegates are statically rooted or [UnmanagedCallersOnly] so the GC cannot collect them. It references no other project, and in particular not FsAnalyser.Core.",
+    "key_interactions": "Launched by the rig as `<muxer> exec --runtimeconfig <FsAnalyser.Core.Tests.runtimeconfig.json> <testsBin>/CfProvider.dll <scenario> <root>`. Writes the flushed line protocol to stdout. Does no teardown of its own: kill, unregister and delete are the test's job."
+   },
+   {
+    "name": "SyncRootRig (sealed IDisposable)",
+    "lives_at": "tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs",
+    "responsibility": "It does four things. (1) It sweeps stale %TEMP%\\fsa-cf-<32 hex> roots, and only names matching that regex, with CfUnregisterSyncRoot then Directory.Delete, best effort. (2) It makes a fresh %TEMP%\\fsa-cf-<guid>. (3) It starts the provider on stdin-redirected, stdout/stderr-captured pipes, collects stdout lines into a queue, and enforces a 30 s READY deadline. (4) Dispose kills the provider, waits for exit, calls CfUnregisterSyncRoot, then Directory.Delete(root, true). The cldapi P/Invoke for CfUnregisterSyncRoot is a private nested import in this file, not in TestNative.cs. Every run takes the kill-then-unregister path that spike 4 measured on the aborted-run case.",
+    "key_interactions": "Derives the muxer as three levels above RuntimeEnvironment.GetRuntimeDirectory() plus dotnet.exe, and fails with a message naming the ProjectReference if the muxer, CfProvider.dll or the runtimeconfig is missing. Exposes a pid-filtered callback log (only lines whose pid equals Environment.ProcessId count) and a way to kill the provider on a missed deadline."
+   },
+   {
+    "name": "Stall Fact",
+    "lives_at": "tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs",
+    "responsibility": "StalledFetchIsFreedByCancelThroughTheShippedGuard. Scenario 'stall': 'ok' is a directory placeholder with population disabled (attrs 0x410) holding f1/f2/f3.txt. 'stall' is a directory placeholder with flags NONE, so listing it raises a FETCH_PLACEHOLDERS that is never answered. Names keep the spiked order (ok lists before stall). Steps: (1) wait at most 10 s for `CB FETCH_PLACEHOLDERS pid=<testhost> path=...\\stall`, which proves the run is not void; (2) hold 3 s and assert the scan task has not finished; (3) cts.Cancel() and assert the scan returns within 5 s. Then assert Status is Cancelled and the guards delivered a cancel (CancelsDelivered >= 1, summed through the Created seam). Also assert the provider process is still alive, so neither cldflt's 60 s timeout nor a provider exit freed the scan. The 3 'ok' files must be present with declared sizes. 'stall' must be a Folder with 0 children and NOT in ScanResult.Unreadable, pinned as a characterization with a comment naming the spike constraint. On any missed deadline the rig kills the provider, which frees the blocked listing in about 15 ms (spike 4), and then fails, so a regressed guard cannot hang testhost.",
+    "key_interactions": "Calls the public Scanner.Scan(root, new ScanProgress(), cts.Token) on Task.Run, as MainWindow.OnCancel drives it. Reaches SynchronousIoCancel.Created, CancelAttempts, CancelsDelivered and ClosesHandedOff through InternalsVisibleTo (FsAnalyser.Core.csproj:10). Belongs to the same xUnit [Collection] as SynchronousIoCancelTests, because Created is a static seam."
+   },
+   {
+    "name": "Dehydrated-tree Fact",
+    "lives_at": "tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs",
+    "responsibility": "DehydratedPlaceholdersAreTraversedWithTrueSizesAndNeverHydrated. Scenario 'tree', all directories placeholders with population disabled: a/f1.bin (5 MiB declared), a/f2.bin (12345 B), a/sub/f3.bin (3 MiB), b/f4.bin (1 MiB), and b/f4-link.bin, a CreateHardLinkW hardlink to f4.bin made by the provider. One Scan with a 30 s CancelAfter deadline. A hydrating scan would block on the never-answering provider and reach Cancelled, which fails the Status assertion. Asserts: Status Completed and Unreadable empty; a, a/sub and b entered and not flagged as links; every file's size equals its declared size and its on-disk size is 0; the hardlink pair charged once under the Scanner's existing hardlink rule; each folder total equals the sum of its children; zero FETCH_DATA from the testhost pid; and after the scan every file still carries FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS (0x400000).",
+    "key_interactions": "Merges the traversal-with-true-sizes and hydrates-nothing spikes into one Fact on one provider launch. Same [Collection] and rig as the Stall Fact."
+   },
+   {
+    "name": "Opt-in wiring",
+    "lives_at": "tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+    "responsibility": "VSTestTestCaseFilter (line 9) becomes `Network!=TEST-NET-1&Network!=SMB-LOOPBACK&Cloud!=CF-SYNC-ROOT`. Add ProjectReference ../CfProvider/CfProvider.csproj, so `dotnet test` builds CfProvider and copies it into the test bin. Add `<AssemblyMetadata Include=\"DefaultTestFilter\" Value=\"$(VSTestTestCaseFilter)\" />` so the guard reads the filter the build actually used. The class carries [Trait(\"Cloud\",\"CF-SYNC-ROOT\")].",
+    "key_interactions": "An explicit --filter replaces the csproj default, as the SMB-LOOPBACK path already relies on."
+   },
+   {
+    "name": "Opt-in trait guard",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs",
+    "responsibility": "EveryOptInTraitIsExcludedByTheDefaultFilter runs in the default suite. It reflects over the test assembly's types and methods for TraitAttribute. It reads the (name, value) constructor arguments through CustomAttributeData, so it works on xunit v2 and v3. It asserts each pair appears as `name!=value` in the DefaultTestFilter metadata. The check itself is a pure function, Unfiltered(pairs, filter), with a second Fact feeding it a synthetic filter that lacks a clause, so the failure branch is exercised. All Trait use in this project is opt-in gating, so the guard covers every pair, including the two existing Network values.",
+    "key_interactions": "Sits beside CountingRuleTestsAreNeverSkipped (ArchitectureRulesTests.cs:76-84), which still forbids Skip, dynamic skips and Explicit. Together they make the opt-in property mechanically checked by the default run, since no engine stage runs the opt-in filters by itself."
+   },
+   {
+    "name": "Solution entry",
+    "lives_at": "FsAnalyser.slnx",
+    "responsibility": "List tests/CfProvider/CfProvider.csproj so `dotnet build FsAnalyser.slnx` compiles it.",
+    "key_interactions": "None beyond the build. It differs deliberately from StallRig and FsaWindowHook, which are outside the slnx and script-built, because this helper is consumed by an xunit test through ProjectReference."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "CfProvider command line",
+    "kind": "cli",
+    "notes": "`<muxer> exec --runtimeconfig <FsAnalyser.Core.Tests.runtimeconfig.json> CfProvider.dll <stall|tree> <absoluteRoot>`. The muxer is <dotnetroot>\\dotnet.exe, three levels above RuntimeEnvironment.GetRuntimeDirectory() (...\\shared\\Microsoft.NETCore.App\\10.0.x\\). The provider therefore runs on exactly the runtime testhost runs on. That covers this PC, where the only 10.0 runtime will be the repo-local .dotnet/, and it does not depend on DOTNET_ROOT or on the SDK copying a referenced exe's runtimeconfig. Redirected stdin stays open for the provider's whole life. EOF, or a testhost crash, is its signal to exit.",
+    "auth_model": "Ordinary user, unelevated. Every spike and both SL-024 runs recorded elevated=False.",
+    "error_cases": "The first failing Cf*/Win32 call prints `ERR <api> hr=0x%08X` and exits 2. The rig fails the Fact with that line plus all captured stdout and stderr. It never skips, so a non-NTFS %TEMP% or cldflt not loaded shows the real error. No READY within 30 s: kill, then fail with the captured output. Missing muxer, CfProvider.dll or runtimeconfig: fail naming the ProjectReference."
+   },
+   {
+    "name": "Provider stdout line protocol",
+    "kind": "event",
+    "notes": "One flushed line per event. `READY` once setup is done. `CB FETCH_PLACEHOLDERS pid=<n> path=<full path>`. `CB FETCH_DATA pid=<n> path=<full path> offset=<o> length=<l>`. Any other registered callback is `CB <TYPE> pid=<n> path=<p>`. The provider never answers any callback. The test ignores lines whose pid is not Environment.ProcessId, so indexer or Defender activity on the root cannot flip a verdict.",
+    "error_cases": "`ERR ...` as above. Unknown lines are kept for the failure message and otherwise ignored."
+   },
+   {
+    "name": "Opt-in run",
+    "kind": "cli",
+    "notes": "`eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter Cloud=CF-SYNC-ROOT`, or plain `dotnet test ...` where a 10.0 SDK is on PATH. The explicit --filter replaces the csproj default. The default run (no --filter) must execute neither Fact. The class's XML doc comment states the command and that the run registers a real cldflt sync root under %TEMP% and removes it. Whether eng/dotnet.ps1 forwards `test` arguments verbatim is not visible in the survey and is settled at build.",
+    "auth_model": "Unelevated. Q-003 authorises the repo-local SDK bootstrap.",
+    "error_cases": "No SDK 10: eng/dotnet.ps1 installs it into .dotnet/. Provider or registration failure: the Fact fails with the real error and never skips."
+   },
+   {
+    "name": "DefaultTestFilter assembly metadata",
+    "kind": "function",
+    "notes": "AssemblyMetadata key `DefaultTestFilter` equals the csproj's VSTestTestCaseFilter, read with Assembly.GetCustomAttributes<AssemblyMetadataAttribute>(). Its only consumer is the trait guard.",
+    "error_cases": "Metadata missing: the guard Fact fails and names the csproj line."
+   },
+   {
+    "name": "Shipped Scanner surface (existing, unchanged)",
+    "kind": "function",
+    "notes": "Scanner.Scan(root, ScanProgress, CancellationToken) returns ScanResult with Status (Completed or Cancelled), Unreadable, and entries with size, on-disk size, kind and children. SynchronousIoCancel.Created plus the CancelAttempts, CancelsDelivered and ClosesHandedOff counters. No production code changes in this slice.",
+    "error_cases": "If a later slice starts reporting a cancelled stall as Unreadable, the stall Fact's characterization assertion fails on purpose and that slice updates it."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "The provider is a separate helper Exe project at tests/CfProvider, ProjectReferenced by Core.Tests and listed in FsAnalyser.slnx. It is not a test project and is not script-built.",
+    "reversibility": "cheap",
+    "rationale": "The measured premise (Derived 5 and all four spikes) is a separate provider process. An in-process provider is unmeasured and is not how OneDrive behaves. ProjectReference makes `dotnet test --filter` alone sufficient. This departs from the StallRig and FsaWindowHook precedent (outside the slnx, built by scripts through eng/dotnet.ps1). Those are consumed by PowerShell and this one by an xunit test. The recorded 'no new test framework or project' line was scoped to the rules-harness Fact and forbids a test project, which this is not. Not built in the repo yet, so this is the least-proven choice."
+   },
+   {
+    "decision": "Launch the provider through the running runtime's muxer with `exec --runtimeconfig <tests runtimeconfig>`, not through its apphost.",
+    "reversibility": "cheap",
+    "rationale": "This PC has no machine-wide 10.0 runtime, only 8.0 and 9.0. An apphost would look in DOTNET_ROOT and Program Files and fail to start. Deriving the muxer from the running runtime avoids that and avoids depending on the SDK copying a referenced exe's runtimeconfig."
+   },
+   {
+    "decision": "Gate with a class-level Trait(\"Cloud\",\"CF-SYNC-ROOT\") plus the clause `Cloud!=CF-SYNC-ROOT` in VSTestTestCaseFilter, and add a default-suite guard Fact that every Trait pair is excluded by the baked-in default filter. No Skip, no Explicit.",
+    "reversibility": "cheap",
+    "rationale": "CountingRuleTestsAreNeverSkipped already forbids Skip and Explicit, so Trait plus the csproj filter is the only mechanism the repo allows (Derived 4). The survey named the failure: a new Trait value missing from the filter runs in the default suite, and here that would register a sync root on every default run. No engine stage runs the opt-in filters, so without the guard the opt-in property is checked by eye. The key is Cloud, not the survey's Network=CLOUD-PLACEHOLDER, because a cloud filter is not a network dependency. The spike also used a Cloud key."
+   },
+   {
+    "decision": "The provider never answers any callback. The scenarios differ only in which placeholders it creates.",
+    "reversibility": "cheap",
+    "rationale": "A never-answering provider produces the stall on demand. It also turns accidental hydration into a hard failure (the scan blocks and reaches the deadline), on top of the zero-FETCH_DATA log check. It keeps the provider to one mode with no transfer-data code, which is the part that produced spike 2's run1 setup defect."
+   },
+   {
+    "decision": "Teardown is crash-only. Dispose always kills the provider, then calls CfUnregisterSyncRoot from the test process, then Directory.Delete(root, true). Each run first sweeps stale roots whose names match ^fsa-cf-[0-9a-f]{32}$. The provider exits on stdin EOF.",
+    "reversibility": "cheap",
+    "rationale": "Spike 4 measured this sequence after a kill: 5 ms, root and folder gone, 6/6 reruns pass. Taking the kill path every run keeps the abort path tested and bounds a regressed guard, since killing the provider frees a blocked listing in about 15 ms. The sweep and stdin-EOF exit cover a testhost crash, which would otherwise leave a dead sync root that the person's own scans of C: could hit. The strict name pattern is because the sweep deletes under the person's %TEMP%."
+   },
+   {
+    "decision": "Two Facts only. First, stall then cancel through the shipped guard, pinning Cancelled, 'stall' present as an empty Folder and not in Unreadable. Second, a dehydrated tree with true sizes, 0 on disk, a hardlink charged once and zero FETCH_DATA. There is no no-cancel or timeout Fact and no partial-hydration arm.",
+    "reversibility": "cheap",
+    "rationale": "Spike 1 is conditional. The stall never ends by itself (cldflt re-issues the callback at 60.48 s) and the guard has no stall deadline, so a timeout Fact would test a promise nobody made. The Unreadable gap is pinned visibly instead of hidden. Only a never-replying provider was measured, so late-reply and error-reply providers are not claimed. The partial arm needs a provider that answers FETCH_DATA, which is where spike 2 hit its run1 setup defect, and its on-disk code path is the one the sparse and compressed tests already cover."
+   },
+   {
+    "decision": "The cloud Facts join the xUnit [Collection] that SynchronousIoCancelTests uses.",
+    "reversibility": "cheap",
+    "rationale": "SynchronousIoCancel.Created is a static seam. A parallel test creating guards would contaminate the CancelsDelivered sum."
+   },
+   {
+    "decision": "The cldapi import (CfUnregisterSyncRoot) lives inside CloudPlaceholderTests.cs and not in TestNative.cs. An architecture rule confines every Cf* call in Core.Tests to that one Trait-gated file.",
+    "reversibility": "cheap",
+    "rationale": "This changes the proposal's placement. The guard Fact only checks Traits that exist. A cldapi call in a file with no Trait would run in the default suite and register a real sync root, and nothing else would notice. One exception file makes that a failing rule."
+   },
+   {
+    "decision": "The SL-024 evidence folder and the %TEMP%\\taad-sl024-respike scratch copy are left untouched. Derived 1 is met by the new tracked, solution-built provider and test.",
+    "reversibility": "cheap",
+    "rationale": "The evidence folder records what SL-024 measured, and rewriting it would falsify that record. The scratch copy sits outside the repo and belongs to the person."
+   },
+   {
+    "decision": "Validate builds through eng/dotnet.ps1, runs the default suite, and runs `--filter Cloud=CF-SYNC-ROOT` once on this PC, unelevated.",
+    "reversibility": "cheap",
+    "rationale": "Every spike ran a scratch copy with a scratch SDK 10.0.401, and the survey could not build at all. The deliverable is unproven until it runs once through the repo's own toolchain. Q-003 authorises the SDK download. The sync root sits under %TEMP% and is removed by the teardown spike 4 measured. SL-024 validate declined the equivalent step, which is why open question 1 exists."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal. Taken whole, with three edits: the cldapi import is confined to CloudPlaceholderTests.cs, the guard Fact's core is a pure function with a negative Fact, and the stale-root sweep uses a strict name regex. Nothing from it was dropped."
+   }
+  ],
+  "coherence_check": "One proposal, no composition across proposals. Nothing here has survived a disagreement, so the design is the first thing to argue with. Checked inside the design, and where reality outranks it:\\n\\n(1) Never-answering provider vs the traversal spike. Spike 2 measured zero FETCH_DATA with a provider that answered every FETCH_DATA. This design's provider never answers. Because zero requests were measured, the difference only matters if the scanner regresses to reading data. Then the read blocks, the 30 s CancelAfter frees it through the guard, Status becomes Cancelled and the Fact fails. It cannot hang.\\n\\n(2) 'Provider still alive' vs kill-on-teardown. The liveness assertion runs before Dispose, and the rig kills the provider only after the assertions or on a missed deadline. There is no ordering conflict.\\n\\n(3) Static Created seam vs parallel xunit. Resolved by the shared [Collection].\\n\\n(4) Seam redesigned: the proposal put the cldapi import in TestNative.cs. That left two files that could call Cf*, only one of them Trait-gated. I moved the import into CloudPlaceholderTests.cs, so the confinement rule has a single exception.\\n\\n(5) The rules use only alternation, \\\\b and literals. The stack block says rules are evaluated by both rules-parity.ps1 and harness.py, so I avoided lookaheads and engine-specific syntax. Per Q-010 they are appended to the existing rules file on trunk, and no rules file is created here.\\n\\n(6) The design conflicts with no answered question. Q-003 covers the SDK bootstrap.\\n\\nMeasured constraints carried, not reasoned around. Spike 1 is conditional: only Stop ends a stalled scan, the stalled folder is not in Unreadable after Stop, and only a never-replying provider was tested.\\n\\nNOT measured, and only a build in the repo can settle it: (a) ProjectReference from Core.Tests to an Exe project under this repo's Directory.Build.props (NETSDK1150/1151 or a missing runtimeconfig); (b) the muxer-plus-tests-runtimeconfig launch, since spikes launched a scratch exe; (c) whether eng/dotnet.ps1 forwards `test` arguments; (d) the Facts themselves inside the repo. The spike Fact ran in a scratch copy whose 21 Core .cs files were hash-identical to the worktree. If (a) fails, the fallback is a script-built provider like StallRig, which changes only how CfProvider.dll is located. It does not change any component boundary or assertion, so I recorded no decidable disagreement.\\n\\nNo cross-domain proposal was supplied, so no transfer block is carried. The web results fetched for this run were unrelated (harness CI, a secret scanner) and no prior art is marked cited.",
+  "stack_chosen": [
+   {
+    "area": "testing",
+    "choice": "Opt-in cloud tests use Trait Cloud=CF-SYNC-ROOT plus a `Cloud!=CF-SYNC-ROOT` clause in Core.Tests' VSTestTestCaseFilter. The sync root is real cldflt under %TEMP%, served unelevated by a separate-process provider. A default-suite guard Fact asserts every Trait pair is excluded by the filter, baked in as AssemblyMetadata DefaultTestFilter.",
+    "why": "The stack block names the SMB-LOOPBACK opt-in pattern but nothing for cloud placeholders. This design had to choose the key and the guard, and later slices that add opt-in traits must inherit both. This is a project-scope testing convention, not a language or framework choice."
+   },
+   {
+    "area": "build",
+    "choice": "tests/CfProvider is a framework-dependent net10.0-windows console listed in FsAnalyser.slnx and ProjectReferenced by Core.Tests, so `dotnet build` and `dotnet test` build it. It is not script-built.",
+    "why": "The stack block records StallRig and FsaWindowHook as outside the slnx and built by scripts. This helper is consumed by an xunit test, which needs it built by the test's own build. A later slice adding a helper project must know which of the two conventions applies."
+   }
+  ],
+  "architecture_rules": [
+   {
+    "name": "shipped code never registers, serves or hydrates through the cloud-files API",
+    "files": "src/**/*.cs",
+    "must_not_match": [
+     "\\bCf(RegisterSyncRoot|UnregisterSyncRoot|ConnectSyncRoot|Execute|HydratePlaceholder)\\b"
+    ],
+    "because": "The app is a reader. Code that registers a sync root, answers callbacks or hydrates would download the person's online-only files and put a fake provider on their PC. The spike shipped-scan-hydrates-nothing measured 0 FETCH_DATA for the shipped scanner. The only sanctioned use of these calls is the opt-in test provider under tests/."
+   },
+   {
+    "name": "cloud-files calls in Core.Tests live only in the Trait-gated class",
+    "files": "tests/FsAnalyser.Core.Tests/**/*.cs",
+    "must_not_match": [
+     "\\bCf(RegisterSyncRoot|UnregisterSyncRoot|ConnectSyncRoot|Execute|HydratePlaceholder)\\b"
+    ],
+    "except_files": [
+     "tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs"
+    ],
+    "because": "A Cf* call in any other test file is not behind Cloud=CF-SYNC-ROOT. Every default run would then register a real sync root under the person's %TEMP%. The guard Fact only checks Traits that exist, so a file with no Trait would pass it."
+   },
+   {
+    "name": "the provider does not use the code it checks",
+    "files": "tests/CfProvider/**",
+    "must_not_import": [
+     "FsAnalyser.Core*"
+    ],
+    "must_not_match": [
+     "<ProjectReference"
+    ],
+    "because": "The provider is the independent source of declared sizes and callback behaviour. If it shared Core code, a counting or guard defect would sit on both sides of the assertion and the test would agree with the bug."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "cancel a scan stalled on a cloud folder",
+    "shape": "a sibling directory placeholder ('stall', flags NONE) whose FETCH_PLACEHOLDERS the provider never answers, cancelled 3 s in, with 'ok' (3 files) listed before it in NTFS name order",
+    "why": "This is the only case where the shipped SynchronousIoCancel meets a real cf-filter block. The named-pipe stand-in tests cannot show it. Spike: freed in 32 ms. The 'ok' files are counted only because 'ok' lists before 'stall', so the assertion depends on name order and a parallel or reordered scanner would flip it."
+   },
+   {
+    "behaviour": "match provider callbacks to the scan",
+    "shape": "callback lines from a pid other than testhost (indexer, Defender, Explorer) on the same sync root",
+    "why": "Counting them would make 'the stall was hit' or 'FETCH_DATA occurred' true or false for the wrong process. Only pid == Environment.ProcessId may count."
+   },
+   {
+    "behaviour": "cancel does not free the scan",
+    "shape": "the scan is still running 5 s after cts.Cancel() because the guard regressed",
+    "why": "Without the rig killing the provider on a missed deadline, testhost hangs until cldflt's 60 s re-issue, and never fails. The kill frees the listing in about 15 ms and the Fact then fails."
+   },
+   {
+    "behaviour": "report a cancelled stalled folder",
+    "shape": "'stall' after a Cancelled scan",
+    "why": "The spike constraint: it is an empty Folder (0 children) and not in ScanResult.Unreadable. This is pinned as a characterization so a later scanner change breaks it on purpose and updates it."
+   },
+   {
+    "behaviour": "start the provider",
+    "shape": "the provider prints ERR and exits 2 (non-NTFS %TEMP%, cldflt unavailable), or stays silent for 30 s without READY",
+    "why": "The Fact must fail with the captured real error, never skip. ArchitectureRulesTests forbids Skip. A silent hang would otherwise pass as a timeout."
+   },
+   {
+    "behaviour": "tear down after a killed provider",
+    "shape": "the provider is killed while 'stall' is unpopulated and its FETCH_PLACEHOLDERS is pending, then the Fact is re-run three times in a row",
+    "why": "Cleanup must not block or throw (for example ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING when deleting 'stall'). Spike 4 measured 5 ms and 6/6 reruns pass, but only on a stand-in Fact."
+   },
+   {
+    "behaviour": "sweep stale sync roots",
+    "shape": "a leftover %TEMP%\\fsa-cf-<guid> from a crashed testhost with a dead provider, next to unrelated %TEMP% entries whose names are similar but not matching",
+    "why": "A dead sync root left behind would trip the person's own scans of C:. The sweep must unregister and delete the matching root within 10 s and must not touch any other name under %TEMP%."
+   },
+   {
+    "behaviour": "size dehydrated cloud placeholders",
+    "shape": "dehydrated placeholder files (5 MiB, 12345 B, 3 MiB nested under a/sub) in directories with population disabled and cloud reparse tags",
+    "why": "The scanner must enter cloud placeholder directories as ordinary folders, not as links. It must report the declared size and 0 on disk. This is the 'OneDrive files that live only online' counting rule, on a real cf-filter volume and not a fake attribute."
+   },
+   {
+    "behaviour": "count a hardlink among placeholders",
+    "shape": "b/f4-link.bin is a second name for placeholder b/f4.bin, with HardLink policy ALLOWED",
+    "why": "The per-file handle query that counts hardlinks once opens every placeholder, so it is the code path most likely to hydrate. The pair must still be charged once under the Scanner's existing rule."
+   },
+   {
+    "behaviour": "hydration regression",
+    "shape": "the scan requests file data (FETCH_DATA from the testhost pid), or a placeholder loses FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS",
+    "why": "The shipped scan must download nothing. With a never-answering provider the read blocks, the 30 s deadline cancels, and the Fact fails on Status and on the FETCH_DATA count. Without that, the regression would download the person's files."
+   },
+   {
+    "behaviour": "run the default suite",
+    "shape": "`dotnet test` with no --filter",
+    "why": "The csproj default filter must exclude both cloud Facts. A missing clause would register a real sync root on every default run. Validate confirms the two Facts are not executed."
+   },
+   {
+    "behaviour": "guard against a Trait missing from the default filter",
+    "shape": "a Trait (name, value) pair with no matching name!=value clause in the filter string",
+    "why": "The guard's failure branch must be exercised, or it can go green while checking nothing. This is why it has a pure function and a synthetic negative Fact."
+   },
+   {
+    "behaviour": "partial hydration arm",
+    "shape": "a placeholder downloaded 1 MiB of 8 MiB",
+    "material": false,
+    "why": "Judged not worth a test. A never-answering provider cannot produce it, the spike's run1 setup defect came from this arm, and partial allocation is the on-disk-size path the sparse and compressed tests already cover. The next slice may disagree and add an answering-provider scenario."
+   },
+   {
+    "behaviour": "stall without cancel",
+    "shape": "the scan is left running with no cancel until a timeout",
+    "material": false,
+    "why": "Judged not worth a test. The spike measured that the stall never resolves by itself (cldflt re-issues at 60.48 s) and the guard has no stall deadline, so a Fact for this behaviour would assert a promise nobody made."
+   }
+  ],
+  "decidable_disagreements": [],
+  "taste_disagreements": [
+   "CfProvider is in FsAnalyser.slnx and ProjectReferenced, against the StallRig and FsaWindowHook precedent of staying outside the slnx and being script-built, and against a literal reading of the recorded 'no new test framework or project' line.",
+   "The stall Fact pins 'stall not in Unreadable' as a characterization of a behaviour that may be a scanner gap. The alternative is to assert only cancel timing and the kept files, so a later fix does not have to edit the test.",
+   "The guard Fact covers every Trait pair in the assembly, so a future non-opt-in Trait would fail it. The alternative is to scope it to the Network and Cloud keys.",
+   "Trait key Cloud=CF-SYNC-ROOT, against the survey's suggested Network=CLOUD-PLACEHOLDER.",
+   "The rig, the two Facts and the cldapi import share one file (CloudPlaceholderTests.cs) so the confinement rule has one exception. Splitting them would read better but costs a second except_files entry."
+  ],
+  "open_questions": [
+   "May validate run `--filter Cloud=CF-SYNC-ROOT` on this PC? It registers a real cldflt sync root under %TEMP% (unelevated) and removes it. SL-024 validate declined the equivalent step, and only the spike stage has run it here. Without that run, the deliverable (a test driving the shipped Scanner and SynchronousIoCancel on a real cf-filter folder) stays unproven in the repo's own build.",
+   "Is it acceptable that a cancelled stalled cloud folder shows as an empty Folder in a Cancelled result and not in Unreadable? The test pins this as it is today. If the person wants such a folder reported as not read, that is a separate scanner slice, and this test's characterization assertion changes with it."
+  ],
+  "prior_art": [
+   {
+    "pattern": "Windows Cloud Files API provider lifecycle: CfRegisterSyncRoot, CfConnectSyncRoot with REQUIRE_PROCESS_INFO|REQUIRE_FULL_FILE_PATH, CfCreatePlaceholders, CfUnregisterSyncRoot",
+    "where": "Microsoft Cloud Files API reference (cfapi.h, cldapi.dll), as exercised by the SL-024 build-2 respike Program.cs in this repo",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Launch a framework-dependent .NET app on a chosen runtime with `dotnet exec --runtimeconfig <file> <dll>`",
+    "where": "dotnet host muxer documentation",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Opt-in test gating by xUnit Trait plus a default VSTestTestCaseFilter property, with an explicit --filter replacing the default",
+    "where": "This repo: Network=TEST-NET-1 (CancellationTests.cs:144, :152), Network=SMB-LOOPBACK (StalledShareTests.cs:31), FsAnalyser.Core.Tests.csproj:9",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Bake a build property into the test assembly as an AssemblyMetadata item so a test can read the filter the build used",
+    "where": "SDK-style project GenerateAssemblyInfo, AssemblyMetadata item support",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Separate-process provider, unelevated, real cldflt sync root, with kill-then-unregister-then-delete teardown",
+    "where": "SL-024 respike run1.log and run2.log plus this slice's spikes 1, 2 and 4 (measured scratch runs, not a URL)",
+    "authority": "community",
+    "basis": "recalled"
+   }
+  ],
+  "whats_new": [
+   "tests/CfProvider/CfProvider.csproj and Program.cs: a never-answering cldapi provider with 'stall' and 'tree' scenarios and a stdout callback log carrying the requester pid, trimmed from the 550-line respike",
+   "tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs: the two opt-in Facts, the SyncRootRig (sweep, launch, READY wait, log queue, kill then unregister then delete) and the private CfUnregisterSyncRoot import",
+   "FsAnalyser.Core.Tests.csproj: `&Cloud!=CF-SYNC-ROOT` in VSTestTestCaseFilter, a ProjectReference to CfProvider, and AssemblyMetadata DefaultTestFilter",
+   "ArchitectureRulesTests.cs: EveryOptInTraitIsExcludedByTheDefaultFilter, its pure Unfiltered function and a synthetic negative Fact",
+   "FsAnalyser.slnx: the CfProvider entry",
+   "Three architecture rules appended to the existing rules file: no register, serve or hydrate calls in src; Cf* calls confined to CloudPlaceholderTests.cs in Core.Tests; CfProvider independent of Core"
+  ],
+  "whats_reused": [
+   "P/Invoke structs, registration policies (flag 2, population FULL, connect flags 6) and placeholder-create flags from .taad/slices/SL-024/build-slice-2-respike/Program.cs, which stays untouched as evidence",
+   "The spike-measured setups: 'ok' with population disabled (0x410), the 'stall' flags-NONE directory placeholder, and the dehydrated tree with HardLink policy ALLOWED",
+   "Shipped Scanner.Scan, ScanProgress, ScanResult and ScanStatus, called as the app calls them",
+   "SynchronousIoCancel.Created, CancelAttempts, CancelsDelivered and ClosesHandedOff, reached through InternalsVisibleTo (FsAnalyser.Core.csproj:10)",
+   "The Trait plus VSTestTestCaseFilter gate (FsAnalyser.Core.Tests.csproj:9) and the CountingRuleTestsAreNeverSkipped no-Skip rule (ArchitectureRulesTests.cs:76-84)",
+   "The shared xUnit [Collection] of SynchronousIoCancelTests",
+   "eng/dotnet.ps1 SDK bootstrap, authorised by Q-003"
+  ]
+ }
+}

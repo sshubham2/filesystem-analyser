@@ -1,0 +1,147 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-049",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-09-26T21:30:19.346Z",
+ "head": "0647ead17aa99f2aace803624966ca4b1edab65b",
+ "run_id": 1421,
+ "summary": "The design is sound: every Fact maps to a spike verdict, it carries the conditional constraints, and it avoids the unmeasured arms. There are no blockers. There are three majors. (1) The trait guard bakes $(VSTestTestCaseFilter) into assembly metadata. The .NET SDK source shows `dotnet test --filter` forwards as `-property:VSTestTestCaseFilter=…`, a global property that overrides the csproj value at build time. So under any explicit filter, the guard checks the ad-hoc filter and not the default, and it fails spuriously. It also fails after a `--no-build` that follows a filtered build. (2) Only the stall Fact has the kill-on-missed-deadline protection. The tree Fact's claim that it \"cannot hang\" rests on the guard covering whatever call would hydrate, and nobody measured that. (3) The confinement rule matches five Cf* names only. SyncRootRig, a Process.Start of CfProvider.dll, other cldapi entry points, or an untraited second class inside the excepted file could each register a real sync root in the default run while the rule and the guard both stay green. The minors: the design pre-answers open question 1; rule 3 misses the HintPath reference pattern that SL-024 itself used; the guard matches substrings; the sweep cannot tell a live root from a stale one; the rig's own failure branches are not exercised; the hardlink-among-placeholders assertion is unmeasured; the muxer derivation has a path bug; and Dispose can mask an assertion failure.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The design is sound: every Fact maps to a spike verdict, it carries the conditional constraints, and it avoids the unmeasured arms. There are no blockers. There are three majors. (1) The trait guard bakes $(VSTestTestCaseFilter) into assembly metadata. The .NET SDK source shows `dotnet test --filter` forwards as `-property:VSTestTestCaseFilter=…`, a global property that overrides the csproj value at build time. So under any explicit filter, the guard checks the ad-hoc filter and not the default, and it fails spuriously. It also fails after a `--no-build` that follows a filtered build. (2) Only the stall Fact has the kill-on-missed-deadline protection. The tree Fact's claim that it \"cannot hang\" rests on the guard covering whatever call would hydrate, and nobody measured that. (3) The confinement rule matches five Cf* names only. SyncRootRig, a Process.Start of CfProvider.dll, other cldapi entry points, or an untraited second class inside the excepted file could each register a real sync root in the default run while the rule and the guard both stay green. The minors: the design pre-answers open question 1; rule 3 misses the HintPath reference pattern that SL-024 itself used; the guard matches substrings; the sweep cannot tell a live root from a stale one; the rig's own failure branches are not exercised; the hardlink-among-placeholders assertion is unmeasured; the muxer derivation has a path bug; and Dispose can mask an assertion failure.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "contract-gaps",
+    "claim": "The design adds `<AssemblyMetadata Include=\"DefaultTestFilter\" Value=\"$(VSTestTestCaseFilter)\" />` so the guard \"reads the filter the build actually used\". But `dotnet test --filter X` forwards the filter as the MSBuild command-line property `-property:VSTestTestCaseFilter=X`. That makes it a global property for the whole restore, build and VSTest invocation, and it overrides the csproj value when AssemblyInfo is generated. So the baked metadata is the default filter only on unfiltered runs. Two things go wrong. (a) Any targeted run that selects the guard, e.g. `dotnet test --filter FullyQualifiedName~ArchitectureRulesTests` (routine in build-slice), compiles in the ad-hoc filter, and EveryOptInTraitIsExcludedByTheDefaultFilter fails, because `Network!=TEST-NET-1` is not in it. (b) A default `dotnet test --no-build` after an opt-in `--filter Cloud=CF-SYNC-ROOT` build reads metadata `Cloud=CF-SYNC-ROOT` and fails the guard. That is the validate sequence the design prescribes, if it is run in that order. On top of this, every switch between a filtered and a default run recompiles Core.Tests.",
+    "evidence": "Opt-in wiring component; DefaultTestFilter contract ('equals the csproj's VSTestTestCaseFilter'). SDK source: https://source.dot.net/Microsoft.DotNet.Cli.Definitions/R/586182068e0a558c.html, TestCommandDefinition.VSTest.cs line 32: `.ForwardAsSingle(o => $\"-property:VSTestTestCaseFilter={MSBuildPropertyParser.SurroundWithDoubleQuotes(o!)}\")`. The design itself relies on this override: 'An explicit --filter replaces the csproj default'. VSTest is still the default runner under SDK 10 (https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-test). To settle it by running: `dotnet test --filter FullyQualifiedName~EveryOptInTrait`, then check whether the guard passes.",
+    "fix": "Hold the default in its own property, which the command line never sets: `<FsaDefaultTestFilter>Network!=TEST-NET-1&amp;Network!=SMB-LOOPBACK&amp;Cloud!=CF-SYNC-ROOT</FsaDefaultTestFilter>`, then `<VSTestTestCaseFilter>$(FsaDefaultTestFilter)</VSTestTestCaseFilter>`, and bake `$(FsaDefaultTestFilter)` into the AssemblyMetadata. An explicit --filter still overrides the run filter, but it no longer changes what the guard checks."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "error-paths",
+    "claim": "Only the stall Fact has the 'kill the provider on a missed deadline, then fail' path. The dehydrated-tree Fact relies on a 30 s CancelAfter, and the coherence check says a hydrating regression 'blocks, the 30 s CancelAfter frees it through the guard … It cannot hang.' No spike measured that. Spike 1 showed SynchronousIoCancel freeing a directory listing blocked on FETCH_PLACEHOLDERS. Nothing shows that the per-file open or read a hydration regression would introduce runs inside a guard, or that CancelSynchronousIo frees a wait on FETCH_DATA. With a provider that never answers, an unguarded hydrating call blocks past the token. Spike 1 saw cldflt re-issue at 60 s rather than fail. testhost then hangs with no failure, which is the outcome the design says it prevents.",
+    "evidence": "Dehydrated-tree Fact: 'One Scan with a 30 s CancelAfter deadline. A hydrating scan would block … and reach Cancelled'. Coherence check (1). Stall Fact alone: 'On any missed deadline the rig kills the provider'. Spike 1 constraint: 'cldflt's 60 s timeout re-issued the callback (at 60.48 s) rather than failing the listing'.",
+    "fix": "Put the deadline in the rig, not in each Fact. The rig runs the scan through `rig.RunScan(root, cts, deadline)`, which awaits the scan task against an outer deadline (CancelAfter + 5 s for the tree Fact, cancel + 5 s for the stall Fact). On a miss it kills the provider and then fails. No Fact can then forget it. The spike 4 measurement (kill frees the blocked I/O in about 15 ms) is the one to extend to FETCH_DATA at validate."
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "cross-cutting-conformance",
+    "claim": "The confinement rule is meant to make 'a Cf* call outside the Trait-gated file' fail. It matches only the five identifiers CfRegisterSyncRoot, CfUnregisterSyncRoot, CfConnectSyncRoot, CfExecute and CfHydratePlaceholder. A sync root can still be registered from the default suite with the rule and the guard both green, in at least three ways. (a) Any test file does `new SyncRootRig(...)`. The rig is a type in the excepted file, so it is visible across the assembly unless it is private. (b) Any test does Process.Start on CfProvider.dll, which the ProjectReference now puts in every test bin. (c) A second class without the Trait is added inside CloudPlaceholderTests.cs, which is exempt from the rule, and the guard only checks Traits that exist. Other cldapi entry points (CfConvertToPlaceholder, CfCreatePlaceholders, CfDisconnectSyncRoot, a `cldapi.dll` import) are not matched either. The whole invariant depends on later authors remembering it.",
+    "evidence": "architecture_rules[1]: must_not_match `\\bCf(RegisterSyncRoot|UnregisterSyncRoot|ConnectSyncRoot|Execute|HydratePlaceholder)\\b`, except_files CloudPlaceholderTests.cs. Key decision: 'One exception file makes that a failing rule.' SyncRootRig is declared 'sealed IDisposable' with no stated accessibility. The opt-in trait guard: 'The guard Fact only checks Traits that exist.'",
+    "fix": "Make SyncRootRig a private nested class of the [Trait(\"Cloud\",\"CF-SYNC-ROOT\")] class, so only methods of the gated class can build a rig. Widen the must_not_match for tests/FsAnalyser.Core.Tests/** (except the one file) to `cldapi|\\bCf(Register|Unregister|Connect|Disconnect|Execute|Hydrate|Dehydrate|Create|Convert|Update|SetInSyncState)\\w*|CfProvider|SyncRootRig`. Apply the same cldapi and Cf* pattern to the src/** rule."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "drift-from-design",
+    "claim": "A key decision says validate 'runs `--filter Cloud=CF-SYNC-ROOT` once on this PC'. The same design leaves open whether validate may do so (open question 1). That proceeds as though the branch were chosen. If the person says no, the design does not say what validate reports for Derived 3, the only criterion the run proves.",
+    "evidence": "key_decisions: 'Validate builds through eng/dotnet.ps1, runs the default suite, and runs `--filter Cloud=CF-SYNC-ROOT` once'. Left open: 'May validate run `--filter Cloud=CF-SYNC-ROOT` on this PC?'",
+    "fix": "Make the opt-in run conditional on the answer. State that a declined run leaves Derived 3 `not_reached`, with the spike-1 scratch run as the only real contact, and does not count as a pass."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "The rule 'the provider does not use the code it checks' forbids only `<ProjectReference` and `FsAnalyser.Core*` imports. The SL-024 harness this provider is lifted from reached Core through `<Reference … HintPath=$(FsCoreDll)>`, which the rule does not catch, and a fully qualified `FsAnalyser.Core.Scanning.…` use needs no import.",
+    "evidence": "architecture_rules[2]. The survey: the harness 'references a guard-less FsAnalyser.Core.dll … through HintPath $(FsCoreDll)'. The CfProvider component: 'P/Invoke structs … are lifted from .taad/slices/SL-024/build-slice-2-respike/Program.cs'.",
+    "fix": "Add `FsAnalyser\\.Core` as a must_not_match over tests/CfProvider/**, which covers the csproj and .cs files alike."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "The guard asserts that each pair 'appears as `name!=value`' in the filter string, which is a substring test. A filter that ORs the clauses (`Network!=A|Cloud!=CF-SYNC-ROOT`, which is true for every test and so excludes nothing) passes. So does a clause for a longer value (`Cloud!=CF-SYNC-ROOT2` contains `Cloud!=CF-SYNC-ROOT`). The negative Fact covers only a missing clause.",
+    "evidence": "Opt-in trait guard: 'asserts each pair appears as `name!=value` in the DefaultTestFilter metadata'. Filter syntax allows `|` and parentheses (https://github.com/microsoft/vstest-docs/blob/main/docs/filter.md).",
+    "fix": "Unfiltered(pairs, filter) rejects filters containing `|` or `(`, splits on `&`, and requires exact clause equality. Add negative cases for the OR form and the prefix form."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "The stale-root sweep unregisters and deletes every %TEMP%\\fsa-cf-<32 hex> it finds, and it cannot tell a crashed run's root from a live one. The person keeps several worktrees and runs sessions at the same time. A second opt-in run that starts while another is still going unregisters the live root under that run's scan. The other run then fails for a reason unrelated to the Scanner.",
+    "evidence": "SyncRootRig (1): 'sweeps stale %TEMP%\\fsa-cf-<32 hex> roots … with CfUnregisterSyncRoot then Directory.Delete'. Key decision: 'Each run first sweeps stale roots whose names match ^fsa-cf-[0-9a-f]{32}$'.",
+    "fix": "Name roots `fsa-cf-<testhostPid>-<guid>`, and sweep only those whose pid is no longer running, or that are older than a few minutes. Keep the regex strict."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "The guard gets a negative Fact, but the rig's own safety branches get none. Nothing exercises the kill-on-missed-deadline path, which keeps a regressed guard from hanging testhost, or the sweep's name predicate, whose strictness is the justification for edit (c). The case 'tear down after a killed provider … re-run three times in a row' has no owner: validate runs the filter 'once'.",
+    "evidence": "Edit (c): 'the stale-root sweep matches a strict name pattern … because it deletes under the person's %TEMP%'. Cases: 'sweep stale sync roots' ('must not touch any other name'), 'tear down after a killed provider' ('re-run three times'). Key decision: validate runs the filter 'once'.",
+    "fix": "Make the sweep's name match a pure function with a default-suite Fact over matching and near-miss names. That Fact makes no cldapi calls, so it may live outside the gated file if the predicate is not inside SyncRootRig. Either state that validate runs the opt-in filter three times in a row, or drop the three-reruns claim from the case."
+   },
+   {
+    "id": "m6",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "'Nothing is built on an unmeasured behaviour' overclaims for the hardlink assertion. Spike 2, the one that measured sizes, had no hardlinks. Spike 3 had hardlinks, but its falsifier is FETCH_DATA and placeholder state, not size charging. The tree scenario itself (population disabled, hardlink created by a provider that never answers) was run by no spike. If 'hardlink pair charged once' fails at validate, the design does not say whether that is a setup defect or a Scanner finding.",
+    "evidence": "Dehydrated-tree Fact: 'the hardlink pair charged once under the Scanner's existing hardlink rule'. Spike 2's falsifier list has no hardlink term. Spike 3: 'provider answers every FETCH_DATA … HardLink policy ALLOWED'.",
+    "fix": "Mark the hardlink assertion as unmeasured in the design. Put it after the size and zero-FETCH_DATA assertions so a failure there does not hide them. State that a failure is reported as a counting-rule question for the person, not patched in the test."
+   },
+   {
+    "id": "m7",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "claim": "The muxer is '<dotnetroot>\\dotnet.exe, three levels above RuntimeEnvironment.GetRuntimeDirectory()'. That call returns the path with a trailing separator, so three naive Path.GetDirectoryName calls stop at `shared\\`, not the dotnet root. The contract also says a missing muxer fails 'naming the ProjectReference', which would point the builder at the wrong cause.",
+    "evidence": "CfProvider command line contract; the SyncRootRig key_interactions: 'fails with a message naming the ProjectReference if the muxer, CfProvider.dll or the runtimeconfig is missing'.",
+    "fix": "Specify `new DirectoryInfo(Path.TrimEndingDirectorySeparator(dir)).Parent.Parent.Parent`. Give a missing muxer, a missing CfProvider.dll and a missing runtimeconfig each its own message."
+   },
+   {
+    "id": "m8",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "claim": "Dispose kills the provider, unregisters and deletes, but the design does not say what happens when one of those steps throws. Under `using`, an exception from Dispose replaces the Fact's own assertion exception. A failed stall assertion, for example a regressed guard, would then show up as an unregister or delete error, and the real finding would be lost.",
+    "evidence": "SyncRootRig (4): 'Dispose kills the provider, waits for exit, calls CfUnregisterSyncRoot, then Directory.Delete(root, true)'.",
+    "fix": "Dispose catches its own failures and writes them to the test output. It rethrows only when the Fact body passed. Leftover residue is left for the next sweep."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "m6: the hardlink-among-placeholders charging and the never-answering 'tree' setup were run by no spike. M2's premise, that the guard covers a hydrating call, is also unmeasured. The design already names the other unmeasured points: NETSDK exe reference, the muxer launch, eng/dotnet.ps1 argument forwarding. I checked the recalled claim that VSTest is the default runner under SDK 10: learn.microsoft.com/en-us/dotnet/core/tools/dotnet-test says 'VSTest … is the current default', so it holds."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "m3: the guard's substring match accepts OR-joined filters and prefix-matching values. m4: the sweep deletes live roots of concurrent runs across worktrees. Other-pid callbacks are handled by the pid filter, and a non-NTFS or unavailable cldflt is handled by the ERR-and-fail path."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "The deadline-and-kill protection is a per-Fact discipline and not a rig guarantee (M2's fix moves it into the rig). The confinement rule leaves the rig and provider reachable (M3). Both are invariants that hold only if later authors remember them."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none: the guard plus its negative Fact, the pid filter, the stdin-EOF exit and the sweep each answer a named failure (a default-run registration, indexer noise, a testhost crash leaving a dead root). The design uses two Facts, one provider mode, and changes no production code."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "M1: the DefaultTestFilter metadata is taken from a property that `--filter` overrides globally. This is confirmed in SDK source at https://source.dot.net/Microsoft.DotNet.Cli.Definitions/R/586182068e0a558c.html line 32. m7: a path bug in the muxer derivation, and a misleading error message for a missing muxer. Whether eng/dotnet.ps1 forwards arguments is deferred to build, as the design itself acknowledges."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "M2: the tree Fact has no kill-on-deadline path, so a hydration regression outside the guard hangs testhost. m8: an exception from Dispose masks the assertion failure. Provider ERR, a READY timeout and missing artifacts all fail loudly without Skip, which is correct."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "m1: the key decision to run the opt-in filter at validate pre-answers open question 1. The brief (an opt-in test against the shipped Scanner and SynchronousIoCancel on a real cf-filter folder) is otherwise met, and nothing contradicts an answered Q. Q-003 covers the SDK bootstrap. On the 'no new test framework or project' line, the design reads it as scoped to the rules-harness Fact, which is plausible. CfProvider is a helper Exe, not a test project."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "M3: the confinement rule is bypassable through SyncRootRig, through CfProvider.dll, through other cldapi APIs, or through an untraited class in the excepted file. m2: the provider-independence rule misses the HintPath reference pattern the source harness used. Rules use only alternation, \\b and literals, so they are compatible with both rules-parity.ps1 and harness.py."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "m5: the rig's deadline-kill branch and the sweep name predicate are never exercised, and the three-reruns teardown case has no owner. The guard does have its negative Fact."
+   },
+   {
+    "dimension": "security",
+    "result": "The sweep's strict regex under %TEMP% is the right bound. Directory.Delete(recursive) does not follow junctions. No elevation is required, and all four spikes recorded elevated=False. The one residual risk is that a concurrent live root can be unregistered (m4, filed under missing-edge-cases). No design citations were marked `cited` (the design says the fetched web results were unrelated), so no source needed contradicting."
+   }
+  ]
+ }
+}
