@@ -1,0 +1,141 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-062",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-09-27T16:46:11.204Z",
+ "head": "07481358c2d7ccba6c2a85f1c11e288d3a825a1b",
+ "run_id": 1640,
+ "summary": "Verdict: clean. The change is what the design and the accepted critique dispositions asked for. Commit 0748135 changes two tracked files against base 6c57f0c:\n- .taad/slices/SL-038/build-slice-2.json: a one-line change at line 108, O-030 \"done\": true to \"done\": false. Its how-text is untouched.\n- docs/design/SL-020-scanner.md: 11 lines added and 2 removed. The O-030 entry sits in the person-run network check at :230-238, and :260-261 was reworded.\n\nIt also adds tests/bugs/SL-062-LedgerCases.ps1, and commits the repro stage's tests/bugs/O-030-ledger-discharge.Tests.ps1 unchanged.\n\nWhat I ran:\n- The acceptance repro exits 0.\n- `SL-062-LedgerCases.ps1 -Case All` passes every check (C-002..C-005), exit 0.\n- Mutant 1, O-030 set back to done:true, restored by bytes with a matching hash afterwards. The repro exited 1, C-003 failed on numstat and on the one-line check, and C-004 failed on 'done is false'.\n- Mutant 2, the whole ledger rewritten CRLF→LF, done still false. The repro and C-003 both pass it. That is correct, not a gap: `git ls-files --eol` shows the ledger stored as LF in the index (i/lf) and checked out as CRLF only because the system gitconfig sets core.autocrlf=true. The rewrite is not a committed change. The builder's \"CRLF is kept\" describes the checkout, not the blob.\n- The default Core.Tests suite: 374/374 passed in 29 s (exit 0). This matters because the builder said no xUnit test reads the changed files, and that is wrong. RigLockScopeWordingTests walks every .md and .ps1 under docs/ and tests/, so it reads the edited SL-020-scanner.md and both new tests/bugs scripts. It passes, so there is no consequence.\n- Fitness: 59 rules hold.\n- Afterwards: the tree has only the engine's own SL-062 records changed, and no test host is left running.\n\nOther checks:\n- StalledShareTests.cs is the only test carrying Trait Network=SMB-LOOPBACK, so the recorded command in the O-030 entry selects exactly the one baseline test.\n- Commit 91c955d and O-008 still reading done:true in SL-038 build-slice-1.json confirm the builder's correction of the O-008 precedent (m2).\n- The engine's SL-059 merge commit touched only its own .taad/slices/SL-059/ directory. So C-005's commit-subject scan (`^SL-062[ :]`) should keep meaning \"this slice\" after the merge.\n- One build attempt, no send-backs, so this is not a loop.\n\nAssumption: the bug report was only a title, so I took the slice brief, which is SL-038 code-review-2 m1's fix text, as the report.\n\nResidual risk, all declared by the builder:\n- The engine's own obligation store is not in this tree and may still hold O-030 as done:true. A re-export of SL-038 would revert the hand-edit and turn the repro red.\n- Whether done:false in this file routes anything inside the engine cannot be shown from the worktree. M1's disposition allowed exactly that, and build filed it as an engine-side follow-up rather than claiming it.\n\nSecond round: Second round, read adversarially: one new minor finding. C-004's mirror detector in tests/bugs/SL-062-LedgerCases.ps1 recognises two of the three obligation-state shapes the engine writes into .taad records. There is no current consequence, because no SL-038 record carries O-030 in the missing shape today.\n\nThe miss, and how I confirmed it:\n- Surveying every `{\"key\":\"O-nnn\", ...}` object under .taad/slices gives three shapes. Build records use `done` (445), code reviews use `discharged` (908), and validate records use `verified` (183).\n- Find-O030 (line 154) and the assertions at lines 173-178 know only `done` and `discharged`.\n- I dropped a temporary `.taad/slices/SL-038/zz-sl062-review-probe.json` holding `{\"key\":\"O-030\",\"verified\":\"yes\"}` into the tree. `-Case C-004` printed 'every check held' and exited 0. The probe was then removed, and git status is back to only the engine's SL-062 records.\n- SL-038's validate-slice-4.json carries only O-038 (verified:'no'), not O-030, so the obligation's substance still holds today.\n\nProbed and holding:\n- **C-002 indexing:** `$before[0]` / `$after[0]` index into a function output that PowerShell unrolls to a single object. That works, and the builder's comma-drop mutant proves the comparison is not vacuous.\n- **Line endings in C-003:** C-003 splits `git show` lines and the working-tree lines the same way (`\\r?\\n`). A CRLF→LF-only rewrite passes it, which is correct: `git ls-files --eol` shows the ledger stored i/lf under core.autocrlf=true, so that rewrite is not a committed change. A BOM is caught.\n- **C-004 section slice:** it finds the first '*The person-run network check.*' and '*When that pass goes stale.*' and fails loudly if they are out of order. It collapses whitespace before matching, so re-wrapping the prose does not break it.\n- **C-005 paths:** `git log --no-merges --grep '^SL-062[ :]'` is anchored against SL-0620. Renames and deletions of guarded files land outside the allowlist or on the untouched check.\n- **git stderr:** the LF-replacement warnings git prints do not abort the script, including when the caller redirects stderr (run with 2>&1: exit 0).\n- **SL-038 layout:** SL-038 has no subdirectories, so the non-recursive Get-ChildItem misses nothing.\n- **Wrong host:** under Windows PowerShell 5.1 the script throws on `[Convert]::ToHexString` and `ConvertFrom-Json -Depth`, so it fails loudly rather than passing.\n\nThe first round's results stand: repro exit 0, all ledger cases pass, 374/374 default suite, Fitness holds.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "matches_design": true,
+  "summary": "Verdict: clean. The change is what the design and the accepted critique dispositions asked for. Commit 0748135 changes two tracked files against base 6c57f0c:\n- .taad/slices/SL-038/build-slice-2.json: a one-line change at line 108, O-030 \"done\": true to \"done\": false. Its how-text is untouched.\n- docs/design/SL-020-scanner.md: 11 lines added and 2 removed. The O-030 entry sits in the person-run network check at :230-238, and :260-261 was reworded.\n\nIt also adds tests/bugs/SL-062-LedgerCases.ps1, and commits the repro stage's tests/bugs/O-030-ledger-discharge.Tests.ps1 unchanged.\n\nWhat I ran:\n- The acceptance repro exits 0.\n- `SL-062-LedgerCases.ps1 -Case All` passes every check (C-002..C-005), exit 0.\n- Mutant 1, O-030 set back to done:true, restored by bytes with a matching hash afterwards. The repro exited 1, C-003 failed on numstat and on the one-line check, and C-004 failed on 'done is false'.\n- Mutant 2, the whole ledger rewritten CRLF→LF, done still false. The repro and C-003 both pass it. That is correct, not a gap: `git ls-files --eol` shows the ledger stored as LF in the index (i/lf) and checked out as CRLF only because the system gitconfig sets core.autocrlf=true. The rewrite is not a committed change. The builder's \"CRLF is kept\" describes the checkout, not the blob.\n- The default Core.Tests suite: 374/374 passed in 29 s (exit 0). This matters because the builder said no xUnit test reads the changed files, and that is wrong. RigLockScopeWordingTests walks every .md and .ps1 under docs/ and tests/, so it reads the edited SL-020-scanner.md and both new tests/bugs scripts. It passes, so there is no consequence.\n- Fitness: 59 rules hold.\n- Afterwards: the tree has only the engine's own SL-062 records changed, and no test host is left running.\n\nOther checks:\n- StalledShareTests.cs is the only test carrying Trait Network=SMB-LOOPBACK, so the recorded command in the O-030 entry selects exactly the one baseline test.\n- Commit 91c955d and O-008 still reading done:true in SL-038 build-slice-1.json confirm the builder's correction of the O-008 precedent (m2).\n- The engine's SL-059 merge commit touched only its own .taad/slices/SL-059/ directory. So C-005's commit-subject scan (`^SL-062[ :]`) should keep meaning \"this slice\" after the merge.\n- One build attempt, no send-backs, so this is not a loop.\n\nAssumption: the bug report was only a title, so I took the slice brief, which is SL-038 code-review-2 m1's fix text, as the report.\n\nResidual risk, all declared by the builder:\n- The engine's own obligation store is not in this tree and may still hold O-030 as done:true. A re-export of SL-038 would revert the hand-edit and turn the repro red.\n- Whether done:false in this file routes anything inside the engine cannot be shown from the worktree. M1's disposition allowed exactly that, and build filed it as an engine-side follow-up rather than claiming it.\n\nSecond round: Second round, read adversarially: one new minor finding. C-004's mirror detector in tests/bugs/SL-062-LedgerCases.ps1 recognises two of the three obligation-state shapes the engine writes into .taad records. There is no current consequence, because no SL-038 record carries O-030 in the missing shape today.\n\nThe miss, and how I confirmed it:\n- Surveying every `{\"key\":\"O-nnn\", ...}` object under .taad/slices gives three shapes. Build records use `done` (445), code reviews use `discharged` (908), and validate records use `verified` (183).\n- Find-O030 (line 154) and the assertions at lines 173-178 know only `done` and `discharged`.\n- I dropped a temporary `.taad/slices/SL-038/zz-sl062-review-probe.json` holding `{\"key\":\"O-030\",\"verified\":\"yes\"}` into the tree. `-Case C-004` printed 'every check held' and exited 0. The probe was then removed, and git status is back to only the engine's SL-062 records.\n- SL-038's validate-slice-4.json carries only O-038 (verified:'no'), not O-030, so the obligation's substance still holds today.\n\nProbed and holding:\n- **C-002 indexing:** `$before[0]` / `$after[0]` index into a function output that PowerShell unrolls to a single object. That works, and the builder's comma-drop mutant proves the comparison is not vacuous.\n- **Line endings in C-003:** C-003 splits `git show` lines and the working-tree lines the same way (`\\r?\\n`). A CRLF→LF-only rewrite passes it, which is correct: `git ls-files --eol` shows the ledger stored i/lf under core.autocrlf=true, so that rewrite is not a committed change. A BOM is caught.\n- **C-004 section slice:** it finds the first '*The person-run network check.*' and '*When that pass goes stale.*' and fails loudly if they are out of order. It collapses whitespace before matching, so re-wrapping the prose does not break it.\n- **C-005 paths:** `git log --no-merges --grep '^SL-062[ :]'` is anchored against SL-0620. Renames and deletions of guarded files land outside the allowlist or on the untouched check.\n- **git stderr:** the LF-replacement warnings git prints do not abort the script, including when the caller redirects stderr (run with 2>&1: exit 0).\n- **SL-038 layout:** SL-038 has no subdirectories, so the non-recursive Get-ChildItem misses nothing.\n- **Wrong host:** under Windows PowerShell 5.1 the script throws on `[Convert]::ToHexString` and `ConvertFrom-Json -Depth`, so it fails loudly rather than passing.\n\nThe first round's results stand: repro exit 0, all ledger cases pass, 374/374 default suite, Fitness holds.",
+  "findings": [
+   {
+    "id": "R2-m1",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "C-004 says 'Every copy of O-030's own state under .taad/slices/SL-038/ says it is not discharged', but its detector only recognises objects carrying `done` or `discharged`. The engine's validate-slice records hold obligation state as `{\"key\":\"O-nnn\",\"verified\":...}`: 183 such entries under .taad/slices. A validate-shaped O-030 copy saying verified:'yes' is neither found nor listed, and C-004 passes. So the design's mirror case (a second copy of O-030's state elsewhere) is only covered for two of the engine's three record shapes. There is no consequence today, because SL-038's validate records carry O-038, not O-030. The test's stated guarantee is still wider than what it checks.",
+    "evidence": "tests/bugs/SL-062-LedgerCases.ps1:154 (`$names -contains 'done' -or $names -contains 'discharged'`) and :173-178. SL-038/validate-slice-4.json payload.obligations = [{\"key\":\"O-038\",\"verified\":\"no\",...}]. I placed a temporary probe .taad/slices/SL-038/zz-sl062-review-probe.json containing {\"key\":\"O-030\",\"verified\":\"yes\"} in the tree; `-Case C-004` printed 'every check held' and exited 0. The probe was removed afterwards.",
+    "fix": "At line 154, also accept `$names -contains 'verified'`. After line 178, add the matching assertion: `if ($node.PSObject.Properties.Name -contains 'verified') { Check (-not ($node.verified -eq $true -or [string]$node.verified -eq 'yes')) \"$($copy.File): O-030 verified is not yes (it is $(Show $node.verified))\" }`. Update the C-004 header comment to name all three shapes."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "I ran `pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/O-030-ledger-discharge.Tests.ps1` and it exited 0 ('OK: O-030 is correctly recorded as owed to the person, not discharged.'). The flip is at .taad/slices/SL-038/build-slice-2.json:108. The formal discharge still belongs to validate."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "C-001 is the unmodified repro. At base 6c57f0c the engine measured exit 1. My own mutant, O-030 set back to done:true and restored by bytes with a matching hash, gave exit 1 again. The current tree gives exit 0."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "tests/bugs/SL-062-LedgerCases.ps1:107-118 (C-002) parses O-030 from `git show 6c57f0c:<ledger>` and from the working tree, and checks the how-text ordinal-equal plus both phrases. It passed 6/6. `git diff 6c57f0c HEAD` shows only the done line changed, so the how-text is byte-identical."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "C-003 (:122-144) passes, and `git diff --stat 6c57f0c HEAD` shows build-slice-2.json | 2 +-. On my done:true mutant, C-003 failed on both numstat and the one-line check. A CRLF→LF-only rewrite passes C-003, but the file is stored i/lf under core.autocrlf=true, so that rewrite is not a committed change."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "C-004 (:148-197) walks every JSON under .taad/slices/SL-038 for key=O-030 objects that carry a done or discharged field. It finds build-slice-2.json (False) and code-review-2.json ('no'). My grep agrees that index.json holds O-030 only in a revoke list and validate-slice-4.json holds it only in prose. The engine's DB copy is outside the tree and is declared as a gap."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "C-005 (:201-231) passes. `git diff --stat 6c57f0c HEAD` lists no file under src/, and neither StalledShareTests.cs nor Rig/SmbRig.cs. The repro's LF-normalised hash matches the pinned value."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "The disposition allowed build to report the gap instead of proving routing. The build record says the engine store is outside the worktree, claims no routing, and files an engine-side follow-up (SL-062 index.json open items, lines 33 and 41). The human-facing route, docs/design/SL-020-scanner.md:230-238, now carries O-030."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "docs/design/SL-020-scanner.md:230-238 adds '*O-030, owed to the person.*' inside 'The person-run network check' (:225-229, the N-001..N-004 record). It gives the full command on one line, 'about 70 s', and 'next to N-001 to N-004'."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "SL-020-scanner.md:233-235 says 'this record is where O-030 is discharged' and that SL-038's own build record keeps done:false 'and is never set true'. That is consistent with the permanent repro. The stale contract line remains in design-slice-1.json and is declared."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "The tracked diff touches only build-slice-2.json under .taad/slices/SL-038. C-004 lists the other slices' O-030 files (SL-024, SL-044, SL-047, SL-056) without judging them, and C-005 enforces the allowlist. I confirmed both in my run."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "SL-020-scanner.md:235-237 says spike#55's run 'broke \"No stage runs it\" above and does not discharge O-030'. The brief/stack conflict and the mechanical-guard follow-up are in SL-062 index.json open items (lines 37, 45). One part rests on the builder alone: I did not re-run its read-only Get-SmbMapping count of 0 loopback mappings, because reading network state is outside what I may touch. The rig's own sweep removes leftover rig mappings in any case (SL-020-scanner.md:271-274)."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "SL-020-scanner.md:235-238 cites the spike: HEAD 6c57f0c, 1 of 1 passed in 66.2 s, not a discharge. :260-261 was reworded to 'No person has run StalledShareTests on the extracted rig (the one agent run ... does not count)'."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "`git log -S '\"O-008\"' -- .taad/slices/SL-038` returns 91c955d, and SL-038 build-slice-1.json still has O-008 done:true (around line 112). So the builder's correction holds: the precedent was not a hand-edit. The deviation is recorded."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "The restated rationale is in the build record deviations (SL-062 index.json:77). The edit itself was a single-line text change, not a round-trip: the diff is one line."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "`git diff --stat 6c57f0c HEAD` gives build-slice-2.json 2 +- (1/1) and SL-020-scanner.md 13 (11/2). The other files are the new tests/bugs scripts and the engine's own SL-062 records, all admitted by C-005's allowlist."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "tests/bugs/O-030-ledger-discharge.Tests.ps1 reads the real ledger's O-030. At base it was done:true beside how-text containing 'NEVER run' and 'remains owed to the person', and the repro exited 1 (the engine's run, and my own restored mutant). It exits 0 on the fixed tree."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "SL-062-LedgerCases.ps1 C-002 compares O-030's how-text at 6c57f0c with the edited working tree, ordinal, and checks both phrases and the {key,done,how} shape. The builder's comma-drop mutant failed it. C-003's line comparison covers raw bytes that the JSON decode would hide."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "C-003 checks numstat against 6c57f0c, BOM, a single line-ending style, the line count, and exactly one differing line, which must be the line after '\"key\": \"O-030\",' going from true to false. It fails on my done:true mutant. A pure CRLF→LF rewrite passes, correctly, because the blob is stored LF (i/lf) and the rewrite is no committed change."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "C-004 walks every JSON under .taad/slices/SL-038 for key=O-030 with done or discharged, and asserts on the actual second copy in the tree, code-review-2.json (discharged:'no'). By its recursion it would flag a done:true copy in any SL-038 JSON, including index.json. The one second copy it cannot reach is the engine's DB store, which is outside the tree. That limit is declared, and M1's disposition allows it."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "C-005 gathers the slice's paths from its SL-062 commits and the uncommitted tree, and requires them to be on the allowlist, StalledShareTests.cs and SmbRig.cs to be absent, and the repro hash to match. The builder's SmbRig.cs CRLF-append mutant failed it. `git diff --stat 6c57f0c HEAD` confirms that no code path was touched."
+   }
+  ],
+  "drift": [
+   "No undeclared departure found. All seven of the build's declared deviations match the tree. These are: no hand-off file in .taad/slices/SL-062/, the dropped 'later slice sets done:true', the mirror search scoped to SL-038, the O-008 precedent corrected, the m3 rationale restated, the reword at SL-020-scanner.md:260-261, and the new SL-062-LedgerCases.ps1. One thing for the next reader: design-slice-1.json still carries the superseded contract line ('O-030 can then be set done:true ... in a later slice') and the O-008 auth_model. What governs now is docs/design/SL-020-scanner.md:230-238.",
+   "The build record says nothing in the xUnit tests reads either changed file. That is not true. tests/FsAnalyser.Core.Tests/RigLockScopeWordingTests.cs:42-57 reads every .md and .ps1 under docs/ and tests/, which covers the edited SL-020-scanner.md and both tests/bugs scripts. The claim was used to skip the default suite. I ran it: 374/374 pass, so there is no consequence here, but a later docs-only slice should not reuse the same reasoning."
+  ],
+  "unreviewed": [
+   ".taad/slices/SL-062/critique-1.json, critique-review-1.json, design-slice-1.json, build-slice-1.json: the engine's own stage records, not builder code. They were not opened, following the index-first rule. The design and critique content was supplied in the brief."
+  ],
+  "second_round": {
+   "run_id": 1641,
+   "filed": 1
+  }
+ }
+}

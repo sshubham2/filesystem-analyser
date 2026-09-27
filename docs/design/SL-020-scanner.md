@@ -227,6 +227,15 @@ so it becomes `\` again.
       carries the HEAD it ran at, pass or fail for N-001 to N-004 and StalledShareTests, and N-001's
       measured Cancel-to-return. No stage runs it. A stage that finds no record, or a stale one, reports
       it as owed to a person once and does not retry.
+      - *O-030, owed to the person.* The StalledShareTests half of this check is SL-038's O-030, run from
+        the repository root in about 70 s:
+        `eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter Network=SMB-LOOPBACK`.
+        Its result goes in this record, next to N-001 to N-004, and this record is where O-030 is
+        discharged. SL-038's own build record keeps O-030 at `"done": false` as history (corrected by
+        SL-062) and is never set true. One agent run exists: SL-062's risk spike ran the command at HEAD
+        6c57f0c, and 1 of 1 passed in 66.2 s. That run broke "No stage runs it" above and does not
+        discharge O-030. It shows only that the filter, the trait and the SDK bootstrap work, so a failure
+        in the person's run points at the rig, not at setup.
     - *When that pass goes stale.* Any change, between the HEAD the pass ran at and the HEAD being
       judged, to any of these paths makes it stale, whatever the change is. Nobody has to judge whether
       a change is "only a comment": `git diff --name-only <pass HEAD> <HEAD> -- <paths>` decides.
@@ -248,8 +257,8 @@ so it becomes `\` again.
       builder does not commit. SL-059 renamed the constant to `RigLock.SessionName`, with the mutex name
       unchanged, so SmbRig.cs is no longer that blob and the exemption no longer covers it; the pass was
       already stale by then through `src/FsAnalyser.Core/Scanning/**` and WindowCases.ps1.
-      StalledShareTests has never passed on the extracted rig, so the record is incomplete until a
-      person runs it.
+      No person has run StalledShareTests on the extracted rig (the one agent run, under O-030 above,
+      does not count), so the record is incomplete until a person runs it.
     - *The rig* (`tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs`, also built as `tests/window/StallRig`)
       serialises runs with one mutex per sign-in session, because the SMB client allows one port per
       server name: a second run waits for the first, or fails saying so. Runs from different sign-in
