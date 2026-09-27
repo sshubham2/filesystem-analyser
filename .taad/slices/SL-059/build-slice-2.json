@@ -1,0 +1,65 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-059",
+ "stage": "build-slice",
+ "attempt": 2,
+ "at": "2026-09-27T15:17:21.324Z",
+ "head": "0ca9f0c6efd4de64926ea3c2fc6a22a910f5e075",
+ "run_id": 1597,
+ "summary": "Fixed O-007 in tests/FsAnalyser.Core.Tests/WindowScriptParseTests.cs. A new Fact, WindowCasesIsAscii, fails if tests/window/WindowCases.ps1 starts with a UTF-8 BOM or holds any byte >= 0x80. The failure message names the byte, its offset and its line. The class summary was rewritten and no longer makes the false claim. It now says the parse check covers code and string literals, the byte check covers comments (which 5.1 parses without error even with non-ASCII in them), and the ASCII rule comes from SL-059's design (\"write ASCII only\"), not WindowCases.ps1:956. I tested it by mutation: I put an em dash in the line-1333 comment, and both parse cases still passed while the new Fact failed with 'byte 0xE2 at offset 73286 (line 1333)'. A BOM added to the file is also caught. The file was restored byte-identical, and the full default suite passes 374/374.",
+ "payload": {
+  "status": "complete",
+  "summary": "Fixed O-007 in tests/FsAnalyser.Core.Tests/WindowScriptParseTests.cs. A new Fact, WindowCasesIsAscii, fails if tests/window/WindowCases.ps1 starts with a UTF-8 BOM or holds any byte >= 0x80. The failure message names the byte, its offset and its line. The class summary was rewritten and no longer makes the false claim. It now says the parse check covers code and string literals, the byte check covers comments (which 5.1 parses without error even with non-ASCII in them), and the ASCII rule comes from SL-059's design (\"write ASCII only\"), not WindowCases.ps1:956. I tested it by mutation: I put an em dash in the line-1333 comment, and both parse cases still passed while the new Fact failed with 'byte 0xE2 at offset 73286 (line 1333)'. A BOM added to the file is also caught. The file was restored byte-identical, and the full default suite passes 374/374.",
+  "files": [
+   {
+    "path": "tests/FsAnalyser.Core.Tests/WindowScriptParseTests.cs",
+    "change": "modified",
+    "why": "O-007: added Fact WindowCasesIsAscii (no UTF-8 BOM, no byte >= 0x80, offset and line named on failure). The summary now says which check covers what: parse check for code and string literals, byte check for comments. It cites the design's 'write ASCII only' instead of WindowCases.ps1:956, and drops the 'dropped BOM' / 'comment can break 5.1' claim."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-007",
+    "done": true,
+    "how": "Added WindowScriptParseTests.WindowCasesIsAscii to the same class. It asserts that WindowCases.ps1 does not start with EF BB BF and has no byte >= 0x80, and on failure reports the byte, offset and line. I rewrote the summary as decided: parse covers string literals, bytes cover comments, and the source is the design's 'write ASCII only' (not line 956). Mutation checks: with an em dash in the 1333 comment, both parse cases still passed and only the new Fact failed ('byte 0xE2 at offset 73286 (line 1333)'); rewriting the file with a UTF-8 BOM failed it with the BOM message. The file was restored byte-identical (hash checked)."
+   },
+   {
+    "key": "O-006",
+    "done": false,
+    "how": "Owed to validate-slice, not build-slice, and still not measurable here. It needs a second sign-in session to check whether one session's SMB mappings are visible from another, and spike 1 showed this agent cannot create one. Unchanged from attempt 1."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-002",
+    "test_name": "FsAnalyser.Core.Tests.WindowScriptParseTests",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.WindowScriptParseTests\""
+   }
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.WindowScriptParseTests\" --logger \"console;verbosity=normal\"",
+    "outcome": "passed",
+    "note": "3/3: WindowCasesParses (pwsh.exe Core, powershell.exe Desktop) and WindowCasesIsAscii. No build warnings."
+   },
+   {
+    "command": "(mutation 1) WindowCases.ps1 line 1333 comment with an em dash (U+2014), saved UTF-8 without BOM, then the same filter with --no-build",
+    "outcome": "failed",
+    "note": "Failed as intended, and it confirms the review's finding. Both parse cases, including 5.1, still PASSED. Only WindowCasesIsAscii failed: 'tests/window/WindowCases.ps1 has byte 0xE2 at offset 73286 (line 1333)'."
+   },
+   {
+    "command": "(mutation 2) WindowCases.ps1's unchanged ASCII text rewritten with a UTF-8 BOM, then the same filter with --no-build",
+    "outcome": "failed",
+    "note": "Failed as intended: both parse cases passed and WindowCasesIsAscii failed with 'starts with a UTF-8 byte-order mark'. The file was restored from backup and the hash matched the original; the scratch folder was deleted."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx",
+    "outcome": "passed",
+    "note": "Full default suite: 374 passed (373 before, plus the new Fact), 0 failed, 0 skipped, 23 s."
+   }
+  ],
+  "follow_ups": [
+   "The rest of attempt 1's follow-ups still stand and are unchanged: the engine's architecture_rules append omits including_comments; O-006 needs a person with a second sign-in session; the person-run -IncludeNetwork pass is stale; and several 'this machine's SMB mappings' comments await O-006."
+  ]
+ }
+}

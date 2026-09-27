@@ -5,11 +5,12 @@ namespace FsAnalyser.Core.Tests;
 /// <summary>
 /// tests/window/WindowCases.ps1 is read the same by Windows PowerShell 5.1 and by pwsh 7 (SL-059). The window cases
 /// run under pwsh, but tests/window/HookCases.ps1 loads WindowCases.ps1 through the parser of whichever PowerShell
-/// runs it, and 5.1 reads a file with no byte-order mark in the ANSI code page, where 7 reads UTF-8. The two checks
-/// cover different places. The parse check covers code and string literals: a curly quote or dash inside a
-/// double-quoted string gave 5.1 two parse errors (SL-059 review). It cannot cover comments: the same characters
-/// in a comment gave 5.1 no error, so the byte check does. The file stays ASCII, with no BOM, as SL-059's
-/// design asked of every edit to it ("write ASCII only"), and then both editions read the same text.
+/// runs it, and 5.1 reads a file with no byte-order mark in the ANSI code page, where 7 reads UTF-8. The parse check
+/// catches only non-ASCII that 5.1 decodes into a quote character: a curly quote or dash inside a double-quoted
+/// string gave 5.1 two parse errors (SL-059 review), but an e with an acute accent in the same place gave none, and
+/// a curly quote or dash in a comment gave none either. WindowCasesIsAscii guards every byte: the file stays ASCII,
+/// with no BOM, as SL-059's design asked of every edit to it ("write ASCII only"), and then both editions read the
+/// same text.
 /// Each PowerShell parses the file itself, reading it as it reads a script it runs, and names its own edition, so
 /// the parse check cannot pass on the wrong host.
 /// </summary>
