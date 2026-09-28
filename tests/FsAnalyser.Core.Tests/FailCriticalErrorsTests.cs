@@ -17,6 +17,7 @@
  * so the mode read there is the one the open ran under.
  */
 using System.Collections.Concurrent;
+using System.Text.RegularExpressions;
 using FsAnalyser.Core.Native;
 using FsAnalyser.Core.Scanning;
 using Microsoft.Win32.SafeHandles;
@@ -472,6 +473,46 @@ public class FailCriticalErrorsTests
         }
 
         Assert.Equal([Kernel32.SEM_FAILCRITICALERRORS, Kernel32.SEM_FAILCRITICALERRORS, Kernel32.SEM_FAILCRITICALERRORS, NoGpFaultErrorBox], modes);
+    }
+
+    /// <summary>
+    /// Kernel32.cs is excepted from ArchitectureRulesTests.PathOpensGoOnlyThroughTheGuardedOpen, and the compiler does not
+    /// hold it: any member of Kernel32 can call its private CreateFileW or GetDiskFreeSpaceEx with no scope (SL-077's
+    /// second review, m1). So its path calls are counted here with the rule's two patterns, over its code lines, comments
+    /// aside: the CreateFile wrapper, which refuses a scope that is not armed; CreateFileW declared and called once, in that
+    /// wrapper; GetDiskFreeSpaceEx declared, named by its entry point and called once, in TryGetVolumeUsed inside the scope.
+    /// Any other path call or path import there changes the count, and fails here until somebody has put it inside a
+    /// CriticalErrorBoxOff and written it into this list.
+    /// </summary>
+    [Fact]
+    public void Kernel32MakesOnlyThePathCallsThatRunInsideTheScope()
+    {
+        const string names = @"(CreateFile[AW2]?|OpenFileById|(Nt|Zw)(Create|Open)File|(Nt|Zw)Query(Full)?AttributesFile|FindFirstFile(Ex)?[AW]?|GetFileAttributes(Ex)?[AW]?|GetVolumeInformation[AW]?|GetDiskFreeSpace(Ex)?[AW]?)";
+        Regex[] patterns = [new($@"\b{names}\s*\("), new($@"""{names}""")];
+
+        var found = new List<(string Name, string Line)>();
+        foreach (string line in File.ReadAllLines(Path.Combine(FindRepo(), @"src\FsAnalyser.Core\Native\Kernel32.cs")))
+        {
+            if (line.TrimStart().StartsWith("//", StringComparison.Ordinal))
+                continue;
+            foreach (Regex pattern in patterns)
+                found.AddRange(pattern.Matches(line).Select(m => (m.Groups[1].Value, line.Trim())));
+        }
+
+        string[] read = ["CreateFile", "CreateFileW", "CreateFileW", "GetDiskFreeSpaceEx", "GetDiskFreeSpaceEx", "GetDiskFreeSpaceExW"];
+        Assert.True(found.Select(f => f.Name).Order(StringComparer.Ordinal).SequenceEqual(read),
+            "Kernel32.cs makes path calls other than the ones read for SL-077 (" + string.Join(", ", read) + "). Put each new one " +
+            "inside a CriticalErrorBoxOff, then add it to this list:\n" + string.Join("\n", found.Select(f => $"{f.Name}: {f.Line}")));
+    }
+
+    private static string FindRepo()
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "FsAnalyser.slnx")))
+                return dir.FullName;
+        }
+        throw new InvalidOperationException($"No FsAnalyser.slnx above {AppContext.BaseDirectory}.");
     }
 
     private static char FreeDriveLetter()

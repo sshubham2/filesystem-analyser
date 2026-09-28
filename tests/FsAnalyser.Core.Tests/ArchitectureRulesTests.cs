@@ -158,16 +158,22 @@ public class ArchitectureRulesTests
     /// <summary>
     /// Every path Core opens is opened in SynchronousIoCancel.Open, inside the critical-error scope (SL-077). A path
     /// call made anywhere else runs with the thread's error mode as it found it, and on a removable drive with no media
-    /// raises the "insert a disk" box and holds the scan. Kernel32.CreateFile takes the scope as an argument, so the
-    /// compiler holds the two excepted files; this holds every other one, a new Native file with its own import included
-    /// (review m2). Comments are matched too.
+    /// raises the "insert a disk" box and holds the scan. The first pattern is a call by the Win32 name, ANSI forms
+    /// included; the second is that name as a string, which is how an import that renames the call (EntryPoint =
+    /// "CreateFileW" on a method of another name) or a NativeLibrary.GetExport lookup names it (review m2, R2-m2). Of the
+    /// two excepted files, the compiler holds SynchronousIoCancel.cs: its only path call is Kernel32.CreateFile, which
+    /// takes the scope as an argument. It does not hold Kernel32.cs, whose own members can call its private CreateFileW
+    /// and GetDiskFreeSpaceEx with no scope: review holds that one, and FailCriticalErrorsTests counts its path calls
+    /// (Kernel32MakesOnlyThePathCallsThatRunInsideTheScope). This holds every other file, a new Native file with its own
+    /// import included. Comments are matched too.
     /// </summary>
     [Fact]
     public void PathOpensGoOnlyThroughTheGuardedOpen()
     {
         AssertNoMatch(Files(@"src\FsAnalyser.Core", "*.cs")
                 .Except([@"src\FsAnalyser.Core\Native\Kernel32.cs", @"src\FsAnalyser.Core\Scanning\SynchronousIoCancel.cs"]),
-            @"\b(CreateFile(W|2)?|OpenFileById|NtCreateFile|NtOpenFile|ZwCreateFile|ZwOpenFile|FindFirstFile(Ex)?W?|GetFileAttributes(Ex)?W?|GetVolumeInformationW?|GetDiskFreeSpace(Ex)?W?)\s*\(");
+            @"\b(CreateFile[AW2]?|OpenFileById|(Nt|Zw)(Create|Open)File|(Nt|Zw)Query(Full)?AttributesFile|FindFirstFile(Ex)?[AW]?|GetFileAttributes(Ex)?[AW]?|GetVolumeInformation[AW]?|GetDiskFreeSpace(Ex)?[AW]?)\s*\(",
+            @"""(CreateFile[AW2]?|OpenFileById|(Nt|Zw)(Create|Open)File|(Nt|Zw)Query(Full)?AttributesFile|FindFirstFile(Ex)?[AW]?|GetFileAttributes(Ex)?[AW]?|GetVolumeInformation[AW]?|GetDiskFreeSpace(Ex)?[AW]?)""");
     }
 
     private static IEnumerable<string> Files(string folder, params string[] patterns) =>
