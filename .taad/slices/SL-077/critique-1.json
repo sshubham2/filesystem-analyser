@@ -1,0 +1,131 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-077",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-09-28T16:14:32.517Z",
+ "head": "14acea3b66f681b23401dcbbb3511d7955f2cd0d",
+ "run_id": 1997,
+ "summary": "The fix itself is sound: a thread-scoped SetThreadErrorMode scope placed outermost in SynchronousIoCancel.Open covers the root open, subfolder opens and SizeProbe's open on any worker thread. The AfterCall sample point at :367 sits inside Open, so the repro Fact should turn green. Nothing blocks the slice. The defects are in what keeps the fix true after this slice ships, and the design's own prior art shows this is where the pattern fails.\n\n(1) A struct scope whose default is a silent no-op is the exact shape the .NET BCL got wrong twice: corefx#35045 in 2019, and dotnet/runtime#126544 in April 2026, which replaced an 'ineffective use of default(DisableMediaInsertionPrompt)'. The design's TryGetVolumeUsed refactor has no test that could fail if the scope there is not armed.\n\n(2) The funnel invariant is enforced everywhere except inside the two files the rule exempts. The second CreateFile route (TryOpenKeepingLastAccess, :388) lies outside Open's body, and the design leaves 'reached only from Open' for build to remember.\n\n(3) The new twinned rule's deliverables are not listed: the ArchitectureRulesTests Fact, the plants.json row that SL-075 added for every twinned rule, and the RuleCases.ps1 literal counts from SL-069. This is the machinery that cost SL-075 a second build attempt.\n\nMinor findings: the rejection of a process-wide startup call rests on two premises that do not apply to the set-once form Microsoft recommends. The rule's regex is narrow (it misses CreateFile2 and NtOpenFile). The pooled-thread leak Fact is nondeterministic and guards a harmless failure direction. The per-open cost question has no measurement attached.\n\nPrior art checked:\n- DisableMediaInsertionPrompt shape and SetThreadErrorMode use: supported (corefx ac3d3ba, runtime#21693).\n- Microsoft's 'best practice' line: supported (learn.microsoft.com SetThreadErrorMode page).\n- SO 29059399: supported.\n- DriveInfo is BCL-guarded: supported by ac3d3ba modifying DriveInfo.Windows.cs.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The fix itself is sound: a thread-scoped SetThreadErrorMode scope placed outermost in SynchronousIoCancel.Open covers the root open, subfolder opens and SizeProbe's open on any worker thread. The AfterCall sample point at :367 sits inside Open, so the repro Fact should turn green. Nothing blocks the slice. The defects are in what keeps the fix true after this slice ships, and the design's own prior art shows this is where the pattern fails.\n\n(1) A struct scope whose default is a silent no-op is the exact shape the .NET BCL got wrong twice: corefx#35045 in 2019, and dotnet/runtime#126544 in April 2026, which replaced an 'ineffective use of default(DisableMediaInsertionPrompt)'. The design's TryGetVolumeUsed refactor has no test that could fail if the scope there is not armed.\n\n(2) The funnel invariant is enforced everywhere except inside the two files the rule exempts. The second CreateFile route (TryOpenKeepingLastAccess, :388) lies outside Open's body, and the design leaves 'reached only from Open' for build to remember.\n\n(3) The new twinned rule's deliverables are not listed: the ArchitectureRulesTests Fact, the plants.json row that SL-075 added for every twinned rule, and the RuleCases.ps1 literal counts from SL-069. This is the machinery that cost SL-075 a second build attempt.\n\nMinor findings: the rejection of a process-wide startup call rests on two premises that do not apply to the set-once form Microsoft recommends. The rule's regex is narrow (it misses CreateFile2 and NtOpenFile). The pooled-thread leak Fact is nondeterministic and guards a harmless failure direction. The per-open cost question has no measurement attached.\n\nPrior art checked:\n- DisableMediaInsertionPrompt shape and SetThreadErrorMode use: supported (corefx ac3d3ba, runtime#21693).\n- Microsoft's 'best practice' line: supported (learn.microsoft.com SetThreadErrorMode page).\n- SO 29059399: supported.\n- DriveInfo is BCL-guarded: supported by ac3d3ba modifying DriveInfo.Windows.cs.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "test-coverage",
+    "claim": "The design makes the scope a struct where 'default(...).Dispose() is a no-op'. So `using (default(Kernel32.CriticalErrorBoxOff))` and `using (new Kernel32.CriticalErrorBoxOff())` both compile and silently set nothing. The Open site is protected by the repro Fact, which samples the mode inside Open. The TryGetVolumeUsed refactor is not: the design says 'The bit inside GetDiskFreeSpaceEx cannot be hooked, so the test checks result equality and the restore', and both of those pass unchanged with an unarmed scope. The refactor could therefore quietly delete the SL-043 m2 fix, and every Fact would stay green. This is not hypothetical, because the design's own prior art made this mistake twice. corefx PR #35045 fixed issue #35037, and its author wrote: 'If it was a class, I would make a private parameterless constructor to prevent this mistake.' dotnet/runtime PR #126544 (2026-04-04) 'Replaced ineffective use of `default(DisableMediaInsertionPrompt)`, with `DisableMediaInsertionPrompt.Create()`.'",
+    "evidence": "Design contract 'Kernel32.TurnOffCriticalErrorBox() -> Kernel32.CriticalErrorBoxOff': 'default(scope).Dispose() is a no-op'. Case 'TryGetVolumeUsed after moving onto the shared scope': 'the test checks result equality and the restore'. https://github.com/dotnet/corefx/pull/35045 ; https://github.com/dotnet/runtime/pull/126544",
+    "fix": "Make an unarmed scope impossible to write. Add a must_not_match rule over src/FsAnalyser.Core/**/*.cs for `\\bnew\\s+(Kernel32\\.)?CriticalErrorBoxOff\\s*\\(` and `\\bdefault\\s*\\(\\s*(Kernel32\\.)?CriticalErrorBoxOff\\s*\\)`, so that only the factory can create one. As an alternative or in addition, give TryGetVolumeUsed the same kind of test-only hook as AfterCall, invoked inside the scope, so a Fact can read 0x1 there and the refactor becomes testable."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "under-engineering",
+    "claim": "The central invariant is 'every CreateFile runs inside the scope'. It is enforced only outside the two files where CreateFile actually lives. except_files exempts all of SynchronousIoCancel.cs and Kernel32.cs. The second route, TryOpenKeepingLastAccess (the CreateFile at :388), sits outside Open's body (347-382). The design handles it with 'Build must confirm TryOpenKeepingLastAccess is reached only from Open. If another caller reaches it, that caller needs the scope too.' That rule depends on every later caller remembering it. Two kinds of change would pass every check and reintroduce the box: a new helper in SynchronousIoCancel.cs that calls CreateFile or TryOpenKeepingLastAccess, and a new Kernel32 convenience method that opens a path. The repro Fact samples only root and SizeProbe opens through :367.",
+    "evidence": "architecture_rules[0].except_files: ['src/FsAnalyser.Core/Native/Kernel32.cs', 'src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs']. key_decisions: 'Build must confirm TryOpenKeepingLastAccess is reached only from Open.' Survey: 'Open calls Kernel32.CreateFile at line 363, and at line 388 through TryOpenKeepingLastAccess'.",
+    "fix": "Move the invariant into the seam. Make the CreateFile P/Invoke private in Kernel32 and expose one internal wrapper that takes `in CriticalErrorBoxOff` as a required argument, as a proof-of-scope token. Then no CreateFile call in any file compiles without an armed scope in hand, given M1's ban on default and new. Keep the `using` in Open, where AfterCall can observe it, and pass the scope down to both routes. The except_files entry for SynchronousIoCancel.cs is then no longer load-bearing."
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "contract-gaps",
+    "claim": "The new twinned rule is the only cross-cutting machinery this slice adds, and the design does not say which files it touches. Its lives_at reads 'the project's existing architecture rules registry and ArchitectureRulesTests (paths not inspected here)'. whats_new lists only 'with its registry twin'. It leaves out three things. (a) SL-075's last commit (72e8dd4) added plant rows to eng/rules-harness/plants.json for every new twinned rule, and SL-075 records that the harness treats an unlisted Fitness hit as STRAY-HIT. (b) SL-069's CONDITIONAL found literal -ExpectFacts 11/12 and `$Twinned = 15` in RuleCases.ps1 that flip on the first added twin. The design says only that they 'must be derived', without saying whether that is already true or is this slice's edit. (c) SL-075 recorded the harness preconditions: --dotnet-from or a .dotnet/ holding SDK 10, --engine-root pointing at the taad_v3 backend, and the engine venv python. SL-075 needed a second build attempt on exactly this machinery.",
+    "evidence": "Component 'Rule: path opens go through SynchronousIoCancel.Open' lives_at. SL-075 commits 72e8dd4 and 0222c9b ('build attempt 2... the uat merge had broken three of this slice's rows'). SL-069 CONDITIONAL on RuleCases.ps1:243 and :369-370. SL-075 CONDITIONAL on --dotnet-from and --engine-root.",
+    "fix": "List the full file set in whats_new: the .taad/fitness.yaml entry (already modified in the tree), one ArchitectureRulesTests Fact, one plants.json row planting e.g. `Kernel32.CreateFile(` in a Scanning file, and, if RuleCases.ps1 still holds literals, the derivation edit. Carry the harness invocation from SL-075 into the build instructions."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "The design rejects any process-wide call on two grounds, neither of which applies to the form Microsoft recommends. 'Save and restore of the process-wide mode races' is true only of save and restore; a single set at startup with no restore does not race. 'It would also need interop in the App project, which has none' is false, because Core's Kernel32 can expose the call and App can invoke it with no interop of its own. Microsoft's current text on the SetThreadErrorMode page reads: 'Best practice is that all applications call the process-wide SetErrorMode function with a parameter of SEM_FAILCRITICALERRORS at startup.' A startup call would also close the design's own open question (handle-based calls after media removal) and any path API the narrow regex misses. The one valid objection is that testhost cannot observe it (process mode already 0x8003). That is a reason not to rely on it alone, not a reason to reject it.",
+    "evidence": "key_decisions: 'Thread-scoped SetThreadErrorMode only. No process-wide SetErrorMode, and no App-startup call.' https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-setthreaderrormode",
+    "fix": "Restate the rejection on its real grounds: untestable in testhost, and inherited by child processes. Or record the one-line startup call as the answer to the open question on handle-based calls. The per-call scope stays either way, because it is the testable guarantee."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "The rule's pattern `\\bCreateFileW?\\s*\\(` does not match CreateFile2(, OpenFileById(, NtCreateFile(, NtOpenFile(, FindFirstFileExW(, GetFileAttributesExW( or GetVolumeInformationW(. All of these take a path or a volume and can raise the same hard error. SL-045 explicitly warned that 'If the scanner's open route ever moves to [NtOpenFile]...'. A new Native/Ntdll.cs would satisfy InteropLivesOnlyInNative and this rule at the same time. The pattern is also a raw-text regex, so a doc comment such as '/// CreateFileW(FILE_READ_ATTRIBUTES...)' in SizeProbe.cs or DirectoryReader.cs would fire.",
+    "evidence": "architecture_rules[0].must_not_match. SL-045 CONDITIONAL on the NtOpenFile route.",
+    "fix": "Widen the alternation to the path-taking entry points named above, keeping the Kernel32.cs exception. Run the rule against the current tree before the Fact is twinned, so that comment hits are fixed by rewording the comment, not by loosening the pattern."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "The pooled-thread 'no leak' Fact depends on a reused pool thread reading its baseline. xUnit cannot choose which pool thread runs next, so the Fact is nondeterministic. It also guards the harmless direction: a leaked 0x1 only suppresses more boxes, which this app always wants. The imported must-verify precondition ('restores on every exit path, nested LIFO') matters little if it fails. The failure that does matter is an unarmed scope (M1), which neither the must-verify nor any restore Fact covers.",
+    "evidence": "cases: 'no leak onto pooled threads ... then a reused pool thread reads its baseline'. cross_domain_transfer.invariants[2] status must-verify.",
+    "fix": "Drop the reuse-dependent Fact. Keep the deterministic restore Facts (presets 0x0, 0x2 and 0x1 on the test thread, and failed and cancelled exits). If worker-thread restore must be shown, run Probe on a dedicated `new Thread` and read the mode on that thread after Probe returns."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "The 'second CreateFile route' case gives no way to force TryOpenKeepingLastAccess rather than the direct call at :363. It also gives no way to observe the mode inside that route: the only AfterCall in Open is at :367, and it may run after either route. As written, the Fact passes whichever route runs and proves nothing about the route it is named for.",
+    "evidence": "cases: 'open through the last-access-preserving route ... the second CreateFile at :388'. Survey AfterCall sites :107, :219, :244, :367.",
+    "fix": "Name the condition that selects each route (for example, whether FILE_WRITE_ATTRIBUTES is granted on the folder) and build one fixture for each. Or make the case redundant with M2's scope token, which makes an unscoped route uncompilable."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "claim": "The design says ERROR_NOT_READY (21) goes into 'Open's existing failure path' and matches pressing Cancel on the box, but that is recalled, not read. The counting constraints and SL-043 name only codes 5, 363 and 1920. If the root-open failure branch switches on known codes and throws for others, the fix turns a dismissable box into whatever that default branch does (a Failed scan or an unhandled exception on the scan thread), and it now happens every time with no user in the loop. No stage read the branch.",
+    "evidence": "contracts 'SynchronousIoCancel.Open': 'the failure goes into Open's existing failure path'. coherence_check (4): 'That is recalled, and no stage exercised it'.",
+    "fix": "Build reads the root-open failure branch in Scanner and Open and states where code 21 lands. If the mapping is a function of the Win32 code, add a Fact that feeds it 21 directly, since the drive itself cannot be produced."
+   },
+   {
+    "id": "m6",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "claim": "The one decidable disagreement (per-open cost over about 2.4M opens) names no measurement, threshold or owning stage, yet it is marked would_force_resynthesis: true. The only alternative it names is already rejected on coverage grounds, so no outcome would change the design. Scan time is already over budget (SL-056: 188.3 s against a 150 s cap), so the number is worth having.",
+    "evidence": "decidable_disagreements[0].",
+    "fix": "Assign it to build: time 2.4M TurnOffCriticalErrorBox and Dispose pairs on one thread with Stopwatch, and keep the design if the total is under about 1 s. Set would_force_resynthesis to false, or name the alternative that a bad number would select."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "m1. The rejection of a process-wide startup call rests on the save/restore race and 'App has no interop', and neither applies to the set-once form in Microsoft's current best-practice text (cited). The thin bug report's two assumptions hold up: the box comes from CreateFileW on a drive with no media, and ERROR_NOT_READY is the result. The recalled 'DriveInfo is BCL-guarded' is supported by corefx ac3d3ba, which modified DriveInfo.Windows.cs to use SetThreadErrorMode. The recalled DisableMediaInsertionPrompt shape is supported by runtime#21693 and ac3d3ba."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "m2: the rule regex misses CreateFile2, NtOpenFile, NtCreateFile, OpenFileById and the other path APIs, and it fires on comments. Media removed mid-scan is correctly left as a person's open question. Replace semantics dropping 0x2 for the length of one CreateFile is harmless."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "M2: the funnel invariant is unenforced inside the two exempted files, and the second route at :388 sits outside Open's body. M1 is also partly under-engineering, since the scope type allows an unarmed instance."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "m3: the pooled-thread reuse Fact is nondeterministic and guards a harmless failure direction. The architecture rule itself is justified, since it is the only thing that can fail for the funnel. The struct plus factory is proportionate."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "M3: the twin deliverables are unenumerated (plants.json row, ArchitectureRulesTests Fact, RuleCases.ps1 literals, harness preconditions). m6: the decidable disagreement has no measurement or owner. The scope contract itself (thread-scoped, replace, restore-if-set) matches the BCL pattern."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "m5: code 21 at the root is claimed to reach the existing failure path, but nobody read that branch. Restore on the failed, cancelled and exception exits is correctly carried by `using`, and the failed and cancelled Facts cover it."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "None against the brief or the survey. The design centralises the guard, guards both opens and keeps the repro Fact unchanged. One tree fact goes unmentioned: .taad/fitness.yaml is modified in the working tree, whereas the survey said only TestNative.cs differs. It is presumably the rule declared at design time, and the rule has not yet been run against the tree."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "The scope nests in Kernel32, so InteropLivesOnlyInNative holds and the P/Invoke stays private. M2: the rule leaves the funnel to discipline within its exempted files. M1: nothing forbids constructing the scope with new or default, a mistake the BCL made twice (corefx#35045, runtime#126544)."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "M1: the TryGetVolumeUsed refactor has no test that could fail. m3: the pooled-leak Fact is nondeterministic. m4: the second-route case cannot force or observe its route. The repro Fact at :367 plus the restore Facts on presets 0x0, 0x2 and 0x1 are sound, and the counting-rule suite runs unchanged."
+   },
+   {
+    "dimension": "security",
+    "result": "none: SetThreadErrorMode is per-thread and unprivileged, no new input surface or elevation is added, and nothing crosses a trust boundary."
+   }
+  ]
+ }
+}

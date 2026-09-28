@@ -44,6 +44,22 @@ internal static class TestNative
         }
     }
 
+    [DllImport("kernel32.dll")]
+    private static extern uint GetThreadErrorMode();
+
+    [DllImport("kernel32.dll", EntryPoint = "SetThreadErrorMode", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetThreadErrorModeNative(uint newMode, out uint oldMode);
+
+    /// <summary>The calling thread's own error mode (SEM_* bits), as GetThreadErrorMode reports it. The process's default is not in it.</summary>
+    public static uint ThreadErrorMode() => GetThreadErrorMode();
+
+    /// <summary>Sets the calling thread's error mode and returns the one it replaced.</summary>
+    public static uint SetThreadErrorMode(uint newMode) =>
+        SetThreadErrorModeNative(newMode, out uint oldMode)
+            ? oldMode
+            : throw new Win32Exception(Marshal.GetLastWin32Error());
+
     [DllImport("kernel32.dll", EntryPoint = "GetCompressedFileSizeW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetCompressedFileSize(string path, out uint high);
 

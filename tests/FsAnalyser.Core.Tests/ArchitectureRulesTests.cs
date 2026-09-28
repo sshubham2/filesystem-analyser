@@ -155,6 +155,21 @@ public class ArchitectureRulesTests
             @"\bScanStore\b");
     }
 
+    /// <summary>
+    /// Every path Core opens is opened in SynchronousIoCancel.Open, inside the critical-error scope (SL-077). A path
+    /// call made anywhere else runs with the thread's error mode as it found it, and on a removable drive with no media
+    /// raises the "insert a disk" box and holds the scan. Kernel32.CreateFile takes the scope as an argument, so the
+    /// compiler holds the two excepted files; this holds every other one, a new Native file with its own import included
+    /// (review m2). Comments are matched too.
+    /// </summary>
+    [Fact]
+    public void PathOpensGoOnlyThroughTheGuardedOpen()
+    {
+        AssertNoMatch(Files(@"src\FsAnalyser.Core", "*.cs")
+                .Except([@"src\FsAnalyser.Core\Native\Kernel32.cs", @"src\FsAnalyser.Core\Scanning\SynchronousIoCancel.cs"]),
+            @"\b(CreateFile(W|2)?|OpenFileById|NtCreateFile|NtOpenFile|ZwCreateFile|ZwOpenFile|FindFirstFile(Ex)?W?|GetFileAttributes(Ex)?W?|GetVolumeInformationW?|GetDiskFreeSpace(Ex)?W?)\s*\(");
+    }
+
     private static IEnumerable<string> Files(string folder, params string[] patterns) =>
         patterns
             .SelectMany(p => Directory.EnumerateFiles(Path.Combine(Repo, folder), p, SearchOption.AllDirectories))

@@ -344,8 +344,12 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
         return true;
     }
 
+    // Every path the scanner opens, the root's, each folder's and each probed file's, on whichever thread opens it, is
+    // opened here with the critical-error box off for the whole call (SL-077): a drive with no media fails the open
+    // with ERROR_NOT_READY instead of asking for a disk. The calling thread has its own mode back on every way out.
     private int Open(string win32Path, uint access, uint flags, bool keepLastAccess, out SafeFileHandle? handle)
     {
+        using Kernel32.CriticalErrorBoxOff boxOff = Kernel32.CriticalErrorBoxOff.Begin();
         handle = null;
         KeptLastAccess = false;
         if (!Enter())
@@ -357,10 +361,10 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
         try
         {
             if (keepLastAccess)
-                kept = TryOpenKeepingLastAccess(win32Path, access, flags, out opened);
+                kept = TryOpenKeepingLastAccess(boxOff, win32Path, access, flags, out opened);
             if (!kept)
             {
-                opened = Kernel32.CreateFile(win32Path, access, Kernel32.FILE_SHARE_ALL, 0, Kernel32.OPEN_EXISTING, flags, 0);
+                opened = Kernel32.CreateFile(boxOff, win32Path, access, Kernel32.FILE_SHARE_ALL, 0, Kernel32.OPEN_EXISTING, flags, 0);
                 if (opened.IsInvalid)
                     error = LastError();
             }
@@ -381,11 +385,13 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
         return 0;
     }
 
-    // Inside Open's bracket. True with a handle whose last-access time the file system will not update; false, with
-    // nothing left open, when the write-attributes open or the set is refused, and the caller opens plainly.
-    private static bool TryOpenKeepingLastAccess(string win32Path, uint access, uint flags, out SafeFileHandle? opened)
+    // Inside Open's bracket and its critical-error scope. True with a handle whose last-access time the file system will
+    // not update; false, with nothing left open, when the write-attributes open or the set is refused, and the caller
+    // opens plainly.
+    private static bool TryOpenKeepingLastAccess(in Kernel32.CriticalErrorBoxOff boxOff, string win32Path, uint access, uint flags,
+        out SafeFileHandle? opened)
     {
-        opened = Kernel32.CreateFile(win32Path, access | Kernel32.FILE_WRITE_ATTRIBUTES, Kernel32.FILE_SHARE_ALL, 0,
+        opened = Kernel32.CreateFile(boxOff, win32Path, access | Kernel32.FILE_WRITE_ATTRIBUTES, Kernel32.FILE_SHARE_ALL, 0,
             Kernel32.OPEN_EXISTING, flags, 0);
         if (!opened.IsInvalid)
         {

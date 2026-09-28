@@ -1,0 +1,137 @@
+{
+ "schema": "slice-record@1",
+ "slice": "SL-077",
+ "title": "Guard the scanner's own root open and SizeProbe with SEM_FAILCRITICALERRORS",
+ "status": "active",
+ "branch": "slice/SL-077",
+ "opened_at": "2026-09-28T15:42:15.563Z",
+ "merge_commit": null,
+ "how_to_read": "Each attempt is one line and a `details` filename in this same directory. Open a detail file ONLY when this index points you at one -- the summaries are here so you do not have to. `caused_by` is what sent the stage back; `changed` is what the attempt then touched, counted by kind. Several attempts in a row that were caused by the same stage and changed no `src` is a loop, not progress.",
+ "open": [
+  {
+   "stage": "repro",
+   "issue": "observed: the scanner's root open ran with thread error mode 0x0, without SEM_FAILCRITICALERRORS (0x1): ...; SizeProbe's open ran with thread error mode 0x0, without SEM_FAILCRITICALERRORS (0x1): ... (Assert.True at FailCriticalErrorsTests.cs:line 72)"
+  },
+  {
+   "stage": "build-check",
+   "issue": "1. The scanner's own root open runs with SEM_FAILCRITICALERRORS set on the scan thread: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "2. SizeProbe's open runs with SEM_FAILCRITICALERRORS set on the probe worker thread: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "3. The guard is centralised in one place instead of living only inside Kernel32.TryGetVolumeUsed: partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "4. A test checks the mode during the scanner's opens, since validate cannot reach an empty removable drive: partial"
+  },
+  {
+   "stage": "risk-spike",
+   "issue": "root-open-is-first-unguarded-drive-touch: No other pre-root drive touch (0 of 6 C: runs), but SizeProbe ran on 14 worker threads, none the root's"
+  },
+  {
+   "stage": "risk-spike",
+   "issue": "thread-error-mode-observable-in-test-run: Thread bit works, but testhost process mode is already 0x8003 (0x1 set) in 4 of 4 runs"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Should media removed mid-scan, so that handle-based calls (listing, GetFileInformationByHandleEx, GetVolumeInformationByHandleW) hit a 'no disk' box, be brought into scope? This slice guards only path opens. No stage measured that case, and it needs a person's call on scope."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Architecture rule: I add one must_not_match rule (path opens only through Open) where the proposal added none, on cost grounds. The cost is a registry twin and parity baselines (SL-069, SL-075). It is a matter of taste whether a two-file fix carries that."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Replace versus OR: the scope sets exactly 0x1 (BCL and TryGetVolumeUsed semantics). OR-ing into the old mode would keep other thread bits inside the open. I kept replace for behaviour parity."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Placement of the scope type: a struct nested in Kernel32, as against a standalone Native/ helper file. Nesting keeps the P/Invoke private, and a separate file would need the P/Invoke widened."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Whether the restore Facts belong in FailCriticalErrorsTests.cs or a separate class. Same file was chosen so the test-only thread-mode helpers stay together."
+  }
+ ],
+ "stages": [
+  {
+   "stage": "repro",
+   "title": "Repro",
+   "order": 1,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "build-check",
+   "title": "Build check",
+   "order": 2,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "risk-spike",
+   "title": "Risk spike",
+   "order": 3,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "design-slice",
+   "title": "Design",
+   "order": 4,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-28T16:06:20.786Z",
+     "head": "14acea3b66f681b23401dcbbb3511d7955f2cd0d",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique",
+   "title": "Critique",
+   "order": 5,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-28T16:14:32.517Z",
+     "head": "14acea3b66f681b23401dcbbb3511d7955f2cd0d",
+     "summary": "The fix itself is sound: a thread-scoped SetThreadErrorMode scope placed outermost in SynchronousIoCancel.Open covers the root open, subfolder opens and SizeProbe's open on any worker thread.",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique-review",
+   "title": "Critique review",
+   "order": 6,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-28T16:22:34.653Z",
+     "head": "14acea3b66f681b23401dcbbb3511d7955f2cd0d",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-review-1.json"
+    }
+   ]
+  }
+ ]
+}
