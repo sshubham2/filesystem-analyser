@@ -15,7 +15,8 @@
 #
 # The oracle is the tree each case builds, never the report's own "core" section. Every non-empty file
 # is a multiple of 64 KiB and every other file is empty, so the size on disk equals the size on any
-# NTFS volume with clusters of 64 KiB or less, without asking the volume.
+# NTFS volume with clusters of 64 KiB or less, without asking the volume, in a folder that is not
+# NTFS-compressed: New-CaseFolder refuses one that is, by name (HF-027).
 #
 # N-001 to N-004 (SL-038) run against a share whose server stops answering: tests/window/StallRig, an
 # SMBLibrary server on 127.0.0.1 reached through a non-persistent SMB mapping that the rig makes and
@@ -60,7 +61,8 @@
 # an empty folder and names as written. T-002 is expand state through recycling. T-003 opens a folder of 100,000
 # files five times and presses the numpad * key. T-004 starts a second scan with a row selected and checks the
 # first scan's store is collectable. T-005 samples the UI thread through a scan, the hand-off to the tree and a
-# second scan over an open large folder. T-006 is the endings that show no tree. C-002, L-003, B-003, B-007 and
+# second scan over an open large folder; its bars are timings on a shared machine, so like M-001 it runs only
+# when named, never in All (HF-010). T-006 is the endings that show no tree. C-002, L-003, B-003, B-007 and
 # M-001 read the tree where they read the results list after a completed scan.
 #
 # K-001 to K-003 (SL-046) are the files by kind, a view of the results cell chosen beside its header: the report's
@@ -103,7 +105,7 @@ $RigExe = Join-Path $Repo 'artifacts\stall-rig\StallRig.exe'
 $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS',
     'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND', 'FSA_HOOK_MINSIZE', 'FSA_HOOK_DRIVES',
     'FSA_HOOK_WALK', 'FSA_HOOK_RECYCLE', 'FSA_HOOK_MULTIPLY', 'FSA_HOOK_SELECT', 'FSA_HOOK_RELEASE', 'FSA_HOOK_GAP', 'FSA_HOOK_HEIGHT', 'FSA_HOOK_REVEAL', 'FSA_HOOK_STATUS',
-    'FSA_HOOK_MAXIMIZE', 'FSA_HOOK_BACK', 'FSA_HOOK_READABLE', 'FSA_HOOK_BEFORE', 'FSA_HOOK_AFTER'
+    'FSA_HOOK_MAXIMIZE', 'FSA_HOOK_BACK', 'FSA_HOOK_READABLE', 'FSA_HOOK_BEFORE', 'FSA_HOOK_AFTER', 'FSA_HOOK_RENAMED'
 $HookedCases = 'C-002', 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
     'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003', 'R-001',
     'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009'
@@ -181,15 +183,28 @@ function CheckFinished($read, [string] $root, [string] $shownRoot, $manifest) {
 
 # ---- Trees ----
 
+# A folder made under an NTFS-compressed one is compressed too, and there a file of zeros takes nothing on disk: every
+# on-disk check would fail as if the app had miscounted (HF-027). Such a case folder is refused by name, and removed.
+# The refusal names the folder it was made in, which carries the attribute (fsa-window-cases, made compressed under a
+# compressed %TEMP% and left so), and the one remedy measured to clear it and all it holds: compact /u /s:"folder".
+# Plain compact /u, or /u /s "folder", clears that folder's own attribute only (SL-073 review, R2-m2).
 function New-CaseFolder {
     $folder = Join-Path ([System.IO.Path]::GetTempPath()) ("fsa-window-cases\{0}" -f [guid]::NewGuid().ToString('N'))
     [void][System.IO.Directory]::CreateDirectory($folder)
+    if ([System.IO.File]::GetAttributes($folder).HasFlag([System.IO.FileAttributes]::Compressed)) {
+        [System.IO.Directory]::Delete($folder)
+        $parent = Split-Path -Parent $folder
+        throw "$folder came out NTFS-compressed and was removed: $parent is NTFS-compressed, so every case folder made in it is too, and the window cases take a file's size on disk to be its size. Uncompress it and all it holds with compact /u /s:`"$parent`", or point TEMP and TMP at a folder that is not compressed."
+    }
     $folder
 }
 
+# Bytes that do not compress (TempTree's pattern), so the file takes its own size on disk in a compressed folder too.
 function New-File([string] $path, [long] $bytes) {
     [void][System.IO.Directory]::CreateDirectory((Split-Path -Parent $path))
-    [System.IO.File]::WriteAllBytes($path, [byte[]]::new($bytes))
+    $content = [byte[]]::new($bytes)
+    [System.Random]::new(20).NextBytes($content)
+    [System.IO.File]::WriteAllBytes($path, $content)
 }
 
 # About 20 files in 4 folders: scanned well inside one 250 ms timer tick.
@@ -2674,13 +2689,14 @@ function Test-T004 {
     finally { Remove-CaseFolder $case }
 }
 
-# T-005 (row 6, review m7): the UI thread sampled by the hook every 10 ms (an Input-priority probe) through a scan
+# T-005 (row 6, review m7; named only, HF-010): the UI thread sampled by the hook every 10 ms (an Input-priority probe) through a scan
 # while the window is moved and resized, the hand-off to the tree, one open of a folder of 100,000 files, and a
 # second scan started over that open tree, to its hand-off. In every phase but the open, whose own bar is T-003's,
 # no probe may wait a second, and where a phase has at least 20 probes, 95% of them must get through within
 # 200 ms. With fewer, the 95th percentile is the longest wait itself, and one stall already there before SL-044
 # (the first resize after a scan starts, 0.4 to 0.8 s, the code review's M1) would fail the phase on the second
-# bar rather than the first; so a phase that short is held to the second alone, and says so.
+# bar rather than the first; so a phase that short is held to the second alone, and says so. Timing on a shared
+# machine, as M-001's: a failure here is a measurement to record, not proof of a defect by itself.
 $GapP95Floor = 20
 function Test-T005 {
     $case = New-CaseFolder
@@ -3806,7 +3822,7 @@ function Test-S009 {
 
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003', 'R-001', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009') + $NetworkCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006','K-001', 'K-002', 'K-003', 'R-001', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009') + $NetworkCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })
