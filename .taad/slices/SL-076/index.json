@@ -10,43 +10,55 @@
  "open": [
   {
    "stage": "build-slice",
-   "issue": "Python's tempfile.gettempdir checks TMPDIR before TEMP. A Windows shell that exports TMPDIR (some MSYS/Git Bash setups) would put the harness scratch in a folder that the fixed guard (GetTempPath or $env:TEMP, as HF-026 specified) does not accept, so it would still be left behind. Adding $env:TMPDIR to the accepted parents is a one-word change if it is ever wanted."
+   "issue": "The send-back suggested deleting 'the exact scratch path it recorded when it made the copy', if the design allowed it. It does not fit here. RuleCases never makes the harness's scratch: harness.py's own tempfile.mkdtemp does, and the only record RuleCases gets is the printed line, which is the source of the four spellings. Recording the exact path would take a new harness option or pointing the harness child's TEMP at a RuleCases-owned folder. The second would also move every dotnet/MSBuild/NuGet scratch file the harness makes. Both go past the design and the accepted m1/m2 decisions, which c…"
   },
   {
    "stage": "build-slice",
-   "issue": "The C-006 fake engine and the new SL-076 Python shape show that RuleCases' own New-TempDir folders go under GetTempPath (TMP) while the harness scratch goes under TEMP. That is harmless now, but a later case that compares the two locations would need to know about it."
+   "issue": "RuleCases C-006 cannot pass on a machine whose GetTempPath holds a non-ASCII character. Its 'engine root <path>' and '<path>\\taad3\\fitness.py, not from this root' expectations use the raw path of folders New-TempDir made, while harness.py's say() prints them escaped ('\\xe9'). Measured: 4 checks fail with TEMP=TMP under 'José Smith'. The expectations could be escaped the way say() escapes, as Get-ImportRuleNames already does for rule names."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "Python's tempfile.gettempdir checks TMPDIR before TEMP. A shell that exports TMPDIR on Windows would put the scratch in a folder Invoke-HarnessRaw does not search. Adding $env:TMPDIR to the folders the leaf is looked for in is a one-item change."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "%TEMP% on this machine holds 26 fsa-rules-* folders from earlier harness runs, the newest made at 20:54, before this attempt. They are kept scratch from runs that no RuleCases case expected to fail, or from before HF-026 was fixed, and a person may want to clear them. This build did not touch them."
   },
   {
    "stage": "code-review",
-   "issue": "drift: Nothing departs from the design without being declared. The old guard accepted any fsa-rules-* folder anywhere below GetTempPath (StartsWith); the new one takes only a folder directly in TMP or TEMP.…"
+   "issue": "drift: The design's key decision still reads 'Accept the folder when its leaf is fsa-rules-* and its parent is either GetTempPath or $env:TEMP'. The code now ignores the printed parent entirely and looks th…"
   },
   {
    "stage": "code-review",
-   "issue": "drift: As declared in the build's open list, the fix does not cover TMPDIR (which Python's gettempdir checks first). The same limit applies to the 8.3 and non-ASCII shapes filed as m1 and m2."
+   "issue": "drift: Declared, not built: the send-back's suggestion to delete an exact recorded scratch path. RuleCases never makes the harness's scratch, so it has no path to record other than the printed line. The rea…"
   },
   {
    "stage": "code-review",
-   "issue": "drift: No new drift. The narrower guard (a folder only directly in TMP or TEMP, where the old one took any descendant of GetTempPath) follows the design and was declared by the build."
+   "issue": "drift: No new drift. The leaf lookup in GetTempPath()/$env:TEMP replaces the design's parent comparison. That was declared through the accepted m1/m2 decisions, as recorded last round."
   },
   {
    "stage": "validate-slice",
-   "issue": "not reached: A real Windows account whose profile path has a space, where Windows itself sets TEMP/TMP. Every spaced, TEMP≠TMP, 8.3 and non-ASCII shape here was simulated by setting TEMP/TMP in a child process on the sshub account, whose TEMP is C:\\Users\\sshub\\AppData\\Local\\Temp with TEMP=TMP."
+   "issue": "not reached: A real Windows account whose profile path has a space or a non-ASCII letter, where Windows itself sets TEMP/TMP. Every such shape was simulated by setting TEMP/TMP in a child process on the sshub account, whose own TEMP=TMP=C:\\Users\\sshub\\AppData\\Local\\Temp."
   },
   {
    "stage": "validate-slice",
-   "issue": "not reached: Whether Windows 11 26200 actually sets TEMP in 8.3 form for a long or spaced account name. O-001's premise ('commonly') was reproduced only with a FileSystemObject ShortPath, not with a real account profile."
+   "issue": "not reached: Whether Windows 11 26200 actually gives TEMP an 8.3 short form for a long or spaced account name. The 8.3 shape used a FileSystemObject ShortPath of a folder made here."
   },
   {
    "stage": "validate-slice",
-   "issue": "not reached: A real MSYS/Git Bash shell exporting TMPDIR. Only simulated by setting the env var; the build declared the gap as left open."
+   "issue": "not reached: A real MSYS/Git Bash shell exporting TMPDIR. Simulated with the env var, and it still leaks (left=1): the gap the build declared, which the fix does not claim to cover."
   },
   {
    "stage": "validate-slice",
-   "issue": "not reached: What left the 26 pre-existing fsa-rules-* folders in this machine's real %TEMP% (11:41-20:54 IST today, before this slice). The conditions here rule out HF-026, and the fsa-rules-case-* pairs suggest interrupted RuleCases runs, but this was not established."
+   "issue": "not reached: RuleCases -Case All under Windows PowerShell 5.1. Only C-006 and C-014 were run under 5.1; -Case All ran under pwsh 7.6."
   },
   {
    "stage": "validate-slice",
-   "issue": "not reached: RuleCases' Invoke-HarnessRaw under Windows PowerShell 5.1. RuleCases was run only under pwsh 7."
+   "issue": "not reached: RuleCases C-006 passing on a machine whose GetTempPath is non-ASCII. The build measured 4 failing 'engine root <path>' expectations there, a separate expectation defect it declared, and I did not re-run it."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: What left the 26 pre-existing fsa-rules-* folders in this machine's %TEMP%. They were there before this slice and are unchanged by it; not attributed, not deleted."
   }
  ],
  "stages": [
@@ -129,7 +141,7 @@
    "stage": "build-slice",
    "title": "Build",
    "order": 7,
-   "state": "sent back",
+   "state": "passed",
    "attempts": [
     {
      "n": 1,
@@ -144,6 +156,32 @@
       "measured_by_git": 6
      },
      "details": "build-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-28T16:10:14.058Z",
+     "head": "efab6732de4f15327bc356a720f88d4d8d0adf41",
+     "summary": "Attempt 2 discharges review findings m1 and m2 (O-001, O-002) with the leaf-based rewrite that was accepted for them.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "rejected at the merge, and sent back rather than stopped. What was objected to: Sent back to build. SL-076 stops RuleCases.ps1 leaking the repo copy when %TEMP% has a space or TEMP and TMP differ. Code review found that a short 8.3-style %TEMP% path and a non-ASCII account name still leak it, and the report says the build owes both and neither is fixed. Fix both on this branch. Give each one a case in tests/bugs/SL-076-ScratchKeptPath.Tests.ps1 that sets TEMP to that spelling and fails before the fix. Four spellings of one path failing suggests the script should delete the exact scratch path …",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-001",
+       "O-002"
+      ]
+     },
+     "changed": {
+      "tests": 2,
+      "listed": 2,
+      "measured_by_git": 6
+     },
+     "details": "build-slice-2.json"
     }
    ]
   },
@@ -162,6 +200,25 @@
      "caused_by": null,
      "changed": {},
      "details": "code-review-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-28T16:17:14.980Z",
+     "head": "efab6732de4f15327bc356a720f88d4d8d0adf41",
+     "summary": "Attempt 2 (efab673) replaces the parent comparison in tests/rules/RuleCases.ps1:177-185 with the accepted leaf-based rewrite.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "code-review passed on 2026-09-28T15:54:44.133Z, and build-slice has judged since (2026-09-28T16:17:14.412Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "cause": "knock-on",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-2.json"
     }
    ]
   },
@@ -180,6 +237,25 @@
      "caused_by": null,
      "changed": {},
      "details": "validate-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-28T16:22:11.406Z",
+     "head": "efab6732de4f15327bc356a720f88d4d8d0adf41",
+     "summary": "HF-026 is fixed, including the 8.3 and non-ASCII TEMP shapes that O-001 and O-002 were about.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "validate-slice passed on 2026-09-28T16:06:42.752Z, and build-slice has judged since (2026-09-28T16:17:14.412Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "cause": "knock-on",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "validate-slice-2.json"
     }
    ]
   },
