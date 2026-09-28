@@ -519,8 +519,9 @@ function Shape-ImportRuleNames {
 
     # More import rules on the provider's folder, which the harness's scratch copy (no code graph) leaves
     # unran, each name spelt a way yaml allows: single-quoted with its apostrophe doubled, double-quoted,
-    # double-quoted with escapes, wrapped onto a second line, followed by a comment (quoted and plain), and
-    # folded. The last entry's must_not_import is empty, so it is no import rule and is never named.
+    # double-quoted with escapes, wrapped onto a second line, followed by a comment (quoted and plain), folded,
+    # and holding characters past ASCII (an e-acute and an em dash). The last entry's must_not_import is
+    # empty, so it is no import rule and is never named.
     $copy = New-RepoScratch
     $base = Get-Agree $copy
     $rules = @'
@@ -577,6 +578,13 @@ function Shape-ImportRuleNames {
     must_not_match:
     - BrandNewThing
     because: A probe import rule whose name is a folded block.
+  - name: the provider's caf{E-ACUTE} probe {EM-DASH} never imports Core
+    files: tests/CfProvider/**
+    must_not_import:
+    - FsAnalyser.Core*
+    must_not_match:
+    - BrandNewThing
+    because: A probe import rule whose name holds characters past ASCII, which the harness prints escaped.
   - name: the provider's empty-import probe is no import rule
     files: tests/CfProvider/**
     must_not_import: []
@@ -584,6 +592,8 @@ function Shape-ImportRuleNames {
     - BrandNewThing
     because: A probe rule whose must_not_import is empty, which the engine does not run as an import rule.
 '@
+    # Made here, so this file stays ASCII whichever shell reads it.
+    $rules = $rules.Replace('{E-ACUTE}', [string][char]0xE9).Replace('{EM-DASH}', [string][char]0x2014)
     $added = @($rules -split "`r?`n" -cmatch '^  - name:').Count
     [System.IO.File]::AppendAllText((Join-Path $copy $YamlRel), ($rules.Replace("`r`n", "`n").Replace("`n", "`r`n")), $Utf8)
     $grown = Get-Agree $copy

@@ -670,12 +670,14 @@ def check(tree, build=False):
 
 # The names of this tree's import rules (a must_not_import that is not empty), read by the yaml parser of the
 # engine's own interpreter, so a name reads as the engine reads it however yaml lets it be spelt: quoted,
-# escaped, wrapped onto a second line, folded, or followed by a comment. JSON keeps the pipe ASCII.
+# escaped, wrapped onto a second line, folded, or followed by a comment. Each is then spelt as the harness's
+# say() prints it, a character past ASCII as its backslash escape (an e-acute as \xe9), and JSON keeps the
+# pipe ASCII.
 function Get-ImportRuleNames {
     if (-not $EnginePython) { throw 'the import rules are read with -EnginePython, which was not given' }
     $ErrorActionPreference = 'Continue'
     $code = 'import sys, json, yaml; rules = yaml.safe_load(open(sys.argv[1], encoding=''utf-8-sig''))[''rules'']; ' +
-        'print(json.dumps([r[''name''] for r in rules if r.get(''must_not_import'')]))'
+        'print(json.dumps([r[''name''].encode(''ascii'', ''backslashreplace'').decode(''ascii'') for r in rules if r.get(''must_not_import'')]))'
     $lines = @(& $EnginePython -c $code (Join-Path $Repo $YamlRel) 2>&1)
     $exit = $LASTEXITCODE
     $json = @($lines | Where-Object { $_ -is [string] })
