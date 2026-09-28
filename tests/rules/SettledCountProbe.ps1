@@ -23,7 +23,8 @@ $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $CasesRel = 'tests\rules\RuleCases.ps1'
 $ParityRel = 'eng\rules-parity.ps1'
 $YamlRel = '.taad\fitness.yaml'
-$Copied = @($CasesRel, $ParityRel, $YamlRel, 'tests\FsAnalyser.Core.Tests\ArchitectureRulesTests.cs')
+$CsRel = 'tests\FsAnalyser.Core.Tests\ArchitectureRulesTests.cs'
+$Copied = @($CasesRel, $ParityRel, $YamlRel, $CsRel)
 # The tree SL-053 was cut from, whose RuleCases.ps1 pinned the count at :205 and :268.
 $PreFix = '0647ead17aa99f2aace803624966ca4b1edab65b'
 $GuardName = 'the rule-case suite never pins a literal settled-entry count'
@@ -31,6 +32,14 @@ $Utf8 = [System.Text.UTF8Encoding]::new($false)
 $Shells = @('powershell.exe', 'pwsh')
 $script:Failures = [System.Collections.Generic.List[string]]::new()
 $script:Temps = [System.Collections.Generic.List[string]]::new()
+$script:Counts = $null
+
+# RuleCases.ps1's own Get-RuleCounts (SL-069), taken from its source rather than copied, so the line this
+# probe expects carries this tree's Facts, twinned entries and patterns as C-001 recounts them.
+$recount = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $Repo $CasesRel), [ref]$null, [ref]$null).Find({
+        param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-RuleCounts' }, $true)
+if (-not $recount) { throw "probe setup: no function Get-RuleCounts in $CasesRel" }
+. ([scriptblock]::Create($recount.Extent.Text))
 
 # ---- Checks ----
 
@@ -122,8 +131,11 @@ function Get-ToolSettled([string] $root) {
     [int] $m.Groups[1].Value
 }
 
-function Get-Line([int] $settled, [int] $twinned = 15) {
-    "rules-parity: AGREE 11 facts <- $twinned twinned entries, 27 patterns; $settled settled entries not compared"
+# The AGREE line of a copy of this tree with $settled settled entries, its twinned entries moved by $dTwinned.
+function Get-Line([int] $settled, [int] $dTwinned = 0) {
+    $counts = Get-RuleCounts
+    "rules-parity: AGREE $($counts.Facts) facts <- $($counts.Twinned + $dTwinned) twinned entries, $($counts.Patterns) patterns; " +
+    "$settled settled entries not compared"
 }
 
 # One copy, one change, C-001 under each shell.
@@ -170,12 +182,12 @@ function Shape-NotAgree {
 }
 
 function Shape-Misclassified {
-    Write-Output 'Misclassified: the parity tool counts one twinned entry as settled (14 twinned, settled+1): C-001 fails'
+    Write-Output 'Misclassified: the parity tool counts one twinned entry as settled (twinned-1, settled+1): C-001 fails'
     Test-C001 'a tool that moves one twinned entry to settled' {
         param($root)
         Edit-Copy $root $ParityRel $TwinnedText '$($entries.Count - 1) twinned entries, $patternCount patterns; " +'
         Edit-Copy $root $ParityRel $SettledText '"$($yaml.Settled + 1) settled entries not compared'
-    } 1 { param($base) (Get-Line ($base + 1) 14), 'FAIL  the repo', '4 check(s) failed.' }
+    } 1 { param($base) (Get-Line ($base + 1) -1), 'FAIL  the repo', '4 check(s) failed.' }
 }
 
 function Shape-C003Base {

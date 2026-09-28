@@ -18,7 +18,9 @@ taad3.fitness reads the rules with (on the machine this was written on, that is
 Exit 0: every row AS-RECORDED. Exit 1: a row MISSED-BY-XUNIT, MISSED-BY-FITNESS, FIRED-WHEN-EXEMPT,
 DIVERGENCE-CLOSED or PLANT-BROKEN, or a STRAY-HIT. Exit 2: cannot measure -- the engine is missing or
 its result lacks a field, the rules' text has drifted, the build failed, the clean baseline is not
-clean, a restore did not match its SHA-256, or the git status of --root changed.
+clean, a restore did not match its SHA-256, or the git status of --root changed. An import rule
+(must_not_import) cannot run on the scratch copy, which has no code graph; it is named NOT RUN, not
+passed, on the clean line and the summary line of every run, exit 0 included (not_run_on_scratch).
 
 It copies what `git ls-files -co --exclude-standard` lists into %TEMP%, builds it once with the SDK
 that --dotnet-from's eng/dotnet.ps1 finds (default --root; its .dotnet/ is gitignored and not copied),
@@ -137,9 +139,12 @@ def run_fitness(fitness, tree: str, engine_root: str) -> dict:
                             f"{', '.join(missing)}")
     try:
         hits = {(v["rule"].name, str(v["file"]).replace("\\", "/"), int(v["line"])) for v in report.violations}
+        # The import rules among them (see not_run_on_scratch): a rule that does not say it has
+        # must_not_import is never taken for one.
+        imports = sorted(r.name for r in report.unran if getattr(r, "must_not_import", None))
         return {"verdict": str(report.verdict), "rules": len(report.rules), "files_read": int(report.content_files),
                 "unmatched": sorted(r.name for r in report.unmatched),
-                "unran": sorted(r.name for r in report.unran), "hits": hits}
+                "unran": sorted(r.name for r in report.unran), "unran_imports": imports, "hits": hits}
     except (KeyError, TypeError, AttributeError, ValueError) as e:
         raise CannotMeasure(f"engine root {engine_root}: the result of taad3.fitness.check has a field "
                             f"in a shape this cannot read ({type(e).__name__}: {e})")
@@ -505,7 +510,9 @@ def attribute(planting: Planting, engine_hits: dict) -> tuple:
 def judge(row: dict, seen: dict) -> tuple:
     """The row's verdicts against what each engine did, and a note for each that is not AS-RECORDED."""
     rules = [row["rule"]] + list(row.get("also") or [])
-    wanted = {"fitness": set(rules), "xunit": {base(r) for r in rules}}
+    # Settled rules the same plant breaks: they have no xUnit twin, so only Fitness is expected to fire them.
+    settled = list(row.get("also_settled") or [])
+    wanted = {"fitness": set(rules) | set(settled), "xunit": {base(r) for r in rules}}
     primary = {"fitness": row["rule"], "xunit": base(row["rule"])}
     lines = row.get("lines") or {}
     expect = row["expect"]
@@ -548,6 +555,26 @@ def judge(row: dict, seen: dict) -> tuple:
 # ------------------------------------------------------------------- the run
 
 
+def not_run_on_scratch(f: dict) -> list:
+    """The rules the engine could not run on the scratch copy, when every one of them is an import rule.
+
+    Fitness judges must_not_import against a code graph, which it keeps under TAAD3_HOME, and this
+    run points TAAD3_HOME at its own scratch and builds no graph, so on the scratch copy an import rule
+    is always unran (SL-049's 'the provider does not use the code it checks' is the first). No plant
+    here is an import, so no row's verdict rests on one; the rule's must_not_match half still runs.
+    Such a rule is NOT RUN: named on the clean line and the summary line of every run, and never a
+    pass. Any other rule the engine did not run still stops the run.
+    """
+    return f["unran"] if f["unran"] and f["unran"] == f["unran_imports"] else []
+
+
+def describe_not_run(names: list) -> str:
+    if not names:
+        return "none unran"
+    return (f"NOT RUN, not passed: {len(names)} import rule(s) the engine judges only against a code "
+            f"graph, which the scratch copy has none of: {names}")
+
+
 def check_clean(x: dict, f: dict, parity: dict) -> None:
     entries = parity["twinned"] + parity["settled"]
     problems = []
@@ -555,11 +582,13 @@ def check_clean(x: dict, f: dict, parity: dict) -> None:
         problems.append("xunit hits " + ", ".join(f"{a} at {b}:{c}" for a, b, c in sorted(x["hits"])[:SHOWN]))
     if f["hits"]:
         problems.append("fitness hits " + ", ".join(f"{a} at {b}:{c}" for a, b, c in sorted(f["hits"])[:SHOWN]))
-    if f["verdict"] != "pass":
+    # With only import rules unran and no hit, the engine's verdict is 'unable', never 'pass'.
+    skipped = not_run_on_scratch(f)
+    if f["verdict"] != ("unable" if skipped else "pass"):
         problems.append(f"fitness verdict {f['verdict']}")
     if f["unmatched"]:
         problems.append(f"fitness rules that matched no file: {f['unmatched']}")
-    if f["unran"]:
+    if f["unran"] and not skipped:
         problems.append(f"fitness rules that did not run: {f['unran']}")
     if f["rules"] != entries:
         problems.append(f"fitness loaded {f['rules']} rules where fitness.yaml has {entries} entries")
@@ -614,8 +643,9 @@ def measure(args, root: str, dotnet_from: str, work: str) -> int:
     x = run_xunit(dotnet_from, tree, results, "clean")
     f = run_fitness(fitness, tree, engine_root)
     check_clean(x, f, parity)
+    not_run = not_run_on_scratch(f)
     say(f"harness: clean: xunit {x['total']} Facts, 0 hits | fitness {f['verdict']}, {f['rules']} rules, "
-        f"{f['files_read']} files read, 0 hits, none unmatched or unran | CLEAN")
+        f"{f['files_read']} files read, 0 hits, none unmatched, {describe_not_run(not_run)} | CLEAN")
 
     matrix, strays = [], []
     for scenario in ("plants", "divergences"):
@@ -629,8 +659,9 @@ def measure(args, root: str, dotnet_from: str, work: str) -> int:
                 planting.restore()
             if x["total"] != parity["facts"]:
                 raise CannotMeasure(f"{scenario} batch {number}: xunit ran {x['total']} tests, not {parity['facts']}")
-            if f["unran"]:
-                raise CannotMeasure(f"{scenario} batch {number}: fitness rules did not run: {f['unran']}")
+            if f["unran"] != not_run or not_run_on_scratch(f) != not_run:
+                raise CannotMeasure(f"{scenario} batch {number}: fitness rules did not run: {f['unran']}, "
+                                    f"where the clean baseline did not run {not_run}")
             seen, batch_strays = attribute(planting, {"xunit": x["hits"], "fitness": f["hits"]})
             strays += [f"{s} ({scenario} batch {number})" for s in batch_strays]
             for row in batch:
@@ -660,7 +691,7 @@ def measure(args, root: str, dotnet_from: str, work: str) -> int:
     failing = [m for m in matrix if m[3] != ["AS-RECORDED"]]
     say()
     say(f"harness: {len(matrix)} rows, {len(matrix) - len(failing)} AS-RECORDED, {len(failing)} not, "
-        f"{len(strays)} stray hits")
+        f"{len(strays)} stray hits | {describe_not_run(not_run)}")
     return 1 if failing or strays else 0
 
 

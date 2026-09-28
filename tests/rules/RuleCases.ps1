@@ -649,16 +649,50 @@ def check(tree, build=False):
     [System.IO.File]::WriteAllText((Join-Path $broken 'taad3\__init__.py'), '', $Utf8)
     [System.IO.File]::WriteAllText((Join-Path $broken 'taad3\fitness.py'), "raise ImportError('this engine is broken')`n", $Utf8)
     CheckRun (Invoke-HarnessRaw @('--engine-root', $broken)) 2 'an engine that fails to import' @("engine root $broken", 'importing taad3.fitness failed')
+
+    # Only an import rule, which needs a code graph the scratch copy has not got, is named NOT RUN and let
+    # through (SL-069). A rule the engine did not run that is not an import rule still stops the clean baseline.
+    $unran = New-TempDir 'fsa-engine-case-'
+    New-Item -ItemType Directory -Path (Join-Path $unran 'taad3') | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $unran 'taad3\__init__.py'), '', $Utf8)
+    [System.IO.File]::WriteAllText((Join-Path $unran 'taad3\fitness.py'), @'
+import types
+
+def check(tree, build=False):
+    rule = types.SimpleNamespace(name="a content rule the engine did not run", must_not_import=[])
+    return types.SimpleNamespace(verdict="unable", rules=[rule], violations=[], unmatched=[], unran=[rule], content_files=0)
+'@, $Utf8)
+    $run = Invoke-HarnessRaw @('--engine-root', $unran, '--scenario', 'clean')
+    CheckRun $run 2 'an engine that did not run a rule that is not an import rule' @(
+        'the clean baseline is not clean', "fitness rules that did not run: ['a content rule the engine did not run']", 'harness: exit 2')
+    Check (-not $run.Output.Contains('NOT RUN')) "that rule is never named NOT RUN and let through`n$($run.Output)"
 }
 
 function Case-C007 {
     Write-Output 'C-007 the clean scenario: no plants, zero hits in both engines'
     $run = Invoke-Harness @('--scenario', 'clean')
-    CheckRun $run 0 'the clean scenario on this repo' @('| CLEAN', "xunit $(Get-ExpectFacts) Facts, 0 hits", 'none unmatched or unran')
+    CheckRun $run 0 'the clean scenario on this repo' @('| CLEAN', "xunit $(Get-ExpectFacts) Facts, 0 hits", 'none unmatched')
     $parity = [regex]::Match($run.Output, '(\d+) twinned entries, \d+ patterns; (\d+) settled')
-    $rules = [regex]::Match($run.Output, 'fitness pass, (\d+) rules')
-    Check ($parity.Success -and $rules.Success -and [int]$rules.Groups[1].Value -eq [int]$parity.Groups[1].Value + [int]$parity.Groups[2].Value) `
+    $rules = [regex]::Match($run.Output, 'fitness (pass|unable), (\d+) rules')
+    Check ($parity.Success -and $rules.Success -and [int]$rules.Groups[2].Value -eq [int]$parity.Groups[1].Value + [int]$parity.Groups[2].Value) `
         "the Fitness rule count equals the yaml entries (twinned + settled)`n$($run.Output)"
+
+    # An import rule (must_not_import) needs a code graph the harness's scratch copy has not got: each is
+    # named NOT RUN and is never a pass, and every other rule runs. The names come from this tree's yaml.
+    $imports = [System.Collections.Generic.List[string]]::new()
+    $entry = $null
+    foreach ($line in [System.IO.File]::ReadAllLines((Join-Path $Repo $YamlRel), $Utf8)) {
+        if ($line -cmatch '^  - name: (.+)$') { $entry = $Matches[1].Trim().Trim("'") }
+        elseif ($line -cmatch '^    must_not_import:' -and $entry) { $imports.Add($entry) }
+    }
+    if ($imports.Count) {
+        $said = @($imports | Where-Object { -not $run.Output.Contains("'$_'") })
+        Check ($rules.Groups[1].Value -ceq 'unable' -and $run.Output.Contains("NOT RUN, not passed: $($imports.Count) import rule(s)") -and $said.Count -eq 0) `
+            "the $($imports.Count) import rule(s) are named NOT RUN, and the verdict is not pass (unnamed: $($said -join ', '))`n$($run.Output)"
+    }
+    else {
+        Check ($rules.Groups[1].Value -ceq 'pass' -and $run.Output.Contains('none unran')) "with no import rule, every rule ran and passed`n$($run.Output)"
+    }
 
     # Bites: a hit nobody planted stops the run before any row is judged.
     $copy = New-RepoCopy
