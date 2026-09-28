@@ -1,0 +1,195 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-069",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-09-28T06:38:15.604Z",
+ "head": "3bd2b9474be39e004561d1a29844a508238f7929",
+ "run_id": 1823,
+ "summary": "What was built matches the design. The departures all trace to accepted review decisions (M1, M2, M5, m5) or to deviations the builder declared. I read every changed code file: RuleCases.ps1, SettledCountProbe.ps1, harness.py, plants.json, the fitness.yaml additions and both tests/bugs/SL-069 scripts. I also read the engine's fitness.check to confirm what the harness change relies on: content rules still run when an import rule is unran, and the verdict is then 'unable'.\n\nWhat I ran myself, all exit 0:\n- **Acceptance repro** (tests/bugs/SL-069-RuleCasesDeriveCounts.Tests.ps1).\n- **Sibling test `-Shape All`** (630 s). SingleScope reached 12/16/28 and TwoScope 12/17/28. C-001, C-003, C-004 and C-005 held under both hosts. NoMarker, UnreadableCs, UnseenFact, HostParity with BOM and GuardRule all held; GuardRule hit pre-fix lines 35, 240, 243, 305, 326, 370, 408, 600, 625 and 633, and nothing in the current files.\n- **SettledCountProbe `-Shape Misclassified`**: C-001 still fails on a stub that prints 14 twinned and 50 settled, with 4 checks failed under each shell.\n- **RuleCases C-001, C-003 and C-004 on the real tree**: 11/15/27/49.\n- **C-006, C-007 and C-008 with the real engine**: C-007 prints 'fitness unable, 64 rules ... NOT RUN, not passed: 1 import rule(s)'. C-008's delete case reads 11/14/27/49.\n- **harness.py `--only F03,F18`**: both rows AS-RECORDED under also_settled.\n- **Fitness op=check**: 64 rules, every one holds.\n\nOne minor gap is left. The new literal-count guard still lets through the argument-array spelling `@('-ExpectFacts', 'N')`. That is the C-005 mismatch site the design calls the worst one. Today only the 11-minute opt-in sibling test would catch a re-pin there. It is not a loop: attempt 1 was a provider session limit, attempt 2 was partial, and attempt 3 fixed the harness that had blocked C-007 and C-008.\n\nSecond round: Second round, trying to break the new parsers and boundaries. I found one new defect, filed as m2.\n\n**The guard fires where the simulation says.** I ran the real Fitness engine (taad3.fitness.check, TAAD3_HOME in scratch) on a tree holding the current fitness.yaml and the pre-fix RuleCases.ps1 from a9e0d1d. The SL-069 rule hit lines 35, 240, 243, 305, 326, 370, 408, 600, 625 and 633, the same lines as the .NET-regex simulation in Shape-GuardRule. It skipped nothing as a comment.\n\n**Get-RuleCounts against eng/rules-parity.ps1 (Read-Facts, lines 230-311):** every input where the two diverge produces a red C-001, never a silent green. The shapes I walked:\n- The recount's Fact regex is a superset of parity's attribute regex. So a Fact spelled `[FactAttribute]`, `[Xunit.Fact]` or `[Fact][Trait]` either makes parity CANNOT-READ (its :259 check) or makes the counts differ.\n- A pattern line with a trailing comment, or split before `);`, is refused by parity through the same literal shape (:235/:305).\n- A verbatim-literal line outside a Fact would be counted only by the recount.\n- Lone CR, U+0085, U+2028 and tab-led lines are all refused by parity.\n- The marker search starts at line 0 rather than after `rules:`. No header line in today's yaml matches it, and one that did would throw by name.\n\n**New defect (m2):** C-007's new import-rule check matches rule names against the harness's Python list repr. That repr switches to double quotes for any name containing an apostrophe, and 10 of this yaml's 64 rule names contain one. C-007's own yaml reader also does not unquote double-quoted or `''`-escaped names. So the next import rule with such a name turns C-007 red on a correct run.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "What was built matches the design. The departures all trace to accepted review decisions (M1, M2, M5, m5) or to deviations the builder declared. I read every changed code file: RuleCases.ps1, SettledCountProbe.ps1, harness.py, plants.json, the fitness.yaml additions and both tests/bugs/SL-069 scripts. I also read the engine's fitness.check to confirm what the harness change relies on: content rules still run when an import rule is unran, and the verdict is then 'unable'.\n\nWhat I ran myself, all exit 0:\n- **Acceptance repro** (tests/bugs/SL-069-RuleCasesDeriveCounts.Tests.ps1).\n- **Sibling test `-Shape All`** (630 s). SingleScope reached 12/16/28 and TwoScope 12/17/28. C-001, C-003, C-004 and C-005 held under both hosts. NoMarker, UnreadableCs, UnseenFact, HostParity with BOM and GuardRule all held; GuardRule hit pre-fix lines 35, 240, 243, 305, 326, 370, 408, 600, 625 and 633, and nothing in the current files.\n- **SettledCountProbe `-Shape Misclassified`**: C-001 still fails on a stub that prints 14 twinned and 50 settled, with 4 checks failed under each shell.\n- **RuleCases C-001, C-003 and C-004 on the real tree**: 11/15/27/49.\n- **C-006, C-007 and C-008 with the real engine**: C-007 prints 'fitness unable, 64 rules ... NOT RUN, not passed: 1 import rule(s)'. C-008's delete case reads 11/14/27/49.\n- **harness.py `--only F03,F18`**: both rows AS-RECORDED under also_settled.\n- **Fitness op=check**: 64 rules, every one holds.\n\nOne minor gap is left. The new literal-count guard still lets through the argument-array spelling `@('-ExpectFacts', 'N')`. That is the C-005 mismatch site the design calls the worst one. Today only the 11-minute opt-in sibling test would catch a re-pin there. It is not a loop: attempt 1 was a provider session limit, attempt 2 was partial, and attempt 3 fixed the harness that had blocked C-007 and C-008.\n\nSecond round: Second round, trying to break the new parsers and boundaries. I found one new defect, filed as m2.\n\n**The guard fires where the simulation says.** I ran the real Fitness engine (taad3.fitness.check, TAAD3_HOME in scratch) on a tree holding the current fitness.yaml and the pre-fix RuleCases.ps1 from a9e0d1d. The SL-069 rule hit lines 35, 240, 243, 305, 326, 370, 408, 600, 625 and 633, the same lines as the .NET-regex simulation in Shape-GuardRule. It skipped nothing as a comment.\n\n**Get-RuleCounts against eng/rules-parity.ps1 (Read-Facts, lines 230-311):** every input where the two diverge produces a red C-001, never a silent green. The shapes I walked:\n- The recount's Fact regex is a superset of parity's attribute regex. So a Fact spelled `[FactAttribute]`, `[Xunit.Fact]` or `[Fact][Trait]` either makes parity CANNOT-READ (its :259 check) or makes the counts differ.\n- A pattern line with a trailing comment, or split before `);`, is refused by parity through the same literal shape (:235/:305).\n- A verbatim-literal line outside a Fact would be counted only by the recount.\n- Lone CR, U+0085, U+2028 and tab-led lines are all refused by parity.\n- The marker search starts at line 0 rather than after `rules:`. No header line in today's yaml matches it, and one that did would throw by name.\n\n**New defect (m2):** C-007's new import-rule check matches rule names against the harness's Python list repr. That repr switches to double quotes for any name containing an apostrophe, and 10 of this yaml's 64 rule names contain one. C-007's own yaml reader also does not unquote double-quoted or `''`-escaped names. So the next import rule with such a name turns C-007 red on a correct run.",
+  "matches_design": true,
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "The literal-count guard does not catch the -ExpectFacts value when it is written as an argument-array element. `CheckRun (Invoke-Parity $shell $Repo @('-ExpectFacts', '11')) 0 \"the repo with -ExpectFacts $facts [$shell]\"` and `... @('-ExpectFacts', '12')` both match none of the nine must_not_match regexes; I checked both spellings against the list. The pre-fix hits at 243 and 370 only fire because a label or message on the same line also carries the literal. So somebody can re-pin C-001's or C-005's -ExpectFacts value while keeping the derived label or message, and Fitness stays green. The design says a literal at the C-005 site 'silently turns into AGREE once the tree reaches that number'. For C-005 the only catch left is the opt-in, 11-minute ExpectFactsMismatch shape. For C-001 the only catches are the SingleScope/TwoScope shapes in that same sibling test and the repro. Neither is the gate that runs every time. The builder carried this gap over as an open follow-up, and no stage has disposed of it.",
+    "evidence": ".taad/fitness.yaml, the two '# settled by SL-069' entries (must_not_match list). tests/rules/RuleCases.ps1:295 and :425-426 are the sites that now pass `$facts` and `$more` in that array form. The `$pinned` samples in tests/bugs/SL-069-EveryCaseFollowsCounts.Tests.ps1:452-457 (Shape-GuardRule) include no array-form sample.",
+    "fix": "Add the regex `-ExpectFacts['\"]?\\s*,\\s*['\"]?\\d` to both SL-069 must_not_match lists, and add `@('-ExpectFacts', '{0}')` (built with -f) to Shape-GuardRule's `$pinned` samples so the committed check proves the regex fires."
+   },
+   {
+    "id": "R2-m2",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "C-007's import-rule check assumes the harness prints each unran rule name in single quotes. The harness actually prints Python's repr of the list, which puts any name containing an apostrophe in double quotes. I confirmed this with the engine's own interpreter: repr(['the scan' + chr(39) + 's own canceller never imports Native']) prints [\"the scan's own canceller never imports Native\"]. The check `$run.Output.Contains(\"'$_'\")` then returns False, and I checked that case too. C-007's name reader has the same gap on its side: `.Trim().Trim(\"'\")` does not strip a double-quoted YAML name, and it leaves a single-quoted name with `''` escaped. Apostrophes are common in this yaml's rule names (fitness.yaml lines 245, 494, 504, 579, 719, 748, 756, 763, 784, 794). So the next must_not_import rule named like its neighbours makes C-007 fail with 'unnamed: <name>' on a harness run that is correct, and only in the engine-backed cases the default suite never runs.",
+    "evidence": "Harness side: eng/rules-harness/harness.py:574-575, describe_not_run: `f\"...which the scratch copy has none of: {names}\"`, which is list repr. Reader side: tests/rules/RuleCases.ps1:685 (`$entry = $Matches[1].Trim().Trim(\"'\")`) and :689 (`$run.Output.Contains(\"'$_'\")`).",
+    "fix": "Make both ends agree on one explicit spelling. In harness.py:575 print `', '.join(f\"'{n}'\" for n in names)` rather than `{names}`. In RuleCases.ps1:685 unquote the YAML name properly: if it is wrapped in `'`, strip them and replace `''` with `'`; if it is wrapped in `\"`, strip them."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "I ran `pwsh -File tests/bugs/SL-069-RuleCasesDeriveCounts.Tests.ps1`: exit 0 in 5 s, 'OK: RuleCases.ps1 C-001 holds on a tree with one more twinned rule'. The setup guard (lines 64-69) now derives its expected counts from the unchanged copy +1, as M5 asked. The core assertion, C-001 exits 0 with 'All checks held.', is unchanged."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "My sibling `-Shape All` run. SingleScope: C-001/C-003/C-004/C-005 each exit 0 and expect 'AGREE 12 facts <- 16 twinned entries, 28 patterns; 49 settled' (50 for C-003) under powershell.exe and pwsh. TwoScope does the same at 12/17/28."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "I ran `SettledCountProbe.ps1 -Shape Misclassified`: exit 0. C-001 exits 1 on the stub line 'AGREE 11 facts <- 14 twinned entries, 27 patterns; 50 settled', with 'FAIL  the repo' and '4 check(s) failed.' under each shell. Get-RuleCounts (RuleCases.ps1:214-236) reads only the .cs and the yaml and never the tool's output."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "Grep of `^\\s*\\[\\s*(Fact|Theory)\\b` on ArchitectureRulesTests.cs returns 11 lines, all [Fact] and no [Theory]. C-001 on the real tree prints 'the repo with -ExpectFacts 11 [powershell.exe] exits 0', with the 11 coming from Get-ExpectFacts."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "RuleCases.ps1:25 sets $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot), which is the scratch root when the script runs from a copy. The repro copies RuleCases.ps1, rules-parity.ps1, fitness.yaml and ArchitectureRulesTests.cs (lines 57-61), which covers everything Get-RuleCounts and Get-ExpectedSettled read. The repro passes."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "I ran `RuleCases.ps1 -Case C-008` with the engine on this tree under pwsh: exit 0. The delete case reads 'AGREE 11 facts <- 14 twinned entries, 27 patterns; 49 settled' from Format-AgreeLine -DTwinned -1 (RuleCases.ps1:717). I did not re-run the two-scope copy or the powershell.exe host; that part rests on the builder's EngineCases run."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "Shape-GuardRule in my sibling run: pre-fix a9e0d1d hit at exactly 35,240,243,305,326,370,408,600,625,633. It hit nothing in the current RuleCases.ps1 or either SL-069 test, comments included, and SettledCountProbe -Shape GuardRule still holds."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "RuleCases.ps1:214 `function Get-RuleCounts` takes no parameters and reads $Repo. Format-AgreeLine (:273) takes only -DFacts/-DTwinned/-DPatterns/-DSettled, and Get-ExpectFacts (:282) only -DFacts. The backstop regexes `-(Facts|Twinned|Patterns)\\s+\\d` and `\\b(Facts|Patterns)\\s*=\\s*\\d` are in both fitness.yaml entries."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "`xunit \\d+ Facts` and `found \\d+ Facts where the test class has \\d+` are in both SL-069 entries in fitness.yaml. The committed check is Shape-GuardRule in tests/bugs/SL-069-EveryCaseFollowsCounts.Tests.ps1:423-471. The array-form -ExpectFacts gap is still open; see m1."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "I ran C-006 (31 s), C-007 (34 s) and C-008 (58 s) with -EnginePython/-EngineRoot on this tree under pwsh; all exit 0 with 'All checks held.'. C-007 reads 'xunit 11 Facts, 0 hits' and names the one import rule NOT RUN with verdict 'unable'."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "The repro's setup guard is derived from the unchanged copy's own AGREE line +1 (lines 64-69, 95). The sibling test derives every line through Get-Agree/Get-Line. A second fitness entry covers tests/bugs/SL-069-*.ps1, and Fitness reports it matched files and holds."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "In my sibling run, NoMarker, UnreadableCs (no .cs, no [Fact], no pattern line) and UnseenFact (both the Trait and the Skip-with-blinded-tool variants) all held under both hosts. Each failure stops C-001 by name ('C-001 stopped: RuleCounts: ...'), and C-002 still runs on the markerless yaml."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "Shape-NoMarker: 'C-001 stopped: RuleCounts: no '# settled by SL-' marker in .taad\\fitness.yaml' under both shells, no parity row is run, and C-002 exits 0."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "Shape-UnreadableCs: each of the three trees stops C-001 by name under both shells. The messages are 'no tests\\...\\ArchitectureRulesTests.cs under', 'no [Fact] or [Theory] line' and 'no verbatim @\"...\" pattern line'."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "Shape-UnseenFact. With [Fact, Trait(...)], the parity tool CANNOT-READs and C-001 fails, passing -ExpectFacts 12. With [Fact(Skip=...)] and the tool made blind to it, the tool AGREEs on 11 while C-001 expects 12/15/28 and fails 'found 11 Facts where the test class has 12'."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "tests/bugs/SL-069-RuleCasesDeriveCounts.Tests.ps1 inserts one [Fact] with one verbatim pattern before `Files(`, and one twinned entry before '  # settled by SL-023' (the first marker, yaml:221). It checks that parity AGREEs at baseline +1 and requires C-001 to exit 0. The sibling SingleScope shape repeats this for C-001/3/4/5. I ran both."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "Sibling Add-TwoScope adds one Fact and two entries, (Core) and (App). New-Changed asserts the copy AGREEs at +1/+2/+1 (12/17/28 in my run), and C-001/3/4/5 hold under both hosts."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "Shape-ExpectFactsMismatch runs C-005 on an unchanged copy (N=11) and on a copy with one more Fact (N=12). It requires the ok row 'found N Facts where the test class has N+1' for each. The outer host is pwsh only, but C-005 itself runs parity under both."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "Shape-C003Settled asserts that the added entry is the last '  - name:' above the first marker. It then requires C-003's appended-entry row to equal base +1 on every count and settled +1, under both shells."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "Shape-EngineCases is engine-only. I ran C-008 directly with the engine on this tree: the tests-scope delete gives 11/14/27/49, which is Twinned-1 with everything else unchanged. The two-scope copy under both hosts rests on the builder's run."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "Shape-SettledMarkers asserts that the real yaml holds several markers with '  # settled by SL-069' last. C-001 holds on the unchanged copy (11/15/27/49) and on a copy with another marker and entry (settled 50, twinned still 15)."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "Shape-NoMarker's Remove-Marker cuts the yaml at the first marker, so no marker is left. C-001 stops with the RuleCounts marker message and runs no parity row."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "Shape-UnreadableCs covers a deleted .cs, `[Fact]` rewritten to `[Fect]` (zero Facts under the recount regex), and every `@\"` line prefixed with `/**/` (zero pattern lines). Each stops C-001 by name."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "tests/rules/SettledCountProbe.ps1 Shape-Misclassified edits the copy's rules-parity.ps1 to print twinned-1 and settled+1, and requires C-001 to exit 1 with '4 check(s) failed.'. I ran it: it holds."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "Shape-UnseenFact adds `[Fact, Trait(\"Kind\", \"Unseen\")]`, and separately `[Fact(Skip = \"unseen\")]` with the copy's tool filtered blind to it. Both turn C-001 red, and the recount counts the extra Fact (-ExpectFacts 12)."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "Every sibling shape and the repro run RuleCases under both powershell.exe and pwsh. Shape-HostParity also requires the ok rows to be identical across hosts."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "Shape-GuardRule parses both SL-069 yaml entries, applies them to `git show a9e0d1d:tests/rules/RuleCases.ps1`, and requires the exact hit list, zero hits in the current files, and hit/no-hit samples. No sample uses the argument-array -ExpectFacts spelling (m1)."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "Shape-HostParity prepends EF BB BF to both the yaml and the .cs of the two-scope copy, and C-001 holds under both hosts. The design marks this row material:false."
+   },
+   {
+    "key": "C-014",
+    "exercised": "no",
+    "evidence": "Deferred as material:false, and nothing feeds a [Theory]. The reason still holds: ArchitectureRulesTests.cs has 11 [Fact] lines and no [Theory]. C-007 compares the trx total with Get-ExpectFacts, so an added Theory would fail loudly."
+   }
+  ],
+  "drift": [
+   "eng/rules-harness/harness.py and plants.json are changed, though the design names neither. Declared: import rules left unran on the scratch copy are named 'NOT RUN, not passed', the verdict must be 'unable', and the harness exits 0. There is also a new row field, also_settled, on F03 and F18. I checked this against the engine's taad3/fitness.py:616-680: content rules run before the graph check, so the must_not_match half of 'the provider does not use the code it checks' really does still run on the scratch copy. What goes unmeasured is only its must_not_import half, and this tree's Fitness gate evaluates that.",
+   "SettledCountProbe.ps1 Get-Line is now derived: it loads RuleCases.ps1's Get-RuleCounts through the PowerShell AST. This reverses the design's key decision to leave line 125 alone. It was declared, but it rests on 'Q-129 as the rebuild order states it', and a search of the tree finds Q-129 only in SL-069's own build-slice-3.json and index.json. The instruction cannot be checked from the repository.",
+   "The design says 'Get-RuleCounts ... throws, and the script exits non-zero before any case runs', and its contract repeats this. The build computes the counts lazily, so only a case that needs them stops, by name, and C-002 still runs. This follows the m5 accepted correction, but the design document still describes the old contract.",
+   "The design says 'The existing prefix or substring matching stays as it is'. C-004's four BOM spellings and C-005's blank-line-and-comment fixture used to match a prefix without the settled count. They now match the full Format-AgreeLine string, settled count included, so they also depend on Get-ExpectedSettled. The change is stricter and harmless, but the build did not declare it.",
+   "The guard is two yaml entries with nine regexes, where the design had one entry with five. This follows the accepted M1, M2 and M5, because `files` takes a single glob."
+  ],
+  "unreviewed": [],
+  "second_round": {
+   "run_id": 1824,
+   "filed": 1
+  }
+ }
+}

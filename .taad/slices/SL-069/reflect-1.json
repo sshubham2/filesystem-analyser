@@ -1,0 +1,133 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-069",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-09-28T07:27:32.347Z",
+ "head": "8007d9fd5ec0400a5b98ad7524b810e47f12351e",
+ "run_id": 1827,
+ "summary": "SL-069 removed the hard-coded Facts/Twinned/Patterns counts from tests/rules/RuleCases.ps1. It did this with an independent recount (Get-RuleCounts) of the tree's own yaml and .cs, plus measured per-site offsets, and deliberately not by reading the parity tool's output as the brief said. It also added a two-entry literal-count guard in fitness.yaml, a sibling scratch-tree test with many shapes, and a derived stub line in SettledCountProbe.ps1. To run C-007/C-008 it had to fix eng/rules-harness/harness.py, which could not judge any row at HEAD. The acceptance repro exits 0 and validation replayed 14 real historical rule states. Three obligations (O-009, O-024, O-025) were still open at validate and reflect.",
+ "payload": {
+  "status": "complete",
+  "summary": "SL-069 removed the hard-coded Facts/Twinned/Patterns counts from tests/rules/RuleCases.ps1. It did this with an independent recount (Get-RuleCounts) of the tree's own yaml and .cs, plus measured per-site offsets, and deliberately not by reading the parity tool's output as the brief said. It also added a two-entry literal-count guard in fitness.yaml, a sibling scratch-tree test with many shapes, and a derived stub line in SettledCountProbe.ps1. To run C-007/C-008 it had to fix eng/rules-harness/harness.py, which could not judge any row at HEAD. The acceptance repro exits 0 and validation replayed 14 real historical rule states. Three obligations (O-009, O-024, O-025) were still open at validate and reflect.",
+  "estimate_error": "Sized too small, and the risk sat in the wrong place. It was opened as medium/medium, a bug fix, on a brief that read like 'refresh about six strings once'. It took 4 build attempts, 2 designs, 2 critiques, 2 build-checks and 2 code reviews. The diff grew to a recount function, a format helper and about ten rewired case sites. It also grew to a guard of two yaml entries with nine regexes each, a sibling test whose default run takes 9-11 minutes, a derived stub in SettledCountProbe.ps1, and an out-of-scope fix to harness.py and plants.json. The risk tier pointed at the oracle-independence question (read-back vs recount). That held on every measurement: the recount matched parity at 11/15/27/47, and a read-back mutant turned the Misclassified probe red. The risk that cost builds was that the engine-backed cases (C-006..C-014) could not run at HEAD, and nobody had opened the slice with that in mind. The brief was also stale on arrival. The C-003 lookahead was already in HEAD (8af2ac6), the settled half was already SL-053's, and the three sources quote the settled count as 47, 48 and 49.",
+  "learned": [
+   {
+    "kind": "design",
+    "lesson": "Expected counts in RuleCases.ps1 must stay an independent recount of the tree's yaml and .cs plus a per-site offset. They must never be read back from eng/rules-parity.ps1's output, even when a slice brief says to. The committed offsets are: C-003 settled +1, C-008 tests-scope delete twinned -1, and 0 everywhere else. Any new C-0NN case that mutates a fixture must add its own offset in the same commit.",
+    "evidence": "SettledCountProbe -Shape Misclassified passes only because C-001's expectations are independent of the tool. Validate's mutation (Get-RuleCounts replaced by a parse of the AGREE line) turned that probe red. The lockstep spike measured the offsets constant over 11 tree states."
+   },
+   {
+    "kind": "risk",
+    "lesson": "eng/rules-harness/harness.py could not judge any row at HEAD. The SL-049 must_not_import rule is UNRAN on the harness's scratch copy because that copy has no code graph. It stopped SL-065 three times and SL-069 once before this slice fixed it. The harness now names unran import rules 'NOT RUN, not passed' and the verdict stays 'unable', so the clean line always reads 'fitness unable ... CLEAN' on this tree. That is expected, not a failure. Import rules are never measured by the harness.",
+    "evidence": "Build #2 exited 2 (CANNOT MEASURE). Build #4 on a git archive of c746a31 gave '48 rows, 48 AS-RECORDED ... NOT RUN, not passed: 1 import rule(s)'. C-006 proves a non-import unran rule still stops the run."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "Any slice that adds a content (settled) rule to .taad/fitness.yaml must run harness.py --scenario all on a git archive of HEAD (about 18 s). Any plant the new rule also fires on needs `also_settled` in eng/rules-harness/plants.json, or the row goes STRAY-HIT and exit 1. SL-046 and SL-056 shipped settled rules while the harness was down, and their hits were found only now.",
+    "evidence": "The first harness run that could judge at HEAD showed F03 and F18 as STRAY-HIT. They genuinely also break settled rules from SL-056 and SL-046. Build #4 added the Fitness-only row field `also_settled`, after which all 48 rows were AS-RECORDED."
+   },
+   {
+    "kind": "estimate",
+    "lesson": "The engine-backed and scratch-tree tests are slow. Budget them explicitly for any slice touching RuleCases.ps1, and run the long ones last or in the background. Measured: sibling test `-Shape All` 513-630 s, `-Shape EngineCases` 316-351 s, SettledCountProbe `-Shape All` 124 s, C-009 80 s, C-012 66 s. A build that runs them all in one session is exposed to the provider session limit.",
+    "evidence": "Build #1 died on 'You've hit your session limit'. Interrupted runs left about 500 fsa-parity-case-*, fsa-sl069-* and fsa-rules-* dirs in %TEMP% (49 + 288 + 155 + 6 + 2 counted by three stages). Validate measured 0 dirs left after normal completion, so the leaks come from killed runs whose finally blocks never ran."
+   },
+   {
+    "kind": "process",
+    "lesson": "Findings accepted as 'pending' at code-review round 2 have no build stage after them. The loop goes code-review to validate, so the fixes are never made. Validate recorded 'failed' for O-024 and O-025 and still passed the slice. Either size a build attempt for round-2 minors, or put them on the backlog at the moment they are accepted.",
+    "evidence": "At reflect, O-009, O-024 and O-025 are open and 'owed to build-slice'. Validate's own rows read '[failed] O-024 fix present in the tree?' and '[failed] O-025 fix present in the tree?', while the acceptance repro and the guard shapes passed."
+   },
+   {
+    "kind": "process",
+    "lesson": "The critique's disposal by a model was wrong on grep-checkable facts for about half its findings. It is also unsafe to override a finding on a wrong detail without checking that its fix still stands. The critique-review stage was sized out at medium risk, so nothing reviewed those overrides.",
+    "evidence": "6 of 11 critique findings were overridden: M3 (the probe already copies ArchitectureRulesTests.cs at SettledCountProbe.ps1:26), m1 (the engine's fitness copy was already at :823 under SL-069), m2, m3, m4 and m6. m6 was overridden because its timing claim was wrong. Its remedy, deriving SettledCountProbe.ps1:125, was then directed by Q-129 in the rebuild order and reversed the design's key decision."
+   },
+   {
+    "kind": "design",
+    "lesson": "The literal-count guard is textual. It takes one `files` glob per yaml entry, so it exists as two entries with nine regexes each (RuleCases.ps1 and tests/bugs/SL-069-*.ps1). It does not catch the argument-array spelling `@('-ExpectFacts','N')`, which is exactly the C-005 mismatch site that silently turns into AGREE once the tree reaches N Facts. Do not treat the guard as covering -ExpectFacts until O-024 lands.",
+    "evidence": "Critique M2's own disposal noted that RuleCases.ps1:370 writes `@('-ExpectFacts', '12')` and that `-ExpectFacts\\s+['\"]?\\d` cannot match it. It still added only the `xunit \\d+ Facts` and `found \\d+ Facts where the test class has \\d+` regexes. Code review m1 found the gap, and validate confirmed the array form is still unmatched."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "The recount depends on ArchitectureRulesTests.cs keeping verbatim `@\"...\"` pattern lines, one Fact per `[Fact]` attribute line, and the yaml position rule (twinned = '  - name:' above the FIRST '# settled by SL-' marker). Each new settled entry goes under its own marker and moves the settled count; the real tree is now 11/15/27/49. Non-verbatim patterns and `[Fact, Trait(...)]` make parity return CANNOT-READ, so a style change fails loudly in both places.",
+    "evidence": "Spike parity-counts-recountable-independently reproduced 11/15/27/47 with about 20 lines of regex. Critique m2's disposal cites rules-parity.ps1:306 (CANNOT-READ for non-verbatim or inline patterns), and the UnseenFact shape confirmed the Trait spelling returns CANNOT-READ."
+   }
+  ],
+  "what_went_wrong": [
+   "Build ran 4 times. #1 was lost to a provider session limit. #2 halted on a pre-existing blocker: harness.py exited 2 at HEAD, so C-007/C-008 could not be measured. #3 was a rebuild order. #4 passed only after the diff reached eng/rules-harness/harness.py, plants.json (a new `also_settled` field) and SettledCountProbe.ps1, none of which the design named. The blocker had already stopped SL-065 three times, and nothing in the design or critique looked at it.",
+   "The brief was stale and partly wrong. One of its three claims (the C-003 lookahead) was already in HEAD, and the settled-count half was SL-053's. Its 'read the numbers from the parity output' instruction contradicted SL-053's Misclassified probe. Build-check ran twice (the first halted as 'partial') and design ran twice (the first halted on an open question). The design then overrode the brief on the strength of the build-check's measurement, which was correct, but it cost a full extra design round.",
+   "The design chose to leave SettledCountProbe.ps1:125's stub literal alone, which is the same class of stale literal this slice exists to remove. The critique filed it as m6 with a wrong timing claim and it was overridden. Q-129 reversed the decision during rebuild, so a valid finding was lost on a technicality and re-won later at the price of scope drift.",
+   "Six of the critique's 11 findings were overridden on premises a grep would have refuted (the probe already copies the .cs, the engine's fitness entry was already below the marker, and so on). Critique-review was sized out, so nothing checked those overrides or the reviewer's precision. The critique also missed the one thing that cost a build: that the harness could not run.",
+   "Three accepted obligations were still open at reflect. O-009 was never discharged by a named command. The fixes for O-024 (array-element guard regex) and O-025 (apostrophe-safe harness/C-007 quoting) were not built, and validate recorded both as failed yet passed. The guard still misses the C-005 -ExpectFacts array spelling in the tree that ships.",
+   "Code-review round 1 halted and round 2 found a defect in the code build #4 wrote for this slice: C-007's import-rule check breaks on a rule name containing an apostrophe (harness.py:575 prints the Python list repr; RuleCases.ps1:685 uses `.Trim(\"'\")`). Round 1 read the same lines. The adversarial second pass found it and the first did not.",
+   "Scratch cleanup was neglected. Hundreds of fsa-parity-case-*, fsa-sl069-* and fsa-rules-* dirs from killed runs sit in %TEMP%. Build and validate both noted them and left them. The default sibling test run takes 9-11 minutes, and nothing in the slice shortened it."
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "dimension": "unfounded-assumptions",
+    "severity": "major",
+    "what": "Finding M4 said skipping C-007/C-008 'is a choice, not a limitation' because the engine's interpreter is available to the build. It never asked whether eng/rules-harness/harness.py can judge a row at HEAD. It could not: it exited 2 CANNOT MEASURE because the SL-049 must_not_import rule is UNRAN on the scratch copy, and the same cause had already stopped SL-065 three times. A one-command check (harness.py --scenario clean on a git archive of HEAD) would have exposed it before the design was accepted.",
+    "caught_by": "build-slice attempt 2, which halted and forced the harness.py/plants.json scope expansion"
+   },
+   {
+    "gate": "critique",
+    "dimension": "test-coverage",
+    "severity": "minor",
+    "what": "M2's disposal recorded that RuleCases.ps1:370 writes `@('-ExpectFacts', '12')` and that `-ExpectFacts\\s+['\"]?\\d` cannot match it. The accepted fix added only the `xunit \\d+ Facts` and `found \\d+ Facts where the test class has \\d+` regexes, so the argument-array spelling stayed unguarded. Only a label on the same line made the pre-fix hits fire. No array-form sample was added to the committed GuardRule probe.",
+    "caught_by": "code-review round 1 (m1); still not in the tree at validate (O-024)"
+   },
+   {
+    "gate": "critique-review",
+    "dimension": "cross-cutting-conformance",
+    "severity": "minor",
+    "what": "The override of m6 stood. The finding said the design leaves a stale-prone literal AGREE line in SettledCountProbe.ps1:125, and it was overridden because its timing claim was wrong. The core remedy (derive that line from the recount) was still right and was directed later by Q-129. Critique-review did not run (sized out at medium risk), so no second reader tested the override.",
+    "caught_by": "a person, via Q-129 in the rebuild order for build #4"
+   },
+   {
+    "gate": "code-review",
+    "dimension": "missing-edge-cases",
+    "severity": "minor",
+    "what": "Round 1 read harness.py:575 and RuleCases.ps1:685 without feeding them a rule name containing an apostrophe. harness.py prints the Python list repr, which switches a name with an apostrophe to double quotes, and C-007's `.Trim(\"'\")` and `'$_'` check then fail on a correct harness run. Ten existing rule names in fitness.yaml (lines 245, 494, 504, 579, 719, 748, 756, 763, 784, 794) contain an apostrophe.",
+    "caught_by": "code-review round 2 (R2-m2); fix still owed as O-025"
+   }
+  ],
+  "unknowns": [
+   "Does the next real slice that declares a twinned rule through the engine's own flow leave RuleCases.ps1 untouched and C-001..C-005 green? Only scratch-copy simulations and replays of 14 historical states were run, so the structural fix is unproven until that happens.",
+   "Does the NOT RUN treatment of import rules hide a real must_not_import regression? The harness never measures them, because a scratch copy has no code graph and the graph store is under TAAD3_HOME. Whether the engine's CRG store can be given to the harness's scratch copy is unknown.",
+   "Where do the leaked %TEMP% scratch dirs (about 500 across stages) come from? Validate measured 0 leaks on normal completion, but nobody identified whether killed runs are the only source or some path skips its finally block."
+  ],
+  "candidates": [
+   {
+    "title": "Guard the argument-array -ExpectFacts spelling and discharge O-009",
+    "urgency": "soon",
+    "why": "O-024. Add `-ExpectFacts['\"]?\\s*,\\s*['\"]?\\d` to both SL-069 must_not_match lists in .taad/fitness.yaml. Add an `@('-ExpectFacts','{0}')` sample to Shape-GuardRule's $pinned list. Also run the sibling test's ExpectFactsMismatch shape alone so O-009 (C-005 with N+1) is discharged by a named command. Until then a re-pinned C-005 value flips to AGREE silently once the tree reaches that Fact count."
+   },
+   {
+    "title": "Make harness NOT RUN listing and C-007's rule-name parsing apostrophe-safe",
+    "urgency": "soon",
+    "why": "O-025. Print `', '.join(f\"'{n}'\" ...)` at harness.py:575 and unquote YAML names properly (strip `'` and un-double `''`, or strip `\"`) at RuleCases.ps1:685. The next must_not_import rule named like its neighbours (ten existing names carry an apostrophe) turns C-007 red on a correct harness run."
+   },
+   {
+    "title": "Make harness.py --scenario all a required check for any slice that edits .taad/fitness.yaml",
+    "urgency": "soon",
+    "why": "F03 and F18 were STRAY-HIT because SL-046 and SL-056 added settled rules while the harness could not run. It now runs on a git archive of HEAD in about 18 s. A slice-level check (or a fitness/CI step) that runs it and demands `also_settled` for any newly hit plant would stop plants going stale again."
+   },
+   {
+    "title": "Split the sibling test into a fast default and opt-in slow shapes, and sweep stale %TEMP% scratch",
+    "urgency": "soon",
+    "why": "tests/bugs/SL-069-EveryCaseFollowsCounts.Tests.ps1 -Shape All takes 513-630 s and EngineCases 316-351 s. Build #1 died on a session limit, and hundreds of fsa-parity-case-*, fsa-sl069-* and fsa-rules-* dirs from killed runs sit in %TEMP%. A cheap default that runs C-001/C-003/C-004/C-005, and a startup sweep of old fsa-* dirs, would shorten the loop."
+   },
+   {
+    "title": "Give the rules-harness scratch copy a code graph so must_not_import rules are measured",
+    "urgency": "someday",
+    "why": "harness.py now reports import rules as 'NOT RUN, not passed' and the verdict stays 'unable'. The scratch copy has no graph because the engine keeps graphs under TAAD3_HOME, so import-rule behaviour is never exercised by any plant. This probably needs engine support for pointing the CRG store at the scratch root."
+   },
+   {
+    "title": "Run C-007 against a tree with a data-driven [Theory] to prove it fails loudly",
+    "urgency": "someday",
+    "why": "Validate exercised parity, C-001 and the harness command C-007 invokes on a [Theory] tree (all exit 2), but not C-007 itself. The design's own case 14 depends on it, and nobody has fed that shape to the case."
+   }
+  ]
+ }
+}

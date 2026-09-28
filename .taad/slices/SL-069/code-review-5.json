@@ -1,0 +1,46 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-069",
+ "stage": "code-review",
+ "attempt": 5,
+ "at": "2026-09-28T10:05:41.069Z",
+ "head": "199f0e1525b30525c79ed7e190d35458642faf1d",
+ "run_id": 1887,
+ "summary": "This stale re-review at 199f0e1 covers the uat merge into SL-069 (a0b028b, which brings in SL-072) and build attempt 7. I found nothing new.\n\n**The two slices together.** SL-072 touches only test files in tests/FsAnalyser.Core.Tests (CancelledFolderTests.cs, the new Scans.cs, SynchronousIoCancelTests.cs, TopLevelTests.cs). None of these is an SL-069 file or a plant anchor. The only place the two slices can meet is the tests-scope architecture rules applied to those files. I ran three checks:\n- **Fitness op=check** (rebuilt): 64 rules hold over 109 parsed files.\n- **Full harness on the merged tree** (`harness.py --scenario all`, exit 0 in 21 s): the clean baseline has xunit 11 Facts and 0 hits in both engines, all 48 rows are AS-RECORDED, and there are 0 stray hits.\n- **Acceptance repro:** exits 0.\n\n**Attempt 7.** C-007 now turns CRLF into LF in the harness output before checking each name with `Contains(\"'$_'\")`. That is the fix R2-m6's decision chose. The normalisation is sound. Out-String rejoins every native output line with CRLF, and a name's embedded or trailing newline comes back from yaml.safe_load as LF, so after the replace both sides agree. The count check still reads the unmodified output.\n\nShape-ImportRuleNames now feeds a clip-folded `name: >` probe and a two-line `name: |` probe. Its comment lists every spelling it feeds. I ran it with the engine on the merged tree: exit 0 in 71 s. The copy AGREEs at 11/15/27/60, and C-007 passes under powershell.exe and pwsh with 11 import rules named and none left unnamed.\n\nThe builder declared that the structural fix was not built: a machine-readable not-run line from the harness, compared as a list. R2-m6's decision chose the smallest fix, and the builder has recorded the structural one as a follow-up for a person to rank.\n\nSecond round: Nothing new this round. I went back over attempt 7's one-line change to C-007, the CRLF-to-LF replace before each name check, looking for line-break inputs that would still slip through.\n\n- **Where the output's line breaks come from.** PowerShell reads native output line by line and Out-String rejoins the lines with CRLF. So every break in `$run.Output` becomes CRLF, whatever Python wrote, and the replace turns them all into LF.\n- **Names with newlines.** A `>` name, a `|` name, and a `|+` name ending in blank lines all come back from yaml.safe_load with LF breaks and match after the replace.\n- **Other characters.** U+0085 and U+2028 are escaped by say() and by Get-ImportRuleNames alike, so both sides agree. Tabs and trailing spaces inside a block name pass through untouched. The whole-output `.Trim()` in Invoke-HarnessRaw cannot reach a name, because the NOT RUN list always sits mid-line, before ' | CLEAN'.\n\nOne mismatch is left: a double-quoted name that spells a bare carriage return as the `\\r` escape. PowerShell would split the line there, and the comparison would miss it. No real rule name would be written that way, so I am not filing it.",
+ "payload": {
+  "status": "complete",
+  "verdict": "clean",
+  "summary": "This stale re-review at 199f0e1 covers the uat merge into SL-069 (a0b028b, which brings in SL-072) and build attempt 7. I found nothing new.\n\n**The two slices together.** SL-072 touches only test files in tests/FsAnalyser.Core.Tests (CancelledFolderTests.cs, the new Scans.cs, SynchronousIoCancelTests.cs, TopLevelTests.cs). None of these is an SL-069 file or a plant anchor. The only place the two slices can meet is the tests-scope architecture rules applied to those files. I ran three checks:\n- **Fitness op=check** (rebuilt): 64 rules hold over 109 parsed files.\n- **Full harness on the merged tree** (`harness.py --scenario all`, exit 0 in 21 s): the clean baseline has xunit 11 Facts and 0 hits in both engines, all 48 rows are AS-RECORDED, and there are 0 stray hits.\n- **Acceptance repro:** exits 0.\n\n**Attempt 7.** C-007 now turns CRLF into LF in the harness output before checking each name with `Contains(\"'$_'\")`. That is the fix R2-m6's decision chose. The normalisation is sound. Out-String rejoins every native output line with CRLF, and a name's embedded or trailing newline comes back from yaml.safe_load as LF, so after the replace both sides agree. The count check still reads the unmodified output.\n\nShape-ImportRuleNames now feeds a clip-folded `name: >` probe and a two-line `name: |` probe. Its comment lists every spelling it feeds. I ran it with the engine on the merged tree: exit 0 in 71 s. The copy AGREEs at 11/15/27/60, and C-007 passes under powershell.exe and pwsh with 11 import rules named and none left unnamed.\n\nThe builder declared that the structural fix was not built: a machine-readable not-run line from the harness, compared as a list. R2-m6's decision chose the smallest fix, and the builder has recorded the structural one as a follow-up for a person to rank.\n\nSecond round: Nothing new this round. I went back over attempt 7's one-line change to C-007, the CRLF-to-LF replace before each name check, looking for line-break inputs that would still slip through.\n\n- **Where the output's line breaks come from.** PowerShell reads native output line by line and Out-String rejoins the lines with CRLF. So every break in `$run.Output` becomes CRLF, whatever Python wrote, and the replace turns them all into LF.\n- **Names with newlines.** A `>` name, a `|` name, and a `|+` name ending in blank lines all come back from yaml.safe_load with LF breaks and match after the replace.\n- **Other characters.** U+0085 and U+2028 are escaped by say() and by Get-ImportRuleNames alike, so both sides agree. Tabs and trailing spaces inside a block name pass through untouched. The whole-output `.Trim()` in Invoke-HarnessRaw cannot reach a name, because the NOT RUN list always sits mid-line, before ' | CLEAN'.\n\nOne mismatch is left: a double-quoted name that spells a bare carriage return as the `\\r` escape. PowerShell would split the line there, and the comparison would miss it. No real rule name would be written that way, so I am not filing it.",
+  "matches_design": true,
+  "findings": [],
+  "obligations": [
+   {
+    "key": "O-029",
+    "discharged": "yes",
+    "evidence": "In tests/rules/RuleCases.ps1 Case-C007, `$output = $run.Output.Replace(\"`r`n\", \"`n\")` comes before the per-name `$output.Contains(\"'$_'\")`. Shape-ImportRuleNames in tests/bugs/SL-069-EveryCaseFollowsCounts.Tests.ps1 adds the `name: >` and two-line `name: |` probes. My run on the merged tree: exit 0, 'the 11 import rule(s) are named NOT RUN ... (unnamed: )' under both hosts."
+   },
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "I re-ran tests/bugs/SL-069-RuleCasesDeriveCounts.Tests.ps1 at 199f0e1, after the SL-072 merge: exit 0."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "Full harness on the tree merged with SL-072: clean baseline, 48/48 AS-RECORDED, exit 0. C-007 run inside ImportRuleNames passes under both hosts, including its stray-violation bite."
+   }
+  ],
+  "cases": [],
+  "drift": [
+   "Declared, not built: R2-m6's structural alternative, a machine-readable `harness: not-run-json` line compared as a list. It stays a follow-up for a person to rank. C-007 therefore still compares names as quoted text inside the human-readable NOT RUN line.",
+   "The uat merge brought in SL-072's test-only changes to tests/FsAnalyser.Core.Tests. They do not depart from SL-069's design, and SL-069's rules and harness were re-measured against them: Fitness holds, harness 48/48."
+  ],
+  "unreviewed": [
+   "SL-072's changes to tests/FsAnalyser.Core.Tests (CancelledFolderTests.cs, Scans.cs, SynchronousIoCancelTests.cs, TopLevelTests.cs) arrived with the uat merge. I did not read them line by line: they are another slice's reviewed work. I checked them only where they meet SL-069's rules and harness, through the full harness run and Fitness."
+  ],
+  "second_round": {
+   "run_id": 1888,
+   "filed": 0
+  }
+ }
+}

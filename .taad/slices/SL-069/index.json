@@ -1,0 +1,656 @@
+{
+ "schema": "slice-record@1",
+ "slice": "SL-069",
+ "title": "Make tests/rules/RuleCases.ps1 derive the parity counts instead of hard-coding them",
+ "status": "active",
+ "branch": "slice/SL-069",
+ "opened_at": "2026-09-28T04:19:26.678Z",
+ "merge_commit": null,
+ "how_to_read": "Each attempt is one line and a `details` filename in this same directory. Open a detail file ONLY when this index points you at one -- the summaries are here so you do not have to. `caused_by` is what sent the stage back; `changed` is what the attempt then touched, counted by kind. Several attempts in a row that were caused by the same stage and changed no `src` is a loop, not progress.",
+ "open": [
+  {
+   "stage": "repro",
+   "issue": "observed: RuleCases.ps1 -Case C-001 exited 1 on a tree where rules-parity says 'AGREE 12 facts <- 16 twinned entries, 28 patterns; 47 settled entries not compared'. C-001 printed FAIL for the pinned 'AGREE 11 facts <- 15 twinned entries, 27 patterns; 48 settled…' string, and its -ExpectFacts 11 run failed wi…"
+  },
+  {
+   "stage": "build-check",
+   "issue": "RuleCases.ps1 no longer hard-codes the 'AGREE N facts <- M twinned entries, P patterns' counts (about six places plus the C-005 fixture): partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "A slice that declares one more twinned rule leaves the rule-copy cases green (C-001 exits 0 on that tree): missing"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Should tests/rules/SettledCountProbe.ps1:125 (the stub tool's literal AGREE line) be derived from the recount in this slice, or left as a follow-up? It is outside the slice's named file. Left as-is, the Misclassified probe still turns red on a read-back regression, but after the next twinned slice it can no longer tell a real misclassification from a stale stub line."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Count-free case titles versus titles computed from the recount (the proposal chose count-free; computed titles need the counts to exist before the cases are declared)."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "A separate Format-AgreeLine function versus inline string interpolation at each site (one spelling chosen, at the price of a function to keep in step with the parity tool's wording)."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The recount in RuleCases.ps1 versus a shared tests/rules/RuleCounts.ps1 that SettledCountProbe.ps1 could also use. The in-file placement was chosen because of the scratch-copy risk, but a shared file would make the SettledCountProbe.ps1:125 follow-up cheaper."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "One literal-count guard rule with five regexes versus a second rule against reading counts back (rejected: read-back has too many spellings for a regex to catch)."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "Loop shape: attempts 3 to 7 were each taken back as STALE because uat moved under the slice before its merge out (SL-070, SL-071, SL-072, SL-073), and none of those merges touched SL-069's files. Every lap re-runs about 10 minutes of engine-backed checks to confirm an overlap that is empty. If the merge step checked file overlap first, or merged out immediately after the uat-in merge, the lap would not recur."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "Still open from attempts 5 and 6, and not built: C-007 compares import-rule names as quoted text in the harness's human-readable NOT RUN line. A machine-readable `harness: not-run-json` line, compared as a parsed list, would close that class of mismatch. It is for a person to rank."
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: The uat merge brought in SL-073's changes to Directory.Build.props, the Core.Tests csproj, Core.Tests files including TestNative.cs, and tests/window. None of them departs from SL-069's design. SL-06…"
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: Still declared and unbuilt: C-007 compares names as quoted text in the human-readable NOT RUN line. The structural fix, a machine-readable not-run line compared as a parsed list, remains a follow-up …"
+  },
+  {
+   "stage": "code-review",
+   "issue": "not reviewed: SL-073's Directory.Build.props, Core.Tests csproj and test changes, and tests/window, arrived with the uat merge and were not read line by line. They are another slice's reviewed work. I checked them…"
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A real future slice that declares a twinned rule through the engine's own flow. Only scratch copies (SingleScope, TwoScope, EngineCases) were run, so whether the next twinned slice leaves RuleCases.ps1 untouched stays unknown until one lands."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A real import rule whose name is non-ASCII, wrapped, commented, folded or broken across lines. None exists in the yaml; the O-028 and O-029 fixes were measured on scratch copies only (validate-5), and not re-probed this pass."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Name spellings C-007 still compares as text and that no stage has probed, such as a name holding \"', '\". Nothing structural closes that class until the harness prints a machine-readable list."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The acceptance repro was not re-run, by design. Its exit 0 is the engine's measurement (O-001)."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The trx-versus-source 'xunit N Facts' comparison in C-007 for a Theory with data rows. Parity refuses any [InlineData] line in ArchitectureRulesTests.cs first, so that comparison cannot be reached with this shape."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: SL-073's changes (Directory.Build.props pin, Core.Tests files, tests/window) were exercised only through the 400-test Core.Tests run, the rules harness, EngineCases' scratch builds and Fitness. Its window and hook cases were not run and its code was not read line by line; that belongs to SL-073's own validate."
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: Finding M4 said skipping C-007/C-008 'is a choice, not a limitation' because the engine's interpreter is available to the build. It never asked whether eng/rules-harness/harness.py can judge a row at HEAD. It could not: it exited 2 CANNOT MEASURE because the SL-049 must_not_import rule is UNRAN on …"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: M2's disposal recorded that RuleCases.ps1:370 writes `@('-ExpectFacts', '12')` and that `-ExpectFacts\\s+['\"]?\\d` cannot match it. The accepted fix added only the `xunit \\d+ Facts` and `found \\d+ Facts where the test class has \\d+` regexes, so the argument-array spelling stayed unguarded. Only a lab…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique-review missed: The override of m6 stood. The finding said the design leaves a stale-prone literal AGREE line in SettledCountProbe.ps1:125, and it was overridden because its timing claim was wrong. The core remedy (derive that line from the recount) was still right and was directed later by Q-129. Critique-review …"
+  },
+  {
+   "stage": "reflect",
+   "issue": "code-review missed: Round 1 read harness.py:575 and RuleCases.ps1:685 without feeding them a rule name containing an apostrophe. harness.py prints the Python list repr, which switches a name with an apostrophe to double quotes, and C-007's `.Trim(\"'\")` and `'$_'` check then fail on a correct harness run. Ten existing …"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does the next real slice that declares a twinned rule through the engine's own flow leave RuleCases.ps1 untouched and C-001..C-005 green? Only scratch-copy simulations and replays of 14 historical states were run, so the structural fix is unproven u…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does the NOT RUN treatment of import rules hide a real must_not_import regression? The harness never measures them, because a scratch copy has no code graph and the graph store is under TAAD3_HOME. Whether the engine's CRG store can be given to the …"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Where do the leaked %TEMP% scratch dirs (about 500 across stages) come from? Validate measured 0 leaks on normal completion, but nobody identified whether killed runs are the only source or some path skips its finally block."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Build ran 4 times. #1 was lost to a provider session limit. #2 halted on a pre-existing blocker: harness.py exited 2 at HEAD, so C-007/C-008 could not be measured. #3 was a rebuild order. #4 passed only after the diff reached eng/rules-harness/harne…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The brief was stale and partly wrong. One of its three claims (the C-003 lookahead) was already in HEAD, and the settled-count half was SL-053's. Its 'read the numbers from the parity output' instruction contradicted SL-053's Misclassified probe. Bu…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The design chose to leave SettledCountProbe.ps1:125's stub literal alone, which is the same class of stale literal this slice exists to remove. The critique filed it as m6 with a wrong timing claim and it was overridden. Q-129 reversed the decision …"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Six of the critique's 11 findings were overridden on premises a grep would have refuted (the probe already copies the .cs, the engine's fitness entry was already below the marker, and so on). Critique-review was sized out, so nothing checked those o…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Three accepted obligations were still open at reflect. O-009 was never discharged by a named command. The fixes for O-024 (array-element guard regex) and O-025 (apostrophe-safe harness/C-007 quoting) were not built, and validate recorded both as fai…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Code-review round 1 halted and round 2 found a defect in the code build #4 wrote for this slice: C-007's import-rule check breaks on a rule name containing an apostrophe (harness.py:575 prints the Python list repr; RuleCases.ps1:685 uses `.Trim(\"'\")…"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Scratch cleanup was neglected. Hundreds of fsa-parity-case-*, fsa-sl069-* and fsa-rules-* dirs from killed runs sit in %TEMP%. Build and validate both noted them and left them. The default sibling test run takes 9-11 minutes, and nothing in the slic…"
+  }
+ ],
+ "stages": [
+  {
+   "stage": "repro",
+   "title": "Repro",
+   "order": 1,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "build-check",
+   "title": "Build check",
+   "order": 2,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "risk-spike",
+   "title": "Risk spike",
+   "order": 3,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "design-slice",
+   "title": "Design",
+   "order": 4,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-28T04:34:29.621Z",
+     "head": "a9e0d1d751fe9d7ddb519944755bb26b7223069d",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique",
+   "title": "Critique",
+   "order": 5,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-28T04:44:16.404Z",
+     "head": "a9e0d1d751fe9d7ddb519944755bb26b7223069d",
+     "summary": "The core of the design is sound.",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique-review",
+   "title": "Critique review",
+   "order": 6,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-28T04:52:12.090Z",
+     "head": "a9e0d1d751fe9d7ddb519944755bb26b7223069d",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-review-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "build-slice",
+   "title": "Build",
+   "order": 7,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "failed",
+     "at": "2026-09-28T04:52:37.371Z",
+     "head": "c746a314ab520faf86e723d3580ea8d90fe0cdb1",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 10:50am (Asia/Kolkata)",
+     "caused_by": null,
+     "changed": {},
+     "details": "build-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-28T05:22:20.927Z",
+     "head": "c746a314ab520faf86e723d3580ea8d90fe0cdb1",
+     "summary": "tests/rules/RuleCases.ps1 no longer writes any parity count.",
+     "caused_by": null,
+     "changed": {
+      "tests": 4,
+      "config": 1,
+      "listed": 5,
+      "measured_by_git": 10
+     },
+     "details": "build-slice-2.json"
+    },
+    {
+     "n": 3,
+     "state": "passed",
+     "at": "2026-09-28T06:13:23.797Z",
+     "head": "3bd2b9474be39e004561d1a29844a508238f7929",
+     "summary": "The harness (eng/rules-harness/harness.py) now judges rows at HEAD.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "1 obligation(s) landed on this stage after it passed (O-009), so nothing downstream was ever going to carry them out and the merge would have refused. Sent back with what raised them: O-009 (case): exercise C-005 deliberate -ExpectFacts mismatch against the tree has N Facts and again N+1 Facts; the case passes N+1 C-003. A literal 12 flips to AGREE when the tree reaches 12 Facts and the case stops testing anything. The expected exit stays 2 (CANNOT-READ) and the message must say 'found N ... has N+1'. A test has to FEED THIS SHAPE IN, not merely cover the lines it runs through. Name the test …",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-024",
+       "O-025"
+      ]
+     },
+     "changed": {
+      "src": 1,
+      "config": 1,
+      "tests": 2,
+      "listed": 4,
+      "measured_by_git": 8
+     },
+     "details": "build-slice-3.json"
+    },
+    {
+     "n": 4,
+     "state": "passed",
+     "at": "2026-09-28T07:30:30.056Z",
+     "head": "8007d9fd5ec0400a5b98ad7524b810e47f12351e",
+     "summary": "This attempt closes the three owed items and changes nothing else in the design.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "uat moved under this: 3 commit(s) were merged into SL-069's branch before the merge out, so this verdict judged 8007d9fd5, a tree that no longer exists. Nothing has yet been checked against the two slices' work TOGETHER, which is what the merge produces. Scoped `stale`: only the tree moved, so this reads the diff -- and that diff is the other slice's work.",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-026",
+       "O-027"
+      ]
+     },
+     "changed": {
+      "src": 1,
+      "tests": 2,
+      "config": 1,
+      "listed": 4,
+      "measured_by_git": 9
+     },
+     "details": "build-slice-4.json"
+    },
+    {
+     "n": 5,
+     "state": "passed",
+     "at": "2026-09-28T08:20:11.630Z",
+     "head": "9dad96ae094dbb01f5e4b1cb80a38722a3039fe6",
+     "summary": "C-007 now gets the tree's import-rule names from the engine interpreter's own yaml parser instead of a hand parser.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "uat moved under this: 4 commit(s) were merged into SL-069's branch before the merge out, so this verdict judged 9dad96ae0, a tree that no longer exists. Nothing has yet been checked against the two slices' work TOGETHER, which is what the merge produces. Scoped `stale`: only the tree moved, so this reads the diff -- and that diff is the other slice's work.",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-028"
+      ]
+     },
+     "changed": {
+      "tests": 2,
+      "listed": 2,
+      "measured_by_git": 3
+     },
+     "details": "build-slice-5.json"
+    },
+    {
+     "n": 6,
+     "state": "passed",
+     "at": "2026-09-28T09:05:34.813Z",
+     "head": "ff666b00074ac5165b30afe06b5da6fd4d965cef",
+     "summary": "Get-ImportRuleNames now returns each import-rule name spelt the way the harness's say() prints it.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "uat moved under this: 4 commit(s) were merged into SL-069's branch before the merge out, so this verdict judged ff666b000, a tree that no longer exists. Nothing has yet been checked against the two slices' work TOGETHER, which is what the merge produces. Scoped `stale`: only the tree moved, so this reads the diff -- and that diff is the other slice's work.",
+      "stage": "code-review",
+      "from": [
+       "code-review"
+      ],
+      "obligations": [
+       "O-029"
+      ]
+     },
+     "changed": {
+      "tests": 2,
+      "listed": 2,
+      "measured_by_git": 3
+     },
+     "details": "build-slice-6.json"
+    },
+    {
+     "n": 7,
+     "state": "passed",
+     "at": "2026-09-28T09:52:50.182Z",
+     "head": "199f0e1525b30525c79ed7e190d35458642faf1d",
+     "summary": "I built R2-m6's decided smallest fix.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "uat moved under this: 4 commit(s) were merged into SL-069's branch before the merge out, so this verdict judged 199f0e152, a tree that no longer exists. Nothing has yet been checked against the two slices' work TOGETHER, which is what the merge produces. Scoped `stale`: only the tree moved, so this reads the diff -- and that diff is the other slice's work.",
+      "cause": "integration",
+      "stage": "merge",
+      "from": [
+       "merge"
+      ]
+     },
+     "changed": {
+      "tests": 2,
+      "listed": 2,
+      "measured_by_git": 3
+     },
+     "details": "build-slice-7.json"
+    },
+    {
+     "n": 8,
+     "state": "unrecorded",
+     "at": "2026-09-28T10:54:18.864Z",
+     "head": "6e5c1e5fcc7e308b0698414693dc734ecc992e8f",
+     "summary": "This attempt was sent back as STALE: uat merged SL-073 into the branch (67951a8).",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "uat moved under this: 4 commit(s) were merged into SL-069's branch before the merge out, so this verdict judged 199f0e152, a tree that no longer exists. Nothing has yet been checked against the two slices' work TOGETHER, which is what the merge produces. Scoped `stale`: only the tree moved, so this reads the diff -- and that diff is the other slice's work.",
+      "cause": "integration",
+      "stage": "merge",
+      "from": [
+       "merge"
+      ]
+     },
+     "changed": {
+      "listed": 0,
+      "measured_by_git": 1
+     },
+     "details": "build-slice-8.json"
+    }
+   ]
+  },
+  {
+   "stage": "code-review",
+   "title": "Code review",
+   "order": 8,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-28T06:38:15.604Z",
+     "head": "3bd2b9474be39e004561d1a29844a508238f7929",
+     "summary": "What was built matches the design.",
+     "caused_by": null,
+     "changed": {},
+     "details": "code-review-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-28T07:44:56.838Z",
+     "head": "8007d9fd5ec0400a5b98ad7524b810e47f12351e",
+     "summary": "Stale re-review of build attempt 4 (8007d9f).",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "code-review passed on 2026-09-28T06:55:38.338Z, and build-slice has judged since (2026-09-28T07:44:56.393Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "cause": "knock-on",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-2.json"
+    },
+    {
+     "n": 3,
+     "state": "passed",
+     "at": "2026-09-28T08:32:37.442Z",
+     "head": "9dad96ae094dbb01f5e4b1cb80a38722a3039fe6",
+     "summary": "Stale re-review at 9dad96a.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "uat moved under this: 3 commit(s) were merged into SL-069's branch before the merge out, so this verdict judged 8007d9fd5, a tree that no longer exists. Nothing has yet been checked against the two slices' work TOGETHER, which is what the merge produces. Scoped `stale`: only the tree moved, so this reads the diff -- and that diff is the other slice's work.",
+      "cause": "integration",
+      "stage": "merge",
+      "from": [
+       "merge"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-3.json"
+    },
+    {
+     "n": 4,
+     "state": "passed",
+     "at": "2026-09-28T09:14:57.214Z",
+     "head": "ff666b00074ac5165b30afe06b5da6fd4d965cef",
+     "summary": "Stale re-review at ff666b0, covering two things: the merge of uat into SL-069 (dadcc1b, which brings in SL-071's src/FsAnalyser.Core and Core.Tests changes) and build attempt 6.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "uat moved under this: 4 commit(s) were merged into SL-069's branch before the merge out, so this verdict judged 9dad96ae0, a tree that no longer exists. Nothing has yet been checked against the two slices' work TOGETHER, which is what the merge produces. Scoped `stale`: only the tree moved, so this reads the diff -- and that diff is the other slice's work.",
+      "cause": "integration",
+      "stage": "merge",
+      "from": [
+       "merge"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-4.json"
+    },
+    {
+     "n": 5,
+     "state": "passed",
+     "at": "2026-09-28T10:05:41.069Z",
+     "head": "199f0e1525b30525c79ed7e190d35458642faf1d",
+     "summary": "This stale re-review at 199f0e1 covers the uat merge into SL-069 (a0b028b, which brings in SL-072) and build attempt 7.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "uat moved under this: 4 commit(s) were merged into SL-069's branch before the merge out, so this verdict judged ff666b000, a tree that no longer exists. Nothing has yet been checked against the two slices' work TOGETHER, which is what the merge produces. Scoped `stale`: only the tree moved, so this reads the diff -- and that diff is the other slice's work.",
+      "cause": "integration",
+      "stage": "merge",
+      "from": [
+       "merge"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-5.json"
+    },
+    {
+     "n": 6,
+     "state": "passed",
+     "at": "2026-09-28T11:12:45.961Z",
+     "head": "6e5c1e5fcc7e308b0698414693dc734ecc992e8f",
+     "summary": "This is a stale re-review at 6e5c1e5.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "uat moved under this: 4 commit(s) were merged into SL-069's branch before the merge out, so this verdict judged 199f0e152, a tree that no longer exists. Nothing has yet been checked against the two slices' work TOGETHER, which is what the merge produces. Scoped `stale`: only the tree moved, so this reads the diff -- and that diff is the other slice's work.",
+      "cause": "integration",
+      "stage": "merge",
+      "from": [
+       "merge"
+      ]
+     },
+     "changed": {},
+     "details": "code-review-6.json"
+    }
+   ]
+  },
+  {
+   "stage": "validate-slice",
+   "title": "Validate",
+   "order": 9,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-28T07:03:29.718Z",
+     "head": "3bd2b9474be39e004561d1a29844a508238f7929",
+     "summary": "tests/rules/RuleCases.ps1 no longer hard-codes the Facts, twinned-entry or pattern counts.",
+     "caused_by": null,
+     "changed": {},
+     "details": "validate-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-09-28T07:58:36.746Z",
+     "head": "8007d9fd5ec0400a5b98ad7524b810e47f12351e",
+     "summary": "This is a stale re-validation at 8007d9f (build attempt 4).",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "validate-slice passed on 2026-09-28T07:27:25.953Z, and build-slice has judged since (2026-09-28T07:44:56.393Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "cause": "knock-on",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "validate-slice-2.json"
+    },
+    {
+     "n": 3,
+     "state": "passed",
+     "at": "2026-09-28T08:45:08.933Z",
+     "head": "9dad96ae094dbb01f5e4b1cb80a38722a3039fe6",
+     "summary": "This is a stale re-validation at 9dad96a.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "uat moved under this: 3 commit(s) were merged into SL-069's branch before the merge out, so this verdict judged 8007d9fd5, a tree that no longer exists. Nothing has yet been checked against the two slices' work TOGETHER, which is what the merge produces. Scoped `stale`: only the tree moved, so this reads the diff -- and that diff is the other slice's work.",
+      "cause": "integration",
+      "stage": "merge",
+      "from": [
+       "merge"
+      ]
+     },
+     "changed": {},
+     "details": "validate-slice-3.json"
+    },
+    {
+     "n": 4,
+     "state": "passed",
+     "at": "2026-09-28T09:26:24.264Z",
+     "head": "ff666b00074ac5165b30afe06b5da6fd4d965cef",
+     "summary": "Stale re-validation at ff666b0.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "uat moved under this: 4 commit(s) were merged into SL-069's branch before the merge out, so this verdict judged 9dad96ae0, a tree that no longer exists. Nothing has yet been checked against the two slices' work TOGETHER, which is what the merge produces. Scoped `stale`: only the tree moved, so this reads the diff -- and that diff is the other slice's work.",
+      "cause": "integration",
+      "stage": "merge",
+      "from": [
+       "merge"
+      ]
+     },
+     "changed": {},
+     "details": "validate-slice-4.json"
+    },
+    {
+     "n": 5,
+     "state": "passed",
+     "at": "2026-09-28T10:16:30.038Z",
+     "head": "199f0e1525b30525c79ed7e190d35458642faf1d",
+     "summary": "This is a stale re-validation at 199f0e1.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "uat moved under this: 4 commit(s) were merged into SL-069's branch before the merge out, so this verdict judged ff666b000, a tree that no longer exists. Nothing has yet been checked against the two slices' work TOGETHER, which is what the merge produces. Scoped `stale`: only the tree moved, so this reads the diff -- and that diff is the other slice's work.",
+      "cause": "integration",
+      "stage": "merge",
+      "from": [
+       "merge"
+      ]
+     },
+     "changed": {},
+     "details": "validate-slice-5.json"
+    },
+    {
+     "n": 6,
+     "state": "passed",
+     "at": "2026-09-28T11:21:22.433Z",
+     "head": "6e5c1e5fcc7e308b0698414693dc734ecc992e8f",
+     "summary": "This is a stale re-validation at 6e5c1e5.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "uat moved under this: 4 commit(s) were merged into SL-069's branch before the merge out, so this verdict judged 199f0e152, a tree that no longer exists. Nothing has yet been checked against the two slices' work TOGETHER, which is what the merge produces. Scoped `stale`: only the tree moved, so this reads the diff -- and that diff is the other slice's work.",
+      "cause": "integration",
+      "stage": "merge",
+      "from": [
+       "merge"
+      ]
+     },
+     "changed": {},
+     "details": "validate-slice-6.json"
+    }
+   ]
+  },
+  {
+   "stage": "reflect",
+   "title": "Reflect",
+   "order": 10,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-28T07:27:32.347Z",
+     "head": "8007d9fd5ec0400a5b98ad7524b810e47f12351e",
+     "summary": "SL-069 removed the hard-coded Facts/Twinned/Patterns counts from tests/rules/RuleCases.ps1.",
+     "caused_by": null,
+     "changed": {},
+     "details": "reflect-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "commit-slice",
+   "title": "Commit",
+   "order": 11,
+   "state": "sent back",
+   "attempts": []
+  }
+ ]
+}
