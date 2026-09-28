@@ -31,6 +31,10 @@ public class SmbLibraryPinTests
             string relative = Path.GetRelativePath(repo, project).Replace('\\', '/');
             foreach ((string package, string property) in Pins)
             {
+                // A project's own definition wins over Directory.Build.props, which the SDK imports before its body: the
+                // MSBuild way to bump one project only (SL-073 review, R2-m3).
+                Assert.True(!XDocument.Load(project).Descendants(property).Any(),
+                    $"{relative} redefines {property}; it is pinned once in Directory.Build.props.");
                 foreach (XElement reference in XDocument.Load(project).Descendants("PackageReference")
                              .Where(e => string.Equals((string?)e.Attribute("Include"), package, StringComparison.OrdinalIgnoreCase)))
                 {

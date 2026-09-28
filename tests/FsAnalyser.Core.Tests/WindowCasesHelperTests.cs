@@ -34,23 +34,36 @@ public class WindowCasesHelperTests
         Assert.False(all.Contains("T-005"), $"-Case All runs T-005, whose UI-thread latency bars a busy machine can miss:\n{output}");
     }
 
+    // As a person meets it (SL-073 review, R2-m2): the fsa-window-cases folder New-CaseFolder makes on the way is
+    // compressed too, and stays so once the refused case folder is removed. The refusal must name that folder, and its
+    // remedy, run through cmd as written, must let the next case folder be made, although %TEMP% is still compressed.
     [Fact]
     public async Task NewCaseFolderRefusesACompressedTempByName()
     {
         using var tree = new TempTree();
         string temp = tree.Folder("temp");
         TempTree.Compress(temp); // folders made in it from now on are compressed, as under a compressed drive
+        string cases = Path.Combine(temp, "fsa-window-cases");
 
         string output = await Pwsh(
             ParseScript() + Load("New-CaseFolder") +
-            "try { $made = New-CaseFolder; 'made ' + $made } catch { 'refused ' + $_.Exception.Message }",
+            "try { $made = New-CaseFolder; 'made first ' + $made } catch { $message = $_.Exception.Message; 'refused ' + $message }; " +
+            "if ($message -match 'compact /u /s:\"[^\"]+\"') { " +
+            "$start = [System.Diagnostics.ProcessStartInfo]::new('cmd.exe', '/c ' + $Matches[0]); $start.UseShellExecute = $false; $start.RedirectStandardOutput = $true; " +
+            "$cmd = [System.Diagnostics.Process]::Start($start); [void]$cmd.StandardOutput.ReadToEnd(); $cmd.WaitForExit(); " +
+            "'remedy exit ' + $cmd.ExitCode + ': ' + $Matches[0] }; " +
+            "try { $made = New-CaseFolder; 'made ' + [System.IO.File]::GetAttributes($made) + ' ' + $made } catch { 'refused again ' + $_.Exception.Message }",
             temp);
 
-        Assert.True(output.StartsWith("refused ", StringComparison.Ordinal), $"New-CaseFolder made a case folder in a compressed %TEMP%:\n{output}");
-        Assert.Contains("NTFS-compressed", output);
-        string cases = Path.Combine(temp, "fsa-window-cases");
-        Assert.True(!Directory.Exists(cases) || !Directory.EnumerateFileSystemEntries(cases).Any(),
-            $"the refused case folder was left behind in {cases}");
+        string[] lines = [.. output.Split('\n').Select(l => l.Trim())];
+        Assert.True(lines.Length == 3 && lines[0].StartsWith("refused ", StringComparison.Ordinal),
+            $"New-CaseFolder did not refuse a case folder in a compressed %TEMP%, or gave no remedy to run:\n{output}");
+        Assert.Contains($"{cases} is NTFS-compressed", lines[0]);
+        string refusedFolder = lines[0]["refused ".Length..].Split(' ')[0];
+        Assert.False(Directory.Exists(refusedFolder), $"the refused case folder {refusedFolder} was left behind");
+        Assert.True(lines[1].StartsWith("remedy exit 0: ", StringComparison.Ordinal), $"the refusal's remedy failed:\n{output}");
+        Assert.True(lines[2].StartsWith("made Directory ", StringComparison.Ordinal),
+            $"after the refusal's remedy, the next case folder was refused or came out compressed:\n{output}");
     }
 
     [Fact]

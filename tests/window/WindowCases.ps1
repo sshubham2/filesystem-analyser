@@ -185,12 +185,16 @@ function CheckFinished($read, [string] $root, [string] $shownRoot, $manifest) {
 
 # A folder made under an NTFS-compressed one is compressed too, and there a file of zeros takes nothing on disk: every
 # on-disk check would fail as if the app had miscounted (HF-027). Such a case folder is refused by name, and removed.
+# The refusal names the folder it was made in, which carries the attribute (fsa-window-cases, made compressed under a
+# compressed %TEMP% and left so), and the one remedy measured to clear it and all it holds: compact /u /s:"folder".
+# Plain compact /u, or /u /s "folder", clears that folder's own attribute only (SL-073 review, R2-m2).
 function New-CaseFolder {
     $folder = Join-Path ([System.IO.Path]::GetTempPath()) ("fsa-window-cases\{0}" -f [guid]::NewGuid().ToString('N'))
     [void][System.IO.Directory]::CreateDirectory($folder)
     if ([System.IO.File]::GetAttributes($folder).HasFlag([System.IO.FileAttributes]::Compressed)) {
         [System.IO.Directory]::Delete($folder)
-        throw "$folder came out NTFS-compressed: %TEMP% or a folder above it is set to compress. The window cases take a file's size on disk to be its size. Uncompress %TEMP% (compact /u) or point TEMP and TMP elsewhere."
+        $parent = Split-Path -Parent $folder
+        throw "$folder came out NTFS-compressed and was removed: $parent is NTFS-compressed, so every case folder made in it is too, and the window cases take a file's size on disk to be its size. Uncompress it and all it holds with compact /u /s:`"$parent`", or point TEMP and TMP at a folder that is not compressed."
     }
     $folder
 }

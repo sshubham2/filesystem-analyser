@@ -31,16 +31,21 @@ internal sealed class TempTree : IDisposable
     }
 
     // A folder made under an NTFS-compressed one is compressed too, and there TextFile compresses with no Compress():
-    // every on-disk and probe count would shift with no cause named (HF-027). Refused by name, and removed again.
+    // every on-disk and probe count would shift with no cause named (HF-027). Refused by name, and removed again. The
+    // refusal names the folder the root was made in, which carries the attribute (fsa-tests, made compressed under a
+    // compressed %TEMP% and left so), and the one remedy measured to clear it and all it holds: compact /u /s:"folder".
+    // Plain compact /u, or /u /s "folder", clears that folder's own attribute only (SL-073 review, R2-m2).
     internal static void CreateRoot(string root)
     {
         Directory.CreateDirectory(root);
         if (System.IO.File.GetAttributes(root).HasFlag(FileAttributes.Compressed))
         {
             Directory.Delete(root);
+            string parent = Path.GetDirectoryName(root)!;
             throw new InvalidOperationException(
-                $"{root} came out NTFS-compressed: %TEMP% or a folder above it is set to compress. The counting-rule tests " +
-                "need files that take their own size on disk. Uncompress %TEMP% (compact /u) or point TEMP and TMP elsewhere.");
+                $"{root} came out NTFS-compressed and was removed: {parent} is NTFS-compressed, so every tree made in it is too, " +
+                "and the counting-rule tests need files that take their own size on disk. Uncompress it and all it holds with " +
+                $"compact /u /s:\"{parent}\", or point TEMP and TMP at a folder that is not compressed.");
         }
     }
 
