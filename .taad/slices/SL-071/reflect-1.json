@@ -1,0 +1,127 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-071",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-09-28T08:46:00.319Z",
+ "head": "350591c3758c7ea85cd749dfdb092efa27e788d1",
+ "run_id": 1855,
+ "summary": "SL-071 fixed six minor health-check findings in one batch: HF-001 (a value-based FileIdsAvailable), HF-003 (TopLevelKind deleted), HF-005 (ScanProgress.Links removed), HF-006 (dead reparse-tag constants deleted), HF-011 (VolumeSpace prefix handling replaced by LongPath.ToDisplay, Start parameters made required) and HF-024 (a guard on the volume-used subtraction). It ran with no critique and needed two builds and three code reviews. HF-003's fix broke the SL-039 App architecture rule, and HF-024's guard covered only one of its two wrap-around bounds. Both defects came out only in a later review round. Validate passed on a real NTFS tree, D:/ and Z:/, but HF-001's triggering case (a volume that lists files with no ID) and HF-024's (a per-user quota) were never seen on a real volume.",
+ "payload": {
+  "status": "complete",
+  "reason": "Reflection written from the full slice record. Stages 1-6 recorded no checkable accounts, so what they did or did not check cannot be audited.",
+  "summary": "SL-071 fixed six minor health-check findings in one batch: HF-001 (a value-based FileIdsAvailable), HF-003 (TopLevelKind deleted), HF-005 (ScanProgress.Links removed), HF-006 (dead reparse-tag constants deleted), HF-011 (VolumeSpace prefix handling replaced by LongPath.ToDisplay, Start parameters made required) and HF-024 (a guard on the volume-used subtraction). It ran with no critique and needed two builds and three code reviews. HF-003's fix broke the SL-039 App architecture rule, and HF-024's guard covered only one of its two wrap-around bounds. Both defects came out only in a later review round. Validate passed on a real NTFS tree, D:/ and Z:/, but HF-001's triggering case (a volume that lists files with no ID) and HF-024's (a per-user quota) were never seen on a real volume.",
+  "estimate_error": "Size was about right: six findings ended up touching TopLevelSnapshot.cs, TopLevelTracker.cs, TopLevelRowText.cs, Scanner.cs, Kernel32.cs, VolumeSpace.cs and ScanOptions.cs, plus tests. Risk tier 'low' was too low, and the error mattered. The batch touched Scanner.cs (the project's own process constraint says scanner slices are cut above the default tier), P/Invoke arithmetic in Kernel32.cs, and a public Core type consumed across the App boundary. The minor lane read 'low risk in a minimal project' as 'no adversarial review', so critique and critique-review never ran. Those are the stages that could have questioned HF-003's premise before any code existed. 'Named file, line and smallest fix' held for HF-005 and HF-006 but not for HF-003, HF-024 or HF-011. The finding text for those three was incomplete or partly wrong, and the builder had to rediscover that.",
+  "what_went_wrong": [
+   "Build attempt 1 claimed the fitness patterns for the edited files all still held. That was wrong: it had checked only the Core rules, and the SL-039 App rule ('the window never touches the scan store') was violated by TopLevelRowText.cs importing FsAnalyser.Core.Store. The blocker reached code review and cost a whole second build.",
+   "Code review 1 filed nothing and halted, saying the fixes did what the findings asked. Both defects (B1 and R2-m1) surfaced only in the next review round. Its mutation check proved the HF-024 test fails without the free > total guard, but did not ask whether that guard covered the unsigned-to-long cast at both ends.",
+   "HF-024's first fix was incomplete. The guard covered free > total only. A difference above long.MaxValue still wrapped negative and was returned as valid, which is the symptom HF-024 describes. It was found in round 2 and fixed in build 2.",
+   "The design was composed by pasting finding text without the refuters' corrections. HF-011's refuter says the claim that the prefix branches are dead in the app is wrong, yet the design still states it. The builder had to overrule it by choosing LongPath.ToDisplay over dropping the handling, and that departure is only a declared deviation.",
+   "The doc comment on Kernel32.TryGetVolumeUsed (Kernel32.cs:146-147) went stale because of build 2's own guard change. Code review and validate both recorded it, and nobody edited it, so it will be committed stale.",
+   "The build stage has no Fitness tool. In build 2 the builder hand-rolled a throwaway regex checker that ignores must_not_import and does not strip comments, and it reported a false hit on a 'takes a lock (SL-039)' comment. The only real fitness check ran at code review, after the build.",
+   "Validate lists a whole C:/ scan as not reached, yet build attempt 1 recorded an 8 min 20 s C:/ run on the same HF-001 code. Nobody recorded whether that run showed the file-ID note, so the false-positive question on C: (WOF/cloud placeholders that may list ID 0) is still open.",
+   "Stages 1-6 (repro, build check, risk spike, design, critique, critique-review) each recorded 'nothing checkable was recorded', so nothing in the record shows what they looked at."
+  ],
+  "missed": [
+   {
+    "gate": "code-review",
+    "severity": "blocker",
+    "dimension": "cross-cutting-conformance",
+    "what": "Code review 1 passed the HF-003 change with no findings. TopLevelRowText.cs now did `using FsAnalyser.Core.Store;` to compare `row.Kind != EntryKind.Folder`, which violates the fitness rule forbidding `.Store` in any App file outside FolderTree*.cs. Fitness op=check reports it, but the xUnit suite does not carry that rule (ArchitectureRulesTests.cs:141-155 checks only `\\bScanStore\\b`), so 394 green tests hid it. A check would be: run Fitness op=check on every diff that changes a public Core type the App consumes. The critique was skipped by sizing, so this was the earliest gate that actually ran.",
+    "caught_by": "code-review round 2, through Fitness op=check on a rebuilt graph"
+   },
+   {
+    "gate": "code-review",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "what": "Code review 1 did not ask what else in Kernel32.TryUsedBytes can turn (long)(total - free) negative. The new `free > total` guard left total - free > long.MaxValue, for example (ulong.MaxValue, 0) gives -1, because the project does not enable overflow checking. A check would be: for a ulong-to-long cast in a native wrapper, test both bounds of the subtraction and the cast.",
+    "caught_by": "code-review round 2 (R2-m1)"
+   }
+  ],
+  "learned": [
+   {
+    "kind": "process",
+    "lesson": "The build stage cannot run Fitness op=check, and `dotnet test` does not carry the App-layer fitness rules. A green build plus 394 tests says nothing about .taad/fitness.yaml. For any slice that edits App/ files or public Core types the App consumes, run Fitness op=check before review, or ask the reviewer to run it first.",
+    "evidence": "Build 1 asserted the fitness patterns held while the SL-039 App rule was violated. Build 2 had to write a throwaway stdlib regex reader because 'the TAAD Fitness tool and harness.py are not available here'. ArchitectureRulesTests.cs:141-155 covers only `\\bScanStore\\b`."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "Any App .cs file outside FolderTree*.cs may not name the Store namespace, and that includes enums such as EntryKind. The rule's regex `(?<!\\bresult)\\.Store\\b` even matches a `using`. When App code needs a kind check, add a Core-side predicate on the row, as TopLevelRow.IsFolder now does. Do not import EntryKind. Also, FolderTreeNode.cs using EntryKind is not precedent, because the rule exempts FolderTree*.cs by name.",
+    "evidence": "B1: HF-003's only support was 'FolderTreeNode.cs:4 and 60 use EntryKind in the App', and that support lives in the exempt files. The fix was IsFolder at TopLevelSnapshot.cs:64-65 and `!row.IsFolder` at TopLevelRowText.cs:37."
+   },
+   {
+    "kind": "risk",
+    "lesson": "Unsigned-to-signed casts in Kernel32 wrappers are unchecked because the projects do not enable CheckForOverflowUnderflow. Guard every ulong figure at both ends, meaning the ordering between the two figures and the long.MaxValue limit, and put an assert for each bound in the case test. A mutation check that removes only one guard does not prove the other bound is covered.",
+    "evidence": "R2-m1: the guard `free > total` passed round 1's mutation check, but (ulong.MaxValue, 0) still returned true with -1. It was closed by `free > total || total - free > long.MaxValue`."
+   },
+   {
+    "kind": "process",
+    "lesson": "Engine-composed minor-lane designs copy each finding's claim and evidence verbatim and drop the refuters' corrections. Before building from such a design, read the refuter's caveat on each finding. Do not trust the design's 'dead code' or 'nothing reads it' framing.",
+    "evidence": "HF-011's refuter says 'the claim that the prefix branches are dead in the app is wrong', yet the design and finding still say 'both branches are dead'. The builder resolved it on its own with LongPath.ToDisplay, and the record carries that as a deviation."
+   },
+   {
+    "kind": "design",
+    "lesson": "FileIdsAvailable now means 'the root was read and no appended file lacked a usable ID'. That is stricter than HF-001's alternative (count > 0). One file with ID 0 or a sentinel ID, or a full-class scan that lists no files, now decides the flag, and it drives MainWindow's 'hardlinks may be counted more than once' note. The note text 'This drive does not report file IDs' can be false for a partial case. The next slice touching Scanner.AddEntry, ScanResult.FileIdsAvailable or the MainWindow note should first scan a real C:/ with the final build. C: has WOF and cloud placeholders, and the record does not say whether they list ID 0 and raise the note.",
+    "evidence": "The builder's declared deviation 'no file lacked an ID rule (a full-class scan that lists no files now reports true)'. The open item on MainWindow's wording. Validate's not-reached entry on C:/. Validate's runs on D:/, Z:/ and the temp tree showed no note."
+   },
+   {
+    "kind": "process",
+    "lesson": "Two of this slice's triggering cases cannot be reached on this PC without administrator rights: a volume that answers the extended class but lists no or sentinel IDs, and a per-user quota. Validate can only reach them through the ScanOptions.ListedFileId seam and the pure Kernel32.TryUsedBytes function. Any later slice that needs the real case should plan a named elevated operation (for example a small VHDX mounted with FAT32 or with an NTFS quota) up front. Validate will not find such a volume itself.",
+    "evidence": "Validate: 'No such volume is reachable. The FAT32 EFI partition has no letter and mounting it needs an administrator' and 'enabling quotas needs an administrator and is not a named elevated operation'. Both cases were marked [not-run]."
+   },
+   {
+    "kind": "estimate",
+    "lesson": "A minor-lane batch that includes Scanner.cs or Kernel32.cs should not take risk tier 'low'. The engine's default sizing skips critique for low risk, but the project constraint says the counting rules get the harder review. The tier should be set from the files touched, not from each finding's 'smallest fix' text.",
+    "evidence": "SL-071 opened as medium/low risk with 0 designers, critique and critique-review skipped, and still needed build x2 and code-review x3. Q-002 recorded the project constraint 'scanner slices are cut above the default tier'."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "ScanProgress.Links no longer exists. The counters line in ShowProgress shows files, folders, bytes, bytes on disk and unreadable folders, and links appear only in the Finished detail ('N links not followed') from ScanTotals. Also VolumeSpace.Start now takes required parameters and the display root, ScanOptions owns the default read bound, and LongPath.ToDisplay handles Win32-form roots.",
+    "evidence": "HF-005 was fixed by removal. Validate's grep of `\\bLinks\\b` and of `Extended\\s*=|DefaultBound|VolumeSpace\\.Start\\(` came back clean."
+   }
+  ],
+  "unknowns": [
+   "Does the value-based FileIdsAvailable show the hardlink note on a whole real C:/ scan? C: has WOF and cloud placeholders that may list ID 0. If it does, is that noise, and should the rule be 'count of files with a usable ID > 0' instead of 'no file lacked an ID'?",
+   "Does any real volume (FAT32, exFAT, ReFS, or SMB served by a non-NTFS server) answer the extended directory class but list files with no or sentinel IDs? HF-001's fix has only been exercised through the ListedFileId seam.",
+   "With a per-user quota above the volume's free space, what does the volume-used figure show, and does it match Get-Volume or FileFsFullSizeInformation? The mixed positive figure was never measured.",
+   "Should the SL-039 App store rule allow App files to import store enums, or should it get an xUnit twin as it stands? A person has to decide, because the rule currently forbids naming EntryKind outside FolderTree*.cs."
+  ],
+  "candidates": [
+   {
+    "title": "Add an xUnit twin for the SL-039 App store rule in ArchitectureRulesTests, or decide to let App files import store enums",
+    "urgency": "soon",
+    "why": "The rule `(?<!\\bresult)\\.Store\\b` has no test twin (ArchitectureRulesTests.cs:141-155 checks only `\\bScanStore\\b`), so `dotnet test` stayed green while the rule was violated. That is how B1 got through build 1. The rule also forbids naming EntryKind outside FolderTree*.cs, which is broader than 'never reads the store'."
+   },
+   {
+    "title": "Run a whole C:/ scan with the final build and record whether the file-ID note appears; settle the 'no file lacked an ID' versus 'count > 0' rule",
+    "urgency": "soon",
+    "why": "Validate did not reach C:/. The value-based flag is stricter than HF-001's alternative, and C: is the volume most likely to list ID 0 for WOF and cloud placeholders. Build attempt 1's C:/ run is on record, but it does not say whether the note showed."
+   },
+   {
+    "title": "Reword MainWindow's file-ID note for the partial case ('This drive does not report file IDs')",
+    "urgency": "soon",
+    "why": "After HF-001 the flag is false when any listed file had no usable ID, not only when the whole volume reported none. The builder flagged the wording as open. It was never touched, and no real volume raised the note."
+   },
+   {
+    "title": "Fix the stale return-value doc on Kernel32.TryGetVolumeUsed (Kernel32.cs:146-147)",
+    "urgency": "now",
+    "why": "It lists only the 'free > total' case for 'false with error 0'. It omits the difference above long.MaxValue that build 2 added. Code review and validate both recorded it, and nobody edited it before commit."
+   },
+   {
+    "title": "Take the volume-used figure from one quota-independent source (GetDiskSpaceInformationW Actual* units or FileFsFullSizeInformation), after re-measuring against Get-Volume",
+    "urgency": "someday",
+    "why": "HF-024's 'better' fix was not built. A quota above the volume's free space still yields a positive, mixed figure (quota total less volume free) that the guard cannot detect."
+   },
+   {
+    "title": "Give validate an elevated rig: a small VHDX with FAT32 and an NTFS volume with a per-user quota",
+    "urgency": "someday",
+    "why": "HF-001's triggering volume and HF-024's quota case are both [not-run] on a real volume. They were proven only through the ListedFileId seam and the pure TryUsedBytes function, and both need an administrator to set up."
+   },
+   {
+    "title": "Let the build stage run Fitness op=check, or add a pre-review fitness step to the minor lane",
+    "urgency": "soon",
+    "why": "Build 1 claimed the rules held without running the engine check. Build 2 wrote a throwaway regex checker that gave a false hit and ignored must_not_import. The real check first ran at code review."
+   }
+  ]
+ }
+}
