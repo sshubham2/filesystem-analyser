@@ -668,13 +668,21 @@ def check(tree, build=False):
     Check (-not $run.Output.Contains('NOT RUN')) "that rule is never named NOT RUN and let through`n$($run.Output)"
 }
 
-# A yaml name scalar as the engine reads it: a single-quoted one unwrapped with '' made ', a double-quoted one
-# unwrapped, a plain one as it stands.
-function Get-YamlName([string] $scalar) {
-    $name = $scalar.Trim()
-    if ($name.Length -ge 2 -and $name.StartsWith("'") -and $name.EndsWith("'")) { return $name.Substring(1, $name.Length - 2).Replace("''", "'") }
-    if ($name.Length -ge 2 -and $name.StartsWith('"') -and $name.EndsWith('"')) { return $name.Substring(1, $name.Length - 2) }
-    $name
+# The names of this tree's import rules (a must_not_import that is not empty), read by the yaml parser of the
+# engine's own interpreter, so a name reads as the engine reads it however yaml lets it be spelt: quoted,
+# escaped, wrapped onto a second line, folded, or followed by a comment. JSON keeps the pipe ASCII.
+function Get-ImportRuleNames {
+    if (-not $EnginePython) { throw 'the import rules are read with -EnginePython, which was not given' }
+    $ErrorActionPreference = 'Continue'
+    $code = 'import sys, json, yaml; rules = yaml.safe_load(open(sys.argv[1], encoding=''utf-8-sig''))[''rules'']; ' +
+        'print(json.dumps([r[''name''] for r in rules if r.get(''must_not_import'')]))'
+    $lines = @(& $EnginePython -c $code (Join-Path $Repo $YamlRel) 2>&1)
+    $exit = $LASTEXITCODE
+    $json = @($lines | Where-Object { $_ -is [string] })
+    if ($exit -or $json.Count -ne 1) { throw "the engine's python did not list the import rules of $YamlRel (exit $exit): $($lines -join "`n")" }
+    $names = [System.Collections.Generic.List[string]]::new()
+    foreach ($name in ($json[0] | ConvertFrom-Json)) { $names.Add([string]$name) }
+    , $names
 }
 
 function Case-C007 {
@@ -688,12 +696,7 @@ function Case-C007 {
 
     # An import rule (must_not_import) needs a code graph the harness's scratch copy has not got: each is
     # named NOT RUN and is never a pass, and every other rule runs. The names come from this tree's yaml.
-    $imports = [System.Collections.Generic.List[string]]::new()
-    $entry = $null
-    foreach ($line in [System.IO.File]::ReadAllLines((Join-Path $Repo $YamlRel), $Utf8)) {
-        if ($line -cmatch '^  - name: (.+)$') { $entry = Get-YamlName $Matches[1] }
-        elseif ($line -cmatch '^    must_not_import:' -and $entry) { $imports.Add($entry) }
-    }
+    $imports = Get-ImportRuleNames
     if ($imports.Count) {
         $said = @($imports | Where-Object { -not $run.Output.Contains("'$_'") })
         Check ($rules.Groups[1].Value -ceq 'unable' -and $run.Output.Contains("NOT RUN, not passed: $($imports.Count) import rule(s)") -and $said.Count -eq 0) `

@@ -508,7 +508,7 @@ function Shape-EngineCases {
 }
 
 function Shape-ImportRuleNames {
-    Write-Output 'ImportRuleNames: C-007 finds every import rule named NOT RUN when a name holds an apostrophe, quoted either way'
+    Write-Output 'ImportRuleNames: C-007 finds every import rule named NOT RUN however yaml spells its name, and counts no empty one'
     if (-not $EnginePython -or -not $EngineRoot) {
         Check $false 'not reached: ImportRuleNames needs -EnginePython and -EngineRoot; without them C-007 is not run'
         return
@@ -517,8 +517,10 @@ function Shape-ImportRuleNames {
     if (Test-Path -LiteralPath (Join-Path $local 'dotnet.exe')) { $env:PATH = "$local;$env:PATH" }
     $engine = @('-EnginePython', $EnginePython, '-EngineRoot', $EngineRoot)
 
-    # Two more import rules on the provider's folder, which the harness's scratch copy (no code graph) leaves
-    # unran: the yaml spells one name single-quoted with its apostrophe doubled, the other double-quoted.
+    # More import rules on the provider's folder, which the harness's scratch copy (no code graph) leaves
+    # unran, each name spelt a way yaml allows: single-quoted with its apostrophe doubled, double-quoted,
+    # double-quoted with escapes, wrapped onto a second line, followed by a comment (quoted and plain), and
+    # folded. The last entry's must_not_import is empty, so it is no import rule and is never named.
     $copy = New-RepoScratch
     $base = Get-Agree $copy
     $rules = @'
@@ -538,13 +540,58 @@ function Shape-ImportRuleNames {
     must_not_match:
     - BrandNewThing
     because: A probe import rule whose double-quoted name holds an apostrophe.
+  - name: "the provider's \"escaped\" probe never imports Core"
+    files: tests/CfProvider/**
+    must_not_import:
+    - FsAnalyser.Core*
+    must_not_match:
+    - BrandNewThing
+    because: A probe import rule whose double-quoted name escapes its quotes.
+  - name: the provider's wrapped probe never imports Core, and its name runs on past the end of its
+      first line
+    files: tests/CfProvider/**
+    must_not_import:
+    - FsAnalyser.Core*
+    must_not_match:
+    - BrandNewThing
+    because: A probe import rule whose plain name wraps onto a second line.
+  - name: 'the provider''s noted probe never imports Core' # a note after a quoted name
+    files: tests/CfProvider/**
+    must_not_import:
+    - FsAnalyser.Core*
+    must_not_match:
+    - BrandNewThing
+    because: A probe import rule whose quoted name is followed by a comment.
+  - name: the provider's plain noted probe never imports Core # a note after a plain name
+    files: tests/CfProvider/**
+    must_not_import:
+    - FsAnalyser.Core*
+    must_not_match:
+    - BrandNewThing
+    because: A probe import rule whose plain name is followed by a comment.
+  - name: >-
+      the provider's folded probe never imports Core
+    files: tests/CfProvider/**
+    must_not_import:
+    - FsAnalyser.Core*
+    must_not_match:
+    - BrandNewThing
+    because: A probe import rule whose name is a folded block.
+  - name: the provider's empty-import probe is no import rule
+    files: tests/CfProvider/**
+    must_not_import: []
+    must_not_match:
+    - BrandNewThing
+    because: A probe rule whose must_not_import is empty, which the engine does not run as an import rule.
 '@
+    $added = @($rules -split "`r?`n" -cmatch '^  - name:').Count
     [System.IO.File]::AppendAllText((Join-Path $copy $YamlRel), ($rules.Replace("`r`n", "`n").Replace("`n", "`r`n")), $Utf8)
     $grown = Get-Agree $copy
-    Check ((Get-Line $grown 0 0 0 0) -ceq (Get-Line $base 0 0 0 2)) "the copy AGREEs on '$(Get-Line $base 0 0 0 2)'"
-    $imports = @([System.IO.File]::ReadAllLines((Join-Path $copy $YamlRel), $Utf8) -cmatch '^    must_not_import:').Count
+    Check ((Get-Line $grown 0 0 0 0) -ceq (Get-Line $base 0 0 0 $added)) "the copy AGREEs on '$(Get-Line $base 0 0 0 $added)'"
+    # A block list under must_not_import is an import rule; the empty [] is not.
+    $imports = @([System.IO.File]::ReadAllLines((Join-Path $copy $YamlRel), $Utf8) -cmatch '^    must_not_import:\s*$').Count
     foreach ($shell in $Shells) {
-        CheckRun (Invoke-Cases $shell $copy 'C-007' $engine) 0 "C-007 on a copy with import rules named with an apostrophe [$shell]" @(
+        CheckRun (Invoke-Cases $shell $copy 'C-007' $engine) 0 "C-007 on a copy with import rules named every way yaml allows [$shell]" @(
             'All checks held.', "  ok    the $imports import rule(s) are named NOT RUN, and the verdict is not pass (unnamed: )")
     }
 }
