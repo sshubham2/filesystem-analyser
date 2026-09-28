@@ -11,27 +11,15 @@ namespace FsAnalyser.Core.Scanning;
 /// </summary>
 internal static class VolumeSpace
 {
-    private const string Extended = @"\\?\";
-
-    /// <summary>
-    /// How long the figure waits for the volume before it is given up as null. A local volume answers in
-    /// well under a millisecond; on a share that stopped answering the call waits as long as the SMB client
-    /// does (21 to 66 s measured), and the figure does not wait that long. The thread itself stays parked
-    /// until the call returns.
-    /// </summary>
-    internal static readonly TimeSpan DefaultBound = TimeSpan.FromSeconds(30);
-
     /// <summary>
     /// Whether <paramref name="root"/> is a whole drive: one letter, a colon and a backslash, in either case,
-    /// after an optional <c>\\?\</c>. A folder, a share and a volume mounted on a folder are not. This is the
-    /// App's rule before SL-043, moved and not widened: a SUBST letter passes it, and gets the figure of the
-    /// volume under it (m3, deferred).
+    /// in its display form (<see cref="LongPath.ToDisplay"/>), so <c>\\?\C:\</c> is one too. A folder, a share
+    /// and a volume mounted on a folder are not. This is the App's rule before SL-043, moved and not widened: a
+    /// SUBST letter passes it, and gets the figure of the volume under it (m3, deferred).
     /// </summary>
     internal static bool IsDriveRoot(string root)
     {
-        ReadOnlySpan<char> path = root.AsSpan();
-        if (path.StartsWith(Extended, StringComparison.Ordinal))
-            path = path[Extended.Length..];
+        string path = LongPath.ToDisplay(root);
         return path.Length == 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] == '\\';
     }
 
@@ -41,12 +29,13 @@ internal static class VolumeSpace
     /// thread of its own, or with null once <paramref name="bound"/> has passed without an answer, whichever
     /// comes first. A reader that fails or throws answers null, so the figure is never faulted.
     /// </summary>
-    /// <param name="reader">The read, given the root without <c>\\?\</c>; <see cref="Read"/> by default.
-    /// Tests substitute one that blocks.</param>
+    /// <param name="reader">The read, given the root's display form, without <c>\\?\</c>; <see cref="Read"/>
+    /// when null. Tests substitute one that blocks.</param>
+    /// <param name="bound">How long the figure waits; <see cref="ScanOptions.VolumeReadBound"/> owns the default.</param>
     /// <param name="anyRoot">Tests only: read whatever the root is, so that a folder scan can be shown to
     /// complete while the read is still stalled.</param>
     internal static void Start(string root, TaskCompletionSource<long?> figure,
-        Func<string, long?>? reader = null, TimeSpan? bound = null, bool anyRoot = false)
+        Func<string, long?>? reader, TimeSpan bound, bool anyRoot)
     {
         if (!anyRoot && !IsDriveRoot(root))
         {
@@ -55,11 +44,11 @@ internal static class VolumeSpace
         }
 
         // The bound first, so the figure is answered even if the thread below never starts.
-        Task.Delay(bound ?? DefaultBound).ContinueWith(
+        Task.Delay(bound).ContinueWith(
             static (_, source) => ((TaskCompletionSource<long?>)source!).TrySetResult(null), figure,
             CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
-        string volume = root.StartsWith(Extended, StringComparison.Ordinal) ? root[Extended.Length..] : root;
+        string volume = LongPath.ToDisplay(root);
         Func<string, long?> read = reader ?? Read;
         var thread = new Thread(() => Answer(figure, volume, read)) { IsBackground = true, Name = "volume-used" };
         thread.Start();

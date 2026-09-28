@@ -128,7 +128,7 @@ public static class Scanner
         private bool _keepLastAccess; // the root's volume is local NTFS: decided once, at the root
         private string? _lastFolder;
         private TimeSpan _listingTime, _sizingTime, _longestProbe;
-        private long _files, _folders, _links, _bytes, _bytesOnDisk;
+        private long _files, _folders, _links, _bytes, _bytesOnDisk, _filesWithoutId;
         private int _probes, _probeFailures, _probeCorrections, _vanished, _foldersListed, _lastAccessAsked, _lastAccessKept;
 
         public ScanResult Execute()
@@ -312,17 +312,20 @@ public static class Scanner
             ref readonly RawEntry raw = ref _reader[index];
             bool isDirectory = (raw.Attributes & Kernel32.FILE_ATTRIBUTE_DIRECTORY) != 0;
             (EntryKind kind, bool cloudOnly) = EntryClassifier.Classify(raw.Attributes, raw.ReparseTag, isDirectory);
+            UInt128 fileId = options.ListedFileId is { } listed ? listed(raw.FileId) : raw.FileId;
             // The store applies the counting rule: a folder or a link posts nothing, and a later name of a
             // file already charged is flagged and posts one file and no bytes. A file is charged its listing sizes
             // here, which SizeFiles replaces with the file's own once every folder is listed.
             int entry = _store.Append(parent, _reader.NameOf(raw), kind, cloudOnly ? EntryFlags.CloudOnly : EntryFlags.None,
-                raw.Attributes, raw.EndOfFile, raw.AllocationSize, raw.FileId, out _, out ScanStore.Posted posted);
+                raw.Attributes, raw.EndOfFile, raw.AllocationSize, fileId, out _, out ScanStore.Posted posted);
             Credit(entry, posted, inPlace: false);
 
             if (kind == EntryKind.Link)
                 _links++;
             else if (kind == EntryKind.Folder)
                 _folders++;
+            else if (!ScanStore.HasFileId(fileId))
+                _filesWithoutId++; // never deduplicated: any other name it has is charged in full too
         }
 
         // Sizes every file the walk charged from the file itself (SL-056), a batch at a time: this thread builds the
@@ -463,7 +466,7 @@ public static class Scanner
             Unreadable = _unreadable,
             ProbeFailures = _probeFailures,
             VanishedBeforeProbe = _vanished,
-            FileIdsAvailable = status != ScanStatus.RootUnreadable && !_fullClass,
+            FileIdsAvailable = status != ScanStatus.RootUnreadable && _filesWithoutId == 0,
             Elapsed = _clock.Elapsed,
             Probes = _probes,
             ProbeCorrections = _probeCorrections,

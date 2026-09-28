@@ -10,7 +10,6 @@ public sealed class ScanProgress
 {
     private long _files;
     private long _folders;
-    private long _links;
     private long _bytes;
     private long _bytesOnDisk;
     private long _unreadable;
@@ -21,7 +20,6 @@ public sealed class ScanProgress
 
     public long Files => Volatile.Read(ref _files);
     public long Folders => Volatile.Read(ref _folders);
-    public long Links => Volatile.Read(ref _links);
     public long Bytes => Volatile.Read(ref _bytes);
     public long BytesOnDisk => Volatile.Read(ref _bytesOnDisk);
     public long Unreadable => Volatile.Read(ref _unreadable);
@@ -65,7 +63,6 @@ public sealed class ScanProgress
     {
         Volatile.Write(ref _files, totals.Files);
         Volatile.Write(ref _folders, totals.Folders);
-        Volatile.Write(ref _links, totals.Links);
         Volatile.Write(ref _bytes, totals.Bytes);
         Volatile.Write(ref _bytesOnDisk, totals.BytesOnDisk);
         Volatile.Write(ref _unreadable, unreadable);

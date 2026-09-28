@@ -220,7 +220,7 @@ public class DoneRowFinalityTests
     private static TopLevelRow MadeRow(TopLevelState state, bool revised)
     {
         ConstructorInfo ctor = typeof(TopLevelRow).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single();
-        TopLevelKind kind = state == TopLevelState.NotFollowed ? TopLevelKind.Link : TopLevelKind.Folder;
+        EntryKind kind = state == TopLevelState.NotFollowed ? EntryKind.Link : EntryKind.Folder;
         var row = (TopLevelRow)ctor.Invoke(["a-row", @"C:\made\a-row", kind, state, 1L, 1L, 0L, 1L, 0L]);
         typeof(TopLevelRow).GetProperty(nameof(TopLevelRow.Revised))!.SetValue(row, revised);
         return row;

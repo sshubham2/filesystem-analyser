@@ -29,15 +29,11 @@ internal static unsafe partial class Kernel32
     public const uint FILE_ATTRIBUTE_UNPINNED = 0x100000;
     public const uint FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS = 0x400000;
 
-    // Reparse tags, for reference: the first two carry the name-surrogate bit and so are links, DFS does
-    // not and is entered. The classifier reads only the bit, never a list of tags (SL-043).
-    public const uint IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003;
-    public const uint IO_REPARSE_TAG_SYMLINK = 0xA000000C;
-    public const uint IO_REPARSE_TAG_DFS = 0x8000000A;
-
     /// <summary>
     /// The name-surrogate bit of a reparse tag (winnt.h's IsReparseTagNameSurrogate): the reparse point
     /// stands for another named entity, as a junction or a symbolic link does. EntryClassifier's link rule.
+    /// A junction's and a symbolic link's tags carry it, so they are links; DFS's does not, and it is entered.
+    /// The classifier reads only the bit, never a list of tags (SL-043).
     /// </summary>
     public const uint REPARSE_TAG_NAME_SURROGATE = 0x20000000;
 
@@ -147,7 +143,8 @@ internal static unsafe partial class Kernel32
     /// cancel guard: it runs on a thread of its own that nothing waits for (VolumeSpace).
     /// </summary>
     /// <param name="root">A drive's root, <c>X:\</c>, in the plain form the spike measured.</param>
-    /// <returns>False, with the Win32 error, when the volume did not answer.</returns>
+    /// <returns>False, with the Win32 error, when the volume did not answer; false with error 0 when it answered
+    /// more free bytes than total bytes (<see cref="TryUsedBytes"/>).</returns>
     public static bool TryGetVolumeUsed(string root, out long used, out int error)
     {
         bool modeSet = SetThreadErrorMode(SEM_FAILCRITICALERRORS, out uint oldMode);
@@ -160,14 +157,30 @@ internal static unsafe partial class Kernel32
                 return false;
             }
             error = 0;
-            used = (long)(total - free);
-            return true;
+            return TryUsedBytes(total, free, out used);
         }
         finally
         {
             if (modeSet)
                 SetThreadErrorMode(oldMode, out _);
         }
+    }
+
+    /// <summary>
+    /// Total less free, or false when free is more than total or the difference is past a long. Under a per-user quota
+    /// GetDiskFreeSpaceExW's total is the caller's quota while its free bytes are the whole volume's (HF-024): a quota
+    /// below the volume's free space would wrap the difference to a large negative figure, and so would a volume that
+    /// claims more than 8 EiB in use.
+    /// </summary>
+    internal static bool TryUsedBytes(ulong total, ulong free, out long used)
+    {
+        if (free > total || total - free > long.MaxValue)
+        {
+            used = 0;
+            return false;
+        }
+        used = (long)(total - free);
+        return true;
     }
 
     [LibraryImport("kernel32.dll", EntryPoint = "GetDiskFreeSpaceExW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]

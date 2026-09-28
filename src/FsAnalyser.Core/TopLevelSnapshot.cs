@@ -1,14 +1,7 @@
 using FsAnalyser.Core.Scanning;
+using FsAnalyser.Core.Store;
 
 namespace FsAnalyser.Core;
-
-/// <summary>What a top-level row is: an entry directly under the scan root.</summary>
-public enum TopLevelKind
-{
-    File,
-    Folder,
-    Link,
-}
 
 /// <summary>How far a top-level row has been read.</summary>
 public enum TopLevelState
@@ -45,7 +38,7 @@ public enum TopLevelState
 /// </summary>
 public sealed class TopLevelRow
 {
-    internal TopLevelRow(string name, string path, TopLevelKind kind, TopLevelState state, long bytes, long onDisk, long files,
+    internal TopLevelRow(string name, string path, EntryKind kind, TopLevelState state, long bytes, long onDisk, long files,
         long folders, long unreadableBelow)
     {
         Name = name;
@@ -65,7 +58,11 @@ public sealed class TopLevelRow
     /// <summary>The full display path of this entry under the root.</summary>
     public string Path { get; }
 
-    public TopLevelKind Kind { get; }
+    /// <summary>What the entry is, as the store holds it.</summary>
+    public EntryKind Kind { get; }
+
+    /// <summary>Whether the entry is a folder. The window asks this rather than naming the store's EntryKind.</summary>
+    public bool IsFolder => Kind == EntryKind.Folder;
 
     public TopLevelState State { get; }
 

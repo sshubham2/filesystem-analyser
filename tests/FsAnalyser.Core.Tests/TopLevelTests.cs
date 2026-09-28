@@ -38,10 +38,10 @@ public class TopLevelTests
         TopLevelSnapshot final = scan.Final;
         Assert.Equal(["at-root.bin", "deep", "empty", "wide"], final.Rows.Select(r => r.Name));
         Assert.All(final.Rows, r => Assert.Equal(TopLevelState.Done, r.State));
-        Assert.Equal(Row(TopLevelKind.File, TopLevelState.Done, 5000, 1, 0), Figures(final, "at-root.bin"));
-        Assert.Equal(Row(TopLevelKind.Folder, TopLevelState.Done, 300, 2, 5), Figures(final, "deep"));
-        Assert.Equal(Row(TopLevelKind.Folder, TopLevelState.Done, 0, 0, 1), Figures(final, "empty"));
-        Assert.Equal(Row(TopLevelKind.Folder, TopLevelState.Done, 300, 1, 3), Figures(final, "wide"));
+        Assert.Equal(Row(EntryKind.File, TopLevelState.Done, 5000, 1, 0), Figures(final, "at-root.bin"));
+        Assert.Equal(Row(EntryKind.Folder, TopLevelState.Done, 300, 2, 5), Figures(final, "deep"));
+        Assert.Equal(Row(EntryKind.Folder, TopLevelState.Done, 0, 0, 1), Figures(final, "empty"));
+        Assert.Equal(Row(EntryKind.Folder, TopLevelState.Done, 300, 1, 3), Figures(final, "wide"));
         Assert.Contains(scan.Snapshots, s => Named(s, "deep").State == TopLevelState.Reading);
     }
 
@@ -125,10 +125,10 @@ public class TopLevelTests
         Assert.Equal(ScanStatus.Completed, scan.Result.Status);
         foreach (string link in new[] { "j-junction", "d-folder-symlink", "f-file-symlink" })
         {
-            Assert.All(scan.Snapshots, s => Assert.Equal(Row(TopLevelKind.Link, TopLevelState.NotFollowed, 0, 0, 0), Figures(s, link)));
+            Assert.All(scan.Snapshots, s => Assert.Equal(Row(EntryKind.Link, TopLevelState.NotFollowed, 0, 0, 0), Figures(s, link)));
             Assert.Equal(0, Named(scan.Final, link).OnDisk);
         }
-        Assert.Equal(Row(TopLevelKind.Folder, TopLevelState.Done, 100, 1, 1), Figures(scan.Final, "inside"));
+        Assert.Equal(Row(EntryKind.Folder, TopLevelState.Done, 100, 1, 1), Figures(scan.Final, "inside"));
         Assert.Equal(3, scan.Result.Totals.Links);
     }
 
@@ -154,7 +154,7 @@ public class TopLevelTests
         Watched scan = Watch(tree.Root);
 
         Assert.Equal(ScanStatus.Completed, scan.Result.Status);
-        Assert.Equal(Row(TopLevelKind.Folder, TopLevelState.Done, 30, 2, 4), Figures(scan.Final, "top"));
+        Assert.Equal(Row(EntryKind.Folder, TopLevelState.Done, 30, 2, 4), Figures(scan.Final, "top"));
         Assert.Contains(scan.Snapshots, s => Named(s, "top").State == TopLevelState.Reading);
         Assert.Equal(3, scan.Result.Totals.Links);
     }
@@ -175,10 +175,10 @@ public class TopLevelTests
 
         Assert.Equal(ScanStatus.Completed, scan.Result.Status);
         Assert.Equal(5, Assert.Single(scan.Result.Unreadable).Win32Error);
-        Assert.Equal(Row(TopLevelKind.Folder, TopLevelState.Unreadable, 0, 0, 1), Figures(scan.Final, "b-denied"));
+        Assert.Equal(Row(EntryKind.Folder, TopLevelState.Unreadable, 0, 0, 1), Figures(scan.Final, "b-denied"));
         Assert.Equal(0, Named(scan.Final, "b-denied").UnreadableBelow);
-        Assert.Equal(Row(TopLevelKind.Folder, TopLevelState.Done, 11, 1, 1), Figures(scan.Final, "a-readable"));
-        Assert.Equal(Row(TopLevelKind.Folder, TopLevelState.Done, 22, 1, 1), Figures(scan.Final, "c-readable"));
+        Assert.Equal(Row(EntryKind.Folder, TopLevelState.Done, 11, 1, 1), Figures(scan.Final, "a-readable"));
+        Assert.Equal(Row(EntryKind.Folder, TopLevelState.Done, 22, 1, 1), Figures(scan.Final, "c-readable"));
     }
 
     [Fact]
@@ -199,7 +199,7 @@ public class TopLevelTests
 
         Assert.Equal(ScanStatus.Completed, scan.Result.Status);
         TopLevelRow top = Named(scan.Final, "top");
-        Assert.Equal(Row(TopLevelKind.Folder, TopLevelState.Done, 33, 2, 4), Figures(scan.Final, "top"));
+        Assert.Equal(Row(EntryKind.Folder, TopLevelState.Done, 33, 2, 4), Figures(scan.Final, "top"));
         Assert.Equal(1, top.UnreadableBelow);
         Assert.Equal(TopLevelState.Done, Named(scan.Final, "z-after").State);
     }
@@ -232,7 +232,7 @@ public class TopLevelTests
         TopLevelSnapshot final = scan.Final;
         Assert.True(final.Final);
         Assert.False(final.Completed);
-        Assert.Equal(Row(TopLevelKind.Folder, TopLevelState.StoppedPartway, 11, 2, 3), Figures(final, "f0"));
+        Assert.Equal(Row(EntryKind.Folder, TopLevelState.StoppedPartway, 11, 2, 3), Figures(final, "f0"));
         Assert.Single(final.Rows, r => r.State == TopLevelState.StoppedPartway);
         Assert.Equal(9, final.Rows.Count(r => r.State == TopLevelState.NotRead));
         Assert.Equal(new ScanTotals(Files: 2, Folders: 12, Links: 0, Bytes: 11, BytesOnDisk: final.OnDisk), scan.Result.Totals);
@@ -401,7 +401,7 @@ public class TopLevelTests
             Put(tree, $@"f{i}\sub\more.bin", 1000);
         }
         TopLevelSnapshot? held = null;
-        List<(string, TopLevelKind, TopLevelState, long, long, long, long, long)>? copied = null;
+        List<(string, EntryKind, TopLevelState, long, long, long, long, long)>? copied = null;
 
         Watched scan = Watch(tree.Root, afterFolder: (n, progress) =>
         {
@@ -682,10 +682,10 @@ public class TopLevelTests
                 Assert.True(!row.Revised || row.State == TopLevelState.Done, $"{which}: revised while {row.State}");
                 switch (row.Kind)
                 {
-                    case TopLevelKind.File:
+                    case EntryKind.File:
                         Assert.True(row.State == TopLevelState.Done, $"{which}: a file row is {row.State}");
                         break;
-                    case TopLevelKind.Link:
+                    case EntryKind.Link:
                         Assert.True(row.State == TopLevelState.NotFollowed, $"{which}: a link row is {row.State}");
                         Assert.True((row.Bytes, row.OnDisk, row.Files, row.Folders) == (0, 0, 0, 0), $"{which}: a link row counted something");
                         break;
@@ -716,7 +716,7 @@ public class TopLevelTests
             }
         }
 
-        foreach (TopLevelRow row in final.Rows.Where(r => r.Kind == TopLevelKind.Folder))
+        foreach (TopLevelRow row in final.Rows.Where(r => r.Kind == EntryKind.Folder))
         {
             if (final.Completed)
                 Assert.True(row.State is TopLevelState.Done or TopLevelState.Unreadable, $"row {row.Name} is {row.State} at completion");
@@ -783,16 +783,16 @@ public class TopLevelTests
 
     private static TopLevelRow Named(TopLevelSnapshot snapshot, string name) => snapshot.Rows.Single(r => r.Name == name);
 
-    private static (TopLevelKind, TopLevelState, long Bytes, long Files, long Folders) Figures(TopLevelSnapshot snapshot, string name)
+    private static (EntryKind, TopLevelState, long Bytes, long Files, long Folders) Figures(TopLevelSnapshot snapshot, string name)
     {
         TopLevelRow row = Named(snapshot, name);
         return (row.Kind, row.State, row.Bytes, row.Files, row.Folders);
     }
 
-    private static (TopLevelKind, TopLevelState, long Bytes, long Files, long Folders) Row(TopLevelKind kind, TopLevelState state,
+    private static (EntryKind, TopLevelState, long Bytes, long Files, long Folders) Row(EntryKind kind, TopLevelState state,
         long bytes, long files, long folders) => (kind, state, bytes, files, folders);
 
-    private static List<(string, TopLevelKind, TopLevelState, long, long, long, long, long)> Values(TopLevelSnapshot snapshot) =>
+    private static List<(string, EntryKind, TopLevelState, long, long, long, long, long)> Values(TopLevelSnapshot snapshot) =>
         [.. snapshot.Rows.Select(r => (r.Name, r.Kind, r.State, r.Bytes, r.OnDisk, r.Files, r.Folders, r.UnreadableBelow)),
             (snapshot.Root, default, default, snapshot.Sequence, snapshot.Bytes, snapshot.OnDisk, snapshot.Files, snapshot.Folders)];
 }
