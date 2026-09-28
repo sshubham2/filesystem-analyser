@@ -125,6 +125,8 @@ criterion 6's timing test fails.** The engine's architecture record is not in th
 there still needs the same edit. The design left this as an open question (sort on read against a stored
 order), and this is the answer the build measured, not a decision on the person's behalf.
 
+Closed in SL-068 (2026-09-28) on these measurements; see docs/design/SL-068-sort-on-read.md.
+
 ## Merging with slice/SL-040 (review m8)
 
 slice/SL-040 (ef74cd1, unmerged) also edits `ScanStore.cs`: it makes `Size`/`OnDisk` internal and adds
