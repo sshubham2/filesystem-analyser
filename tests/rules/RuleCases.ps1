@@ -666,6 +666,39 @@ def check(tree, build=False):
     CheckRun $run 2 'an engine that did not run a rule that is not an import rule' @(
         'the clean baseline is not clean', "fitness rules that did not run: ['a content rule the engine did not run']", 'harness: exit 2')
     Check (-not $run.Output.Contains('NOT RUN')) "that rule is never named NOT RUN and let through`n$($run.Output)"
+
+    # A second taad3 importable from elsewhere on the path, the way a shared venv would hold one (SL-075): the
+    # engine root still wins, and the header names its fitness.py. The decoy fails if it is ever imported.
+    if (-not $EngineRoot) { Check $false 'the decoy-engine checks need -EngineRoot'; return }
+    $engineFile = Join-Path ([System.IO.Path]::GetFullPath($EngineRoot)) 'taad3\fitness.py'
+    $decoy = New-TempDir 'fsa-engine-case-'
+    New-Item -ItemType Directory -Path (Join-Path $decoy 'taad3') | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $decoy 'taad3\__init__.py'), '', $Utf8)
+    [System.IO.File]::WriteAllText((Join-Path $decoy 'taad3\fitness.py'), "raise ImportError('the decoy taad3.fitness was imported')`n", $Utf8)
+    $pythonPath = $env:PYTHONPATH
+    try {
+        $env:PYTHONPATH = $decoy
+        $run = Invoke-Harness @('--scenario', 'clean')
+    }
+    finally { $env:PYTHONPATH = $pythonPath }
+    CheckRun $run 0 'a decoy taad3 on PYTHONPATH' @('| CLEAN')
+    Check ($run.Output.IndexOf("(taad3.fitness from $engineFile)", [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+        -not $run.Output.Contains('the decoy taad3.fitness was imported')) "the header names $engineFile, not the decoy`n$($run.Output)"
+
+    # Bites: a decoy already imported before the harness runs (a sitecustomize on the path) is the module the
+    # harness gets, and it refuses to measure with it rather than report what the decoy said.
+    $preloaded = New-TempDir 'fsa-engine-case-'
+    New-Item -ItemType Directory -Path (Join-Path $preloaded 'taad3') | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $preloaded 'taad3\__init__.py'), '', $Utf8)
+    [System.IO.File]::WriteAllText((Join-Path $preloaded 'taad3\fitness.py'), "def check(tree, build=False):`n    raise RuntimeError('the decoy was asked to check')`n", $Utf8)
+    [System.IO.File]::WriteAllText((Join-Path $preloaded 'sitecustomize.py'), "import taad3.fitness`n", $Utf8)
+    try {
+        $env:PYTHONPATH = $preloaded
+        $run = Invoke-Harness @('--scenario', 'clean')
+    }
+    finally { $env:PYTHONPATH = $pythonPath }
+    CheckRun $run 2 'a decoy taad3.fitness imported before the harness' @('taad3.fitness was imported from', "$preloaded\taad3\fitness.py, not from this root", 'harness: exit 2')
+    Check (-not $run.Output.Contains('the decoy was asked to check')) "the decoy's check() is never called`n$($run.Output)"
 }
 
 # The names of this tree's import rules (a must_not_import that is not empty), read by the yaml parser of the
