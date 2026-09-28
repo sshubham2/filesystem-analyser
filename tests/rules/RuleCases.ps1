@@ -668,6 +668,15 @@ def check(tree, build=False):
     Check (-not $run.Output.Contains('NOT RUN')) "that rule is never named NOT RUN and let through`n$($run.Output)"
 }
 
+# A yaml name scalar as the engine reads it: a single-quoted one unwrapped with '' made ', a double-quoted one
+# unwrapped, a plain one as it stands.
+function Get-YamlName([string] $scalar) {
+    $name = $scalar.Trim()
+    if ($name.Length -ge 2 -and $name.StartsWith("'") -and $name.EndsWith("'")) { return $name.Substring(1, $name.Length - 2).Replace("''", "'") }
+    if ($name.Length -ge 2 -and $name.StartsWith('"') -and $name.EndsWith('"')) { return $name.Substring(1, $name.Length - 2) }
+    $name
+}
+
 function Case-C007 {
     Write-Output 'C-007 the clean scenario: no plants, zero hits in both engines'
     $run = Invoke-Harness @('--scenario', 'clean')
@@ -682,7 +691,7 @@ function Case-C007 {
     $imports = [System.Collections.Generic.List[string]]::new()
     $entry = $null
     foreach ($line in [System.IO.File]::ReadAllLines((Join-Path $Repo $YamlRel), $Utf8)) {
-        if ($line -cmatch '^  - name: (.+)$') { $entry = $Matches[1].Trim().Trim("'") }
+        if ($line -cmatch '^  - name: (.+)$') { $entry = Get-YamlName $Matches[1] }
         elseif ($line -cmatch '^    must_not_import:' -and $entry) { $imports.Add($entry) }
     }
     if ($imports.Count) {

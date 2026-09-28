@@ -13,13 +13,13 @@ single-scope rule. Each shape here copies the four files RuleCases.ps1 and eng/r
 No count of this repository is written here. Every expected line is the unchanged copy's own AGREE line, as
 the parity tool prints it, plus what the shape did to the copy; that is a setup reading, never what the case
 under test compares against (RuleCases.ps1 recounts the files itself). -Shape All runs every shape but
-EngineCases, which needs the TAAD engine and a .NET 10 SDK and is asked for by name; without the engine it
-fails as not reached, never passes. Exit 0 when every check held, 1 when any failed.
+EngineCases and ImportRuleNames, which need the TAAD engine and a .NET 10 SDK and are asked for by name;
+without the engine each fails as not reached, never passes. Exit 0 when every check held, 1 when any failed.
 #>
 
 param(
     [ValidateSet('All', 'SingleScope', 'TwoScope', 'ExpectFactsMismatch', 'C003Settled', 'SettledMarkers', 'NoMarker',
-        'UnreadableCs', 'UnseenFact', 'HostParity', 'GuardRule', 'EngineCases')]
+        'UnreadableCs', 'UnseenFact', 'HostParity', 'GuardRule', 'EngineCases', 'ImportRuleNames')]
     [string] $Shape = 'All',
     [string] $EnginePython = '',
     [string] $EngineRoot = ''
@@ -288,8 +288,12 @@ function Shape-ExpectFactsMismatch {
     foreach ($tree in @(@('the unchanged copy', $clean, 0), @('a copy with one more Fact', $grown, 1))) {
         $what, $t, $df = $tree
         $found = $t.Base.Facts + $df
-        $row = "a Fact count that differs from the reflected count [pwsh] says 'rules-parity: CANNOT-READ tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs: $(Get-Mismatch $found)'"
-        CheckRun (Invoke-Cases 'pwsh' $t.Root 'C-005') 0 "C-005 on $what" @('All checks held.', "  ok    $row")
+        # Each parity run C-005 makes, under each shell, exits 2 CANNOT-READ naming N found and N+1 expected.
+        $rows = foreach ($shell in $Shells) {
+            "  ok    a Fact count that differs from the reflected count [$shell] exits 2"
+            "  ok    a Fact count that differs from the reflected count [$shell] says 'rules-parity: CANNOT-READ tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs: $(Get-Mismatch $found)'"
+        }
+        CheckRun (Invoke-Cases 'pwsh' $t.Root 'C-005') 0 "C-005 on $what" (@('All checks held.') + $rows)
     }
 }
 
@@ -451,7 +455,8 @@ function Shape-GuardRule {
     # Built with -f, so this file carries none of them.
     $pinned = @(
         ('rules-parity: AGREE {0} facts <- {1} twinned entries, {2} patterns; ' -f 12, 16, 28),
-        ('the repo with -ExpectFacts {0} [pwsh]' -f 11), ('$Twinned = {0}' -f 15), ('xunit {0} Facts, 0 hits' -f 11),
+        ('the repo with -ExpectFacts {0} [pwsh]' -f 11), ("@('-ExpectFacts', '{0}')" -f 11), ("@('-ExpectFacts', {0})" -f 12),
+        ('$Twinned = {0}' -f 15), ('xunit {0} Facts, 0 hits' -f 11),
         ('the reader found {0} Facts where the test class has {1}' -f 11, 12), ('Format-AgreeLine -Facts {0} -Twinned {1}' -f 12, 16),
         ('$Facts = {0}' -f 11), ('Patterns = {0}' -f 27)
     )
@@ -459,7 +464,8 @@ function Shape-GuardRule {
     $derived = @(
         'rules-parity: AGREE $($counts.Facts + $DFacts) facts <- $($counts.Twinned + $DTwinned) twinned entries, ',
         '"$($counts.Patterns + $DPatterns) patterns; $settled settled entries not compared"',
-        'the repo with -ExpectFacts $facts [$shell]', 'Format-AgreeLine -DTwinned -1', 'Get-ExpectFacts -DFacts 1',
+        'the repo with -ExpectFacts $facts [$shell]', '@(''-ExpectFacts'', $facts)', '@(''-ExpectFacts'', $more)',
+        'Format-AgreeLine -DTwinned -1', 'Get-ExpectFacts -DFacts 1',
         '"xunit $(Get-ExpectFacts) Facts, 0 hits"', '(\d+) twinned entries, \d+ patterns; (\d+) settled',
         'C-001 the clean tree: its Facts, twinned entries and patterns, the settled entries below the marker'
     )
@@ -498,6 +504,48 @@ function Shape-EngineCases {
                 "  ok    the tests scope of InteropLivesOnlyInNative deleted from yaml says '$(Get-Line $base $df ($dt - 1) $dp 0)'",
                 "  ok    the tests scope of InteropLivesOnlyInNative dropped from xUnit says '$(Get-Line $base $df $dt $dp 0)'")
         }
+    }
+}
+
+function Shape-ImportRuleNames {
+    Write-Output 'ImportRuleNames: C-007 finds every import rule named NOT RUN when a name holds an apostrophe, quoted either way'
+    if (-not $EnginePython -or -not $EngineRoot) {
+        Check $false 'not reached: ImportRuleNames needs -EnginePython and -EngineRoot; without them C-007 is not run'
+        return
+    }
+    $local = Join-Path $Repo '.dotnet'
+    if (Test-Path -LiteralPath (Join-Path $local 'dotnet.exe')) { $env:PATH = "$local;$env:PATH" }
+    $engine = @('-EnginePython', $EnginePython, '-EngineRoot', $EngineRoot)
+
+    # Two more import rules on the provider's folder, which the harness's scratch copy (no code graph) leaves
+    # unran: the yaml spells one name single-quoted with its apostrophe doubled, the other double-quoted.
+    $copy = New-RepoScratch
+    $base = Get-Agree $copy
+    $rules = @'
+
+  # settled by SL-999
+  - name: 'the provider''s helper never imports Core'
+    files: tests/CfProvider/**
+    must_not_import:
+    - FsAnalyser.Core*
+    must_not_match:
+    - BrandNewThing
+    because: A probe import rule whose single-quoted name doubles its apostrophe.
+  - name: "the provider's stub never imports Core"
+    files: tests/CfProvider/**
+    must_not_import:
+    - FsAnalyser.Core*
+    must_not_match:
+    - BrandNewThing
+    because: A probe import rule whose double-quoted name holds an apostrophe.
+'@
+    [System.IO.File]::AppendAllText((Join-Path $copy $YamlRel), ($rules.Replace("`r`n", "`n").Replace("`n", "`r`n")), $Utf8)
+    $grown = Get-Agree $copy
+    Check ((Get-Line $grown 0 0 0 0) -ceq (Get-Line $base 0 0 0 2)) "the copy AGREEs on '$(Get-Line $base 0 0 0 2)'"
+    $imports = @([System.IO.File]::ReadAllLines((Join-Path $copy $YamlRel), $Utf8) -cmatch '^    must_not_import:').Count
+    foreach ($shell in $Shells) {
+        CheckRun (Invoke-Cases $shell $copy 'C-007' $engine) 0 "C-007 on a copy with import rules named with an apostrophe [$shell]" @(
+            'All checks held.', "  ok    the $imports import rule(s) are named NOT RUN, and the verdict is not pass (unnamed: )")
     }
 }
 

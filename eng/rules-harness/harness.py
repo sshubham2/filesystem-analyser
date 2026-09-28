@@ -571,8 +571,10 @@ def not_run_on_scratch(f: dict) -> list:
 def describe_not_run(names: list) -> str:
     if not names:
         return "none unran"
+    # Each name in single quotes as it is, never a list's repr, which double-quotes a name that holds one.
+    quoted = ", ".join("'" + name + "'" for name in names)
     return (f"NOT RUN, not passed: {len(names)} import rule(s) the engine judges only against a code "
-            f"graph, which the scratch copy has none of: {names}")
+            f"graph, which the scratch copy has none of: {quoted}")
 
 
 def check_clean(x: dict, f: dict, parity: dict) -> None:
