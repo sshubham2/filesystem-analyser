@@ -1,0 +1,118 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-076",
+ "stage": "build-slice",
+ "attempt": 2,
+ "at": "2026-09-28T16:10:14.058Z",
+ "head": "efab6732de4f15327bc356a720f88d4d8d0adf41",
+ "run_id": 1993,
+ "summary": "Attempt 2 discharges review findings m1 and m2 (O-001, O-002) with the leaf-based rewrite that was accepted for them. Invoke-HarnessRaw in tests/rules/RuleCases.ps1 now reads only mkdtemp's ASCII leaf from the harness's line, with '(?m)^harness: scratch kept at .*[\\\\/](fsa-rules-[A-Za-z0-9_]+)\\s*$'. For each of GetTempPath() and $env:TEMP it then removes [IO.Path]::Combine(folder, leaf) if that folder exists. The printed path is never compared, so an 8.3 short TEMP, a non-ASCII TEMP that say() prints as \\xe9, a space in TEMP and TEMP≠TMP are all cleaned the same way. Only a folder with mkdtemp's name directly in TMP or TEMP is ever removed. I added ShortName and NonAscii shapes to tests/bugs/SL-076-ScratchKeptPath.Tests.ps1 and watched them fail on the attempt-1 code. The stand-in now prints through say()'s escaping, and the Python shape runs the real harness.py for all three spellings of TEMP. After the fix they pass, and so do the real RuleCases C-006 and C-014 runs with a short or a non-ASCII TEMP, and the full .NET suite. Neither C-006 run left an fsa-rules-* folder, nor did C-014.",
+ "payload": {
+  "status": "complete",
+  "summary": "Attempt 2 discharges review findings m1 and m2 (O-001, O-002) with the leaf-based rewrite that was accepted for them. Invoke-HarnessRaw in tests/rules/RuleCases.ps1 now reads only mkdtemp's ASCII leaf from the harness's line, with '(?m)^harness: scratch kept at .*[\\\\/](fsa-rules-[A-Za-z0-9_]+)\\s*$'. For each of GetTempPath() and $env:TEMP it then removes [IO.Path]::Combine(folder, leaf) if that folder exists. The printed path is never compared, so an 8.3 short TEMP, a non-ASCII TEMP that say() prints as \\xe9, a space in TEMP and TEMP≠TMP are all cleaned the same way. Only a folder with mkdtemp's name directly in TMP or TEMP is ever removed. I added ShortName and NonAscii shapes to tests/bugs/SL-076-ScratchKeptPath.Tests.ps1 and watched them fail on the attempt-1 code. The stand-in now prints through say()'s escaping, and the Python shape runs the real harness.py for all three spellings of TEMP. After the fix they pass, and so do the real RuleCases C-006 and C-014 runs with a short or a non-ASCII TEMP, and the full .NET suite. Neither C-006 run left an fsa-rules-* folder, nor did C-014.",
+  "files": [
+   {
+    "path": "tests/rules/RuleCases.ps1",
+    "change": "modified",
+    "why": "HF-026 plus review m1 and m2: Invoke-HarnessRaw captures only the fsa-rules-[A-Za-z0-9_]+ leaf from the 'scratch kept at' line. It removes <GetTempPath() or $env:TEMP>\\<leaf> when that folder exists. The printed path is not compared, so the space, 8.3, non-ASCII (say() escapes) and TEMP≠TMP spellings are all cleaned."
+   },
+   {
+    "path": "tests/bugs/SL-076-ScratchKeptPath.Tests.ps1",
+    "change": "added",
+    "why": "The HF-026 test. New since attempt 1: a ShortName shape (TMP=TEMP set to Scripting.FileSystemObject's ShortPath of a spaced folder) and a NonAscii shape (TMP=TEMP under 'José Smith', built from [char]0xE9). The stand-in is now a pwsh script that prints through harness.py's say() escaping. Refused gains a case for a folder name mkdtemp never makes. The Python shape runs the real harness.py for the space/TEMP≠TMP, 8.3 and non-ASCII spellings."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "done": true,
+    "how": "The fix follows m2's leaf-based rewrite, which the decision says also settles m1. No printed parent is compared any more: the leaf is joined to GetTempPath() and $env:TEMP exactly as the process spells them, so an 8.3 TEMP finds its folder. I added a ShortName shape (TMP=TEMP set to FSO .ShortPath, e.g. ...\\FS8CED~1\\Users\\JOHNSM~1\\AppData\\Local\\Temp). On the attempt-1 code it failed ('removes ...\\JOHNSM~1\\...\\fsa-rules-sl076' FAIL). The Python shape's 8.3 spelling also left fsa-rules-qcwe62v9 behind on that code. Both pass after the fix, and RuleCases C-006 with TEMP=TMP=an 8.3 short name held every check and left no fsa-rules-*."
+   },
+   {
+    "key": "O-002",
+    "done": true,
+    "how": "The fix captures only mkdtemp's ASCII leaf ('(?m)^harness: scratch kept at .*[\\\\/](fsa-rules-[A-Za-z0-9_]+)\\s*$') and removes it directly in each of GetTempPath() and $env:TEMP. I added a NonAscii shape: TMP=TEMP under 'José Smith', which the stand-in prints as 'Jos\\xe9 Smith' the way say() does. It failed on the attempt-1 code, and the Python shape's real harness.py left fsa-rules-j8pa99fn behind on that code. Both pass after the fix. RuleCases C-006 and C-014 with a non-ASCII TEMP left no fsa-rules-*."
+   }
+  ],
+  "cases": [
+   {
+    "key": "HF-026",
+    "test_name": "tests/bugs/SL-076-ScratchKeptPath.Tests.ps1 (shapes Space, TempNotTmp, ShortName, NonAscii, Refused)",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-076-ScratchKeptPath.Tests.ps1"
+   }
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-076-ScratchKeptPath.Tests.ps1 -Shape ShortName   (on the attempt-1 code)",
+    "outcome": "failed",
+    "note": "Written first. The one failing check: TEMP=TMP='...\\FS8CED~1\\Users\\JOHNSM~1\\AppData\\Local\\Temp', and '...\\fsa-rules-sl076' was not removed. This reproduces review m1."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-076-ScratchKeptPath.Tests.ps1 -Shape NonAscii   (on the attempt-1 code)",
+    "outcome": "failed",
+    "note": "Written first. The line said '...\\Jos\\xe9 Smith\\...\\fsa-rules-sl076', and the real '...\\José Smith\\...\\fsa-rules-sl076' was not removed. This reproduces review m2."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-076-ScratchKeptPath.Tests.ps1 -Shape Python -EnginePython C:\\Users\\sshub\\AppData\\Roaming\\taad3\\venv\\Scripts\\python.exe   (on the attempt-1 code)",
+    "outcome": "failed",
+    "note": "The real harness.py: the space/TEMP≠TMP spelling was cleaned. The 8.3 spelling left fsa-rules-qcwe62v9 and the non-ASCII spelling left fsa-rules-j8pa99fn: 2 checks failed."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-076-ScratchKeptPath.Tests.ps1",
+    "outcome": "passed",
+    "note": "After the fix: all checks held in Space, TempNotTmp, ShortName, NonAscii and Refused (Refused now has 4 cases, including a folder name mkdtemp never makes). Exit 0."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-076-ScratchKeptPath.Tests.ps1 -Shape Python -EnginePython C:\\Users\\sshub\\AppData\\Roaming\\taad3\\venv\\Scripts\\python.exe",
+    "outcome": "passed",
+    "note": "After the fix: for each spelling (space with TEMP≠TMP, 8.3 short name, non-ASCII) harness.py exited 2 and said its scratch was in TEMP in that spelling, and no fsa-rules-* was left in TMP or TEMP. Exit 0."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-006 -EnginePython <taad3 venv python> -EngineRoot C:\\Users\\sshub\\projets\\taad_v3\\backend   (child env TEMP=TMP=8.3 short path ...\\FS1C1E~1\\Users\\JOHNSM~1\\AppData\\Local\\Temp)",
+    "outcome": "passed",
+    "note": "Real entry point with the real engine, 26 s: All checks held, exit 0, and no fsa-rules-* was left in that TEMP."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-006 ... (child env TEMP=TMP='...\\Users\\José Smith\\AppData\\Local\\Temp')",
+    "outcome": "failed",
+    "note": "No fsa-rules-* was left in that TEMP, so the scratch cleanup worked. C-006 still exited 1 on 4 of its own 'says engine root <path>' checks. RuleCases' New-TempDir puts its fake engines under the non-ASCII GetTempPath, and CheckRun looks for the raw é path while say() prints '\\xe9'. That is a separate, pre-existing expectation defect that does not touch the lines this slice changed; it is recorded under follow_ups."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-014 ... (child env TEMP=TMP='...\\Users\\José Smith\\AppData\\Local\\Temp')",
+    "outcome": "passed",
+    "note": "All checks held, exit 0. The exit-1 DIVERGENCE-CLOSED run's scratch was removed, and no fsa-rules-* was left in that TEMP."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-006 -EnginePython C:\\Users\\sshub\\AppData\\Roaming\\taad3\\venv\\Scripts\\python.exe -EngineRoot C:\\Users\\sshub\\projets\\taad_v3\\backend   (the machine's own TEMP)",
+    "outcome": "passed",
+    "note": "All checks held, exit 0. %TEMP% already held 26 fsa-rules-* folders from earlier runs; the newest was made at 20:54, before this attempt. This run added none, and I left those folders alone."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx",
+    "outcome": "passed",
+    "note": "Full .NET suite: 400 passed, 0 failed, 0 skipped."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-069-EveryCaseFollowsCounts.Tests.ps1 -Shape GuardRule",
+    "outcome": "passed",
+    "note": "The literal-count fitness rule hits nothing in the changed RuleCases.ps1. All checks held."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/SettledCountProbe.ps1 -Shape GuardRule",
+    "outcome": "passed",
+    "note": "The settled-count fitness rule hits nothing in the changed RuleCases.ps1. All checks held."
+   }
+  ],
+  "deviations": [],
+  "not_built": [
+   "The send-back suggested deleting 'the exact scratch path it recorded when it made the copy', if the design allowed it. It does not fit here. RuleCases never makes the harness's scratch: harness.py's own tempfile.mkdtemp does, and the only record RuleCases gets is the printed line, which is the source of the four spellings. Recording the exact path would take a new harness option or pointing the harness child's TEMP at a RuleCases-owned folder. The second would also move every dotnet/MSBuild/NuGet scratch file the harness makes. Both go past the design and the accepted m1/m2 decisions, which chose the leaf-based rewrite. The rewrite does keep the send-back's safety requirement: it removes only a folder whose name is exactly mkdtemp's 'fsa-rules-' + [A-Za-z0-9_]+, directly in one of the two folders mkdtemp could have used, and nothing else. Refused pins that with 4 cases."
+  ],
+  "follow_ups": [
+   "RuleCases C-006 cannot pass on a machine whose GetTempPath holds a non-ASCII character. Its 'engine root <path>' and '<path>\\taad3\\fitness.py, not from this root' expectations use the raw path of folders New-TempDir made, while harness.py's say() prints them escaped ('\\xe9'). Measured: 4 checks fail with TEMP=TMP under 'José Smith'. The expectations could be escaped the way say() escapes, as Get-ImportRuleNames already does for rule names.",
+   "Python's tempfile.gettempdir checks TMPDIR before TEMP. A shell that exports TMPDIR on Windows would put the scratch in a folder Invoke-HarnessRaw does not search. Adding $env:TMPDIR to the folders the leaf is looked for in is a one-item change.",
+   "%TEMP% on this machine holds 26 fsa-rules-* folders from earlier harness runs, the newest made at 20:54, before this attempt. They are kept scratch from runs that no RuleCases case expected to fail, or from before HF-026 was fixed, and a person may want to clear them. This build did not touch them."
+  ],
+  "architecture": [],
+  "sessions": []
+ }
+}
