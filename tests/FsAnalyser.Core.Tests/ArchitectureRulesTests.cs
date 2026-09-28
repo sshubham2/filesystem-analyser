@@ -160,10 +160,13 @@ public class ArchitectureRulesTests
     /// call made anywhere else runs with the thread's error mode as it found it, and on a removable drive with no media
     /// raises the "insert a disk" box and holds the scan. The first pattern is a call by the Win32 name, ANSI forms
     /// included; the second is that name as a string, which is how an import that renames the call (EntryPoint =
-    /// "CreateFileW" on a method of another name) or a NativeLibrary.GetExport lookup names it (review m2, R2-m2). Of the
-    /// two excepted files, the compiler holds SynchronousIoCancel.cs: its only path call is Kernel32.CreateFile, which
-    /// takes the scope as an argument. It does not hold Kernel32.cs, whose own members can call its private CreateFileW
-    /// and GetDiskFreeSpaceEx with no scope: review holds that one, and FailCriticalErrorsTests counts its path calls
+    /// "CreateFileW" on a method of another name) or a NativeLibrary.GetExport lookup names it (review m2, R2-m2, and the
+    /// third review's m1, which added GetCompressedFileSize, FindFirstFileName, FindFirstStream, GetFileInformationByName
+    /// and CreateFileTransacted). It holds the path-taking entry points it names, and a call by a name missing from the
+    /// list passes it. Of the two excepted files, the compiler holds SynchronousIoCancel.cs: its only path call is
+    /// Kernel32.CreateFile, which takes the scope as an argument. It does not hold Kernel32.cs, whose own members can call
+    /// its private CreateFileW and GetDiskFreeSpaceEx with no scope: review holds that one, and FailCriticalErrorsTests
+    /// counts its calls of the named entry points with these two patterns, read from this source
     /// (Kernel32MakesOnlyThePathCallsThatRunInsideTheScope). This holds every other file, a new Native file with its own
     /// import included. Comments are matched too.
     /// </summary>
@@ -172,8 +175,8 @@ public class ArchitectureRulesTests
     {
         AssertNoMatch(Files(@"src\FsAnalyser.Core", "*.cs")
                 .Except([@"src\FsAnalyser.Core\Native\Kernel32.cs", @"src\FsAnalyser.Core\Scanning\SynchronousIoCancel.cs"]),
-            @"\b(CreateFile[AW2]?|OpenFileById|(Nt|Zw)(Create|Open)File|(Nt|Zw)Query(Full)?AttributesFile|FindFirstFile(Ex)?[AW]?|GetFileAttributes(Ex)?[AW]?|GetVolumeInformation[AW]?|GetDiskFreeSpace(Ex)?[AW]?)\s*\(",
-            @"""(CreateFile[AW2]?|OpenFileById|(Nt|Zw)(Create|Open)File|(Nt|Zw)Query(Full)?AttributesFile|FindFirstFile(Ex)?[AW]?|GetFileAttributes(Ex)?[AW]?|GetVolumeInformation[AW]?|GetDiskFreeSpace(Ex)?[AW]?)""");
+            @"\b(CreateFile[AW2]?|CreateFileTransacted[AW]?|OpenFileById|(Nt|Zw)(Create|Open)File|(Nt|Zw)Query(Full)?AttributesFile|FindFirstFile(Ex)?[AW]?|FindFirstFileName[AW]?|FindFirstStream[AW]?|GetFileAttributes(Ex)?[AW]?|GetFileInformationByName|GetCompressedFileSize[AW]?|GetVolumeInformation[AW]?|GetDiskFreeSpace(Ex)?[AW]?)\s*\(",
+            @"""(CreateFile[AW2]?|CreateFileTransacted[AW]?|OpenFileById|(Nt|Zw)(Create|Open)File|(Nt|Zw)Query(Full)?AttributesFile|FindFirstFile(Ex)?[AW]?|FindFirstFileName[AW]?|FindFirstStream[AW]?|GetFileAttributes(Ex)?[AW]?|GetFileInformationByName|GetCompressedFileSize[AW]?|GetVolumeInformation[AW]?|GetDiskFreeSpace(Ex)?[AW]?)""");
     }
 
     private static IEnumerable<string> Files(string folder, params string[] patterns) =>

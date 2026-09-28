@@ -478,20 +478,27 @@ public class FailCriticalErrorsTests
     /// <summary>
     /// Kernel32.cs is excepted from ArchitectureRulesTests.PathOpensGoOnlyThroughTheGuardedOpen, and the compiler does not
     /// hold it: any member of Kernel32 can call its private CreateFileW or GetDiskFreeSpaceEx with no scope (SL-077's
-    /// second review, m1). So its path calls are counted here with the rule's two patterns, over its code lines, comments
-    /// aside: the CreateFile wrapper, which refuses a scope that is not armed; CreateFileW declared and called once, in that
-    /// wrapper; GetDiskFreeSpaceEx declared, named by its entry point and called once, in TryGetVolumeUsed inside the scope.
-    /// Any other path call or path import there changes the count, and fails here until somebody has put it inside a
-    /// CriticalErrorBoxOff and written it into this list.
+    /// second review, m1). So its calls of the rule's named path-taking entry points are counted here, over its code lines,
+    /// comments aside: the CreateFile wrapper, which refuses a scope that is not armed; CreateFileW declared and called
+    /// once, in that wrapper; GetDiskFreeSpaceEx declared, named by its entry point and called once, in TryGetVolumeUsed
+    /// inside the scope. A call or import of any other named entry point there changes the count, and fails here until
+    /// somebody has put it inside a CriticalErrorBoxOff and written it into this list; a name the rule does not list is
+    /// not counted. The patterns are the rule's own, read from ArchitectureRulesTests' source (the copy rules-parity
+    /// compares with the yaml), so a widening of the rule reaches this count with no third copy to fall behind (the
+    /// third review, m2).
     /// </summary>
     [Fact]
     public void Kernel32MakesOnlyThePathCallsThatRunInsideTheScope()
     {
-        const string names = @"(CreateFile[AW2]?|OpenFileById|(Nt|Zw)(Create|Open)File|(Nt|Zw)Query(Full)?AttributesFile|FindFirstFile(Ex)?[AW]?|GetFileAttributes(Ex)?[AW]?|GetVolumeInformation[AW]?|GetDiskFreeSpace(Ex)?[AW]?)";
-        Regex[] patterns = [new($@"\b{names}\s*\("), new($@"""{names}""")];
+        string repo = FindRepo();
+        List<Regex> patterns = FactPatterns(Path.Combine(repo, @"tests\FsAnalyser.Core.Tests\ArchitectureRulesTests.cs"),
+            nameof(ArchitectureRulesTests.PathOpensGoOnlyThroughTheGuardedOpen));
+        Assert.True(patterns.Count == 2 && patterns.All(p => p.GetGroupNumbers().Contains(1)),
+            "PathOpensGoOnlyThroughTheGuardedOpen no longer has the two patterns this count reads, a call and an entry-point " +
+            "name, each with the name as group 1: " + string.Join(" | ", patterns));
 
         var found = new List<(string Name, string Line)>();
-        foreach (string line in File.ReadAllLines(Path.Combine(FindRepo(), @"src\FsAnalyser.Core\Native\Kernel32.cs")))
+        foreach (string line in File.ReadAllLines(Path.Combine(repo, @"src\FsAnalyser.Core\Native\Kernel32.cs")))
         {
             if (line.TrimStart().StartsWith("//", StringComparison.Ordinal))
                 continue;
@@ -503,6 +510,31 @@ public class FailCriticalErrorsTests
         Assert.True(found.Select(f => f.Name).Order(StringComparer.Ordinal).SequenceEqual(read),
             "Kernel32.cs makes path calls other than the ones read for SL-077 (" + string.Join(", ", read) + "). Put each new one " +
             "inside a CriticalErrorBoxOff, then add it to this list:\n" + string.Join("\n", found.Select(f => $"{f.Name}: {f.Line}")));
+    }
+
+    /// <summary>
+    /// The patterns of one ArchitectureRulesTests Fact, read from its source the way eng/rules-parity.ps1 reads them: each
+    /// pattern is a line holding one verbatim literal that ends in ',' or ');', and the one ending in ');' is the last.
+    /// Compiled with RegexOptions.Multiline, as that Fact compiles them.
+    /// </summary>
+    private static List<Regex> FactPatterns(string file, string fact)
+    {
+        var literal = new Regex(@"^\s*@""((?:[^""]|"""")*)""\s*(,|\);)\s*$");
+        string[] lines = File.ReadAllLines(file);
+        int at = Array.FindIndex(lines, l => Regex.IsMatch(l, $@"^\s*public\s+void\s+{fact}\s*\(\s*\)\s*$"));
+        Assert.True(at >= 0, $"No Fact {fact} in {file}.");
+
+        var patterns = new List<Regex>();
+        for (int i = at + 1; i < lines.Length && lines[i].TrimEnd() != "    }"; i++)
+        {
+            Match pattern = literal.Match(lines[i]);
+            if (!pattern.Success)
+                continue;
+            patterns.Add(new Regex(pattern.Groups[1].Value.Replace("\"\"", "\""), RegexOptions.Multiline));
+            if (pattern.Groups[2].Value == ");")
+                break;
+        }
+        return patterns;
     }
 
     private static string FindRepo()
