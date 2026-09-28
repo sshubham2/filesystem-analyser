@@ -167,13 +167,14 @@ internal static unsafe partial class Kernel32
     }
 
     /// <summary>
-    /// Total less free, or false when free is more than total. Under a per-user quota GetDiskFreeSpaceExW's total is
-    /// the caller's quota while its free bytes are the whole volume's (HF-024): a quota below the volume's free space
-    /// would wrap the difference to a large negative figure.
+    /// Total less free, or false when free is more than total or the difference is past a long. Under a per-user quota
+    /// GetDiskFreeSpaceExW's total is the caller's quota while its free bytes are the whole volume's (HF-024): a quota
+    /// below the volume's free space would wrap the difference to a large negative figure, and so would a volume that
+    /// claims more than 8 EiB in use.
     /// </summary>
     internal static bool TryUsedBytes(ulong total, ulong free, out long used)
     {
-        if (free > total)
+        if (free > total || total - free > long.MaxValue)
         {
             used = 0;
             return false;

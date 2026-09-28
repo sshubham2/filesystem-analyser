@@ -61,6 +61,9 @@ public sealed class TopLevelRow
     /// <summary>What the entry is, as the store holds it.</summary>
     public EntryKind Kind { get; }
 
+    /// <summary>Whether the entry is a folder. The window asks this rather than naming the store's EntryKind.</summary>
+    public bool IsFolder => Kind == EntryKind.Folder;
+
     public TopLevelState State { get; }
 
     /// <summary>Charged logical bytes under it, the same rule as the totals: each byte counted once.</summary>

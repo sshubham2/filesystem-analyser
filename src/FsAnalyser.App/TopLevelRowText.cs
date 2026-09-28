@@ -1,5 +1,4 @@
 using FsAnalyser.Core;
-using FsAnalyser.Core.Store;
 using static FsAnalyser.App.FigureText;
 
 namespace FsAnalyser.App;
@@ -35,7 +34,7 @@ public sealed partial class TopLevelRowText
     internal static string FiguresOf(TopLevelRow row)
     {
         string size = $"{FormatSize(row.Bytes)} ({FormatSize(row.OnDisk)} on disk)";
-        if (row.Kind != EntryKind.Folder)
+        if (!row.IsFolder)
             return size;
         // The count holds folders that could not be opened and folders listed partway alike (HF-002).
         string unreadable = row.UnreadableBelow > 0

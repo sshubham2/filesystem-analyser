@@ -91,7 +91,8 @@ public class VolumeUsageTests(ITestOutputHelper output)
     /// <summary>
     /// HF-024: under a per-user quota GetDiskFreeSpaceExW's total is the caller's quota while its free bytes are the
     /// whole volume's, so free can exceed total. That is no figure, never the negative one the subtraction wraps to.
-    /// Setting a quota needs an administrator, so the two figures are fed in as the call returns them.
+    /// Nor is a difference past a long, which would wrap the same way. Setting a quota needs an administrator, so the
+    /// two figures are fed in as the call returns them.
     /// </summary>
     [Fact]
     public void AFreeFigureAboveTheQuotaTotalIsNoFigure()
@@ -99,6 +100,7 @@ public class VolumeUsageTests(ITestOutputHelper output)
         const ulong quotaTotal = 100UL << 30, volumeFree = 626UL << 30;
 
         Assert.False(Kernel32.TryUsedBytes(quotaTotal, volumeFree, out long used), $"a used figure of {used:N0} bytes");
+        Assert.False(Kernel32.TryUsedBytes(ulong.MaxValue, 0, out used), $"a used figure of {used:N0} bytes");
         Assert.True(Kernel32.TryUsedBytes(volumeFree, quotaTotal, out used));
         Assert.Equal(526L << 30, used);
     }

@@ -1,0 +1,171 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-071",
+ "stage": "build-slice",
+ "attempt": 1,
+ "at": "2026-09-28T08:05:51.847Z",
+ "head": "7cf96047c685a7d0ff428074bba227e04aa81027",
+ "run_id": 1839,
+ "summary": "All six findings still held in the tree, and I fixed each one with the smallest change. HF-001: the Scanner now counts files it appended with no usable ID (ScanStore.HasFileId) and sets FileIdsAvailable = root read && that count == 0. HF-024: GetDiskFreeSpaceExW's figures go through a new Kernel32.TryUsedBytes, which answers false (a null figure) when free > total instead of wrapping to a negative number. The other four: TopLevelKind is deleted and TopLevelRow.Kind is an EntryKind (HF-003); the unread ScanProgress.Links is removed (HF-005); the three unused reparse-tag constants are deleted and their explanation moved into the REPARSE_TAG_NAME_SURROGATE doc (HF-006); VolumeSpace uses LongPath.ToDisplay instead of its own copy of the \\\\?\\ prefix, Start's parameters are all required, and ScanOptions alone owns the 30 s default bound (HF-011). The HF-001 and HF-024 tests were written first and failed on the unfixed code (5 failures, including a used figure of -564,788,199,424 bytes). After the fix the full suite (394), the SL-063 bug test and a whole-drive run of the published exe all pass.",
+ "payload": {
+  "status": "complete",
+  "summary": "All six findings still held in the tree, and I fixed each one with the smallest change. HF-001: the Scanner now counts files it appended with no usable ID (ScanStore.HasFileId) and sets FileIdsAvailable = root read && that count == 0. HF-024: GetDiskFreeSpaceExW's figures go through a new Kernel32.TryUsedBytes, which answers false (a null figure) when free > total instead of wrapping to a negative number. The other four: TopLevelKind is deleted and TopLevelRow.Kind is an EntryKind (HF-003); the unread ScanProgress.Links is removed (HF-005); the three unused reparse-tag constants are deleted and their explanation moved into the REPARSE_TAG_NAME_SURROGATE doc (HF-006); VolumeSpace uses LongPath.ToDisplay instead of its own copy of the \\\\?\\ prefix, Start's parameters are all required, and ScanOptions alone owns the 30 s default bound (HF-011). The HF-001 and HF-024 tests were written first and failed on the unfixed code (5 failures, including a used figure of -564,788,199,424 bytes). After the fix the full suite (394), the SL-063 bug test and a whole-drive run of the published exe all pass.",
+  "files": [
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "change": "modified",
+    "why": "HF-001: AddEntry counts files whose listed ID fails ScanStore.HasFileId (_filesWithoutId), and FileIdsAvailable = status != RootUnreadable && _filesWithoutId == 0 in place of !_fullClass. It also applies the new ListedFileId test seam."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/ScanOptions.cs",
+    "change": "modified",
+    "why": "HF-001: new test seam ListedFileId (null in the app), so a test can list files with no ID or a sentinel ID under the extended class. HF-011: VolumeReadBound now owns the 30 s default and its explanation, which moved here from VolumeSpace.DefaultBound."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/ScanResult.cs",
+    "change": "modified",
+    "why": "HF-001: FileIdsAvailable's doc now describes what it measures: a file listed without an ID, whatever the listing class, or a root that could not be read."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Native/Kernel32.cs",
+    "change": "modified",
+    "why": "HF-024: new TryUsedBytes(total, free) returns false when free > total, and TryGetVolumeUsed goes through it. HF-006: the three unreferenced IO_REPARSE_TAG_* constants are deleted and their explanation folded into the REPARSE_TAG_NAME_SURROGATE doc, with tag names but no values."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/VolumeSpace.cs",
+    "change": "modified",
+    "why": "HF-011: removed the private Extended constant and both hand-written prefix strips (IsDriveRoot and Start now use LongPath.ToDisplay). Removed DefaultBound. Start's reader, bound and anyRoot are required (reader stays nullable, meaning Read)."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/ScanProgress.cs",
+    "change": "modified",
+    "why": "HF-005: removed the _links field, the Links property and its write in Publish. Nothing read them. ScanTotals.Links is unchanged."
+   },
+   {
+    "path": "src/FsAnalyser.Core/TopLevelSnapshot.cs",
+    "change": "modified",
+    "why": "HF-003: deleted the TopLevelKind enum. TopLevelRow.Kind and its constructor take FsAnalyser.Core.Store.EntryKind."
+   },
+   {
+    "path": "src/FsAnalyser.Core/TopLevelTracker.cs",
+    "change": "modified",
+    "why": "HF-003: a row's Kind is store.Kind(entry) itself, with no switch and no default arm mapping unknown kinds to File. Files, Folders, Pending and Build compare against EntryKind."
+   },
+   {
+    "path": "src/FsAnalyser.App/TopLevelRowText.cs",
+    "change": "modified",
+    "why": "HF-003: compares row.Kind with EntryKind.Folder (adds using FsAnalyser.Core.Store)."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ListingFallbackTests.cs",
+    "change": "modified",
+    "why": "HF-001 tests. TheExtendedClassListingNoFileIdsSaysSo (Theory over 0, all ones, and 64-bit all ones widened) and OneFileListedWithoutAnIdIsEnoughToSaySo scan a real NTFS tree with a hardlink under the extended class, with IDs replaced through ListedFileId."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/VolumeUsageTests.cs",
+    "change": "modified",
+    "why": "HF-024 test AFreeFigureAboveTheQuotaTotalIsNoFigure feeds a 100 GiB quota total with 626 GiB volume free, expects false, and checks the normal case still subtracts."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/TopLevelTests.cs",
+    "change": "modified",
+    "why": "HF-003: TopLevelKind -> EntryKind in assertions and helper tuple types."
+   },
+   {
+    "path": "tests/bugs/SL-063-DoneRowFinality/DoneRowFinalityTests.cs",
+    "change": "modified",
+    "why": "HF-003: the reflection-built row passes an EntryKind to TopLevelRow's internal constructor. A TopLevelKind would now throw at Invoke."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "done": true,
+    "how": "FsAnalyser.Core.Tests.ListingFallbackTests.TheExtendedClassListingNoFileIdsSaysSo scans a real NTFS temp tree holding a hardlinked pair under the extended class. Through ScanOptions.ListedFileId every listed ID becomes 0, all ones, or the widened 64-bit all ones. It asserts both names are charged (2000 bytes) and FileIdsAvailable is false. All 3 cases failed before the fix (Actual: True) and pass after. The companion Fact OneFileListedWithoutAnIdIsEnoughToSaySo pins that one file without an ID is enough."
+   },
+   {
+    "key": "O-002",
+    "done": true,
+    "how": "FsAnalyser.Core.Tests.VolumeUsageTests.AFreeFigureAboveTheQuotaTotalIsNoFigure feeds the quota shape (total 100 GiB, free 626 GiB) into Kernel32.TryUsedBytes, the function TryGetVolumeUsed now returns through. Before the fix it returned true with -564,788,199,424; now it returns false, so VolumeSpace.Read gives a null figure. A real per-user quota was not set: that needs an administrator, and no named elevated operation covers it."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "test_name": "FsAnalyser.Core.Tests.ListingFallbackTests.TheExtendedClassListingNoFileIdsSaysSo",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.ListingFallbackTests.TheExtendedClassListingNoFileIdsSaysSo\""
+   },
+   {
+    "key": "C-002",
+    "test_name": "FsAnalyser.Core.Tests.VolumeUsageTests.AFreeFigureAboveTheQuotaTotalIsNoFigure",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.VolumeUsageTests.AFreeFigureAboveTheQuotaTotalIsNoFigure\""
+   }
+  ],
+  "deviations": [
+   "HF-001: added an internal test seam, ScanOptions.ListedFileId (null in the app), which the design did not name. No volume on this machine answers the extended class while listing files with no ID or a sentinel ID, so the case's shape could not be fed through the real scanner any other way. The production path only gains a null check per entry.",
+   "HF-001: of the finding's two rules ('count > 0' or 'no file lacked an ID') I built 'no file lacked an ID', because only that one makes the note follow exactly what the store could deduplicate. One consequence: a forced full-class listing of a tree with no files at all now reports FileIdsAvailable = true (nothing could be counted twice). Every tree with files under the full class still reports false, and ListingFallbackTests and ProbePassTests still pass.",
+   "HF-011: of the two fixes the finding offered I took 'call LongPath.ToDisplay' rather than dropping prefix handling. The finding's refuter disputed that the prefix branches are dead in the app, and VolumeUsageTests pins \\\\?\\C:\\ as a drive root. ToDisplay keeps that behaviour and removes VolumeSpace's own copy of the constant."
+  ],
+  "not_built": [
+   "HF-024's 'better' fix, taking total and free from one consistent source (GetDiskSpaceInformationW or FileFsFullSizeInformation), was not built; only the free > total guard was. Switching source would need re-measuring against Get-Volume, which SL-043's spike measured equal for GetDiskFreeSpaceExW and ASystemDriveScanRecordsWhatGetVolumeReports pins. A quota above the volume's free space still yields a positive but mixed figure (quota total less volume free); see follow_ups.",
+   "HF-005: I took the 'remove the field' option rather than adding links to the counters line, so the window's live counters are unchanged and WindowCases.ps1 expectations need no change."
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.ListingFallbackTests|FullyQualifiedName~FsAnalyser.Core.Tests.VolumeUsageTests.AFreeFigureAboveTheQuotaTotalIsNoFigure\"",
+    "outcome": "failed",
+    "note": "Before the fixes, as intended: 5 failed and 1 passed (the existing fallback test). All three TheExtendedClassListingNoFileIdsSaysSo cases and OneFileListedWithoutAnIdIsEnoughToSaySo failed with FileIdsAvailable Actual: True. AFreeFigureAboveTheQuotaTotalIsNoFigure failed with 'a used figure of -564,788,199,424 bytes'. The first eng/dotnet.ps1 run installed SDK 10 into the gitignored .dotnet/."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build FsAnalyser.slnx",
+    "outcome": "passed",
+    "note": "Build succeeded, 0 warnings, 0 errors."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.ListingFallbackTests|FullyQualifiedName~FsAnalyser.Core.Tests.VolumeUsageTests|FullyQualifiedName~FsAnalyser.Core.Tests.TopLevelTests|FullyQualifiedName~FsAnalyser.Core.Tests.RootTests|FullyQualifiedName~FsAnalyser.Core.Tests.ProbePassTests|FullyQualifiedName~FsAnalyser.Core.Tests.ArchitectureRulesTests\"",
+    "outcome": "passed",
+    "note": "After the fixes: 71 passed, 0 failed."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx",
+    "outcome": "passed",
+    "note": "Full default suite: 394 passed, 0 failed, 0 skipped, 23 s. It includes RuleCopiesAgreeTests, which runs eng/rules-parity.ps1. eng/rules-harness/harness.py was not run: it needs the TAAD engine's interpreter. I checked the .taad/fitness.yaml patterns covering the edited files by reading them: the snapshot immutability, ScanStore allow-list, TryAddFileId, BCL-call and classifier tag rules all still hold."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-063-DoneRowFinality/SL-063-DoneRowFinality.Tests.csproj",
+    "outcome": "passed",
+    "note": "Bug catalog: 10 passed. It builds TopLevelRow by reflection, so it needed the EntryKind change."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.ListingFallbackTests.TheExtendedClassListingNoFileIdsSaysSo\"",
+    "outcome": "passed",
+    "note": "C-001 case command: 3 passed."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.VolumeUsageTests.AFreeFigureAboveTheQuotaTotalIsNoFigure\"",
+    "outcome": "passed",
+    "note": "C-002 case command: 1 passed."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o artifacts/publish",
+    "outcome": "passed",
+    "note": "Published the single-file exe to the gitignored artifacts/publish."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/read-window.ps1 -Root C:\\Windows\\System32\\drivers -TimeoutSec 240",
+    "outcome": "passed",
+    "note": "EXIT 0, Completed: 659 files, 11 folders, 0 links, 242,585,339 bytes, 1 unreadable folder. OutcomeDetail has no 'does not report file IDs' note, correct for local NTFS where every file carries an ID."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/read-window.ps1 -Root C:\\ -TimeoutSec 540",
+    "outcome": "passed",
+    "note": "Whole-drive run through the real entry point, 8 min 20 s. EXIT 0, Completed: 3,799,402 files, 973,956 folders, 15,864 links. Coverage line: 'The volume reports 759.5 GB in use, so 53.5 GB of it was not seen by this scan'. That is a positive figure matching Get-PSDrive's 815,503,482,880 used, so the drive-root path via LongPath.ToDisplay and TryUsedBytes works. No file-ID note, so no file on C: lacked an ID. I deliberately did not scan Z:, a mapped network drive."
+   }
+  ],
+  "follow_ups": [
+   "HF-024 residual: under a per-user quota whose limit is ABOVE the volume's free space, GetDiskFreeSpaceExW's total less free is still a positive but meaningless figure (quota total minus volume free), which the free > total guard cannot catch. Taking both numbers from one quota-independent source (GetDiskSpaceInformationW's ActualTotal/ActualAvailable allocation units, or FileFsFullSizeInformation) would fix it, but needs re-measuring against Get-Volume as SL-043's spike did.",
+   "HF-024 was not reproduced on a real quota. Setting a per-user NTFS quota needs an administrator and changes volume configuration, and no named elevated operation covers it. A person could check it once by enabling a quota below the free space on a test volume and running the exe on that drive root.",
+   "HF-001: MainWindow's note still says 'This drive does not report file IDs'. With the value-based flag it can also show when only some files lacked IDs; a wording such as 'Some files on this drive have no file ID' would be more exact. Not changed, because it is App text outside the finding's fix."
+  ]
+ }
+}
