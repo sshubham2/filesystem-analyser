@@ -1,0 +1,82 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-069",
+ "stage": "build-slice",
+ "attempt": 5,
+ "at": "2026-09-28T08:20:11.630Z",
+ "head": "9dad96ae094dbb01f5e4b1cb80a38722a3039fe6",
+ "run_id": 1842,
+ "summary": "C-007 now gets the tree's import-rule names from the engine interpreter's own yaml parser instead of a hand parser. It is a new helper, Get-ImportRuleNames, which runs yaml.safe_load through -EnginePython, keeps the rules whose must_not_import is not empty, and returns the names as ASCII JSON. Get-YamlName and the line loop are deleted. The ImportRuleNames shape now adds eight probe entries, one for each spelling the two findings named: single-quoted with '', double-quoted, double-quoted with \\\" escapes, a plain name wrapped onto a second line, a quoted name and a plain name each followed by a comment, a folded >- block, and one entry with `must_not_import: []`. The shape passes under both hosts with 8 import rules named and the empty one not counted. With HEAD's hand parser put back, it fails on every one of those spellings and counts the empty entry, 9 against the harness's 8. The real-tree C-007, C-001, GuardRule and the acceptance repro all still pass.",
+ "payload": {
+  "status": "complete",
+  "summary": "C-007 now gets the tree's import-rule names from the engine interpreter's own yaml parser instead of a hand parser. It is a new helper, Get-ImportRuleNames, which runs yaml.safe_load through -EnginePython, keeps the rules whose must_not_import is not empty, and returns the names as ASCII JSON. Get-YamlName and the line loop are deleted. The ImportRuleNames shape now adds eight probe entries, one for each spelling the two findings named: single-quoted with '', double-quoted, double-quoted with \\\" escapes, a plain name wrapped onto a second line, a quoted name and a plain name each followed by a comment, a folded >- block, and one entry with `must_not_import: []`. The shape passes under both hosts with 8 import rules named and the empty one not counted. With HEAD's hand parser put back, it fails on every one of those spellings and counts the empty entry, 9 against the harness's 8. The real-tree C-007, C-001, GuardRule and the acceptance repro all still pass.",
+  "files": [
+   {
+    "path": "tests/rules/RuleCases.ps1",
+    "change": "modified",
+    "why": "O-026/O-027: deleted Get-YamlName and C-007's `^  - name:` / `^    must_not_import:` line loop. Added Get-ImportRuleNames, which lists names with yaml.safe_load (utf-8-sig) through $EnginePython, filters on r.get('must_not_import'), and emits JSON so the pipe stays ASCII on both hosts. It throws, which stops C-007 by name, if -EnginePython is missing or the call fails. C-007 uses it for the import-rule list."
+   },
+   {
+    "path": "tests/bugs/SL-069-EveryCaseFollowsCounts.Tests.ps1",
+    "change": "modified",
+    "why": "O-026/O-027: Shape-ImportRuleNames now appends eight probe entries. Seven are import rules, one for each spelling: '' doubling, double-quoted, \\\" escapes, a wrapped plain name, a comment after a quoted name, a comment after a plain name, and a folded >- block. The eighth has `must_not_import: []`. The expected settled offset comes from the entries added, and the expected import count from the block-list `must_not_import:` lines, so the empty one is excluded."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-026",
+    "done": true,
+    "how": "Closed by the R2-m4 fix, as the finding's decision directs: names come from the engine interpreter's yaml.safe_load, so a wrapped plain name reads whole. ImportRuleNames feeds 'the provider's wrapped probe never imports Core, and its name runs on past the end of its' plus 'first line' on the next line. C-007 names it under both hosts (exit 0, 'the 8 import rule(s) are named NOT RUN … (unnamed: )'). HEAD's hand parser cuts it at '…past the end of its' and fails."
+   },
+   {
+    "key": "O-027",
+    "done": true,
+    "how": "Get-YamlName and the line loop are deleted. C-007's names come from `yaml.safe_load(...)['rules']` filtered on `r.get('must_not_import')` via $EnginePython. ImportRuleNames feeds a comment after a quoted name and after a plain name, a folded >- name, a double-quoted name with \\\" escapes, and `must_not_import: []`. The shape passes under powershell.exe and pwsh (66 s) with 8 import rules and the empty one excluded. With HEAD's RuleCases.ps1 put back temporarily (bytes restored and hash-checked), it exits 1: those spellings come back unnamed and the count is 9 against the harness's 8."
+   }
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-069-EveryCaseFollowsCounts.Tests.ps1 -Shape ImportRuleNames -EnginePython C:\\Users\\sshub\\AppData\\Roaming\\taad3\\venv\\Scripts\\python.exe -EngineRoot C:\\Users\\sshub\\projets\\taad_v3\\backend",
+    "outcome": "passed",
+    "note": "Exit 0 in 66 s. The copy AGREEs at 11/15/27/57, the unchanged tree's line plus 8 settled. C-007 exits 0 under powershell.exe and pwsh with 'the 8 import rule(s) are named NOT RUN, and the verdict is not pass (unnamed: )': the real rule plus the seven probes, not the empty one."
+   },
+   {
+    "command": "same ImportRuleNames command with tests/rules/RuleCases.ps1 temporarily replaced by `git show HEAD:tests/rules/RuleCases.ps1` (the hand parser); bytes restored in finally, SHA-256 verified",
+    "outcome": "failed",
+    "note": "Deliberate mutant, and it failed as intended with exit 1. C-007 counted 9 import rules and left unnamed: the \\\"escaped\\\" name, the wrapped name cut at '…past the end of its', `'the provider''s noted probe…' # a note…`, the plain name with its comment, `>-`, and the empty-import probe. The shape therefore feeds each spelling."
+   },
+   {
+    "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-007 -EnginePython C:\\Users\\sshub\\AppData\\Roaming\\taad3\\venv\\Scripts\\python.exe -EngineRoot C:\\Users\\sshub\\projets\\taad_v3\\backend",
+    "outcome": "passed",
+    "note": "Real tree, exit 0 in 27 s, 'the 1 import rule(s) are named NOT RUN … (unnamed: )'. The python -c argument, which contains no double quotes, survives 5.1's argument passing."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-007 -EnginePython C:\\Users\\sshub\\AppData\\Roaming\\taad3\\venv\\Scripts\\python.exe -EngineRoot C:\\Users\\sshub\\projets\\taad_v3\\backend",
+    "outcome": "passed",
+    "note": "Real tree, exit 0 in 32 s, same rows."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-069-EveryCaseFollowsCounts.Tests.ps1 -Shape GuardRule",
+    "outcome": "passed",
+    "note": "Exit 0. The guard hits nothing in the edited RuleCases.ps1 or either SL-069 test, and SettledCountProbe -Shape GuardRule holds. A Select-String over tests/ and eng/ finds no remaining Get-YamlName reference."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-001",
+    "outcome": "passed",
+    "note": "All checks held."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-069-RuleCasesDeriveCounts.Tests.ps1",
+    "outcome": "passed",
+    "note": "Acceptance repro exits 0: 'OK: RuleCases.ps1 C-001 holds on a tree with one more twinned rule'."
+   }
+  ],
+  "deviations": [
+   "R2-m4's fix prints one name per line. I emit json.dumps of the list instead and read it with ConvertFrom-Json. JSON's ASCII escaping keeps names with non-ASCII characters intact whatever console encoding powershell.exe 5.1 or pwsh reads the pipe with. The file is opened as utf-8-sig so a BOM on the yaml does not end up in the first key. The filter is unchanged: r.get('must_not_import')."
+  ],
+  "follow_ups": [
+   "C-007 now depends on PyYAML being importable from -EnginePython. It is today, since the reviewer's safe_load comparison and these runs used the same venv. If the engine ever stops shipping it, C-007 stops by name with the interpreter's error rather than passing."
+  ],
+  "not_built": []
+ }
+}
