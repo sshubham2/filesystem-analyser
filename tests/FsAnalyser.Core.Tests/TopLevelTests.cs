@@ -239,7 +239,7 @@ public class TopLevelTests
     }
 
     /// <summary>
-    /// Cancel fed in at each guarded call of the scan thread in turn, as CancelledFolderTests does, before the
+    /// Cancel fed in at each guarded call of the scan thread in turn (Scans.RunCancellingAt, which CancelledFolderTests uses too), before the
     /// call or during it (SynchronousIoCancel then discards what it returned). That includes every buffer of
     /// d\big, a deeper listing that takes several; the probes run after the walk (SL-056). A folder Cancel aborts commits
     /// nothing, so it changes no total and no row: the final snapshot holds exactly the figures of the last
@@ -265,55 +265,15 @@ public class TopLevelTests
         Put(tree, @"z\last.txt", 33);
 
         SynchronousIoCancel? guard = null;
-        SynchronousIoCancel.Created = g => guard = g;
-        Watched baseline;
-        try
-        {
-            using var live = new CancellationTokenSource();
-            baseline = Watch(tree.Root, live.Token);
-        }
-        finally
-        {
-            SynchronousIoCancel.Created = null;
-        }
+        using var live = new CancellationTokenSource();
+        Watched baseline = Scans.WithGuard(g => guard = g, () => Watch(tree.Root, live.Token));
         Assert.Equal(ScanStatus.Completed, baseline.Result.Status);
         int calls = guard!.Calls;
 
         int stoppedInBig = 0;
         for (int k = 1; k <= calls; k++)
         {
-            using var cts = new CancellationTokenSource();
-            int cancelAt = k;
-            SynchronousIoCancel.Created = g =>
-            {
-                if (duringTheCall)
-                {
-                    g.AfterCall = call =>
-                    {
-                        if (call != cancelAt)
-                            return;
-                        cts.Cancel();
-                        Assert.True(SpinWait.SpinUntil(() => g.CancelIsIssued, TimeSpan.FromSeconds(5)), "the canceller never marked the call");
-                    };
-                }
-                else
-                {
-                    g.BeforeCall = call =>
-                    {
-                        if (call == cancelAt)
-                            cts.Cancel();
-                    };
-                }
-            };
-            Watched scan;
-            try
-            {
-                scan = Watch(tree.Root, cts.Token);
-            }
-            finally
-            {
-                SynchronousIoCancel.Created = null;
-            }
+            Watched scan = Scans.RunCancellingAt(tree.Root, k, duringTheCall, (root, ct) => Watch(root, ct));
 
             string at = $"Cancel {(duringTheCall ? "during" : "before")} call {k} of {calls}";
             Assert.True(scan.Result.Status == ScanStatus.Cancelled, $"{at}: {scan.Result.Status}");

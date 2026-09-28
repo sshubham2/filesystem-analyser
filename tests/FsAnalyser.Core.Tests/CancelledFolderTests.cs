@@ -41,18 +41,10 @@ public class CancelledFolderTests
         ScanResult baseline;
         using (var live = new CancellationTokenSource())
         {
-            SynchronousIoCancel.Created = g => guard = g;
-            try
+            baseline = Scans.WithGuard(g => guard = g, () => Scanner.Scan(tree.Root, progress, live.Token, new ScanOptions
             {
-                baseline = Scanner.Scan(tree.Root, progress, live.Token, new ScanOptions
-                {
-                    AfterFolder = _ => folderEnds.Add((progress.CurrentFolder!, guard!.Calls)),
-                });
-            }
-            finally
-            {
-                SynchronousIoCancel.Created = null;
-            }
+                AfterFolder = _ => folderEnds.Add((progress.CurrentFolder!, guard!.Calls)),
+            }));
         }
         Assert.Equal(ScanStatus.Completed, baseline.Status);
         Assert.Equal(2005, baseline.Probes); // every file but y.bin, on worker threads after the walk
@@ -71,39 +63,8 @@ public class CancelledFolderTests
 
         for (int k = 1; k <= calls; k++)
         {
-            using var cts = new CancellationTokenSource();
-            int cancelAt = k;
-            SynchronousIoCancel.Created = g =>
-            {
-                if (duringTheCall)
-                {
-                    g.AfterCall = call =>
-                    {
-                        if (call != cancelAt)
-                            return;
-                        cts.Cancel();
-                        Assert.True(SpinWait.SpinUntil(() => g.CancelIsIssued, TimeSpan.FromSeconds(5)), "the canceller never marked the call");
-                    };
-                }
-                else
-                {
-                    g.BeforeCall = call =>
-                    {
-                        if (call == cancelAt)
-                            cts.Cancel();
-                    };
-                }
-            };
             var runProgress = new ScanProgress();
-            ScanResult result;
-            try
-            {
-                result = Scanner.Scan(tree.Root, runProgress, cts.Token);
-            }
-            finally
-            {
-                SynchronousIoCancel.Created = null;
-            }
+            ScanResult result = Scans.RunCancellingAt(tree.Root, k, duringTheCall, (root, ct) => Scanner.Scan(root, runProgress, ct));
 
             int inProgress = folderEnds.FindIndex(f => f.LastCall >= k);
             int committedCount = inProgress;
@@ -159,24 +120,7 @@ public class CancelledFolderTests
         using var reader = new DirectoryReader(guard);
         Assert.Equal(0, guard.OpenDirectory(tree.ExtendedRoot, keepLastAccess: true, out var handle));
         const int ThirdBuffer = 4; // call 1 was the open
-        if (duringTheCall)
-        {
-            guard.AfterCall = call =>
-            {
-                if (call != ThirdBuffer)
-                    return;
-                cts.Cancel();
-                Assert.True(SpinWait.SpinUntil(() => guard.CancelIsIssued, TimeSpan.FromSeconds(5)));
-            };
-        }
-        else
-        {
-            guard.BeforeCall = call =>
-            {
-                if (call == ThirdBuffer)
-                    cts.Cancel();
-            };
-        }
+        Scans.CancelAt(guard, cts, ThirdBuffer, duringTheCall);
 
         int error = reader.List(handle!, fullClass: false);
         guard.Close(handle!);
