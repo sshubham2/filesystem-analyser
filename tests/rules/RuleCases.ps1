@@ -170,16 +170,17 @@ function Invoke-HarnessRaw([string[]] $arguments) {
     $output = & $EnginePython $Harness @arguments 2>&1 | Out-String
     $exit = $LASTEXITCODE
     # A run that did not exit 0 keeps its scratch copy for a person to read; a case that expected that
-    # removes it, and only a folder the harness itself made in %TEMP%. The path is the rest of the line, since
-    # %TEMP% can hold a space (HF-026). Python's tempfile reads TEMP before TMP and .NET's GetTempPath reads
-    # TMP first, so the folder is taken directly in either.
-    $kept = [regex]::Match($output, '(?m)^harness: scratch kept at (.+?)\s*$')
+    # removes it, and only a folder the harness itself made directly in %TEMP%. Only the leaf is read from the
+    # line: the harness prints the path as TEMP spells it (a space, an 8.3 short name) and escaped to ASCII by
+    # say() (a non-ASCII account name), while mkdtemp's leaf is always ASCII (HF-026). Python's tempfile reads
+    # TEMP before TMP and .NET's GetTempPath reads TMP first, so the leaf is looked for directly in each.
+    $kept = [regex]::Match($output, '(?m)^harness: scratch kept at .*[\\/](fsa-rules-[A-Za-z0-9_]+)\s*$')
     if ($kept.Success) {
-        $dir = $kept.Groups[1].Value
-        $parent = (Split-Path -Parent $dir).TrimEnd('\')
-        $temps = @([System.IO.Path]::GetTempPath(), $env:TEMP) | Where-Object { $_ } | ForEach-Object { [System.IO.Path]::GetFullPath($_).TrimEnd('\') }
-        if ((Split-Path -Leaf $dir) -like 'fsa-rules-*' -and @($temps | Where-Object { $_ -ieq $parent }).Count) {
-            Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+        foreach ($folder in @([System.IO.Path]::GetTempPath(), $env:TEMP) | Where-Object { $_ }) {
+            $dir = [System.IO.Path]::Combine($folder, $kept.Groups[1].Value)
+            if (Test-Path -LiteralPath $dir -PathType Container) {
+                Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
     [pscustomobject]@{ Exit = $exit; Output = $output.Trim() }
