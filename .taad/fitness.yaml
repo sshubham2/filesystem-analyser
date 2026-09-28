@@ -470,36 +470,6 @@ rules:
       criterion 6 is a measured number. A skipped or default-filtered test reports green while
       proving nothing, which is the failure this slice's cases exist to prevent.
 
-  # settled by SL-043
-  # These three are as SL-043's design declared them. Its build also twinned them above, where they match
-  # comments too and the no-wait rule covers the App as well (M1): TheClassifierListsNoLinkTags,
-  # NothingWaitsOnTheVolumeFigure (Core) and (App), and TheVolumeReadHoldsNoScanStore.
-  - name: the classifier does not list link tags; the surrogate bit is the rule
-    files: src/FsAnalyser.Core/Scanning/EntryClassifier.cs
-    must_not_match:
-    - (?i)IO_REPARSE_TAG_(MOUNT_POINT|SYMLINK|DFS)\b|0x(A0000003|A000000C|8000000A)\b
-    because: A link is 'reparse attribute AND name-surrogate bit' (criterion 4, U-004). Re-listing
-      tags brings back DFS as a link, so directories are silently skipped, and lets surrogate
-      tags outside the list (LX_SYMLINK and others) be counted as files, so bytes are counted
-      twice or charged to the wrong place.
-  - name: nothing in Core waits on the volume figure
-    files: src/FsAnalyser.Core/**/*.cs
-    must_not_match:
-    - (?i)VolumeUsed\w*\.(Task\.)?(Wait|WaitAsync|GetAwaiter|Result)\b
-    - (?i)\bawait\s+[\w.]*VolumeUsed
-    because: O-031 exists so a stalled share or dead mapped drive cannot hold a scan. One Wait,
-      Result or await on the figure anywhere on the scan's path makes the scan never end when
-      GetDiskFreeSpaceExW never returns, and the person sees a frozen progress bar. The App
-      may wait on it because it does so on its own thread, and it is outside this glob.
-  - name: the volume read cannot hold a scan's memory
-    files: src/FsAnalyser.Core/Scanning/VolumeSpace.cs
-    must_not_match:
-    - \bScanStore\b
-    because: A read stalled on an unreachable drive parks its dedicated thread indefinitely.
-      If that thread's closure names the store, the discarded scan (~700 MiB at 5M rows, against
-      ~136 MiB of headroom) stays alive for as long as the thread. The read is handed only the
-      completion source.
-
   # settled by SL-044
   - name: the folder tree shows Core's order and never re-sorts or mutates children item by
       item
