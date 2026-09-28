@@ -700,7 +700,10 @@ function Case-C007 {
     # named NOT RUN and is never a pass, and every other rule runs. The names come from this tree's yaml.
     $imports = Get-ImportRuleNames
     if ($imports.Count) {
-        $said = @($imports | Where-Object { -not $run.Output.Contains("'$_'") })
+        # A name yaml ends or breaks with a newline (name: > or name: |) reaches the output as CRLF, the way a
+        # console on Windows writes it, and comes from the parser as LF.
+        $output = $run.Output.Replace("`r`n", "`n")
+        $said = @($imports | Where-Object { -not $output.Contains("'$_'") })
         Check ($rules.Groups[1].Value -ceq 'unable' -and $run.Output.Contains("NOT RUN, not passed: $($imports.Count) import rule(s)") -and $said.Count -eq 0) `
             "the $($imports.Count) import rule(s) are named NOT RUN, and the verdict is not pass (unnamed: $($said -join ', '))`n$($run.Output)"
     }
