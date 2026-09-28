@@ -31,8 +31,9 @@ $Utf8 = [System.Text.UTF8Encoding]::new($false)
 $Shells = @('powershell.exe', 'pwsh')
 $script:Failures = [System.Collections.Generic.List[string]]::new()
 $script:Temps = [System.Collections.Generic.List[string]]::new()
-# The twinned entries the AGREE line pins. Every other entry of the yaml is settled (Get-ExpectedSettled).
-$Twinned = 15
+# The counts the AGREE line carries, worked out from this tree's own two files on first use (Get-RuleCounts,
+# Get-ExpectedSettled) and kept for the run. No count is written in this file.
+$script:Counts = $null
 $script:ExpectedSettled = $null
 
 # ---- Checks ----
@@ -199,7 +200,40 @@ function Test-Rows($run, [string[]] $ids, [string] $verdict, [string] $xunit = '
     }
 }
 
-# ---- The settled count ----
+# ---- The counts ----
+
+# The Facts, twinned entries and patterns rules-parity must report for this tree, recounted here from the
+# tree's own two files by a route of their own (SL-069). Never read from the tool's output, run or
+# dot-sourced from it: an expectation read back from the tool agrees with whatever it prints, and
+# tests/rules/SettledCountProbe.ps1 -Shape Misclassified fails on that. A Fact is a line that opens with a
+# [Fact] or [Theory] attribute in any spelling, so one the tool's reader cannot see is still counted and
+# -ExpectFacts catches it; a pattern is a line that is one verbatim @"..." literal ending ',' or ');'; a
+# twinned entry is a '  - name:' line above the FIRST '# settled by SL-' marker, however many follow it.
+# Worked out on first use and kept for the run, so a tree it cannot count stops only the cases that ask,
+# by name. A missing file, no marker or a count of 0 is refused, never replaced by a number.
+function Get-RuleCounts {
+    if ($null -eq $script:Counts) {
+        foreach ($rel in @($CsRel, $YamlRel)) {
+            if (-not (Test-Path -LiteralPath (Join-Path $Repo $rel) -PathType Leaf)) { throw "RuleCounts: no $rel under $Repo" }
+        }
+        $cs = [System.IO.File]::ReadAllLines((Join-Path $Repo $CsRel), $Utf8)
+        [int] $facts = @($cs -cmatch '^\s*\[\s*(Fact|Theory)\b').Count
+        [int] $patterns = @($cs -cmatch '^\s*@".*"\s*(,|\);)\s*$').Count
+        $yaml = [System.IO.File]::ReadAllLines((Join-Path $Repo $YamlRel), $Utf8)
+        [int] $twinned = 0
+        [int] $marker = -1
+        for ($i = 0; $i -lt $yaml.Length -and $marker -lt 0; $i++) {
+            if ($yaml[$i] -cmatch '^\s*#\s*settled by SL-') { $marker = $i }
+            elseif ($yaml[$i] -cmatch '^  - name:') { $twinned++ }
+        }
+        if ($marker -lt 0) { throw "RuleCounts: no '# settled by SL-' marker in $YamlRel under $Repo, so nothing parts the twinned entries from the settled ones" }
+        if ($facts -eq 0) { throw "RuleCounts: no [Fact] or [Theory] line in $CsRel under $Repo" }
+        if ($patterns -eq 0) { throw "RuleCounts: no verbatim @`"...`" pattern line in $CsRel under $Repo" }
+        if ($twinned -eq 0) { throw "RuleCounts: no '  - name:' entry above the first settled marker in $YamlRel under $Repo" }
+        $script:Counts = [pscustomobject]@{ Facts = $facts; Twinned = $twinned; Patterns = $patterns }
+    }
+    $script:Counts
+}
 
 # Every item of the yaml's rules: list, counted here line by line, less the twinned entries: what C-001 and
 # C-003 expect rules-parity to print as settled. Never read from its output, and never per '# settled by'
@@ -225,22 +259,40 @@ function Get-ExpectedSettled {
             if ($item.Groups[1].Length -eq $indent) { $count++ }
         }
         if ($rules -lt 0 -or $count -eq 0) { throw "ExpectedSettled: fitness rule count unavailable: no rules: list in $path" }
-        [int] $settled = $count - $Twinned
-        if ($settled -lt 1) { throw "ExpectedSettled: derived count $settled < 1 ($count rules, $Twinned twinned)" }
+        [int] $twinned = (Get-RuleCounts).Twinned
+        [int] $settled = $count - $twinned
+        if ($settled -lt 1) { throw "ExpectedSettled: derived count $settled < 1 ($count rules, $twinned twinned)" }
         $script:ExpectedSettled = $settled
     }
     [int] $script:ExpectedSettled
 }
 
+# The one spelling of the line rules-parity prints on AGREE (eng/rules-parity.ps1, Main): this tree's counts,
+# moved by what a case did to its copy. It takes only those moves, so no case can write a count; each is
+# measured against the tree the copy was made from, never recounted from the changed copy.
+function Format-AgreeLine([int] $DFacts = 0, [int] $DTwinned = 0, [int] $DPatterns = 0, [int] $DSettled = 0) {
+    # Settled first, so a tree with no yaml stops the way ExpectedSettled has always said it does.
+    $settled = (Get-ExpectedSettled) + $DSettled
+    $counts = Get-RuleCounts
+    "rules-parity: AGREE $($counts.Facts + $DFacts) facts <- $($counts.Twinned + $DTwinned) twinned entries, " +
+    "$($counts.Patterns + $DPatterns) patterns; $settled settled entries not compared"
+}
+
+# The value passed to -ExpectFacts: this tree's Fact count, moved by $DFacts.
+function Get-ExpectFacts([int] $DFacts = 0) {
+    [string]((Get-RuleCounts).Facts + $DFacts)
+}
+
 # ---- The cases ----
 
 function Case-C001 {
-    Write-Output 'C-001 the clean tree: 11 Facts, 15 twinned entries, 27 patterns, the settled entries below the marker'
-    # The settled count moves with every slice that appends rules, so it comes from Get-ExpectedSettled.
-    $agree = "rules-parity: AGREE 11 facts <- $Twinned twinned entries, 27 patterns; $(Get-ExpectedSettled) settled entries not compared"
+    Write-Output 'C-001 the clean tree: its Facts, twinned entries and patterns, the settled entries below the marker'
+    # Every count moves with the slices that declare rules, so each comes from this tree's own files.
+    $agree = Format-AgreeLine
+    $facts = Get-ExpectFacts
     foreach ($shell in $Shells) {
         CheckRun (Invoke-Parity $shell $Repo) 0 "the repo [$shell]" @($agree)
-        CheckRun (Invoke-Parity $shell $Repo @('-ExpectFacts', '11')) 0 "the repo with -ExpectFacts 11 [$shell]" @($agree)
+        CheckRun (Invoke-Parity $shell $Repo @('-ExpectFacts', $facts)) 0 "the repo with -ExpectFacts $facts [$shell]" @($agree)
     }
 }
 
@@ -296,13 +348,13 @@ function Case-C003 {
         "yaml entry 'ANewRuleInTheWrongPlace (*.cs)' (.taad/fitness.yaml:$(Get-LineOf $root $YamlRel "name: 'ANewRuleInTheWrongPlace (*.cs)'")) pairs with no Fact"
     } 1 @('rules-parity: DRIFT 1 unpaired')
 
-    # One more than this repo's own yaml, counted before the copy is appended to.
-    $settled = (Get-ExpectedSettled) + 1
+    # One settled entry more than this repo's own yaml, counted before the copy is appended to.
+    $agree = Format-AgreeLine -DSettled 1
     Test-Parity 'the same entry appended below the marker, as the engine appends' {
         param($root)
         $path = Join-Path $root $YamlRel
         [System.IO.File]::AppendAllText($path, "`r`n  # settled by SL-999`r`n" + $newEntry.Replace("`n", "`r`n"), $Utf8)
-    } 0 @("rules-parity: AGREE 11 facts <- $Twinned twinned entries, 27 patterns; $settled settled entries not compared")
+    } 0 @($agree)
 }
 
 function Case-C004 {
@@ -316,6 +368,8 @@ function Case-C004 {
     # replacement text of Regex.Replace takes a backslash literally; only $ is special in it.
     $bs = [string][char]92
     $guard = [regex]::Escape("^${bs}ufeff?")
+    # A spelling of the guard moves no count.
+    $agree = Format-AgreeLine
     foreach ($spelling in @("${bs}ufeff", "${bs}uFEFF", "${bs}uFeFf", [string][char]0xFEFF)) {
         $label = if ($spelling.Length -eq 1) { 'a literal U+FEFF' } else { Show $spelling }
         Test-Parity "the BOM guard written as $label" {
@@ -323,7 +377,7 @@ function Case-C004 {
             Edit-File $root $YamlRel $guard ('^' + $spelling + '?') -Pattern -All
             $text = [System.IO.File]::ReadAllText((Join-Path $root $YamlRel), $Utf8)
             if (-not $text.Contains('^' + $spelling + '?')) { throw "case setup: the copy does not carry ^$(Show $spelling)?" }
-        } 0 @('rules-parity: AGREE 11 facts <- 15 twinned entries, 27 patterns')
+        } 0 @($agree)
     }
 
     Test-Parity 'a BOM without the ? is not the guard' {
@@ -366,8 +420,10 @@ function Case-C005 {
         param($root)
         Edit-File $root $CsRel '\[Fact\]' '[Fect]' -Pattern -All
     } 2 @('rules-parity: CANNOT-READ tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs: zero [Fact]s found')
+    # One Fact more than this tree holds, so the reader disagrees whatever the tree's count has grown to.
+    $more = Get-ExpectFacts -DFacts 1
     Test-Parity 'a Fact count that differs from the reflected count' { param($root) } 2 `
-        @('rules-parity: CANNOT-READ tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs: the reader found 11 Facts where the test class has 12') @('-ExpectFacts', '12')
+        @("rules-parity: CANNOT-READ tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs: the reader found $(Get-ExpectFacts) Facts where the test class has $more") @('-ExpectFacts', $more)
 
     $isReparse = "      - '(?m)IsReparsePoint'"
     $yaml = @(
@@ -401,11 +457,12 @@ function Case-C005 {
             Edit-File $root $YamlRel $last ($last + $gap + $onlyInYaml)
         } 1 @('rules-parity: DRIFT 2 unpaired', "yaml entry 'TheScannerListsDirectoriesOnlyThroughDirectoryReader (*.cs)'", "only in yaml 'OnlyInYaml'")
     }
-    # ... and a blank line and a comment between two twinned items hide neither: still AGREE on 27 patterns.
+    # ... and a blank line and a comment between two twinned items hide neither: still AGREE on every count.
+    $agree = Format-AgreeLine
     Test-Parity 'a blank line and a comment between two items' {
         param($root)
         Edit-File $root $YamlRel "      - '(?m)EnumerationOptions'`n" ("      - '(?m)EnumerationOptions'`n`n    # a note`n")
-    } 0 @('rules-parity: AGREE 11 facts <- 15 twinned entries, 27 patterns')
+    } 0 @($agree)
 
     # An entry opened by a bare dash, with name: on the next line: legal YAML that Fitness reads as a rule,
     # so the reader must refuse it wherever it sits, never skip it or fold it into its neighbour (O-020).
@@ -597,7 +654,7 @@ def check(tree, build=False):
 function Case-C007 {
     Write-Output 'C-007 the clean scenario: no plants, zero hits in both engines'
     $run = Invoke-Harness @('--scenario', 'clean')
-    CheckRun $run 0 'the clean scenario on this repo' @('| CLEAN', 'xunit 11 Facts, 0 hits', 'none unmatched or unran')
+    CheckRun $run 0 'the clean scenario on this repo' @('| CLEAN', "xunit $(Get-ExpectFacts) Facts, 0 hits", 'none unmatched or unran')
     $parity = [regex]::Match($run.Output, '(\d+) twinned entries, \d+ patterns; (\d+) settled')
     $rules = [regex]::Match($run.Output, 'fitness pass, (\d+) rules')
     Check ($parity.Success -and $rules.Success -and [int]$rules.Groups[1].Value -eq [int]$parity.Groups[1].Value + [int]$parity.Groups[2].Value) `
@@ -618,11 +675,12 @@ function Case-C008 {
     CheckRun $run 0 'the 16 must-fire plants' @('harness: 16 rows, 16 AS-RECORDED, 0 not, 0 stray hits')
     Test-Rows $run $MustFire 'AS-RECORDED'
 
-    # Bites: a scope entry deleted from yaml is parity's blind spot, and the per-scope plant catches it.
+    # Bites: a scope entry deleted from yaml is parity's blind spot, and the per-scope plant catches it. The
+    # entry is one of this tree's twinned entries, and the Fact keeps its other scope, so only that count moves.
     $copy = New-RepoCopy
     Edit-File $copy $YamlRel "(?ms)^  - name: 'InteropLivesOnlyInNative \(tests\)'.*?(?=^  - name: )" '' -Pattern
     $run = Invoke-Harness @('--root', $copy, '--dotnet-from', $Repo, '--scenario', 'plants', '--only', 'F02,F12')
-    CheckRun $run 1 'the tests scope of InteropLivesOnlyInNative deleted from yaml' @('rules-parity: AGREE 11 facts <- 14 twinned entries')
+    CheckRun $run 1 'the tests scope of InteropLivesOnlyInNative deleted from yaml' @((Format-AgreeLine -DTwinned -1))
     Test-Rows $run @('F02') 'AS-RECORDED'
     Test-Rows $run @('F12') 'MISSED-BY-FITNESS'
 
@@ -630,7 +688,7 @@ function Case-C008 {
     $copy = New-RepoCopy
     Edit-File $copy $CsRel 'Files("src", "*.cs").Concat(Files("tests", "*.cs"))' 'Files("src", "*.cs")'
     $run = Invoke-Harness @('--root', $copy, '--dotnet-from', $Repo, '--scenario', 'plants', '--only', 'F02,F12')
-    CheckRun $run 1 'the tests scope of InteropLivesOnlyInNative dropped from xUnit' @('rules-parity: AGREE 11 facts <- 15 twinned entries')
+    CheckRun $run 1 'the tests scope of InteropLivesOnlyInNative dropped from xUnit' @((Format-AgreeLine))
     Test-Rows $run @('F02') 'AS-RECORDED'
     Test-Rows $run @('F12') 'MISSED-BY-XUNIT'
 }

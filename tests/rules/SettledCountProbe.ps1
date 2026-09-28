@@ -82,7 +82,8 @@ function Add-Settled([string] $root, [int] $count) {
     [System.IO.File]::AppendAllText((Join-Path $root $YamlRel), $entries, $Utf8)
 }
 
-# The yaml cut after its first $keepSettled settled entries; 0 cuts it at the first settled marker.
+# The yaml cut after its first $keepSettled settled entries; 0 cuts it just after the first settled marker,
+# which stays, since a yaml with no marker is one RuleCases cannot part into twinned and settled (SL-069).
 function Limit-Yaml([string] $root, [int] $keepSettled) {
     $path = Join-Path $root $YamlRel
     $lines = [System.IO.File]::ReadAllLines($path, $Utf8)
@@ -91,7 +92,7 @@ function Limit-Yaml([string] $root, [int] $keepSettled) {
     $cut = $lines.Length
     for ($i = 0; $i -lt $lines.Length; $i++) {
         if ($marker -lt 0) {
-            if ($lines[$i] -cmatch '^  # settled by SL-') { $marker = $i; if ($keepSettled -eq 0) { $cut = $i; break } }
+            if ($lines[$i] -cmatch '^  # settled by SL-') { $marker = $i; if ($keepSettled -eq 0) { $cut = $i + 1; break } }
             continue
         }
         if ($lines[$i] -cmatch '^  - name:') {
