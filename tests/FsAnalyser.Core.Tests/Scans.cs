@@ -105,6 +105,54 @@ internal static class Scans
         result.Unreadable.Select(u => (result.Store.GetPath(u.Entry), u.Win32Error)).Order().ToList();
 
     /// <summary>
+    /// Runs <paramref name="scan"/> on this thread with <paramref name="created"/> handed each guard it creates,
+    /// and takes the seam off again however the scan ends.
+    /// </summary>
+    public static T WithGuard<T>(Action<SynchronousIoCancel> created, Func<T> scan)
+    {
+        SynchronousIoCancel.Created = created;
+        try
+        {
+            return scan();
+        }
+        finally
+        {
+            SynchronousIoCancel.Created = null;
+        }
+    }
+
+    /// <summary>
+    /// Runs <paramref name="scan"/> of <paramref name="root"/> with Cancel fed in at the scan thread's guarded
+    /// call <paramref name="call"/> (from 1): before it, so the guard refuses it, or during it, so the guard
+    /// discards what it returned.
+    /// </summary>
+    public static T RunCancellingAt<T>(string root, int call, bool during, Func<string, CancellationToken, T> scan)
+    {
+        using var cts = new CancellationTokenSource();
+        return WithGuard(g =>
+        {
+            if (during)
+            {
+                g.AfterCall = n =>
+                {
+                    if (n != call)
+                        return;
+                    cts.Cancel();
+                    Assert.True(SpinWait.SpinUntil(() => g.CancelIsIssued, TimeSpan.FromSeconds(5)), "the canceller never marked the call");
+                };
+            }
+            else
+            {
+                g.BeforeCall = n =>
+                {
+                    if (n == call)
+                        cts.Cancel();
+                };
+            }
+        }, () => scan(root, cts.Token));
+    }
+
+    /// <summary>
     /// Waits for the closes of aborted calls' handles, which run on the pool, so a temp tree can be removed.
     /// </summary>
     public static void WaitForAbortedCloses()
