@@ -170,11 +170,15 @@ function Invoke-HarnessRaw([string[]] $arguments) {
     $output = & $EnginePython $Harness @arguments 2>&1 | Out-String
     $exit = $LASTEXITCODE
     # A run that did not exit 0 keeps its scratch copy for a person to read; a case that expected that
-    # removes it, and only a folder the harness itself made in %TEMP%.
-    $kept = [regex]::Match($output, 'harness: scratch kept at (\S+)')
+    # removes it, and only a folder the harness itself made in %TEMP%. The path is the rest of the line, since
+    # %TEMP% can hold a space (HF-026). Python's tempfile reads TEMP before TMP and .NET's GetTempPath reads
+    # TMP first, so the folder is taken directly in either.
+    $kept = [regex]::Match($output, '(?m)^harness: scratch kept at (.+?)\s*$')
     if ($kept.Success) {
         $dir = $kept.Groups[1].Value
-        if ((Split-Path -Leaf $dir) -like 'fsa-rules-*' -and $dir.StartsWith([System.IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase)) {
+        $parent = (Split-Path -Parent $dir).TrimEnd('\')
+        $temps = @([System.IO.Path]::GetTempPath(), $env:TEMP) | Where-Object { $_ } | ForEach-Object { [System.IO.Path]::GetFullPath($_).TrimEnd('\') }
+        if ((Split-Path -Leaf $dir) -like 'fsa-rules-*' -and @($temps | Where-Object { $_ -ieq $parent }).Count) {
             Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
