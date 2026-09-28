@@ -36,6 +36,9 @@ namespace FsAnalyser.App;
 ///                 "OutcomePanel": { "visible": bool, "actualHeight": number },
 ///                 "OutcomeTexts": { "actualHeight": number, "extentHeight": number, "inView": bool },
 ///                 "TopLevelHeader": Text,
+///                 "OutcomeTabs": { "visible": bool, "selected": x:Name or null, "actualHeight": number, "stripRows": number },
+///                 "LargestFilesTab": { "visible": bool, "selected": bool, "inView": bool, "actualHeight": number, "header": Text },
+///                 "UnreadableTab": { "visible": bool, "selected": bool, "inView": bool, "actualHeight": number, "header": Text },
 ///                 "LargestFilesPanel": { "visible": bool, "actualHeight": number },
 ///                 "LargestFilesCaption": Text,
 ///                 "LargestFilesList": { "actualHeight": number, "inView": bool, "realizedRows": number, "fullRows": number },
@@ -76,6 +79,13 @@ namespace FsAnalyser.App;
 /// region of the outcome's texts: "extentHeight" is their whole height, and more than "actualHeight" means
 /// the rest is a scroll away. PickerPanel's height is what the pickers take above everything else, and
 /// DrivePanel's "buttons" how many drive buttons they hold; the height must not depend on that count.
+/// OutcomeTabs (SL-065) holds the outcome's analysis sections, one tab each, and shows the selected one's alone:
+/// "selected" is that tab's x:Name, "stripRows" how many rows the headers take (0 while the tabs are not on screen).
+/// LargestFilesTab and UnreadableTab are the tabs themselves: "visible" and "inView" are about the header, and
+/// "header" is its text. A section's controls are out of the visual tree while another tab is selected, so they read
+/// visible false, inView false and fullRows 0 then, whatever actualHeight they kept from when they were last on
+/// screen. UnreadableExpander is what the unreadable folders were before SL-065, kept with the meaning it had: it is
+/// read from UnreadableTab, and "expanded" is whether that tab is selected, the one way their list is on screen.
 /// FolderTree (SL-044) is the folder tree a completed scan shows in TopLevelList's place: its layout only, never
 /// a row's name or figures (Q-016). Its "realizedRows" are the tree rows built at any depth, and a row is one of
 /// its "fullRows" when its own line, not the folders opened under it, lies wholly inside the viewport. Later
@@ -122,6 +132,15 @@ internal static class WindowReport
                     inView = InView(window.OutcomeTexts),
                 },
                 TopLevelHeader = window.TopLevelHeader.Text,
+                OutcomeTabs = new
+                {
+                    visible = window.OutcomeTabs.IsVisible,
+                    selected = (window.OutcomeTabs.SelectedItem as TabItem)?.Name,
+                    actualHeight = window.OutcomeTabs.ActualHeight,
+                    stripRows = StripRows(window.OutcomeTabs),
+                },
+                LargestFilesTab = Section(window.LargestFilesTab),
+                UnreadableTab = Section(window.UnreadableTab),
                 LargestFilesPanel = new { visible = window.LargestFilesPanel.IsVisible, actualHeight = window.LargestFilesPanel.ActualHeight },
                 LargestFilesCaption = window.LargestFilesCaption.Text,
                 LargestFilesList = new
@@ -131,12 +150,14 @@ internal static class WindowReport
                     realizedRows = Enumerable.Range(0, largest.Count).Count(i => window.LargestFilesList.ItemContainerGenerator.ContainerFromIndex(i) is not null),
                     fullRows = FullRows(window.LargestFilesList),
                 },
+                // The unreadable folders were an expander before SL-065: its key stays, read from their tab, open
+                // when the tab is selected.
                 UnreadableExpander = new
                 {
-                    visible = window.UnreadableExpander.IsVisible,
-                    actualHeight = window.UnreadableExpander.ActualHeight,
-                    inView = InView(window.UnreadableExpander),
-                    expanded = window.UnreadableExpander.IsExpanded,
+                    visible = window.UnreadableTab.IsVisible,
+                    actualHeight = window.UnreadableTab.ActualHeight,
+                    inView = InView(window.UnreadableTab),
+                    expanded = window.UnreadableTab.IsSelected,
                 },
                 UnreadableList = new
                 {
@@ -251,8 +272,42 @@ internal static class WindowReport
         return true;
     }
 
+    // A section's tab: its header, whether it is shown and selected, and where the header is. What the section holds
+    // is read from its own controls, which are out of the visual tree while another tab is selected (SL-065).
+    private static object Section(TabItem tab) => new
+    {
+        visible = tab.IsVisible,
+        selected = tab.IsSelected,
+        inView = InView(tab),
+        actualHeight = tab.ActualHeight,
+        header = tab.Header as string,
+    };
+
+    // How many rows the tabs' headers take: the header panel's height over its tallest header's, rounded. A strip
+    // wider than the tabs wraps into a second row, which takes that row's height from every section. 0 while the tabs
+    // are not on screen.
+    private static int StripRows(TabControl tabs)
+    {
+        if (!tabs.IsVisible || FindDescendant<TabPanel>(tabs) is not { } strip)
+            return 0;
+        double tallest = tabs.Items.OfType<TabItem>().Where(tab => tab.IsVisible).Select(tab => tab.ActualHeight).DefaultIfEmpty(0).Max();
+        return tallest > 0 ? (int)Math.Round(strip.ActualHeight / tallest) : 0;
+    }
+
+    private static T? FindDescendant<T>(DependencyObject node) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(node, i);
+            if ((child as T ?? FindDescendant<T>(child)) is { } found)
+                return found;
+        }
+        return null;
+    }
+
     // How many of the list's rows lie wholly inside its viewport, the part of it that shows rows: the rows a person
-    // can read there without scrolling. A list with none shows only slivers, however tall it is.
+    // can read there without scrolling. A list with none shows only slivers, however tall it is. A list in a tab that
+    // is not selected is out of the visual tree, so it is not visible and has none, whatever height it last had.
     private static int FullRows(ListBox list)
     {
         if (!list.IsVisible || FindViewport(list) is not { } viewport)

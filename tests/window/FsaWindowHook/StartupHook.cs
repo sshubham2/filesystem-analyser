@@ -18,11 +18,13 @@ using System.Windows.Threading;
 /// </summary>
 /// <remarks>
 /// <code>
-///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|watch|measure|rescan|expand|kinds|size|tree
+///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|watch|measure|rescan|expand|hide|kinds|size|tree
 ///   FSA_HOOK_LOG=&lt;file&gt;  [FSA_HOOK_ARMED=&lt;marker file&gt;  FSA_HOOK_CANCEL_DELAY_MS=&lt;n&gt;  FSA_HOOK_CLOSE_DELAY_MS=&lt;n&gt;]
 ///   [FSA_HOOK_SLOW_REFRESH_MS=&lt;n&gt;]  (watch and measure only)
 ///   [FSA_HOOK_MISSING=&lt;the root folder, under %TEMP%&gt;]  (rescan only)
+///   [FSA_HOOK_READABLE=&lt;a folder under %TEMP%&gt;  FSA_HOOK_BEFORE=&lt;a tab's x:Name&gt;  FSA_HOOK_AFTER=&lt;a tab's x:Name&gt;]  (rescan only)
 ///   [FSA_HOOK_EXPAND=1]  (watch only; a folder's path for tree)  [FSA_HOOK_MINSIZE=1]  (watch, expand and kinds only)
+///   [FSA_HOOK_MAXIMIZE=1]  (watch, expand and size only)  [FSA_HOOK_BACK=1]  (expand, and watch with FSA_HOOK_EXPAND)
 ///   [FSA_HOOK_DRIVES=&lt;n&gt;]  (watch, expand, kinds and size only)
 ///   [FSA_HOOK_WALK, FSA_HOOK_RECYCLE, FSA_HOOK_MULTIPLY, FSA_HOOK_SELECT, FSA_HOOK_RELEASE, FSA_HOOK_GAP, FSA_HOOK_HEIGHT]  (tree only)
 /// </code>
@@ -61,10 +63,33 @@ using System.Windows.Threading;
 /// queued until that scan's ending is on screen: the report, at Loaded, cannot run meanwhile, so it reads
 /// the failure's ending. It changes nothing the app shows, and rescan is not armed.
 ///
-/// expand (SL-040, O-024) watches the same way and, once the first ending shows the list of largest files
-/// beside a closed, pressable list of unreadable folders, opens that list as a click on its header would
-/// (IsExpanded, which the header's toggle sets). The layout that follows runs ahead of the report, so the
-/// report reads the window with the list open. It is not armed and takes no FSA_HOOK_MISSING.
+/// With FSA_HOOK_READABLE (SL-065) it deletes that folder, which must be under %TEMP% and empty, before the second
+/// scan, as a person who made an unreadable folder go would: a folder the first scan could not open is not there for
+/// the second. With FSA_HOOK_BEFORE it selects that tab of the outcome's sections as a click on its header would
+/// (IsSelected), lays the window out, and only then starts the second scan, so the scan starts with that section on
+/// screen; with FSA_HOOK_AFTER it selects that tab once the second scan's ending is on screen, ahead of the report.
+/// FSA_HOOK_READABLE holds the report until the second scan's ending, as FSA_HOOK_MISSING does, and FSA_HOOK_AFTER
+/// needs one of the two. They log "readable deleted=path", "before selected=name unreadableHeight=px" and "after
+/// selected=name unreadableRows=n STATE".
+///
+/// expand (SL-040, O-024; SL-065) watches the same way and, once the first ending shows the list of largest files
+/// beside a pressable, unselected tab of unreadable folders, selects that tab as a click on its header would
+/// (IsSelected, which the click sets): before SL-065 the folders were an expander, opened the same way. The layout
+/// that follows runs ahead of the report, so the report reads the window with their list on screen. Its "acted" line
+/// carries "tabsHeight=px", the sections' height before the click. With FSA_HOOK_BACK=1 it then lays the window out,
+/// logs "shown unreadableHeight=px unreadableRows=n" and selects the first tab again, as a second click would, and
+/// logs "back selected=name STATE": the report then reads the unreadable folders' list after it was on screen and
+/// left. It is not armed and takes no FSA_HOOK_MISSING.
+///
+/// hide (SL-065) watches the same way and, once the first ending shows the largest files selected beside the
+/// unreadable folders, collapses the largest files' tab as a section whose own condition turned false would, and
+/// calls the window's EnsureSelectedTabIsVisible, as the window does after every such change. No ending of the app
+/// shows the unreadable folders without the largest files, so this is the one way to its branch that selects a
+/// section other than the first. It logs "acted mode=hide rows=n ms=n" and "hidden selected=name tabs=Visibility".
+///
+/// FSA_HOOK_MAXIMIZE=1 (SL-065) maximizes the window in the same Loaded class handler as FSA_HOOK_MINSIZE, and
+/// holds the report the same way; in size mode it takes the place of the sizing to the minimum. It logs
+/// "maximized ms=n", and size mode "acted mode=size maximized=True ms=n".
 ///
 /// kinds (SL-046) watches the same way and, once the first ending shows the list of largest files, chooses the files
 /// by kind on the results cell's header line as a click would (ShowKindsButton's IsChecked, which a click sets), if a
@@ -81,7 +106,8 @@ using System.Windows.Threading;
 /// Both then hold the report, once the ending is on screen, until the drive buttons are in. FSA_HOOK_DRIVES=n
 /// (SL-040, O-028) does the same hold, at any size, and then adds n drive buttons shaped like the app's own
 /// beside the real ones, so a case can show the pickers take the same room however many drives are ready.
-/// The hold logs "drives in ms=n held=n added=n buttons=n". FSA_HOOK_STATUS=text (SL-047) also puts that text in the
+/// The hold logs "drives in ms=n held=n added=n buttons=n windowWidth=px windowHeight=px state=WindowState" (the size
+/// the ending was laid out at, SL-065). FSA_HOOK_STATUS=text (SL-047) also puts that text in the
 /// window's reveal status line as the drives come in, ahead of the report, and adds "status=b statusHeight=px" to
 /// that line: whether the line is visible and how tall it was laid out.
 ///
@@ -182,7 +208,7 @@ internal class StartupHook
         try
         {
             Log($"loaded mode={mode} pid={Environment.ProcessId}");
-            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "kinds" or "size" or "tree" or "reveal"))
+            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "hide" or "kinds" or "size" or "tree" or "reveal"))
             {
                 Log($"refused mode={mode} reason=unknown mode");
                 return;
@@ -194,13 +220,20 @@ internal class StartupHook
                 Log($"refused mode={mode} reason=FSA_HOOK_MINSIZE is 1, and for watch, expand and kinds only (size mode sizes by itself)");
                 return;
             }
+            string? maximize = Environment.GetEnvironmentVariable("FSA_HOOK_MAXIMIZE");
+            bool maximized = !string.IsNullOrEmpty(maximize);
+            if (maximized && (maximize != "1" || sizeFirst || mode is not ("watch" or "expand" or "size")))
+            {
+                Log($"refused mode={mode} reason=FSA_HOOK_MAXIMIZE is 1, for watch, expand and size only, and never with FSA_HOOK_MINSIZE");
+                return;
+            }
             if (!Delay("FSA_HOOK_DRIVES", out int? extraDrives) || (extraDrives is not null && mode is not ("watch" or "expand" or "kinds" or "size")))
             {
                 Log($"refused mode={mode} reason=FSA_HOOK_DRIVES is a whole number, and for watch, expand, kinds and size only");
                 return;
             }
-            // Size to the minimum, add drive buttons, or both, before the window loads.
-            bool prepare = sizeFirst || extraDrives is not null;
+            // Size to the minimum, maximize, add drive buttons, or both, before the window loads.
+            bool prepare = sizeFirst || maximized || extraDrives is not null;
             if (!Delay("FSA_HOOK_SLOW_REFRESH_MS", out int? pad))
             {
                 Log($"refused mode={mode} reason=FSA_HOOK_SLOW_REFRESH_MS is not a whole number of milliseconds");
@@ -211,6 +244,25 @@ internal class StartupHook
             if (!string.IsNullOrEmpty(expandAfter) && mode != "tree" && (mode != "watch" || expandAfter != "1"))
             {
                 Log($"refused mode={mode} reason=FSA_HOOK_EXPAND is 1 for watch, or a folder's path for tree");
+                return;
+            }
+            string? back = Environment.GetEnvironmentVariable("FSA_HOOK_BACK");
+            if (!string.IsNullOrEmpty(back) && (back != "1" || !(mode == "expand" || (mode == "watch" && expandAfter == "1"))))
+            {
+                Log($"refused mode={mode} reason=FSA_HOOK_BACK is 1, for expand, and watch with FSA_HOOK_EXPAND");
+                return;
+            }
+            string? readable = Environment.GetEnvironmentVariable("FSA_HOOK_READABLE") is { Length: > 0 } gone ? gone : null;
+            string? before = Environment.GetEnvironmentVariable("FSA_HOOK_BEFORE") is { Length: > 0 } first ? first : null;
+            string? after = Environment.GetEnvironmentVariable("FSA_HOOK_AFTER") is { Length: > 0 } last ? last : null;
+            if ((readable ?? before ?? after) is not null && mode != "rescan")
+            {
+                Log($"refused mode={mode} reason=FSA_HOOK_READABLE, FSA_HOOK_BEFORE and FSA_HOOK_AFTER are for rescan only");
+                return;
+            }
+            if (after is not null && readable is null && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("FSA_HOOK_MISSING")))
+            {
+                Log($"refused mode={mode} reason=FSA_HOOK_AFTER needs the report held until the second ending (FSA_HOOK_READABLE or FSA_HOOK_MISSING)");
                 return;
             }
             if (mode == "tree")
@@ -233,7 +285,7 @@ internal class StartupHook
                     Log($"refused mode={mode} reason={mode} mode is not armed");
                     return;
                 }
-                if (prepare && !PrepareWindow(mode, sizeFirst, extraDrives ?? 0))
+                if (prepare && !PrepareWindow(mode, sizeFirst, maximized, extraDrives ?? 0))
                     return;
                 // Before the window loads, as expand mode does: the Cancel's ending then opens the list.
                 if (!string.IsNullOrEmpty(expandAfter))
@@ -251,17 +303,17 @@ internal class StartupHook
                 if (!string.IsNullOrEmpty(marker))
                     Log("refused mode=size reason=size mode is not armed");
                 else
-                    PrepareWindow(mode, true, extraDrives ?? 0);
+                    PrepareWindow(mode, !maximized, maximized, extraDrives ?? 0);
                 return;
             }
-            if (mode is "rescan" or "expand" or "kinds")
+            if (mode is "rescan" or "expand" or "hide" or "kinds")
             {
                 string? missing = Environment.GetEnvironmentVariable("FSA_HOOK_MISSING") is { Length: > 0 } folder ? folder : null;
                 if (!string.IsNullOrEmpty(marker))
                     Log($"refused mode={mode} reason={mode} mode is not armed");
                 else if (mode != "rescan" && missing is not null)
                     Log($"refused mode={mode} reason=FSA_HOOK_MISSING is for rescan only");
-                else if (!prepare || PrepareWindow(mode, sizeFirst, extraDrives ?? 0))
+                else if (!prepare || PrepareWindow(mode, sizeFirst, maximized, extraDrives ?? 0))
                     DriveAfterList(mode, missing);
                 return;
             }
@@ -401,7 +453,7 @@ internal class StartupHook
     // registered in time: that wait lasts until the window has loaded, so ahead of watch or expand it would make
     // their own handlers late. There a missing "sized" or "drives in" line is the sign.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static bool PrepareWindow(string mode, bool minimum, int extraDrives)
+    private static bool PrepareWindow(string mode, bool minimum, bool maximize, int extraDrives)
     {
         if (WaitForApplication(mode) is not { } app)
             return false;
@@ -420,6 +472,13 @@ internal class StartupHook
                 Log($"sized {size} ms={Clock.ElapsedMilliseconds}");
                 if (mode == "size")
                     Log($"acted mode=size {size} ms={Clock.ElapsedMilliseconds}");
+            }
+            if (maximize)
+            {
+                window.WindowState = System.Windows.WindowState.Maximized;
+                Log($"maximized ms={Clock.ElapsedMilliseconds}");
+                if (mode == "size")
+                    Log($"acted mode=size maximized=True ms={Clock.ElapsedMilliseconds}");
             }
             // The drive buttons come in after the window loads. So once the ending is on screen the report is held
             // until they are in (DriveStatus has changed from what it shows at load), and the extra ones are added
@@ -465,7 +524,10 @@ internal class StartupHook
                 revealTb.UpdateLayout();
                 statusInfo = string.Create(CultureInfo.InvariantCulture, $" status={revealTb.Visibility == Visibility.Visible} statusHeight={revealTb.ActualHeight:F2}");
             }
-            Log($"drives in ms={Clock.ElapsedMilliseconds} held={since.ElapsedMilliseconds} added={extra} buttons={drives.Children.Count}{statusInfo}");
+            Window window = app.MainWindow!;
+            string laidOut = string.Create(CultureInfo.InvariantCulture,
+                $"windowWidth={window.ActualWidth:F0} windowHeight={window.ActualHeight:F0} state={window.WindowState}");
+            Log($"drives in ms={Clock.ElapsedMilliseconds} held={since.ElapsedMilliseconds} added={extra} buttons={drives.Children.Count} {laidOut}{statusInfo}");
             return;
         }
         if (since.Elapsed > Deadline)
@@ -551,6 +613,11 @@ internal class StartupHook
                 Expand(app, window, rows);
                 return;
             }
+            if (mode == "hide")
+            {
+                Hide(app, window, rows);
+                return;
+            }
             if (mode == "kinds")
             {
                 ChooseKinds(app, window, rows);
@@ -562,6 +629,8 @@ internal class StartupHook
                 Log($"refused mode=rescan reason=no list on screen with a new scan startable (rows={rows} chooser={chooser is not null && Pressable(chooser)})");
                 return;
             }
+            if (Environment.GetEnvironmentVariable("FSA_HOOK_BEFORE") is { Length: > 0 } before && !SelectTab(app, window, "before", before))
+                return;
             // At Normal, as a click's handler runs: WPF hands the running operation's priority to what the
             // handler awaits, so the second scan's continuations come back at Normal, as a person's would.
             app.Dispatcher.BeginInvoke(DispatcherPriority.Normal, new Action(() => StartSecondScan(app, window, missing, rows)));
@@ -573,21 +642,97 @@ internal class StartupHook
         }
     }
 
-    // expand (SL-040, O-024): opens the unreadable-folders list as a click on its header would, once the ending
-    // shows both lists. Its layout runs at Render, still ahead of the report, so the report reads it opened.
+    // expand (SL-040, O-024; SL-065): selects the unreadable folders' tab as a click on its header would, once the
+    // ending shows it beside the largest files. Its layout runs at Render, still ahead of the report, so the report
+    // reads their list on screen. With FSA_HOOK_BACK=1 the list is laid out, and then the first tab selected again.
     private static void Expand(Application app, Window window, int rows)
     {
-        var expander = window.FindName("UnreadableExpander") as Expander;
+        var tab = window.FindName("UnreadableTab") as TabItem;
         int unreadable = window.FindName("UnreadableList") is ItemsControl folders ? folders.Items.Count : 0;
-        if (rows == 0 || unreadable == 0 || expander is null || !Pressable(expander) || expander.IsExpanded)
+        if (rows == 0 || unreadable == 0 || tab is null || !Pressable(tab) || tab.IsSelected)
         {
-            Log($"refused mode=expand reason=no list of largest files beside a closed, pressable list of unreadable folders (rows={rows} unreadable={unreadable} pressable={expander is not null && Pressable(expander)} expanded={expander?.IsExpanded})");
+            Log($"refused mode=expand reason=no list of largest files beside a pressable, unselected tab of unreadable folders (rows={rows} unreadable={unreadable} pressable={tab is not null && Pressable(tab)} selected={tab?.IsSelected})");
             return;
         }
-        Log($"acted mode=expand rows={rows} unreadable={unreadable} ms={Clock.ElapsedMilliseconds}");
-        Pressing(app, "expand", () => expander.IsExpanded = true); // what its header's toggle sets when clicked
-        Log($"expanded={expander.IsExpanded} {State(window)}");
+        Log($"acted mode=expand rows={rows} unreadable={unreadable} tabsHeight={Px(window, "OutcomeTabs")} ms={Clock.ElapsedMilliseconds}");
+        Pressing(app, "expand", () => tab.IsSelected = true); // what a click on its header sets
+        Log($"expanded={tab.IsSelected} {State(window)}");
+        if (Environment.GetEnvironmentVariable("FSA_HOOK_BACK") != "1")
+            return;
+        window.UpdateLayout(); // the list on screen, as a person would see it before clicking back
+        Log($"shown unreadableHeight={Px(window, "UnreadableList")} unreadableRows={Realized(window, "UnreadableList")}");
+        if (window.FindName("OutcomeTabs") is not TabControl tabs
+            || tabs.Items.OfType<TabItem>().FirstOrDefault(t => t.Visibility == Visibility.Visible) is not { } first || ReferenceEquals(first, tab))
+        {
+            Log("refused mode=expand reason=no other tab to go back to");
+            return;
+        }
+        Pressing(app, "back", () => first.IsSelected = true);
+        Log($"back selected={first.Name} {State(window)}");
     }
+
+    // hide (SL-065): the largest files' tab collapsed as a section whose own condition turned false would, and then
+    // the window's own guard, as the window calls it after every such change. It must select the unreadable folders,
+    // the first section still shown, and not the collapsed tab a guard naming the largest files would.
+    private static void Hide(Application app, Window window, int rows)
+    {
+        var tabs = window.FindName("OutcomeTabs") as TabControl;
+        var largest = window.FindName("LargestFilesTab") as TabItem;
+        var unreadable = window.FindName("UnreadableTab") as TabItem;
+        MethodInfo? guard = window.GetType().GetMethod("EnsureSelectedTabIsVisible", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (tabs is null || largest is null || unreadable is null || guard is null || !largest.IsSelected || !Pressable(unreadable))
+        {
+            Log($"refused mode=hide reason=no selected tab of largest files beside a shown one of unreadable folders, or no guard (largest={largest?.IsSelected} unreadable={unreadable is not null && Pressable(unreadable)} guard={guard is not null})");
+            return;
+        }
+        Log($"acted mode=hide rows={rows} ms={Clock.ElapsedMilliseconds}");
+        Pressing(app, "hide", () =>
+        {
+            largest.Visibility = Visibility.Collapsed;
+            guard.Invoke(window, null);
+        });
+        Log($"hidden selected={(tabs.SelectedItem as TabItem)?.Name} tabs={tabs.Visibility} {State(window)}");
+    }
+
+    // rescan's FSA_HOOK_BEFORE and FSA_HOOK_AFTER: the named tab selected as a click on its header would, if a person
+    // could click it, and the window laid out, so its section is on screen.
+    private static bool SelectTab(Application app, Window window, string when, string name)
+    {
+        if (window.FindName(name) is not TabItem tab || !Pressable(tab))
+        {
+            Log($"refused mode=rescan reason=no pressable tab {name} to select {when} the second scan");
+            return false;
+        }
+        Pressing(app, when, () => tab.IsSelected = true);
+        window.UpdateLayout();
+        Log($"{when} selected={((window.FindName("OutcomeTabs") as TabControl)?.SelectedItem as TabItem)?.Name} unreadableHeight={Px(window, "UnreadableList")} unreadableRows={Realized(window, "UnreadableList")} {State(window)}");
+        return true;
+    }
+
+    // rescan's FSA_HOOK_READABLE: an unreadable folder of the first scan deleted, so the second scan does not meet it.
+    // Only under %TEMP%, so a mistyped variable cannot delete anything of the person's, and only if empty.
+    private static bool DeleteReadable(string folder)
+    {
+        string full = Path.GetFullPath(folder).TrimEnd('\\');
+        string temp = Path.GetFullPath(Path.GetTempPath()).TrimEnd('\\');
+        if (!full.StartsWith(temp + "\\", StringComparison.OrdinalIgnoreCase) || !Directory.Exists(full))
+        {
+            Log($"refused mode=rescan reason=FSA_HOOK_READABLE is not a folder under {temp}: {full}");
+            return false;
+        }
+        Directory.Delete(full, recursive: false);
+        Log($"readable deleted={full}");
+        return true;
+    }
+
+    private static string Px(Window window, string name) =>
+        window.FindName(name) is FrameworkElement element ? element.ActualHeight.ToString("F2", CultureInfo.InvariantCulture) : "-";
+
+    // The rows the list has built: containers, with virtualization about a screenful.
+    private static int Realized(Window window, string name) =>
+        window.FindName(name) is ItemsControl list
+            ? Enumerable.Range(0, list.Items.Count).Count(i => list.ItemContainerGenerator.ContainerFromIndex(i) is not null)
+            : 0;
 
     // kinds (SL-046): chooses the files by kind on the results cell's header line as a click would, once the ending is
     // on screen. Its layout runs at Render, still ahead of the report, so the report reads the kinds shown.
@@ -610,10 +755,13 @@ internal class StartupHook
         {
             if (missing is not null && !MoveAside(missing))
                 return;
+            string? readable = Environment.GetEnvironmentVariable("FSA_HOOK_READABLE") is { Length: > 0 } folder ? folder : null;
+            if (readable is not null && !DeleteReadable(readable))
+                return;
             Log($"acted mode=rescan rows={rows} ms={Clock.ElapsedMilliseconds}");
             Pressing(app, "rescan", () => window.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent, window)));
             Log($"started {State(window)}");
-            if (missing is not null)
+            if (missing is not null || readable is not null)
                 HoldUntilEnded(app, window, Stopwatch.StartNew());
         }
         catch (Exception e)
@@ -659,6 +807,8 @@ internal class StartupHook
         if (Shown(window, "OutcomePanel") && !Shown(window, "ScanningPanel"))
         {
             Log($"ended {State(window)} ms={Clock.ElapsedMilliseconds}");
+            if (Environment.GetEnvironmentVariable("FSA_HOOK_AFTER") is { Length: > 0 } after)
+                SelectTab(app, window, "after", after);
             return;
         }
         if (since.Elapsed > Deadline)

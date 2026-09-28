@@ -70,12 +70,23 @@
 # the list as a second scan starts and at its Could not read ending (K-003, the hook's rescan mode, as B-006). B-001
 # checks a missing root's Could not read ending carries no kinds. The Scan failed ending (Scanner.Scan throws) takes the
 # same path in the window, ShowProblem, and no case drives it: no hook mode makes the scan fail.
+#
+# S-001 to S-009 (SL-065) are the outcome's sections, one tab each of OutcomeTabs: the largest files, and the unreadable
+# folders only when there are any. S-001 is the default state at the window's minimum size (Largest files selected, the
+# fit with its 10 px to spare); S-002 selects the unreadable folders and goes back (the hook's expand mode, with
+# FSA_HOOK_BACK); S-003 starts a second scan with the unreadable folders selected, whose result has none; S-004 hides the
+# largest files while the unreadable folders are shown (the hook's hide mode); S-005 is an ending with no section and a
+# long text; S-006 a long text above the sections; S-007 a five-digit count of unreadable folders in the header at the
+# minimum width; S-008 the lists at the minimum size and maximized; S-009 a second scan that refills a list whose tab is
+# not selected. The expand mode of B-003, B-007 and B-008 selects the unreadable folders' tab where it opened their
+# expander before SL-065, and the report's UnreadableExpander, kept, is read from that tab.
 
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
         'L-001', 'L-002', 'L-003', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'N-001', 'N-002', 'N-003', 'N-004',
-        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003', 'R-001')]
+        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003', 'R-001',
+        'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009')]
     [string] $Case,
     [switch] $IncludeNetwork
 )
@@ -91,9 +102,11 @@ $RigProject = Join-Path $Repo 'tests\window\StallRig\StallRig.csproj'
 $RigExe = Join-Path $Repo 'artifacts\stall-rig\StallRig.exe'
 $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS',
     'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND', 'FSA_HOOK_MINSIZE', 'FSA_HOOK_DRIVES',
-    'FSA_HOOK_WALK', 'FSA_HOOK_RECYCLE', 'FSA_HOOK_MULTIPLY', 'FSA_HOOK_SELECT', 'FSA_HOOK_RELEASE', 'FSA_HOOK_GAP', 'FSA_HOOK_HEIGHT', 'FSA_HOOK_REVEAL', 'FSA_HOOK_STATUS'
+    'FSA_HOOK_WALK', 'FSA_HOOK_RECYCLE', 'FSA_HOOK_MULTIPLY', 'FSA_HOOK_SELECT', 'FSA_HOOK_RELEASE', 'FSA_HOOK_GAP', 'FSA_HOOK_HEIGHT', 'FSA_HOOK_REVEAL', 'FSA_HOOK_STATUS',
+    'FSA_HOOK_MAXIMIZE', 'FSA_HOOK_BACK', 'FSA_HOOK_READABLE', 'FSA_HOOK_BEFORE', 'FSA_HOOK_AFTER'
 $HookedCases = 'C-002', 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
-    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003', 'R-001'
+    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003', 'R-001',
+    'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004'
 $RigOnlyCases = 'N-003', 'N-004'
 $KiB64 = 64KB
@@ -638,13 +651,26 @@ function Test-RigServes([string] $root) {
 
 # ---- Cases ----
 
-# C-001: a tree that finishes inside one timer tick.
+# C-001: a tree that finishes inside one timer tick. It has no unreadable folder, so the outcome's sections are the
+# largest files alone, selected; the unreadable folders' tab, and the expander key the report keeps for it, are not
+# on screen (SL-065).
 function Test-C001 {
     $case = New-CaseFolder
     try {
         $root = Join-Path $case 'small'
         $manifest = New-SmallTree $root
-        CheckFinished (Read-Window $root) $root $root $manifest
+        $read = Read-Window $root
+        CheckFinished $read $root $root $manifest
+        if ($null -eq $read.Report) { return }
+        $window = $read.Report.window
+        CheckEqual $true $window.OutcomeTabs.visible 'OutcomeTabs is on screen'
+        CheckEqual 'LargestFilesTab' $window.OutcomeTabs.selected 'OutcomeTabs.selected'
+        CheckEqual $true $window.LargestFilesTab.selected 'LargestFilesTab is selected'
+        CheckEqual $false $window.UnreadableTab.visible 'UnreadableTab is not shown: no folder was unreadable'
+        CheckEqual $false $window.UnreadableExpander.visible 'UnreadableExpander (the key kept for that tab) reads not shown'
+        CheckEqual $false $window.UnreadableExpander.expanded 'UnreadableExpander reads not expanded'
+        CheckEqual $false $window.UnreadableList.inView 'UnreadableList is not on screen'
+        CheckEqual 1 $window.OutcomeTabs.stripRows 'OutcomeTabs.stripRows'
     }
     finally { Remove-CaseFolder $case }
 }
@@ -1429,17 +1455,20 @@ function Undo-DenyListing([string] $folder) {
 
 # What the report says of the largest-files section after a scan that returned: how many rows are bound,
 # the first row's on-disk bytes, a measured ranking time, the section and its caption on screen, the list
-# laid out inside the panel when it has rows, and no planted name anywhere in the report (Q-016).
-function CheckLargestFiles($read, [int] $shown, $firstOnDisk, [string] $caption) {
+# laid out inside the panel when it has rows, and no planted name anywhere in the report (Q-016). With
+# $selected false another section's tab is selected (SL-065): the section is then off screen, caption and list.
+function CheckLargestFiles($read, [int] $shown, $firstOnDisk, [string] $caption, [bool] $selected = $true) {
     $report = $read.Report
     $window = $report.window
     CheckEqual $shown $report.largestFilesShown 'largestFilesShown (rows bound to LargestFilesList)'
     CheckEqual $firstOnDisk $report.largestFileOnDisk 'largestFileOnDisk (the first row, against the tree)'
     Check ($null -ne $report.largestFilesMs -and $report.largestFilesMs -ge 0) "largestFilesMs was measured ($(Show $report.largestFilesMs))"
-    CheckEqual $true $window.LargestFilesPanel.visible 'LargestFilesPanel is on screen'
+    CheckEqual $true $window.LargestFilesTab.visible 'LargestFilesTab is on screen'
+    CheckEqual $selected $window.LargestFilesTab.selected "LargestFilesTab is $(if ($selected) { '' } else { 'not ' })selected"
+    CheckEqual $selected $window.LargestFilesPanel.visible "LargestFilesPanel is $(if ($selected) { 'on screen' } else { 'off screen: its tab is not selected' })"
     Check ($window.LargestFilesPanel.actualHeight -gt 0) "LargestFilesPanel has been laid out (actualHeight $($window.LargestFilesPanel.actualHeight))"
     CheckEqual $caption $window.LargestFilesCaption 'LargestFilesCaption'
-    CheckEqual ($shown -gt 0) $window.LargestFilesList.inView 'LargestFilesList is on screen inside the panel exactly when it has rows'
+    CheckEqual ($selected -and $shown -gt 0) $window.LargestFilesList.inView "LargestFilesList is on screen inside the panel exactly when it has rows$(if (-not $selected) { ' and its tab is selected' })"
     Check (-not $read.Text.Contains($Planted)) "the report holds no planted file name ('$Planted')"
 }
 
@@ -1561,15 +1590,17 @@ function Test-B003 {
         if ($null -eq $read.Report) { return }
         $window = $read.Report.window
         CheckEqual "Finished: $root" $window.OutcomeTitle 'OutcomeTitle'
-        CheckLargestFiles $read 100 (16 * $KiB64) $caption
-        CheckEqual $true $window.UnreadableExpander.expanded 'the report: UnreadableExpander is open'
+        # Since SL-065 the two lists are two tabs, one on screen at a time: the unreadable folders' now.
+        CheckLargestFiles $read 100 (16 * $KiB64) $caption $false
+        CheckEqual $true $window.UnreadableExpander.expanded 'the report: UnreadableExpander is open (their tab is selected)'
         CheckEqual $true $window.UnreadableExpander.inView 'the report: UnreadableExpander is inside the panel'
         CheckEqual $true $window.UnreadableList.inView 'the report: UnreadableList is inside the panel'
         CheckEqual $true $window.FolderTree.inView "the report: FolderTree is inside the window below the outcome ($($window.FolderTree.actualHeight) px)"
         $built = $window.LargestFilesList.realizedRows
-        Check ($built -gt 0 -and $built -lt 100) "LargestFilesList still virtualizes: $built of 100 rows built"
-        Check ($window.LargestFilesList.fullRows -ge 1) "LargestFilesList keeps at least one full row in view ($($window.LargestFilesList.fullRows) in $($window.LargestFilesList.actualHeight) px)"
+        Check ($built -gt 0 -and $built -lt 100) "LargestFilesList built only a screenful before its tab was left: $built of 100 rows"
+        CheckEqual 0 $window.LargestFilesList.fullRows 'LargestFilesList shows no row: its tab is not selected'
         Check ($window.UnreadableList.fullRows -ge 1) "UnreadableList keeps at least one full row in view ($($window.UnreadableList.fullRows) in $($window.UnreadableList.actualHeight) px)"
+        CheckTabsKeptHeight $run.Log $window
     }
     finally {
         foreach ($folder in $denied) { Undo-DenyListing $folder }
@@ -1706,14 +1737,31 @@ function Test-B006 {
     }
 }
 
-# After an ending, the outcome's lists and the results list below it (SL-039), or the folder tree in its place
-# after a completed scan (SL-044), are on screen together, none pushed off the window by another or by any text
+# After an ending, the outcome's selected section and the results list below it (SL-039), or the folder tree in its
+# place after a completed scan (SL-044), are on screen together, none pushed off the window by another or by any text
 # (O-025), and each with at least one full row in view: a row wholly inside the list's viewport, readable
 # without scrolling (the window-size rework). The outcome's texts are in view too, scrolling whatever does not fit.
+# Since SL-065 the outcome's two lists are two tabs: $opened is the unreadable folders' selected (their expander open,
+# before), and then the largest files' list is off screen, with no full row, whatever height it last had. Either list
+# is inside the tabs, and the headers take one row.
 function CheckBothLists($window, [bool] $opened, [bool] $completed) {
+    $tabs = $window.OutcomeTabs
+    CheckEqual $true $tabs.visible 'OutcomeTabs is on screen'
+    CheckEqual $(if ($opened) { 'UnreadableTab' } else { 'LargestFilesTab' }) $tabs.selected 'OutcomeTabs.selected'
+    CheckEqual 1 $tabs.stripRows 'the tab headers take one row (OutcomeTabs.stripRows)'
     $largest = $window.LargestFilesList
-    CheckEqual $true $largest.inView "LargestFilesList is inside the window ($($largest.actualHeight) px)"
-    Check ($largest.fullRows -ge 1) "LargestFilesList shows at least one full row ($($largest.fullRows) of $($largest.realizedRows) built)"
+    $shown = if ($opened) { $window.UnreadableList } else { $largest }
+    $hidden = if ($opened) { $largest } else { $window.UnreadableList }
+    $shownName = if ($opened) { 'UnreadableList' } else { 'LargestFilesList' }
+    $hiddenName = if ($opened) { 'LargestFilesList' } else { 'UnreadableList' }
+    CheckEqual $true $shown.inView "$shownName is inside the window ($($shown.actualHeight) px)"
+    Check ($shown.fullRows -ge 1) "$shownName shows at least one full row ($($shown.fullRows))"
+    Check ($shown.actualHeight -le $tabs.actualHeight) "$shownName is no taller than the tabs ($($shown.actualHeight) of $($tabs.actualHeight) px): its height is bounded"
+    CheckEqual $false $hidden.inView "$hiddenName is off screen: its tab is not selected"
+    CheckEqual 0 $hidden.fullRows "$hiddenName shows no full row (last laid out at $($hidden.actualHeight) px)"
+    if (-not $opened) {
+        Check ($largest.realizedRows -lt 100) "LargestFilesList virtualizes ($($largest.realizedRows) rows built)"
+    }
     CheckEqual $true $window.TopLevelPanel.visible 'TopLevelPanel is on screen'
     $results = if ($completed) { $window.FolderTree } else { $window.TopLevelList }
     $name = if ($completed) { 'FolderTree' } else { 'TopLevelList' }
@@ -1722,13 +1770,35 @@ function CheckBothLists($window, [bool] $opened, [bool] $completed) {
     CheckEqual (-not $completed) $window.TopLevelList.inView "TopLevelList is $(if ($completed) { 'not shown: the tree took its place' } else { 'shown' })"
     CheckEqual $opened $window.UnreadableExpander.expanded "UnreadableExpander is $(if ($opened) { 'open' } else { 'closed' })"
     CheckEqual $true $window.UnreadableExpander.inView 'UnreadableExpander is inside the window'
-    if ($opened) {
-        $folders = $window.UnreadableList
-        CheckEqual $true $folders.inView "UnreadableList is inside the window ($($folders.actualHeight) px)"
-        Check ($folders.fullRows -ge 1) "UnreadableList shows at least one full row ($($folders.fullRows))"
-    }
+    CheckEqual $true $window.UnreadableTab.inView 'UnreadableTab, its header, is inside the window'
     $texts = $window.OutcomeTexts
     CheckEqual $true $texts.inView "the outcome's texts are inside the window ($($texts.actualHeight) of $($texts.extentHeight) px shown, the rest a scroll away)"
+}
+
+# SL-065: the hook's expand mode logged the sections' height as it selected the unreadable folders' tab, and the report
+# reads it after: only the selected section is laid out, so the other one adds nothing and the height does not move.
+# Not compared when the hook put the reveal status line on screen (FSA_HOOK_STATUS): that comes after the click, as the
+# drive buttons come in, and takes its own share of the window's height between the two readings (16.5 px of the
+# outcome's after a stop, measured). Every case that shows the line also runs the same ending without it.
+function CheckTabsKeptHeight($log, $window) {
+    $drives = @($log | Where-Object { $_.StartsWith('drives in ') })
+    if ($drives.Count -eq 1 -and (Field $drives[0] 'status') -ceq 'True') {
+        Write-Output "        OutcomeTabs' height across the click is not compared here: the reveal status line came on screen between the two readings"
+        return
+    }
+    $acted = @($log | Where-Object { $_.StartsWith('acted mode=expand ') })
+    $before = if ($acted.Count -eq 1) { Field $acted[0] 'tabsHeight' } else { $null }
+    $after = $window.OutcomeTabs.actualHeight
+    Check ($null -ne $before -and [Math]::Abs([double]$before - [double]$after) -lt 0.01) "OutcomeTabs kept its height when the unreadable folders' tab was selected ($before px before, $after px after)"
+}
+
+# SL-065: the hook maximized the window when it loaded (FSA_HOOK_MAXIMIZE), and the ending was laid out maximized,
+# larger than the window's minimum both ways.
+function CheckMaximized($log) {
+    $drives = @($log | Where-Object { $_.StartsWith('drives in ') })
+    $line = if ($drives.Count -eq 1) { $drives[0] } else { '' }
+    Check (@($log | Where-Object { $_.StartsWith('maximized ') }).Count -eq 1 -and (Field $line 'state') -ceq 'Maximized' -and
+        [int](Field $line 'windowWidth') -gt 560 -and [int](Field $line 'windowHeight') -gt 644) "the hook maximized the window, and the ending was laid out so ($(Show $line))"
 }
 
 # The hook set the window to its own MinWidth by MinHeight when it loaded, before the scan started.
@@ -1842,10 +1912,11 @@ function CheckTopsTree($run, [string] $root) {
 # slow folders are not, with the unreadable folders closed or opened (FSA_HOOK_EXPAND), at the window's minimum
 # size (FSA_HOOK_MINSIZE) or not, and with $extra drive buttons added (FSA_HOOK_DRIVES) or none. Its checks
 # print as they go; the report it read is left in $script:StoppedReport, null when a check before it failed.
-function Invoke-StoppedEnding([string] $case, [string] $root, [bool] $opened, [bool] $smallest, [int] $extra, [string] $statusMsg = $null) {
+function Invoke-StoppedEnding([string] $case, [string] $root, [bool] $opened, [bool] $smallest, [int] $extra, [string] $statusMsg = $null, [bool] $maximized = $false) {
     $script:StoppedReport = $null
     $variables = @{}
     if ($smallest) { $variables.FSA_HOOK_MINSIZE = '1' }
+    if ($maximized) { $variables.FSA_HOOK_MAXIMIZE = '1' }
     if ($extra -gt 0) { $variables.FSA_HOOK_DRIVES = "$extra" }
     if ($opened) { $variables.FSA_HOOK_EXPAND = '1' }
     if ($statusMsg) { $variables.FSA_HOOK_STATUS = $statusMsg }
@@ -1854,7 +1925,8 @@ function Invoke-StoppedEnding([string] $case, [string] $root, [bool] $opened, [b
     CheckActed $run 'watch'
     if ($opened) { CheckActed $run 'expand' }
     if ($smallest) { CheckSized $run.Log }
-    if ($smallest -or $extra -gt 0) { CheckDrives $run.Log $extra }
+    if ($maximized) { CheckMaximized $run.Log }
+    if ($smallest -or $maximized -or $extra -gt 0) { CheckDrives $run.Log $extra }
     if ($statusMsg) { CheckStatusShown $run.Log }
     if ($script:Failures.Count -gt $before) { return }
     $watch = Read-WatchLine $run.Log
@@ -1865,10 +1937,11 @@ function Invoke-StoppedEnding([string] $case, [string] $root, [bool] $opened, [b
     CheckEqual 'Cancelled' $run.Report.core.status 'core.status'
     $files = ("$($run.Report.window.OutcomeDetail[0])" -split ' and ')[0]
     $read = [pscustomobject]@{ Report = $run.Report; Text = ($run.Report | ConvertTo-Json -Depth 8) }
-    CheckLargestFiles $read 100 $KiB64 "Top 100 of $files scanned in the part read before the scan stopped. Files in 12 unreadable folders are not included."
+    CheckLargestFiles $read 100 $KiB64 "Top 100 of $files scanned in the part read before the scan stopped. Files in 12 unreadable folders are not included." (-not $opened)
     CheckTopLevel $run.Report.topLevel @{ rows = 36; unreadable = 12; final = $true } 'against the tree'
     Check ([int]$run.Report.topLevel.notRead -ge 1) "some slow folders were not read before the stop ($($run.Report.topLevel.notRead))"
     CheckBothLists $run.Report.window $opened $false
+    if ($opened) { CheckTabsKeptHeight $run.Log $run.Report.window }
     $after = $run.Report.window.TopLevelList.actualHeight
     Check ([double]$watch.listHeight -gt $after) "mid-scan, with no outcome on screen, TopLevelList had more height ($($watch.listHeight) px) than beside the outcome after the stop ($after px)"
     $script:StoppedReport = $run.Report
@@ -1932,9 +2005,10 @@ function Test-B007 {
                 Check ($null -ne $read.Report) 'a report was written'
                 if ($null -eq $read.Report) { continue }
                 CheckEqual "Finished: $root" $read.Report.window.OutcomeTitle 'OutcomeTitle'
-                CheckLargestFiles $read 100 $KiB64 "Top 100 of 104 files scanned.$unread"
+                CheckLargestFiles $read 100 $KiB64 "Top 100 of 104 files scanned.$unread" (-not $opened)
                 Check ($read.Text -notmatch '"topLevel"') 'no topLevel in the report: the folder tree shows the completed scan (SL-044)'
                 CheckBothLists $read.Report.window $opened $true
+                if ($opened) { CheckTabsKeptHeight $run.Log $read.Report.window }
                 $pickers += [pscustomobject]@{ Run = $label; Height = $read.Report.window.PickerPanel.actualHeight; Buttons = $read.Report.window.DrivePanel.buttons }
             }
 
@@ -1966,6 +2040,7 @@ function Test-B007 {
             if ($null -ne $read.Report) {
                 CheckEqual "Finished: $root" $read.Report.window.OutcomeTitle 'OutcomeTitle'
                 CheckBothLists $read.Report.window $true $true
+                CheckTabsKeptHeight $run.Log $read.Report.window
             }
         }
         Write-Output "  Cancelled, the unreadable folders opened, at minimum size with reveal status visible"
@@ -3294,9 +3369,425 @@ function Test-R001 {
     }
 }
 
+# ---- The outcome's sections (SL-065) ----
+
+# MainWindow.xaml's fit at the window's minimum size: the outcome's texts capped at 76 px while a section is shown, and
+# the tabs at least their 154 px minimum, with 10 px to spare. Written here as numbers, as MainWindow.xaml writes them,
+# so that a change to either shows up as a failing case and not as a silently different layout.
+$TextsCap = 76
+$TabsMinHeight = 154
+$FitSpare = 10
+$RevealStatusText = "'pagefile.sys' is hidden, so Explorer only highlights it if it is set to show hidden files (and protected operating system files, for system items)."
+
+# 104 non-empty files, 26 in each of 4 folders, and $denied folders the scan cannot open: the largest files list full at
+# 100 rows beside the unreadable folders. Returns the denied folders, for the caller to give back.
+function New-SectionsTree([string] $root, [int] $denied) {
+    for ($d = 1; $d -le 4; $d++) {
+        for ($f = 1; $f -le 26; $f++) {
+            New-File (Join-Path $root "a$d-$Planted\$Planted-$f.bin") $KiB64
+        }
+    }
+    $folders = @()
+    for ($k = 1; $k -le $denied; $k++) {
+        $folder = Join-Path $root ('b{0:D2}-{1}' -f $k, $Planted)
+        [void][System.IO.Directory]::CreateDirectory($folder)
+        Deny-Listing $folder
+        $folders += $folder
+    }
+    , $folders
+}
+
+function Format-Unreadable([int] $n) { "Files in $(Format-Count $n 'unreadable folder') are not included." }
+
+# The fit of MainWindow.xaml once a section is shown: the texts within their cap, the tabs at their minimum and the
+# 10 px to spare (the outcome's row is never under its 292 px minimum), and texts and tabs inside the panel with its
+# border and padding (26) and the tabs' margin (10), with nothing left between them and the panel's foot.
+function CheckFit($window) {
+    $texts = $window.OutcomeTexts
+    $tabs = $window.OutcomeTabs
+    $panel = $window.OutcomePanel
+    Check ($texts.actualHeight -le $TextsCap + 0.5) "the outcome's texts are within their $TextsCap px cap ($($texts.actualHeight) px shown of $($texts.extentHeight))"
+    CheckEqual $true $texts.inView "the outcome's texts are in view"
+    Check ($tabs.actualHeight -ge $TabsMinHeight + $FitSpare - 0.5) "the tabs have their $TabsMinHeight px minimum and the $FitSpare px to spare ($($tabs.actualHeight) px)"
+    $rest = $panel.actualHeight - 26 - $texts.actualHeight - 10 - $tabs.actualHeight
+    Check ([Math]::Abs($rest) -le 1) "texts, margin and tabs fill the panel, with no band left under the tabs ($([Math]::Round($rest, 2)) px left of $($panel.actualHeight))"
+}
+
+# A size-mode run (the window at its minimum, or maximized with FSA_HOOK_MAXIMIZE) through eng/read-window.ps1, with 26
+# drive buttons added; the report, or null when a check on the hook failed.
+function Invoke-Sized([string] $root, [hashtable] $variables = @{}) {
+    $all = @{ FSA_HOOK_DRIVES = "$ExtraDrives" } + $variables
+    $run = Invoke-WithHook 'size' $HookDll { Read-Window $root } $all
+    $before = $script:Failures.Count
+    CheckActed $run 'size'
+    if ($variables.ContainsKey('FSA_HOOK_MAXIMIZE')) { CheckMaximized $run.Log } else { CheckSized $run.Log }
+    CheckDrives $run.Log $ExtraDrives
+    if ($variables.ContainsKey('FSA_HOOK_STATUS')) { CheckStatusShown $run.Log }
+    if ($script:Failures.Count -gt $before) { return $null }
+    CheckEqual 'EXIT 0' $run.Result.Exit 'exit code'
+    Check ($null -ne $run.Result.Report) 'a report was written'
+    $run.Result
+}
+
+# S-001 (SL-065, design C-002): the outcome's default state with an unreadable folder, at the window's minimum size
+# with the reveal status line shown and 26 drive buttons added, the least room the window has. The largest files are
+# selected, with a full row of their list; the unreadable folders' tab is beside them with its count, not selected,
+# and their list is off screen; the headers take one row; and the fit holds with its 10 px to spare.
+function Test-S001 {
+    $case = New-CaseFolder
+    $denied = @()
+    try {
+        $root = Join-Path $case 'tree'
+        $denied = New-SectionsTree $root 1
+        $read = Invoke-Sized $root @{ FSA_HOOK_STATUS = $RevealStatusText }
+        if ($null -eq $read -or $null -eq $read.Report) { return }
+        $window = $read.Report.window
+        CheckEqual "Finished: $root" $window.OutcomeTitle 'OutcomeTitle'
+        CheckLargestFiles $read 100 $KiB64 "Top 100 of 104 files scanned. $(Format-Unreadable 1)"
+        CheckEqual $true $window.UnreadableTab.visible 'UnreadableTab is shown: one folder was unreadable'
+        CheckEqual 'Unreadable folders (1)' $window.UnreadableTab.header 'UnreadableTab.header'
+        CheckEqual $false $window.UnreadableTab.selected 'UnreadableTab is not selected: the window never selects it itself'
+        CheckEqual $true $window.UnreadableExpander.visible 'UnreadableExpander (the key kept for that tab) reads shown'
+        CheckBothLists $window $false $true
+        CheckFit $window
+    }
+    finally {
+        foreach ($folder in $denied) { Undo-DenyListing $folder }
+        Remove-CaseFolder $case
+    }
+}
+
+# S-002 (SL-065, design C-003): the unreadable folders' tab selected at the minimum size (the hook's expand mode), and
+# then selected and left again for the largest files (FSA_HOOK_BACK). The list of the tab that is not selected reads off
+# screen with no full row, though it keeps the height it was last laid out at, and the tabs keep their height whichever
+# is selected: only the selected section is laid out.
+function Test-S002 {
+    $case = New-CaseFolder
+    $denied = @()
+    try {
+        $root = Join-Path $case 'tree'
+        $denied = New-SectionsTree $root 3
+        $caption = "Top 100 of 104 files scanned. $(Format-Unreadable 3)"
+
+        Write-Output '  the unreadable folders selected'
+        $run = Invoke-WithHook 'expand' $HookDll { Read-Window $root } @{ FSA_HOOK_MINSIZE = '1'; FSA_HOOK_DRIVES = "$ExtraDrives" }
+        $before = $script:Failures.Count
+        CheckActed $run 'expand'
+        CheckSized $run.Log
+        CheckDrives $run.Log $ExtraDrives
+        if ($script:Failures.Count -eq $before -and $null -ne $run.Result.Report) {
+            $window = $run.Result.Report.window
+            CheckLargestFiles $run.Result 100 $KiB64 $caption $false
+            Check ($window.LargestFilesList.actualHeight -gt 0) "LargestFilesList keeps the height it was laid out at before its tab was left ($($window.LargestFilesList.actualHeight) px)"
+            CheckBothLists $window $true $true
+            CheckTabsKeptHeight $run.Log $window
+            CheckFit $window
+        }
+
+        Write-Output '  the unreadable folders selected, laid out, and left for the largest files'
+        $run = Invoke-WithHook 'expand' $HookDll { Read-Window $root } @{ FSA_HOOK_MINSIZE = '1'; FSA_HOOK_DRIVES = "$ExtraDrives"; FSA_HOOK_BACK = '1' }
+        $before = $script:Failures.Count
+        CheckActed $run 'expand'
+        CheckSized $run.Log
+        if ($script:Failures.Count -gt $before -or $null -eq $run.Result.Report) { return }
+        $shown = @($run.Log | Where-Object { $_.StartsWith('shown ') })
+        $height = if ($shown.Count -eq 1) { [double](Field $shown[0] 'unreadableHeight') } else { 0 }
+        Check ($height -gt 0 -and [int](Field $shown[0] 'unreadableRows') -ge 1) "the unreadable folders' list was on screen before the tab was left ($(Show ($shown -join ' | ')))"
+        Check (@($run.Log | Where-Object { $_.StartsWith('back selected=LargestFilesTab ') }).Count -eq 1) 'the hook selected the largest files again'
+        $window = $run.Result.Report.window
+        CheckLargestFiles $run.Result 100 $KiB64 $caption
+        CheckBothLists $window $false $true
+        Check ([Math]::Abs($window.UnreadableList.actualHeight - $height) -lt 0.01) "UnreadableList keeps the $height px it was laid out at, and still reads off screen ($($window.UnreadableList.actualHeight) px, inView $($window.UnreadableList.inView))"
+        CheckTabsKeptHeight $run.Log $window
+    }
+    finally {
+        foreach ($folder in $denied) { Undo-DenyListing $folder }
+        Remove-CaseFolder $case
+    }
+}
+
+# S-003 (SL-065, design C-004): a second scan started with the unreadable folders' tab selected (the hook's rescan mode,
+# FSA_HOOK_BEFORE), whose result has no unreadable folder, because the one the first scan met is gone
+# (FSA_HOOK_READABLE). The selection must leave that tab before it is hidden: the second ending shows the largest files
+# selected, their list refilled while its tab was not selected, and the unreadable folders' list is off screen.
+function Test-S003 {
+    $case = New-CaseFolder
+    $denied = @()
+    try {
+        $root = Join-Path $case 'tree'
+        $denied = New-SectionsTree $root 1
+        $run = Invoke-WithHook 'rescan' $HookDll { Read-Window $root } @{ FSA_HOOK_BEFORE = 'UnreadableTab'; FSA_HOOK_READABLE = $denied[0] }
+        $before = $script:Failures.Count
+        CheckActed $run 'rescan'
+        if ($script:Failures.Count -gt $before) { return }
+        $selected = @($run.Log | Where-Object { $_.StartsWith('before selected=') })
+        Check ($selected.Count -eq 1 -and (Field $selected[0] 'selected') -ceq 'UnreadableTab' -and [double](Field $selected[0] 'unreadableHeight') -gt 0) "the unreadable folders were selected and on screen as the second scan started ($(Show ($selected -join ' | ')))"
+        Check (@($run.Log | Where-Object { $_.StartsWith('readable deleted=') }).Count -eq 1) 'the hook deleted the unreadable folder before the second scan'
+        Check (@($run.Log | Where-Object { $_.StartsWith('ended ') }).Count -eq 1) "the hook held the report until the second scan's ending"
+        $read = $run.Result
+        CheckEqual 'EXIT 0' $read.Exit 'exit code'
+        Check ($null -ne $read.Report) 'a report was written'
+        if ($null -eq $read.Report) { return }
+        $window = $read.Report.window
+        CheckEqual 'Completed' $read.Report.core.status 'the report is of the second scan (core.status)'
+        CheckEqual "Finished: $root" $window.OutcomeTitle 'OutcomeTitle'
+        CheckLargestFiles $read 100 $KiB64 'Top 100 of 104 files scanned.'
+        CheckEqual $false $window.UnreadableTab.visible 'UnreadableTab is not shown: the second scan met no unreadable folder'
+        CheckEqual $false $window.UnreadableExpander.visible 'UnreadableExpander reads not shown'
+        CheckEqual $false $window.UnreadableExpander.expanded 'UnreadableExpander reads not expanded'
+        CheckEqual 'LargestFilesTab' $window.OutcomeTabs.selected 'OutcomeTabs.selected: the largest files, not the hidden tab'
+        CheckEqual $false $window.UnreadableList.inView 'UnreadableList is not on screen under the largest files'
+        CheckEqual 0 $window.UnreadableList.fullRows 'UnreadableList shows no row'
+        Check ($window.LargestFilesList.fullRows -ge 1) "LargestFilesList shows its new rows ($($window.LargestFilesList.fullRows) full, $($window.LargestFilesList.realizedRows) built)"
+    }
+    finally {
+        foreach ($folder in $denied) { Undo-DenyListing $folder }
+        Remove-CaseFolder $case
+    }
+}
+
+# S-004 (SL-065, design C-005): the largest files' tab hidden while the unreadable folders' is shown. No ending of the
+# app does that (both come with every scan that returned), so the hook's hide mode collapses it and calls the window's
+# EnsureSelectedTabIsVisible: it must select the unreadable folders, the first section still shown, and not the
+# collapsed tab a guard naming the largest files would.
+function Test-S004 {
+    $case = New-CaseFolder
+    $denied = @()
+    try {
+        $root = Join-Path $case 'tree'
+        $denied = New-SectionsTree $root 3
+        $run = Invoke-WithHook 'hide' $HookDll { Read-Window $root }
+        $before = $script:Failures.Count
+        CheckActed $run 'hide'
+        if ($script:Failures.Count -gt $before) { return }
+        $hidden = @($run.Log | Where-Object { $_.StartsWith('hidden ') })
+        Check ($hidden.Count -eq 1 -and (Field $hidden[0] 'selected') -ceq 'UnreadableTab' -and (Field $hidden[0] 'tabs') -ceq 'Visible') "the guard selected the unreadable folders and kept the tabs ($(Show ($hidden -join ' | ')))"
+        $read = $run.Result
+        CheckEqual 'EXIT 0' $read.Exit 'exit code'
+        Check ($null -ne $read.Report) 'a report was written'
+        if ($null -eq $read.Report) { return }
+        $window = $read.Report.window
+        CheckEqual $true $window.OutcomeTabs.visible 'OutcomeTabs is on screen'
+        CheckEqual 'UnreadableTab' $window.OutcomeTabs.selected 'OutcomeTabs.selected'
+        CheckEqual $false $window.LargestFilesTab.visible 'LargestFilesTab is hidden'
+        CheckEqual $false $window.LargestFilesTab.selected 'LargestFilesTab is not selected'
+        CheckEqual $true $window.UnreadableTab.selected 'UnreadableTab is selected'
+        CheckEqual $true $window.UnreadableExpander.expanded 'UnreadableExpander reads expanded'
+        CheckEqual $true $window.UnreadableList.inView 'UnreadableList is on screen'
+        Check ($window.UnreadableList.fullRows -ge 1) "UnreadableList shows a full row ($($window.UnreadableList.fullRows))"
+        CheckEqual $false $window.LargestFilesList.inView 'LargestFilesList is off screen with its tab'
+        CheckEqual 0 $window.LargestFilesList.fullRows 'LargestFilesList shows no row'
+        CheckEqual 1 $window.OutcomeTabs.stripRows 'OutcomeTabs.stripRows'
+    }
+    finally {
+        foreach ($folder in $denied) { Undo-DenyListing $folder }
+        Remove-CaseFolder $case
+    }
+}
+
+# S-005 (SL-065, design C-006): an ending with no section, Could not read, at the window's minimum size, with a missing
+# root of over 1,400 characters, so the title runs to about 27 lines. With no section the texts are not capped: they
+# take the whole panel and scroll inside it (before SL-065 they were laid out whole and cut off, 575 px in 378). A
+# short missing root's ending is as tall as its texts, with no blank band under them.
+function Test-S005 {
+    $case = New-CaseFolder
+    try {
+        $root = $case
+        foreach ($i in 1..8) { $root = Join-Path $root (('missing-{0}-' -f $i) + ('x' * 160)) }
+        Write-Output "  a missing root of $($root.Length) characters, at the window's minimum size"
+        $read = Invoke-Sized $root
+        if ($null -ne $read -and $null -ne $read.Report) {
+            $window = $read.Report.window
+            CheckEqual "Could not read $root" $window.OutcomeTitle 'OutcomeTitle'
+            CheckEqual $false $window.OutcomeTabs.visible 'OutcomeTabs is not on screen: no section'
+            CheckEqual $null $window.OutcomeTabs.selected 'OutcomeTabs.selected'
+            CheckEqual 0 $window.OutcomeTabs.stripRows 'OutcomeTabs.stripRows'
+            CheckEqual $false $window.LargestFilesTab.visible 'LargestFilesTab is hidden'
+            CheckEqual $false $window.UnreadableTab.visible 'UnreadableTab is hidden'
+            $texts = $window.OutcomeTexts
+            CheckEqual $true $texts.inView "the texts are in view ($($texts.actualHeight) px)"
+            Check ($texts.extentHeight -gt $texts.actualHeight) "the texts are taller than the panel and scroll inside it ($($texts.extentHeight) px in $($texts.actualHeight))"
+            Check ($texts.actualHeight -gt $TextsCap) "with no section the texts are not held to the $TextsCap px cap ($($texts.actualHeight) px)"
+            $rest = $window.OutcomePanel.actualHeight - 26 - $texts.actualHeight
+            Check ([Math]::Abs($rest) -le 1) "the texts take the whole panel ($($texts.actualHeight) of $($window.OutcomePanel.actualHeight) px)"
+        }
+
+        $short = Join-Path $case 'missing'
+        Write-Output '  a short missing root, at the default size'
+        $read = Read-Window $short
+        CheckEqual 'EXIT 0' $read.Exit 'exit code'
+        if ($null -eq $read.Report) { Check $false 'a report was written'; return }
+        $window = $read.Report.window
+        CheckEqual "Could not read $short" $window.OutcomeTitle 'OutcomeTitle'
+        CheckEqual $false $window.OutcomeTabs.visible 'OutcomeTabs is not on screen'
+        $texts = $window.OutcomeTexts
+        Check ([Math]::Abs($texts.extentHeight - $texts.actualHeight) -lt 0.5) "the texts are shown whole ($($texts.actualHeight) of $($texts.extentHeight) px)"
+        $rest = $window.OutcomePanel.actualHeight - 26 - $texts.actualHeight
+        Check ([Math]::Abs($rest) -le 1) "the panel is as tall as its texts, with no blank band under them ($($window.OutcomePanel.actualHeight) px for $($texts.actualHeight))"
+    }
+    finally { Remove-CaseFolder $case }
+}
+
+# S-006 (SL-065, design C-007): Validate #3's shape: texts far longer than the room above the sections, at the window's
+# minimum size with the reveal status line shown. A root of 140 characters makes the finished title wrap over several
+# lines: the texts scroll inside their cap, and never take the sections under their minimum.
+function Test-S006 {
+    $case = New-CaseFolder
+    $denied = @()
+    try {
+        $root = Join-Path $case ('long-root-' * 14)
+        $denied = New-SectionsTree $root 1
+        $read = Invoke-Sized $root @{ FSA_HOOK_STATUS = $RevealStatusText }
+        if ($null -eq $read -or $null -eq $read.Report) { return }
+        $window = $read.Report.window
+        CheckEqual "Finished: $root" $window.OutcomeTitle 'OutcomeTitle'
+        $texts = $window.OutcomeTexts
+        Check ($texts.extentHeight -gt $TextsCap + 40) "the texts run well past their cap ($($texts.extentHeight) px)"
+        Check ($texts.extentHeight -gt $texts.actualHeight) "they scroll inside it ($($texts.actualHeight) px shown)"
+        CheckLargestFiles $read 100 $KiB64 "Top 100 of 104 files scanned. $(Format-Unreadable 1)"
+        CheckBothLists $window $false $true
+        CheckFit $window
+    }
+    finally {
+        foreach ($folder in $denied) { Undo-DenyListing $folder }
+        Remove-CaseFolder $case
+    }
+}
+
+# S-007 (SL-065, design C-008 and C-009): 12,345 folders the scan cannot open, so the unreadable folders' header carries
+# a five-digit count, 'Unreadable folders (12,345)', at the window's minimum width: the headers must still take one row,
+# or every section loses a row's height. Then their tab selected: a list of 12,345 rows bounded by the tabs. The folders
+# are denied and given back with one icacls call each way.
+function Test-S007 {
+    $case = New-CaseFolder
+    $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $root = Join-Path $case 'tree'
+    $denied = $false
+    try {
+        [void](New-SectionsTree $root 0)
+        for ($k = 1; $k -le 12345; $k++) { [void][System.IO.Directory]::CreateDirectory((Join-Path $root ('u{0:D5}' -f $k))) }
+        $out = & icacls.exe (Join-Path $root 'u*') /deny "*${sid}:(RD)" 2>&1
+        $denied = $true
+        if ($LASTEXITCODE -ne 0) { throw "icacls /deny on $root\u* exited ${LASTEXITCODE}: $out" }
+        $caption = "Top 100 of 104 files scanned. $(Format-Unreadable 12345)"
+
+        Write-Output "  the default state, at the window's minimum size"
+        $read = Invoke-Sized $root
+        if ($null -ne $read -and $null -ne $read.Report) {
+            $window = $read.Report.window
+            CheckEqual 'Unreadable folders (12,345)' $window.UnreadableTab.header 'UnreadableTab.header'
+            CheckLargestFiles $read 100 $KiB64 $caption
+            CheckEqual 1 $window.OutcomeTabs.stripRows 'the headers take one row at the minimum width (OutcomeTabs.stripRows)'
+            CheckEqual $true $window.UnreadableTab.inView "UnreadableTab's header is inside the window"
+            CheckBothLists $window $false $true
+            CheckFit $window
+        }
+
+        Write-Output "  the unreadable folders selected, at the window's minimum size"
+        $run = Invoke-WithHook 'expand' $HookDll { Read-Window $root } @{ FSA_HOOK_MINSIZE = '1'; FSA_HOOK_DRIVES = "$ExtraDrives" }
+        $before = $script:Failures.Count
+        CheckActed $run 'expand'
+        CheckSized $run.Log
+        if ($script:Failures.Count -gt $before -or $null -eq $run.Result.Report) { return }
+        $window = $run.Result.Report.window
+        CheckLargestFiles $run.Result 100 $KiB64 $caption $false
+        CheckEqual 1 $window.OutcomeTabs.stripRows 'the headers still take one row with the unreadable folders selected'
+        CheckBothLists $window $true $true
+        CheckTabsKeptHeight $run.Log $window
+    }
+    finally {
+        if ($denied) { & icacls.exe (Join-Path $root 'u*') /remove:d "*$sid" 2>&1 | Out-Null }
+        Remove-CaseFolder $case
+    }
+}
+
+# S-008 (SL-065, design C-009 and C-010): the lists at the window's minimum size and maximized. B-007's tree, whose
+# largest files are 100 rows, far more than the tabs hold: each list stays within the tabs' height and builds only a
+# screenful of rows. Stopped, the outcome has 3 of every 4 px left below the pickers, so maximized the tabs get the
+# extra height, with no band left under them by the texts' cap; completed, the folder tree has most of it and the
+# outcome keeps its minimum, maximized too.
+function Test-S008 {
+    $case = New-CaseFolder
+    $denied = @()
+    try {
+        $root = Join-Path $case 'tree'
+        $denied = New-TopsTree $root
+
+        Write-Output "  Cancelled, at the window's minimum size"
+        Invoke-StoppedEnding $case $root $false $true $ExtraDrives
+        $floor = $script:StoppedReport
+        if ($null -ne $floor) { CheckFit $floor.window }
+
+        Write-Output '  Cancelled, maximized'
+        Invoke-StoppedEnding $case $root $false $false $ExtraDrives $null $true
+        $max = $script:StoppedReport
+        if ($null -ne $max) {
+            CheckFit $max.window
+            if ($null -ne $floor) {
+                Check ($max.window.OutcomeTabs.actualHeight -gt $floor.window.OutcomeTabs.actualHeight + 100) "maximized, the tabs get the extra height ($($max.window.OutcomeTabs.actualHeight) px, against $($floor.window.OutcomeTabs.actualHeight) at the minimum size)"
+                Check ($max.window.LargestFilesList.fullRows -gt $floor.window.LargestFilesList.fullRows) "and the largest files show more full rows ($($max.window.LargestFilesList.fullRows), against $($floor.window.LargestFilesList.fullRows))"
+            }
+        }
+
+        Write-Output '  Cancelled, the unreadable folders selected, maximized'
+        Invoke-StoppedEnding $case $root $true $false $ExtraDrives $null $true
+        if ($null -ne $script:StoppedReport) { CheckFit $script:StoppedReport.window }
+
+        Write-Output '  Completed, maximized'
+        $read = Invoke-Sized $root @{ FSA_HOOK_MAXIMIZE = '1' }
+        if ($null -ne $read -and $null -ne $read.Report) {
+            CheckEqual "Finished: $root" $read.Report.window.OutcomeTitle 'OutcomeTitle'
+            CheckLargestFiles $read 100 $KiB64 "Top 100 of 104 files scanned. $(Format-Unreadable 12)"
+            CheckBothLists $read.Report.window $false $true
+            CheckFit $read.Report.window
+        }
+    }
+    finally {
+        foreach ($folder in $denied) { Undo-DenyListing $folder }
+        Remove-CaseFolder $case
+    }
+}
+
+# S-009 (SL-065, design C-011): a second scan that refills the unreadable folders' list while their tab is not selected,
+# and was never selected: the list is out of the visual tree and has never been laid out. The first scan meets two
+# unreadable folders; one is deleted before the second (FSA_HOOK_READABLE), and the tab is selected only once the second
+# ending is on screen (FSA_HOOK_AFTER). The report reads the refilled lists without failing, and the tab shows the
+# second scan's one folder, not the first scan's two.
+function Test-S009 {
+    $case = New-CaseFolder
+    $denied = @()
+    try {
+        $root = Join-Path $case 'tree'
+        $denied = New-SectionsTree $root 2
+        $run = Invoke-WithHook 'rescan' $HookDll { Read-Window $root } @{ FSA_HOOK_READABLE = $denied[1]; FSA_HOOK_AFTER = 'UnreadableTab' }
+        $before = $script:Failures.Count
+        CheckActed $run 'rescan'
+        if ($script:Failures.Count -gt $before) { return }
+        Check (@($run.Log | Where-Object { $_.StartsWith('before ') }).Count -eq 0) 'the unreadable folders were not selected before the second scan'
+        $after = @($run.Log | Where-Object { $_.StartsWith('after selected=') })
+        Check ($after.Count -eq 1 -and (Field $after[0] 'selected') -ceq 'UnreadableTab' -and (Field $after[0] 'unreadableRows') -eq '1') "after the second ending the tab shows its one row ($(Show ($after -join ' | ')))"
+        $read = $run.Result
+        CheckEqual 'EXIT 0' $read.Exit 'exit code (70 would be a throw reading a list out of the visual tree)'
+        Check ($null -ne $read.Report) 'a report was written'
+        if ($null -eq $read.Report) { return }
+        $window = $read.Report.window
+        CheckEqual 'Completed' $read.Report.core.status 'the report is of the second scan (core.status)'
+        CheckLargestFiles $read 100 $KiB64 "Top 100 of 104 files scanned. $(Format-Unreadable 1)" $false
+        CheckEqual 'Unreadable folders (1)' $window.UnreadableTab.header 'UnreadableTab.header: the second scan''s count'
+        CheckEqual 'UnreadableTab' $window.OutcomeTabs.selected 'OutcomeTabs.selected'
+        CheckEqual $true $window.UnreadableList.inView 'UnreadableList is on screen'
+        CheckEqual 1 $window.UnreadableList.fullRows 'UnreadableList shows the one row of the second scan, not the two of the first'
+        CheckEqual 0 $window.LargestFilesList.fullRows 'LargestFilesList, refilled and now off screen, shows no row'
+    }
+    finally {
+        foreach ($folder in $denied) { Undo-DenyListing $folder }
+        Remove-CaseFolder $case
+    }
+}
+
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003', 'R-001') + $NetworkCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003', 'R-001', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009') + $NetworkCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })

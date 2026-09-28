@@ -211,11 +211,12 @@ public partial class MainWindow : Window
         _scanGeneration++;
         _result = null; // let the previous scan's store be collected
         LastResult = null;
-        UnreadableList.ItemsSource = null;
         RevealStatus.Text = string.Empty;
         RevealStatus.Visibility = Visibility.Collapsed;
         LastRevealOutcome = null;
+        HideUnreadable();
         HideLargestFiles(); // the last scan's list is never shown as this one's
+        EnsureSelectedTabIsVisible(); // none is: the next ending opens on its own first section
         AwaitKinds(); // nor its kinds
         OutcomePanel.Visibility = Visibility.Collapsed;
         ClearFolderTree(); // and its store with it, before this scan builds another
@@ -490,7 +491,7 @@ public partial class MainWindow : Window
 
         if (result.Unreadable.Count > 0)
         {
-            UnreadableExpander.Header = $"{result.Unreadable.Count:N0} folders could not be read";
+            UnreadableTab.Header = $"Unreadable folders ({result.Unreadable.Count:N0})";
             UnreadableList.ItemsSource = result.Unreadable
                 .Select(u =>
                 {
@@ -498,16 +499,16 @@ public partial class MainWindow : Window
                     return new UnreadableRow(path, $"{path}  ({Win32Message(u.Win32Error)})");
                 })
                 .ToList();
-            UnreadableExpander.IsExpanded = false;
-            UnreadableExpander.Visibility = Visibility.Visible;
+            UnreadableTab.Visibility = Visibility.Visible;
         }
         else
         {
-            UnreadableExpander.Visibility = Visibility.Collapsed;
+            HideUnreadable();
         }
 
         // Last, so that a failure here cannot take away what is already filled in above.
         ShowLargestFiles(result);
+        EnsureSelectedTabIsVisible(); // every section of this ending is in: its first is selected
         if (finished)
             ShowFolderTree(result); // a stopped scan keeps its list: a share would be of an incomplete whole
         ShowKinds(result); // after the tree, which a failure here cannot take away; a stopped scan's kinds too
@@ -554,6 +555,8 @@ public partial class MainWindow : Window
             caption += $" Files in {Count(result.Unreadable.Count, "unreadable folder")} are not included.";
         LargestFilesCaption.Text = caption;
 
+        // Its tab may not be the selected one, so the list may be out of the visual tree, never laid out: nothing here
+        // reads its layout, and it builds its rows when its tab is next selected.
         LargestFilesList.ItemsSource = top
             .Select(f => new LargestFileRow(f.ChargedOnDisk, FormatSize(f.ChargedOnDisk), FormatSize(f.ChargedSize), f.Path))
             .ToList();
@@ -561,20 +564,51 @@ public partial class MainWindow : Window
         LargestFilesHeadings.Visibility = rows;
         LargestFilesList.Visibility = rows;
         LargestFilesPanel.Visibility = Visibility.Visible;
+        LargestFilesTab.Visibility = Visibility.Visible;
     }
-
-    // The outcome's texts row takes their natural height at most, so the lists get the rest (MainWindow.xaml).
-    // Set once the texts are laid out, and never under the row's MinHeight: before that their height is 0.
-    private void OnOutcomeTextsSizeChanged(object sender, SizeChangedEventArgs e) =>
-        OutcomeTextsRow.MaxHeight = Math.Max(e.NewSize.Height, OutcomeTextsRow.MinHeight);
 
     private void HideLargestFiles()
     {
+        HideSection(LargestFilesTab);
         LargestFilesPanel.Visibility = Visibility.Collapsed;
-        LargestFilesList.Visibility = Visibility.Collapsed; // its own row, below the heading's
+        LargestFilesList.Visibility = Visibility.Collapsed;
         LargestFilesList.ItemsSource = null;
         LargestFilesCaption.Text = "";
         LargestFilesMs = null;
+    }
+
+    private void HideUnreadable()
+    {
+        HideSection(UnreadableTab);
+        UnreadableList.ItemsSource = null;
+    }
+
+    // ---- The outcome's sections (SL-065) ----
+
+    // A section goes: the selection first, if it is on it, and then the tab, because a tab collapsed while it is selected
+    // keeps its content on screen under no header. EnsureSelectedTabIsVisible, once every section of the change is set,
+    // selects another.
+    private void HideSection(TabItem section)
+    {
+        if (ReferenceEquals(OutcomeTabs.SelectedItem, section))
+            OutcomeTabs.SelectedItem = null;
+        section.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Puts the selection on a section that is on screen, and shows the sections only while there is one: the selected
+    /// section if it still is, or else the first shown, in the order of OutcomeTabs; with none, no selection and no tabs,
+    /// so the outcome's texts take the whole panel (MainWindow.xaml). Called once a change has set every section's
+    /// visibility: at a scan's start, where none is left, and at each ending, which so opens on its first section and
+    /// never on the unreadable folders while the largest files are shown. It names no section, so a section added
+    /// later calls it after its own visibility changes and adds nothing here.
+    /// </summary>
+    internal void EnsureSelectedTabIsVisible()
+    {
+        TabItem? first = OutcomeTabs.Items.OfType<TabItem>().FirstOrDefault(tab => tab.Visibility == Visibility.Visible);
+        if (OutcomeTabs.SelectedItem is not TabItem { Visibility: Visibility.Visible })
+            OutcomeTabs.SelectedItem = first;
+        OutcomeTabs.Visibility = first is null ? Visibility.Collapsed : Visibility.Visible;
     }
 
     // ---- The files by kind (SL-046) ----
@@ -650,8 +684,9 @@ public partial class MainWindow : Window
         OutcomeTitle.Text = title;
         OutcomeDetail.Text = why;
         OutcomeNotes.Visibility = Visibility.Collapsed;
-        UnreadableExpander.Visibility = Visibility.Collapsed;
+        HideUnreadable();
         HideLargestFiles();
+        EnsureSelectedTabIsVisible(); // no section: the texts take the whole panel
         HideKinds();
         OutcomePanel.Visibility = Visibility.Visible;
         EndingShown?.Invoke(this, EventArgs.Empty);

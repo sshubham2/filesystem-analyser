@@ -802,3 +802,20 @@ rules:
       there without that work would be inert or wrong.'
     except_files:
     - src/FsAnalyser.App/TopLevelRowText.cs
+
+  # settled by SL-065
+  - name: no list or tree is placed directly inside a ScrollViewer in the main window
+    files: src/FsAnalyser.App/MainWindow.xaml
+    must_not_match:
+    - '(?s)<ScrollViewer\b(?:"[^"]*"|''[^'']*''|[^>"''])*(?<!/)>(?:\s|<!--(?:(?!-->).)*-->|<ScrollViewer\.(\w+)\b[^>]*>(?:(?!</ScrollViewer\.\1>).)*</ScrollViewer\.\1>)*<(ListView|TreeView|ListBox|DataGrid)\b'
+    because: A ScrollViewer measures its child with infinite height, which turns off virtualization.
+      Spike 1 measured a ScrollViewer-hosted list realizing 100,001 containers, with a 229.7
+      s expand and about 2 GB. Sections belong in a TabItem or a star row with a finite height.
+      The pattern is deliberately narrow (direct child only) so it cannot fire on OutcomeTexts,
+      which holds only TextBlocks. Between the two tags it skips whitespace, comments and ScrollViewer
+      property elements (OutcomeTexts' own ScrollViewer.Style shape), reads quoted attribute values
+      whole so a '>' inside one does not end the tag, and ignores a self-closing ScrollViewer. A
+      skipped comment or property element ends at its own first closing tag and never runs on to
+      a later one, so a commented ScrollViewer that holds no list stays quiet (plant row S13). It
+      is multi-line, so plant rows S09-S12 prove the harness matches across newlines. If it matches
+      per line, the rule can never fail and must be rewritten or dropped.

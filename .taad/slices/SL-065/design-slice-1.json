@@ -1,0 +1,339 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-065",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-28T00:31:37.927Z",
+ "head": "e2774dfb1e53465d62282cbe9ac15b0aa8cc38ef",
+ "run_id": 1732,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "One proposal, taken as its core (tabs, not a scroll host), and selected against what was measured.\n\n1. Spike 1 measured a ScrollViewer host realizing 100,001 containers (tree expand 229.7 s, about 2 GB) unless every list has a fixed Height. Fixed heights are the per-section arithmetic this slice exists to delete. A TabControl kept virtualization with no per-section height (76 tree / 37 list containers, 165.6 ms worst case). Spike 2 showed a scroll host needs new viewport/extent/offset report keys before a test can tell reachable from clipped. Tabs need none.\n2. The build check found the minimum already decided (MinWidth 560 / MinHeight 644, committed and derived in a comment) and the Validate #3 clipping unreachable. Both are cut from this slice. What remains is only restructuring the outcome panel so a new section changes no RowDefinition and no MinHeight. The proposal's smallest change does that: two rows, one TabControl, and the lists reused with their x:Names.\n3. The proposal's own over_engineering_flag is against the popular answers, not against itself. I honoured it by declining a keep-alive TabControl subclass, scroll-viewport report keys, a splitter, and a lower floor.\n\nThree corrections to the proposal, made against reality:\n- It deleted every trigger and capped the texts with a fixed MaxHeight. When no tab is visible (scan running, cancelled, failed, empty), that cap leaves blank space under a long note that used to get the whole panel. I keep exactly one trigger, keyed to whether any tab is visible and independent of how many sections exist.\n- Its selection guard named LargestFilesTab. If that tab is hidden while another is visible, \"select Largest files\" selects a collapsed tab. I made it a generic \"first visible tab\" helper, so adding a section adds no guard code.\n- Two stages label the 292/84 MinHeights differently (build check: the two lists' minimums; spike 2 and the proposal: outer outcome and results rows). The sum, 376 of 396 px below the pickers, agrees. The designer could not open the file, so the build must read the real values and write the headroom into the comment.",
+  "components": [
+   {
+    "name": "OutcomePanel Grid, restructured",
+    "responsibility": "Inside OutcomePanel (MainWindow.xaml:174-349) reduce the four trigger-driven rows to two. Row 0 is Auto and holds the existing OutcomeTexts ScrollViewer, with MaxHeight equal to what its trigger gives it today while lists show. Row 1 is * and holds OutcomeTabs. Delete the per-section RowDefinition DataTriggers/MultiDataTriggers, the largest-files heading TextBlock, the UnreadableExpander, and both lists' own MinHeights. Keep ONE trigger keyed to OutcomeTabs.Visibility. While the tabs are collapsed, row 0 becomes * with no MaxHeight and row 1 becomes Auto, so the texts get the whole panel as they do today when no list shows. That trigger does not depend on section count.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml",
+    "key_interactions": "The outer rows' MinHeights (recorded as 292 and 84, sum 376 of the 396 px below the pickers) and Window MinWidth 560 / MinHeight 644 (line 5) are unchanged. The build re-reads the real values, because two stages disagree on which row carries which. The invariant to write into the comment and check in B-007 is: text cap + tab strip + one list minimum <= the outcome row's usable height at 560x644, with the pixel headroom stated."
+   },
+   {
+    "name": "OutcomeTabs (TabControl) with LargestFilesTab and UnreadableTab",
+    "responsibility": "Show one analysis section at a time in a bounded content area. LargestFilesTab: Header 'Largest files', Content = the existing LargestFilesList (same x:Name, ItemsSource, template). UnreadableTab: header set from code as 'Unreadable folders (N)', Content = the existing UnreadableList. If the old Expander header carried anything besides the count (for example the coverage gap), that text goes in the tab content as an Auto row above the list inside a two-row Grid, not in the header. OutcomeTabs.MinHeight = one tab-strip height + the largest-files list's current minimum. OutcomeTabs is visible when any TabItem is visible.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml",
+    "key_interactions": "Sits in a star row, so the selected tab's content gets a finite height and virtualization holds (spike 1). Named elements in tab content stay in the Window's namescope, so code-behind can set ItemsSource while a tab is unselected. The build must check that any code reading a list's ActualHeight or container generator tolerates a detached, never-realized list."
+   },
+   {
+    "name": "Tab selection guard (code-behind)",
+    "responsibility": "One helper, EnsureSelectedTabIsVisible(): if OutcomeTabs.SelectedItem is not a visible TabItem, select the first visible TabItem. If none is visible, collapse OutcomeTabs. Called after every place that changes a tab's visibility, and at scan start (which selects the first visible tab, normally Largest files). It replaces the Expander handling in place: set UnreadableTab.Header to 'Unreadable folders (N)'; N==0 collapses the tab only after the selection has moved off it. The unreadable tab is never selected automatically. Delete Expanded/Collapsed handlers that only drove row math.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "key_interactions": "Avoids the WPF trap where a TabItem collapsed while selected keeps showing its content. Generic by design, so the largest-folders and by-extension slices add a TabItem and a visibility condition and no guard code."
+   },
+   {
+    "name": "WindowReport tab keys (schema 1, additive)",
+    "responsibility": "Add OutcomeTabs {visible, selected (x:Name of the selected TabItem), actualHeight, stripRows}, where stripRows = round(first TabPanel descendant's height / tallest TabItem height). Add LargestFilesTab and UnreadableTab {visible, selected, inView, actualHeight}. LargestFilesList and UnreadableList keep names and meaning. A list in an unselected tab must read inView=false and fullRows=0 without throwing, driven by IsVisible / visual-tree membership and never by a stale ActualHeight. UnreadableExpander stays emitted as an alias: visible/actualHeight/inView from UnreadableTab, expanded = UnreadableTab.IsSelected. It must still be emitted when the tab is collapsed. No scroll viewport/extent/offset keys, because there is no scroll host.",
+    "lives_at": "src/FsAnalyser.App/WindowReport.cs",
+    "key_interactions": "Read by eng/read-window.ps1 and tests/window/WindowCases.ps1. Schema 1 allows added keys and forbids renaming or redefining. This makes spike 2's untested clause ('a tab that is not selected is reported as not currently shown') testable."
+   },
+   {
+    "name": "Window cases repointed and extended",
+    "responsibility": "Grep tests/window (WindowCases.ps1, FsaWindowHook) and eng/read-window.ps1 for every deleted x:Name (UnreadableExpander, the largest-files heading) and repoint each use. Whatever B-007/B-008 use to open the Expander now selects UnreadableTab. Add the tab assertions from the contracts. C-001 asserts UnreadableTab.visible=false and LargestFilesTab.selected=true with no unreadable folders.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "Needs an interactive window station. The build-check sandbox hung on every case, including trivial C-001, and spike runs had one. A TIMEOUT on all cases is reported as 'not run', never pass or fail. Validate must run these cases on a session that can show a window."
+   },
+   {
+    "name": "Layout contract comment and structural rule",
+    "responsibility": "Replace the derivation at MainWindow.xaml:143-172. It states: (a) the fit at 560x644 is text cap + strip + one list minimum, with the actual headroom in px; (b) the rule for adding a section, from the contracts; (c) the tab strip must stay one row at MinWidth 560, checked by stripRows; (d) why there is no ScrollViewer around a list, citing the spike numbers. Add the architecture rule below to the project's rule twin files, plus a plant row proving it fires on a multi-line ScrollViewer-wraps-ListView snippet.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml",
+    "key_interactions": "Later slices are handed constraints and architecture, not this design. The comment and the rule are the only places the 'one section = one TabItem' contract survives. Rules live in the existing twin files checked by eng/rules-parity.ps1, with plant rows under eng/rules-harness."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "OutcomePanel layout",
+    "kind": "ui",
+    "notes": "Top to bottom: OutcomeTexts (title, detail, notes; scrolls its own text; capped while tabs are visible; takes the whole panel when no tab is visible), then OutcomeTabs [Largest files | Unreadable folders (N)]. The first visible tab is selected by default and again at every scan start. The unreadable tab exists only when N>0. Ctrl+Tab and arrow keys are built into TabControl. Only one section is on screen at a time; a tab's scroll offset may reset on switch (accepted).",
+    "error_cases": "A tab collapsed while selected keeps showing its content, so the guard moves selection first. A strip wider than the panel wraps into a second row and steals about 22 px from every tab, so stripRows must be 1. A tab list wrapped in an Auto row, StackPanel or ScrollViewer gets infinite height and realizes every row."
+   },
+   {
+    "name": "Rule for adding an analysis section (largest folders, by-extension)",
+    "kind": "ui",
+    "notes": "One new section = one TabItem in OutcomeTabs. Its Content is the virtualized ListView/TreeView itself, or a Grid with Auto rows for captions and one * row for the list. Add no RowDefinition, MinHeight, DataTrigger, ScrollViewer, StackPanel or Auto-height row around the list. Headers are about two words, and only the unreadable tab carries a count. Visibility comes from the section's own condition, and EnsureSelectedTabIsVisible() is called after it changes. The window floor and OutcomeTabs.MinHeight do not change when a tab is added. The section adds report keys for its TabItem and list, in the existing flat named style.",
+    "error_cases": "Spike 1 measured 100,001 containers, 229.7 s and about 2 GB for a list under an unbounded host. A fourth header that wraps the strip fails stripRows==1."
+   },
+   {
+    "name": "--report schema 1: tab keys + UnreadableExpander alias",
+    "kind": "cli",
+    "auth_model": "none; a local JSON file written by the exe, read through eng/read-window.ps1",
+    "notes": "Added: OutcomeTabs{visible,selected,actualHeight,stripRows}, LargestFilesTab{visible,selected,inView,actualHeight}, UnreadableTab{visible,selected,inView,actualHeight}. Unchanged: LargestFilesList, UnreadableList. UnreadableExpander is an alias of UnreadableTab with expanded == selected. No existing key is renamed or removed.",
+    "error_cases": "An element outside the visual tree (a list in an unselected tab) reads inView=false and fullRows=0 even if ActualHeight still holds an old value. Every key whose element was deleted keeps being emitted as an alias or is audited, and none vanishes silently."
+   },
+   {
+    "name": "Window cases B-007 / B-008 / C-001",
+    "kind": "cli",
+    "notes": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case B-007 (then B-008, C-001), on an interactive desktop. At 560x644 with at least 1 unreadable folder: LargestFilesTab.selected=true, LargestFilesList.inView=true with fullRows at or above what SL-040/047 guaranteed, UnreadableTab.visible=true and selected=false, UnreadableList.inView=false, UnreadableExpander.expanded=false, OutcomeTabs.stripRows=1. After the unreadable tab is selected: UnreadableList.inView=true with fullRows>=1, LargestFilesList.inView=false, and OutcomeTabs.actualHeight unchanged. Both lists' actualHeight <= OutcomeTabs.actualHeight. The same assertions hold maximized. C-001: UnreadableTab.visible=false, UnreadableExpander.visible=false, LargestFilesTab.selected=true.",
+    "error_cases": "TIMEOUT on every case, including C-001, means no interactive window station (measured in the build-check sandbox). Report 'not run', not pass and not fail."
+   },
+   {
+    "name": "EnsureSelectedTabIsVisible / unreadable tab state update",
+    "kind": "function",
+    "notes": "Set UnreadableTab.Header to 'Unreadable folders (N)' wherever the Expander header was set. If N==0, call the helper first and collapse the tab after. If N>0, make it visible. At scan start, select the first visible tab. If no tab is visible, collapse OutcomeTabs so the texts row takes the panel.",
+    "error_cases": "Collapsing before moving the selection leaves the unreadable list on screen under a hidden header. Selecting a specific tab by name when it is collapsed selects an invisible tab."
+   }
+  ],
+  "architecture_rules": [
+   {
+    "name": "no list or tree is placed directly inside a ScrollViewer in the main window",
+    "files": "src/FsAnalyser.App/MainWindow.xaml",
+    "must_not_import": [],
+    "must_not_match": [
+     "(?s)<ScrollViewer\\b[^>]*>\\s*<(ListView|TreeView|ListBox|DataGrid)\\b"
+    ],
+    "because": "A ScrollViewer measures its child with infinite height, which turns off virtualization. Spike 1 measured a ScrollViewer-hosted list realizing 100,001 containers, with a 229.7 s expand and about 2 GB. Sections belong in a TabItem or a star row with a finite height. The pattern is deliberately narrow (direct child only) so it cannot fire on OutcomeTexts, which holds only TextBlocks. It is multi-line, so the build must add a plant row proving the harness matches across newlines. If it matches per line, the rule can never fail and must be rewritten or dropped."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "show the outcome panel after a scan",
+    "shape": "no unreadable folders (N=0)",
+    "why": "The unreadable tab is collapsed and Largest files selected (C-001). The UnreadableExpander alias must still be emitted with visible=false, or WindowCases/read-window.ps1 lose a key."
+   },
+   {
+    "behaviour": "show the outcome panel after a scan",
+    "shape": "at least 1 unreadable folder, default state at the 560x644 floor",
+    "why": "Largest files is selected. The unreadable tab is visible with its count, and UnreadableList reads inView=false. stripRows must be 1 and the fit inequality (text cap + strip + list min) must hold with headroom (B-007)."
+   },
+   {
+    "behaviour": "switch to the unreadable section",
+    "shape": "select UnreadableTab, then back to Largest files",
+    "why": "This is spike 2's untested clause. The list of the unselected tab must read inView=false and fullRows=0 even though it has a stale ActualHeight. OutcomeTabs.actualHeight must be identical in both states, or the unselected tab is still contributing to the layout."
+   },
+   {
+    "behaviour": "start a new scan",
+    "shape": "UnreadableTab is selected when the scan starts, and the new result has N=0",
+    "why": "A tab collapsed while selected keeps showing its content. Selection must move before the collapse, and the unreadable list must not stay on screen under a hidden header."
+   },
+   {
+    "behaviour": "choose the selected tab",
+    "shape": "Largest files tab hidden while Unreadable tab is visible (for example a tree with no listed files but one denied folder, if that state is reachable)",
+    "why": "A guard hard-wired to 'select Largest files' would select a collapsed tab. The build reads the largest-files visibility condition to decide reachability. If unreachable, the hook still drives the first-visible-tab branch."
+   },
+   {
+    "behaviour": "show outcome text with no lists",
+    "shape": "no tab visible (scan running, cancelled or failed) and a long notes block",
+    "why": "A permanent text cap would leave blank space below a long message. The single visibility-keyed trigger must give the texts the whole panel, and the ScrollViewer must scroll inside it."
+   },
+   {
+    "behaviour": "show outcome text above the tabs",
+    "shape": "long detail/notes wrapping to many lines at width 560 while tabs are visible (the original Validate #3 shape)",
+    "why": "The text must scroll inside its cap and never squeeze row 1 below the tab strip + list minimum. This is the clipping the slice exists to prevent."
+   },
+   {
+    "behaviour": "lay out the tab strip",
+    "shape": "unreadable count with 5+ digits ('Unreadable folders (12,345)') at MinWidth 560",
+    "why": "A wrapped strip takes about 22 px from every tab's content and makes rows jump. stripRows must stay 1. This is the width edge for the next sections' headers."
+   },
+   {
+    "behaviour": "list rows inside a tab",
+    "shape": "list with far more rows than the content area holds, at 560x644 and maximized at 1920x1080",
+    "why": "The list's actualHeight must be <= OutcomeTabs.actualHeight, which is an observable proxy for a bounded measure and so for virtualization. Spike 1 used a stand-in host and synthetic nodes, so this checks the real layout with the texts row above."
+   },
+   {
+    "behaviour": "resize the window",
+    "shape": "maximized at 1920x1080",
+    "why": "The same assertions as at the floor. There must be no dead band from the text cap, and the star row must give the extra height to the selected tab."
+   },
+   {
+    "behaviour": "load results into a list",
+    "shape": "rescan replaces ItemsSource while that list's tab is unselected (list detached, possibly never realized)",
+    "why": "Report and code-behind reads of ActualHeight, fullRows or the container generator must not throw on a detached list. Selecting the tab later must show the new rows, not stale ones."
+   },
+   {
+    "behaviour": "add a third section later",
+    "shape": "a third TabItem added by the next slice",
+    "why": "The point of the slice is that this changes no RowDefinition or MinHeight. Enforced by the contract comment and the ScrollViewer rule. The slice that adds the section owns the fixture, so no fixture is built here.",
+    "material": false
+   },
+   {
+    "behaviour": "switch tabs by keyboard",
+    "shape": "Ctrl+Tab / arrow keys",
+    "why": "Built-in TabControl behaviour, with no project code branching on it.",
+    "material": false
+   },
+   {
+    "behaviour": "layout at other DPI or text scaling",
+    "shape": "125%/150% display scaling",
+    "why": "WPF lays out in device-independent pixels, and the single user's PC is at 100% (measured 1920x1080 at 100% DPI). Not worth a case here, and the next slice can disagree.",
+    "material": false
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Host the analysis sections in a TabControl inside a star row. No ScrollViewer around the panel and no per-list fixed heights.",
+    "reversibility": "expensive",
+    "rationale": "Spike 1 measured a ScrollViewer host realizing all 100,000 rows (229.7 s, about 2 GB) unless every list has a finite Height, which is the per-section arithmetic this slice removes. The TabControl kept virtualization with no per-section height (76/37 containers, 165.6 ms). Spike 2 showed a scroll host needs new viewport/extent/offset report keys, and tabs do not. Expensive to reverse because the next two sections, the report keys and the window cases are built on it."
+   },
+   {
+    "decision": "One section = one TabItem whose content is the list itself. Nothing in the panel's height math depends on how many sections exist. The rule is written in the XAML comment and enforced by the ScrollViewer rule.",
+    "reversibility": "expensive",
+    "rationale": "This is the contract the largest-folders and by-extension slices inherit. Later slices are not handed this design, so it must live in the file and in a failing rule."
+   },
+   {
+    "decision": "OutcomeTexts stays above the tabs, always visible, capped by MaxHeight only while tabs are visible. One trigger keyed to OutcomeTabs.Visibility gives it the whole panel when no tab is visible.",
+    "reversibility": "cheap",
+    "rationale": "Corrects the proposal. Deleting all triggers and keeping a fixed cap would leave blank space under long notes when no list shows. The scan result text must be readable whichever section is selected, and one trigger does not scale with section count."
+   },
+   {
+    "decision": "Keep Window MinWidth=560 / MinHeight=644. Only the derivation comment is rewritten, and it now states the headroom in px.",
+    "reversibility": "cheap",
+    "rationale": "The survey measured the minimum as explicitly decided and cut it from this slice. Tabs turn the 0.3 px margin into real headroom, roughly the old unreadable section's minimum minus one strip height. Lowering the floor would move the B-007/B-008 fixtures and is not needed."
+   },
+   {
+    "decision": "Selection is managed by one generic EnsureSelectedTabIsVisible() helper (select the first visible tab, else collapse OutcomeTabs). The unreadable tab is hidden at N=0 and never auto-selected.",
+    "reversibility": "cheap",
+    "rationale": "Avoids the collapsed-but-selected trap without per-tab code. Hiding at zero matches today's Expander behaviour, so C-001 still holds. The header count and outcome text already announce unreadable folders."
+   },
+   {
+    "decision": "Add tab keys to --report schema 1 and keep UnreadableExpander as an alias (expanded == UnreadableTab selected). No scroll keys.",
+    "reversibility": "expensive",
+    "rationale": "Schema 1 allows added keys but not renames, and WindowCases.ps1 / read-window.ps1 read UnreadableExpander. The alias keeps its meaning, the new keys make spike 2's untested tab clause testable, and nothing is added for a scroll host that does not exist."
+   },
+   {
+    "decision": "Report OutcomeTabs.stripRows and assert it equals 1 at MinWidth 560.",
+    "reversibility": "cheap",
+    "rationale": "With sections as tabs, the strip wrapping is the one thing that can silently break the fit as headers are added. One integer turns it into a failing case."
+   },
+   {
+    "decision": "Accept TabControl's default of detaching the unselected tab's visual tree. No keep-alive subclass.",
+    "reversibility": "cheap",
+    "rationale": "The lists are virtualized, so re-realizing costs at most 165 ms (measured). Keeping scroll positions is a nicety nobody asked for and would mean a custom control."
+   },
+   {
+    "decision": "Enforce the no-ScrollViewer-around-a-list rule with a narrow multi-line must_not_match plus a plant row, not with prose alone.",
+    "reversibility": "cheap",
+    "rationale": "The defect is silent (a 230 s, 2 GB expand only on a 100,000-row list) and any later section slice could reintroduce it while every gate stays green. The pattern is deliberately narrow so it cannot fire on OutcomeTexts."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal (tournament sized to one). Its over_engineering_flag was raised against the popular scroll-area-plus-lower-minimum answer, and I honoured it by dropping any keep-alive control, scroll-offset keys, splitter or lower floor. Changed at the seams: one visibility-keyed trigger is kept for the no-tabs state, the selection guard is generic, and the 292/84 MinHeight labels are left for the build to re-read. The cross-domain block it carried was kept as supporting evidence only."
+   }
+  ],
+  "coherence_check": "One proposal, no composition to check. Nothing here has survived a disagreement, so this is the first thing to argue with, and it is the honest sentence the reviewer should start from.\n\nWhat I did check, at the joins between the proposal and the measured record:\n\n1. **Text cap vs. the collapsed state.** The proposal deleted all row triggers AND capped OutcomeTexts with a fixed MaxHeight. Together these leave the texts capped with blank space below whenever no tab shows. I resolved it by keeping one trigger keyed to tab visibility, which is independent of section count. The 'no per-section arithmetic' invariant still holds.\n2. **Guard vs. generic section contract.** The proposal's guard selected LargestFilesTab by name while its contract said sections are added freely. That is incoherent if Largest files is hidden. I replaced it with a first-visible-tab helper.\n3. **Floor vs. tab count.** The proposal keeps 644 and says adding tabs never changes it. That holds only while the strip stays one row, so the strip-width invariant is now checked in the report (stripRows) and by a 5-digit-count case.\n4. **Spike 1 vs. the real layout.** Spike 1 measured a stand-in TabControl with synthetic nodes at 560x644. The real panel has a texts row above it. Case 9 (list actualHeight <= OutcomeTabs.actualHeight, at floor and maximized) checks it against the real layout.\n5. **Cross-domain transfer.** The Qt 'only the visible page counts toward the minimum' mechanism has no WPF counterpart, because Window.MinHeight is already an explicit number. The transfer is analogy only. The choice of tabs rests on spike 1, not on the transfer.\n\nFacts the design does NOT settle:\n- The designer could not open a file. The Expander header content, the code-behind handlers, and every test-side use of UnreadableExpander are unverified and are listed as grep obligations. The 292/84 labels disagree between the build check and spike 2.\n- Window cases could not run in the build-check sandbox (TIMEOUT even on C-001). Any build-stage pass on B-007/B-008/C-001 in such a sandbox is 'not run'. The tab-not-selected report clause (spike 2, untested) is verified only where a desktop session exists.\n\nArchitecture rules: one rule is added, on the XAML. Its multi-line matching is unproven until a plant row shows it fires. No dependency edges change, since Core does not depend on App and this slice adds no import, so no must_not_import rule is invented. The existing 11-fact rule set (eng/rules-parity.ps1) already governs the Core/App split.\n\nStack: nothing outside the project's stack block was chosen. TabControl is stock WPF, so stack_chosen is empty.",
+  "decidable_disagreements": [
+   {
+    "question": "Do the planned headers (Largest files, Largest folders, By extension, Unreadable folders (N)) fit one strip row at MinWidth 560 with the real font and tab padding?",
+    "positions": "Proposal: yes, keep headers to about two words and assert stripRows==1. If they wrap, the alternatives are a different selector (left-placed strip, ComboBox or ListBox switcher) or a wider floor. Nobody measured four headers. Only two tabs exist today.",
+    "would_force_resynthesis": true
+   },
+   {
+    "question": "In the real layout (texts row above, star row below, real templates), is a list in a TabItem bounded, so virtualization holds as spike 1 measured on a stand-in?",
+    "positions": "Proposal and spike 1: yes, with no per-section height. Spike 1 used a synthetic node and stand-in host at 560x644. If the real layout gives the list unbounded height, the fallback is explicit per-section heights, which reverses the design. Case 9 settles it at build.",
+    "would_force_resynthesis": true
+   }
+  ],
+  "taste_disagreements": [
+   "Tabs vs. a splitter or stacked sections. Tabs show one section at a time, so 'Largest files' and the unreadable list can no longer be seen together, which SL-046's note about a splitter wanted. The unreadable list was already on demand behind an Expander.",
+   "Unreadable tab hidden at N=0 vs. shown but disabled. Hidden matches the Expander today and C-001, and disabled would keep the strip width constant.",
+   "Count in the tab header vs. in the tab content. Only the unreadable tab carries a count here, and any other text goes in the content.",
+   "Flat named report keys per TabItem, in the existing style, vs. one generic OutcomeTabs.tabs array that needs no reporter edit per section.",
+   "MaxHeight cap on the texts vs. a proportional row for it. The cap is simpler and keeps today's numbers."
+  ],
+  "open_questions": [
+   "Does the person ever want two analysis sections visible at once (for example largest files beside by-extension)? Tabs preclude it, and the slice title allowed 'scroll or tab'. If yes, the next slices need a splitter or a second tab host, and that changes the 'one section = one TabItem' contract."
+  ],
+  "whats_reused": [
+   "Existing OutcomeTexts ScrollViewer (text only, so it costs no virtualization)",
+   "Existing LargestFilesList and UnreadableList with their x:Names, ItemsSource and templates, so code-behind bindings and report keys keep working",
+   "Window.MinWidth 560 / MinHeight 644 and the outer rows' MinHeights (292/84), already decided and committed",
+   "Report schema 1 path (--report, eng/read-window.ps1, WindowCases.ps1) and cases B-007/B-008/C-001",
+   "Spike 1 and 2 results as constraints (tab host virtualizes, scroll host does not, inView is a boolean only)",
+   "Existing architecture-rule twin files, rules-parity.ps1 and the rules-harness plant-row mechanism"
+  ],
+  "whats_new": [
+   "OutcomeTabs TabControl with LargestFilesTab and UnreadableTab replacing the trigger-driven rows and the Expander",
+   "One visibility-keyed trigger giving the texts the whole panel when no tab is visible",
+   "EnsureSelectedTabIsVisible() helper in MainWindow.xaml.cs",
+   "Report keys OutcomeTabs{visible,selected,actualHeight,stripRows}, LargestFilesTab and UnreadableTab{visible,selected,inView,actualHeight}, and the UnreadableExpander alias",
+   "Rewritten layout comment with the fit inequality, headroom in px and the 'adding a section' rule",
+   "Architecture rule against a ScrollViewer directly wrapping a list or tree, with a plant row",
+   "Window-case assertions for tab selection, stripRows==1 and list height <= tab area"
+  ],
+  "prior_art": [
+   {
+    "pattern": "Combined panel minimums pushed a window's minimum past the monitor. The fix counted only the visible page of a stacked container toward the minimum and wrapped the page in a scroll area. Only the stacking half is adopted here, because the scroll half destroys virtualization in WPF (spike 1).",
+    "where": "https://gitea.psi.ch/mx/AareDAQ/commit/b83ce455dbdbfafd86421186c3b56ce3030109e1.patch",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-08-06"
+   },
+   {
+    "pattern": "Tabbed pages (a wx.Notebook) whose individual pages scroll only when needed: tabs split the content and any scrolling stays local to a page.",
+    "where": "https://discuss.wxpython.org/t/making-window-scrollable-after-window-goes-less-than-a-particular-size/36120",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2022-09-07"
+   },
+   {
+    "pattern": "A WPF ScrollViewer or StackPanel measures its children with infinite height, so a VirtualizingStackPanel inside realizes every item. Also measured locally by the SL-065 spike: 100,001 containers, 229.7 s.",
+    "where": "WPF documentation on UI virtualization / optimizing control performance; local measurement in spike outcome-host-keeps-tree-and-list-virtualized",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "A TabControl hosts only the selected tab's content in its single content presenter, and switching tabs detaches the old content. A keep-alive subclass is the usual workaround, and it is not adopted here.",
+    "where": "WPF TabControl behaviour; community keep-alive TabControl samples",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Setting a selected TabItem's Visibility to Collapsed hides its header but leaves its content showing, so move the selection first.",
+    "where": "WPF TabControl known behaviour (community Q&A)",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "TabPanel wraps headers into several rows when they overflow the width, which takes height from the content area.",
+    "where": "WPF TabPanel default behaviour (community Q&A)",
+    "authority": "community",
+    "basis": "recalled"
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Qt desktop main windows (the AareDAQ minimum-size fixes in the fetched search results)",
+   "pattern": "Stop tying the window's minimum to the sum of every panel's minimum: only the visible page of a stacked container contributes, and the window floor is an explicit number. The stacked-page half transfers as a WPF TabControl. The scroll-area half does not.",
+   "transfer_found": true,
+   "rationale": "The transfer is an analogy and is not what carries the choice. WPF's Window.MinHeight is already an explicit number, so the Qt failure mode of hidden pages inflating an auto-derived minimum does not exist. The analogous WPF problem is a Grid whose per-section MinHeights must be summed by hand. The selection rests on spike 1's measurement of tabs against a scroll host, and the transfer only supports it.",
+   "invariants": [
+    {
+     "precondition": "A child list on the visible page gets a finite height, so virtualization holds without a per-section height",
+     "status": "holds",
+     "evidence": "Spike 1: TabControl with one section per tab gave 76 tree and 37 list containers, worst 165.6 ms at 1920x1080 maximized. Measured on a stand-in host with synthetic nodes, so case 9 re-checks it in the real layout."
+    },
+    {
+     "precondition": "Wrapping the panel in a scroll host keeps its child lists usable",
+     "status": "fails",
+     "evidence": "Spike 1: a ScrollViewer host realized all 100,001 containers, tree expand 229.7 s, about 2 GB, unless each list had an explicit Height (280 px gave 28/14 containers)."
+    },
+    {
+     "precondition": "Only the selected tab's content is measured and on screen, so unselected sections add nothing to the panel's minimum and report inView=false",
+     "status": "must-verify",
+     "evidence": "Recalled from WPF TabControl's single content presenter. Spike 2 explicitly left the tab clause untested. Check: B-007 with UnreadableTab selected gives LargestFilesList.inView=false, UnreadableList.inView=true, and the same OutcomeTabs.actualHeight as with Largest files selected."
+    },
+    {
+     "precondition": "The window floor is an explicit value, not auto-derived from content",
+     "status": "holds",
+     "evidence": "Build-check survey: MainWindow.xaml:5 sets MinWidth=560 MinHeight=644 explicitly, and WPF does not auto-pin Window.MinHeight to content."
+    },
+    {
+     "precondition": "The tab strip stays one row (the same chrome height) as sections are added",
+     "status": "must-verify",
+     "evidence": "WPF TabPanel wraps overflowing headers. Check: OutcomeTabs.stripRows == 1 at 560x644 in B-007, with a 5-digit unreadable count. The four-header case is a recorded decidable disagreement."
+    }
+   ]
+  },
+  "channeled_experts": []
+ }
+}

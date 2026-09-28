@@ -142,35 +142,52 @@
 
         <!-- The last child, so it gets the rest of the window's height: how the last scan ended, above what it
              read (SL-040). Every list in it keeps at least one full row in view in every ending, at any size the
-             window allows, for any length of text and however many drives are ready (SL-040, O-024 to O-028 and
-             the window-size rework):
-             - Each list sits in a star row whose MinHeight is one full row of that list, so no text can take it.
-             - Text that grows with a path or a count is bounded: while a list is shown the outcome's texts scroll
-               inside their own row, which takes their natural height when there is room and yields down to one
-               line when there is not (an ending with no list shows its texts whole, as it always has); the
-               results header is one line, trimmed; a largest file's location wraps to three lines at
-               most, trimmed, with the whole location as its tooltip; the results rows are trimmed, not scrolled
-               sideways. What is left varies only with numbers: the largest files' caption and the unreadable
-               folders' header.
+             window allows, for any length of text and however many drives are ready (SL-040, O-024 to O-028, the
+             window-size rework and SL-065):
+             - Text that grows with a path or a count is bounded: while a section of the outcome is shown its texts
+               scroll inside a cap of 76 px, a title line and three detail lines, the whole of a finished folder
+               scan's; with none shown they take the whole panel, and scroll inside it when they are taller. The
+               results header is one line, trimmed; a largest file's location wraps to three lines at most,
+               trimmed, with the whole location as its tooltip; the results rows are trimmed, not scrolled
+               sideways. What is left varies only with numbers: the largest files' caption, up to three lines at
+               the minimum width, and the unreadable folders' count in their tab's header.
              - The reveal status line docked below (SL-047) is one line, trimmed with a tooltip: at most 24 px with
                its 6 px margin when it is shown, and nothing when it is not. The window's minimum height went from 620
-               to 644 px to pay for it, so the lists below the pickers keep at least the 396 px they had at 620 with
-               the line on screen, and have 24 px more than that without it. B-007 and B-008 check this with the line shown.
+               to 644 px to pay for it, so the rows below the pickers keep at least the 396 px they had at 620 with
+               the line on screen, and have 24 px more than that without it.
              - Here, a row is star-sized while its panel is shown and takes nothing while it is collapsed, so
                during a scan the results list has all of it. After a stop or a failure the two share it 3 to 1;
                once a scan completes the folder tree is the result a person works down, so it is the other way
-               round, 1 to 3 (SL-044, review M2). Neither gets less than its own minimum: the outcome's (292) is
-               its texts' first line, the largest files' heading with a caption of up to three lines, a row of that
-               list, and the unreadable folders opened with a row of theirs; the results list's (84) is its header
-               and one row, or the header, the tree's headings and one tree row. The pickers above take the same
-               height whatever the window's width and however many drives are ready (their drive buttons scroll
-               sideways), so both minimums (376) always fit in what the window's minimum size leaves below them at
-               100% scaling: 396 px at the 620 px minimum SL-040 set, and at least that with the reveal status line
-               shown at today's 644 (above). At 600 px they would have 0.3 px to spare, which is why the window's height was
-               620 at the least (O-028) before the status line needed its 24 px. By default it is 860, or the work
-               area's height where that is less, so the tree opens with room for more than a few rows (SL-044). B-007
-               and B-008 check every list at the minimum size with 26 drive buttons added, B-008 with a stopped scan of
-               a long path. -->
+               round, 1 to 3 (SL-044, review M2). Neither gets less than its own minimum. The results list's (84)
+               is its header and one row, or the header, the tree's headings and one tree row. The outcome's (292)
+               is its margin, border and padding (42) and 250 px inside them: the texts' cap (76), the sections'
+               margin (10) and OutcomeTabs' MinHeight (154), which is one strip of tab headers (22), the tab's border
+               and padding (6), and the largest files' section at its least: a caption of three lines, the column
+               headings and one row of the list (126). That is 240, so 10 px are to spare at the smallest size,
+               where before SL-065 there were none (the two lists' minimums each had their own row and filled the
+               250 to the pixel). Only the selected section is measured, so another section adds nothing to this.
+               The pickers above take the same height whatever the window's width and however many drives are
+               ready (their drive buttons scroll sideways), so both minimums (376) fit in the 396 px the window's
+               minimum size leaves below them at 100% scaling with the status line shown. By default the window is
+               860 tall, or the work area's height where that is less, so the tree opens with room for more than a
+               few rows (SL-044). B-007, B-008 and S-001 check every list at the minimum size with 26 drive buttons
+               added, B-008 with a stopped scan of a long path.
+             - The sections are the tabs of OutcomeTabs (SL-065). A section added later (the largest folders, the
+               files by extension) is one TabItem there, whose content is its virtualized list or tree itself, or a
+               Grid with Auto rows for captions and one star row for the list. It adds no RowDefinition, MinHeight
+               or DataTrigger outside its own content, no ScrollViewer, StackPanel or Auto row around its list, and
+               its header is about two words (only the unreadable folders' carries a count). Its visibility follows
+               its own condition, and EnsureSelectedTabIsVisible is called after that changes. Neither this minimum
+               nor the window's changes. It adds report keys for its tab and its list, as LargestFilesTab and
+               LargestFilesList have.
+             - The headers stay one row at the minimum width (560), which the report's OutcomeTabs.stripRows says;
+               a second row would take 22 px from every section, more than the 10 to spare. S-007 checks it with a
+               five-digit count of unreadable folders.
+             - No list or tree sits in a ScrollViewer, a StackPanel or an Auto row: each of them measures its content
+               with an unbounded height, and a list measured so builds a row for every item. The SL-065 spike
+               measured a folder of 100,000 rows in a ScrollViewer at 100,001 rows built, 229.7 s to open and about
+               2 GB; in a tab, 76 rows of the tree and 37 of a list, 165.6 ms at the most. The architecture rule in
+               .taad/fitness.yaml fails a list written straight inside a ScrollViewer here. -->
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition>
@@ -215,136 +232,148 @@
                 </RowDefinition>
             </Grid.RowDefinitions>
 
-            <!-- How the last scan ended: Finished, Stopped, Could not read or Scan failed. At the top of its row, so
-                 an ending with no list to show is as tall as its texts, not as its row. -->
-            <Border x:Name="OutcomePanel" Grid.Row="0" VerticalAlignment="Top" Visibility="Collapsed" Margin="0,16,0,0" Padding="12" BorderThickness="1">
-                <!-- The texts first, then the largest files' heading, their list, and the unreadable folders. The texts'
-                     row weighs so much more than the lists' that it takes the texts' natural height (its MaxHeight)
-                     whenever the lists' own minimums leave room, and the lists share the rest, 3 to 2 while the
-                     unreadable folders are open. -->
+            <!-- How the last scan ended: Finished, Stopped, Could not read or Scan failed, and what it found, one
+                 section at a time (SL-065). While a section is shown the panel takes its whole row, so the selected
+                 section has all of it below the texts, whichever it is; with none shown it is at the top of its row,
+                 as tall as its texts and not as its row. -->
+            <Border x:Name="OutcomePanel" Grid.Row="0" Visibility="Collapsed" Margin="0,16,0,0" Padding="12" BorderThickness="1">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="VerticalAlignment" Value="Top" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Visibility, ElementName=OutcomeTabs}" Value="Visible">
+                                <Setter Property="VerticalAlignment" Value="Stretch" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <!-- The texts, then the sections. Every setter below that depends on anything depends on one thing only,
+                     whether OutcomeTabs is on screen, which it is while any section is (EnsureSelectedTabIsVisible), and
+                     never on how many sections there are or which is selected. -->
                 <Grid>
                     <Grid.RowDefinitions>
-                        <!-- One line at least, and at most the texts' natural height, which OnOutcomeTextsSizeChanged sets.
-                             A star row only while a list's row is one: with no list shown it is Auto, because Grid throws
-                             while it arranges (IndexOutOfRange in SetFinalSizeMaxDiscrepancy) when every star row has a
-                             MaxHeight and it is given more than they add up to, even by 1e-14 px. Measured on the Could not
-                             read ending of a relative root: the texts row at most 43.24 px, the Grid 43.24000000000001. -->
-                        <RowDefinition x:Name="OutcomeTextsRow" MinHeight="22">
-                            <RowDefinition.Style>
-                                <Style TargetType="RowDefinition">
-                                    <Setter Property="Height" Value="Auto" />
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Visibility, ElementName=LargestFilesList}" Value="Visible">
-                                            <Setter Property="Height" Value="100*" />
-                                        </DataTrigger>
-                                        <MultiDataTrigger>
-                                            <MultiDataTrigger.Conditions>
-                                                <Condition Binding="{Binding IsExpanded, ElementName=UnreadableExpander}" Value="True" />
-                                                <Condition Binding="{Binding Visibility, ElementName=UnreadableExpander}" Value="Visible" />
-                                            </MultiDataTrigger.Conditions>
-                                            <Setter Property="Height" Value="100*" />
-                                        </MultiDataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </RowDefinition.Style>
-                        </RowDefinition>
-                        <RowDefinition Height="Auto" />
+                        <!-- While a section is shown: the texts' natural height, up to their cap below. With none shown: a
+                             star row, so texts taller than the panel scroll inside it, and the panel is as tall as them
+                             when they fit. Neither row has a MaxHeight: Grid throws while it arranges (IndexOutOfRange in
+                             SetFinalSizeMaxDiscrepancy) when every star row has one and it is given more than they add up
+                             to, even by 1e-14 px (measured at SL-040 on the Could not read ending of a relative root). -->
                         <RowDefinition>
                             <RowDefinition.Style>
                                 <Style TargetType="RowDefinition">
-                                    <Setter Property="Height" Value="Auto" />
+                                    <Setter Property="Height" Value="*" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Visibility, ElementName=LargestFilesList}" Value="Visible">
-                                            <Setter Property="Height" Value="3*" />
-                                            <Setter Property="MinHeight" Value="56" />
+                                        <DataTrigger Binding="{Binding Visibility, ElementName=OutcomeTabs}" Value="Visible">
+                                            <Setter Property="Height" Value="Auto" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </RowDefinition.Style>
                         </RowDefinition>
+                        <!-- The sections: a star row while they are shown, so the selected one has a bounded height and its
+                             list virtualizes; nothing while they are not. -->
                         <RowDefinition>
                             <RowDefinition.Style>
                                 <Style TargetType="RowDefinition">
                                     <Setter Property="Height" Value="Auto" />
                                     <Style.Triggers>
-                                        <MultiDataTrigger>
-                                            <MultiDataTrigger.Conditions>
-                                                <Condition Binding="{Binding IsExpanded, ElementName=UnreadableExpander}" Value="True" />
-                                                <Condition Binding="{Binding Visibility, ElementName=UnreadableExpander}" Value="Visible" />
-                                            </MultiDataTrigger.Conditions>
-                                            <Setter Property="Height" Value="2*" />
-                                            <Setter Property="MinHeight" Value="74" />
-                                        </MultiDataTrigger>
+                                        <DataTrigger Binding="{Binding Visibility, ElementName=OutcomeTabs}" Value="Visible">
+                                            <Setter Property="Height" Value="*" />
+                                        </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </RowDefinition.Style>
                         </RowDefinition>
                     </Grid.RowDefinitions>
 
-                    <!-- Top-aligned, so the content's ActualHeight is the texts' natural height at this width. -->
+                    <!-- Capped while a section is shown (the fit, above the outer Grid); the rest a scroll away. -->
                     <ScrollViewer x:Name="OutcomeTexts" Grid.Row="0" VerticalScrollBarVisibility="Auto"
                                   HorizontalScrollBarVisibility="Disabled" Focusable="False">
-                        <StackPanel x:Name="OutcomeTextsContent" VerticalAlignment="Top" SizeChanged="OnOutcomeTextsSizeChanged">
+                        <ScrollViewer.Style>
+                            <Style TargetType="ScrollViewer">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Visibility, ElementName=OutcomeTabs}" Value="Visible">
+                                        <Setter Property="MaxHeight" Value="76" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ScrollViewer.Style>
+                        <StackPanel x:Name="OutcomeTextsContent" VerticalAlignment="Top">
                             <TextBlock x:Name="OutcomeTitle" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
                             <TextBlock x:Name="OutcomeDetail" TextWrapping="Wrap" Margin="0,6,0,0" />
                             <TextBlock x:Name="OutcomeNotes" TextWrapping="Wrap" Margin="0,6,0,0" Foreground="#FF7A5200" />
                         </StackPanel>
                     </ScrollViewer>
 
-                    <!-- The largest single files under the root (SL-040): the heading here, the list in the row below. -->
-                    <DockPanel x:Name="LargestFilesPanel" Grid.Row="1" Margin="0,10,0,0" Visibility="Collapsed">
-                        <TextBlock DockPanel.Dock="Top" Text="Largest files, by space on disk" FontWeight="SemiBold" />
-                        <TextBlock x:Name="LargestFilesCaption" DockPanel.Dock="Top" TextWrapping="Wrap" Foreground="Gray" Margin="0,2,0,4" />
-                        <Grid x:Name="LargestFilesHeadings" DockPanel.Dock="Top" Margin="5,0,0,2">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="80" />
-                                <ColumnDefinition Width="80" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="On disk" TextAlignment="Right" Margin="0,0,12,0" Foreground="Gray" />
-                            <TextBlock Grid.Column="1" Text="Size" TextAlignment="Right" Margin="0,0,12,0" Foreground="Gray" />
-                            <TextBlock Grid.Column="2" Text="Location" Foreground="Gray" />
-                        </Grid>
-                    </DockPanel>
+                    <!-- The analysis sections, one tab each, one on screen at a time: the selected one, whose content
+                         alone is measured and laid out (the rule for adding one is above the outer Grid). Shown while any
+                         section is, and never with a collapsed tab selected (EnsureSelectedTabIsVisible). Its minimum is
+                         one strip of headers and the largest files' section with one row of their list. -->
+                    <TabControl x:Name="OutcomeTabs" Grid.Row="1" Margin="0,10,0,0" MinHeight="154" Visibility="Collapsed">
 
-                    <!-- Horizontal scrolling is off so that each location wraps to the row's width instead of running off
-                         to the right; three lines at most, so that one row always fits the list's MinHeight. -->
-                    <ListBox x:Name="LargestFilesList" Grid.Row="2" MinHeight="56" Visibility="Collapsed"
-                             VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                        <ListBox.ItemContainerStyle>
-                            <Style TargetType="ListBoxItem">
-                                <Setter Property="ContextMenu" Value="{StaticResource RowContextMenu}" />
-                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                            </Style>
-                        </ListBox.ItemContainerStyle>
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="80" />
-                                        <ColumnDefinition Width="80" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="{Binding OnDiskText, Mode=OneTime}" TextAlignment="Right" Margin="0,0,12,0" />
-                                    <TextBlock Grid.Column="1" Text="{Binding SizeText, Mode=OneTime}" TextAlignment="Right" Margin="0,0,12,0" Foreground="Gray" />
-                                    <TextBlock Grid.Column="2" Text="{Binding Path, Mode=OneTime}" ToolTip="{Binding Path, Mode=OneTime}"
-                                               TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="48" />
-                                </Grid>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
+                        <!-- The largest single files under the root (SL-040), by space on disk: the caption and the
+                             column headings in an Auto row, the list in the star row below. Horizontal scrolling is off so
+                             that each location wraps to the row's width instead of running off to the right; three lines
+                             at most, so that one row is at most 56 px, as the section's minimum counts it. -->
+                        <TabItem x:Name="LargestFilesTab" Header="Largest files" Visibility="Collapsed">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <DockPanel x:Name="LargestFilesPanel" Visibility="Collapsed">
+                                    <TextBlock x:Name="LargestFilesCaption" DockPanel.Dock="Top" TextWrapping="Wrap" Foreground="Gray" Margin="0,0,0,4" />
+                                    <Grid x:Name="LargestFilesHeadings" DockPanel.Dock="Top" Margin="5,0,0,2">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="On disk" TextAlignment="Right" Margin="0,0,12,0" Foreground="Gray" />
+                                        <TextBlock Grid.Column="1" Text="Size" TextAlignment="Right" Margin="0,0,12,0" Foreground="Gray" />
+                                        <TextBlock Grid.Column="2" Text="Location" Foreground="Gray" />
+                                    </Grid>
+                                </DockPanel>
+                                <ListBox x:Name="LargestFilesList" Grid.Row="1" Visibility="Collapsed"
+                                         VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="ContextMenu" Value="{StaticResource RowContextMenu}" />
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="80" />
+                                                    <ColumnDefinition Width="80" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding OnDiskText, Mode=OneTime}" TextAlignment="Right" Margin="0,0,12,0" />
+                                                <TextBlock Grid.Column="1" Text="{Binding SizeText, Mode=OneTime}" TextAlignment="Right" Margin="0,0,12,0" Foreground="Gray" />
+                                                <TextBlock Grid.Column="2" Text="{Binding Path, Mode=OneTime}" ToolTip="{Binding Path, Mode=OneTime}"
+                                                           TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="48" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
+                        </TabItem>
 
-                    <Expander x:Name="UnreadableExpander" Grid.Row="3" Margin="0,10,0,0" Visibility="Collapsed">
-                        <ListBox x:Name="UnreadableList" MinHeight="41" MaxHeight="200"
-                                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
-                            <ListBox.ItemContainerStyle>
-                                <Style TargetType="ListBoxItem">
-                                    <Setter Property="ContextMenu" Value="{StaticResource RowContextMenu}" />
-                                </Style>
-                            </ListBox.ItemContainerStyle>
-                        </ListBox>
-                    </Expander>
+                        <!-- The folders the scan could not open: only when there are any, never selected by the window
+                             itself, their count in the header ('Unreadable folders (N)', set with the list). -->
+                        <TabItem x:Name="UnreadableTab" Header="Unreadable folders" Visibility="Collapsed">
+                            <ListBox x:Name="UnreadableList"
+                                     VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="ContextMenu" Value="{StaticResource RowContextMenu}" />
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
+                            </ListBox>
+                        </TabItem>
+                    </TabControl>
                 </Grid>
             </Border>
 
