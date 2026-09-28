@@ -506,10 +506,11 @@ internal static class RevealMode
 
     private static FrameworkElement? FindUnreadableContainer(Window window, string name)
     {
-        if (window.FindName("UnreadableExpander") is Expander exp)
+        // Their list is on screen only while their tab is selected (SL-065; before, while their expander was open).
+        if (window.FindName("UnreadableTab") is TabItem tab)
         {
-            exp.IsExpanded = true;
-            exp.UpdateLayout();
+            tab.IsSelected = true;
+            tab.UpdateLayout();
         }
 
         if (window.FindName("UnreadableList") is not ListBox list)
