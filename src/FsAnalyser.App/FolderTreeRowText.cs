@@ -1,15 +1,16 @@
 namespace FsAnalyser.App;
 
 /// <summary>
-/// The words and the bar of a folder tree row (SL-044): sizes as the rest of the window writes them, and the
-/// row's share of its parent's space on disk, as Core computed it (ChildRow.Share).
+/// The share and the bar of a folder tree row (SL-044): the row's share of its parent's space on disk, as Core computed
+/// it (ChildRow.Share). Its sizes are written by <see cref="FigureText.FormatSize"/>, as the rest of the window's are.
 /// </summary>
+/// <remarks>
+/// No WPF and no window: it is also compiled into Core.Tests, where its rounding and its bar are tested.
+/// </remarks>
 internal static class FolderTreeRowText
 {
     /// <summary>The width of the track a share bar is drawn in, in device-independent pixels.</summary>
     internal const double BarTrack = 60;
-
-    internal static string Size(long bytes) => MainWindow.FormatSize(bytes);
 
     /// <summary>
     /// The share as a percentage, as the window writes every share (<see cref="ShareText.Percent"/>). A share of 0,
