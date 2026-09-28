@@ -1,0 +1,112 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-075",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-09-28T14:57:58.972Z",
+ "head": "6f49ae3a717e5521051704c7055016a3ae0ccefd",
+ "run_id": 1925,
+ "summary": "SL-075 added plant rows F20-F23 to eng/rules-harness/plants.json, one for each of SL-043's four twinned fitness entries. It also updated the `_note` counts to 39 rows and 23 must-fire, and added two decoy-engine checks to RuleCases C-006. The outcomes come from a recorded --engine-root run against taad_v3 at faecfc3: 52 rows, 52 AS-RECORDED, 0 stray hits, and a clean baseline of 11 Facts and 64 rules with 0 hits. Validation mutated the four new rows and each mutant was caught, so the rows discriminate. The slice was mostly transcription of what the risk spike had already run, and the design's expectation that RuleCases.ps1 needed count bumps was wrong.",
+ "payload": {
+  "status": "complete",
+  "summary": "SL-075 added plant rows F20-F23 to eng/rules-harness/plants.json, one for each of SL-043's four twinned fitness entries. It also updated the `_note` counts to 39 rows and 23 must-fire, and added two decoy-engine checks to RuleCases C-006. The outcomes come from a recorded --engine-root run against taad_v3 at faecfc3: 52 rows, 52 AS-RECORDED, 0 stray hits, and a clean baseline of 11 Facts and 64 rules with 0 hits. Validation mutated the four new rows and each mutant was caught, so the rows discriminate. The slice was mostly transcription of what the risk spike had already run, and the design's expectation that RuleCases.ps1 needed count bumps was wrong.",
+  "estimate_error": "Sized medium, and the work was small. The risk spike had already run all four plants through the real harness, so the build was four JSON rows, a note edit and one recording run. Risk 'low' was right: no gate found a defect, and the only rework was the build-check re-run. The diff was wrong in kind as well as size. The design expected +4 count bumps in RuleCases.ps1 and none exist. The build instead added two new decoy-engine checks to C-006 to discharge O-008. The real cost was wall time. `RuleCases -Case All` takes about 300 s and ran three times (build, code review, validate), on top of several 17-20 s `--scenario all` runs. A slice like this, where the spike has already executed the artefact, should open at small.",
+  "what_went_wrong": [
+   "build-check ran twice. The first pass halted 'partial' because the survey scored the slice's own deliverable (plant rows and recorded outcomes) as 'missing'. That is the slice's premise, not a defect. The engine then proceeded with 'built anyway despite a partial survey'. For a slice whose whole purpose is to create the missing thing, this halt is guaranteed and costs a pass.",
+   "The design's premise about RuleCases.ps1 was wrong. The design summary, case 9, a key decision and amendment 3 all expected row-count or ID literals to bump by +4. None exist. O-009 was discharged with 'nothing to bump', which makes it a vacuous obligation. The real gap was found by the builder's grep: C-008's $MustFire is fixed at 1..16 (SL-022), so F17-F19 (SL-040) and now F20-F23 are asserted by no rule case.",
+   "The spike's scratch plants-spike.json was not recoverable. The design was handed a clipped spike record, and the file was not under %TEMP%/fsa-rules-*. So F21's anchor and all of F22 and F23 were re-derived instead of transcribed. It worked only because the recording run verifies the rows. The spike's evidence was not durable enough to build from.",
+   "Scope drifted from 'data only'. The design said RuleCases.ps1 would get literal bumps. The build added two decoy-engine checks to C-006 to discharge O-008, which is new test code. Code review then found the C-006 title at RuleCases.ps1:620 stale: it says 'exit 2 naming the path' but the PYTHONPATH-decoy check now expects exit 0 CLEAN. It was recorded as drift and neither fixed nor raised as an obligation.",
+   "critique and critique-review did not run (low risk, minimal project, by sizing). Nothing here was adversarially reviewed before the build, so this slice tells us nothing about whether those gates earn their cost. The only independent checks were the code review and validate, which held up: validate's row mutants were the strongest evidence in the slice."
+  ],
+  "learned": [
+   {
+    "kind": "codebase",
+    "lesson": "Adding plant rows needs no edit to RuleCases.ps1 and no count anywhere except the prose `_note` in plants.json, which harness.py does not read. The next plant-adding slice should bump the `_note` by hand (now 39 rows, 23 must-fire; `--scenario all` is 39 plants + 13 divergences = 52) and should not plan RuleCases literal bumps.",
+    "evidence": "Build and code review both grepped RuleCases.ps1 for 35/39/19/23/48/52/F17-F23 and found nothing. C-008's $MustFire is SL-022's fixed F01-F16."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "RuleCases C-008 asserts only F01-F16. F17-F23, the must-fire rows from SL-040 and SL-075, are measured only when someone runs harness `--scenario plants/all` by hand. Two slices in a row added must-fire rows without extending C-008, so the pattern is to skip it. A future edit could stale these rows and no case would notice.",
+    "evidence": "Build-slice and validate-slice each listed this as open. C-008 uses `$MustFire = 1..16`."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "A plant in a file that other rules also guard trips those settled twins, and the row must list every one in `also_settled` or the harness reports STRAY-HIT. Find them by running `--only <row>` and reading the stray hits, not by guessing. F20, F21 and F23 need them (F23 needs two: 'the volume read cannot hold a scan's memory' and 'Core does not publish a live ScanStore before the scan ends'). F22 needs none.",
+    "evidence": "Spike constraint on X01/X02/X04. Validate's mutant 'F20 without also_settled' gave STRAY-HIT, and 'F23 missing SL-044's rule' gave STRAY-HIT naming it."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "Two fitness entries share the name NothingWaitsOnTheVolumeFigure and differ only by glob. The row's `rule` string must carry the '(Core)' or '(App)' suffix, and one xUnit Fact covers both halves. Only the per-entry Fitness hit says which half caught a plant. Any further same-named entry gets its own row and an exact suffix.",
+    "evidence": "F21 relabelled '(App)' gave MISSED-BY-FITNESS plus STRAY-HIT naming '(Core)' in validate's mutation run. `--only F21,F22` in one batch attributed each hit to its own row."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "On the scratch copy Fitness never reaches 'pass'. The import rule 'the provider does not use the code it checks' is NOT RUN because there is no code graph, so the verdict is 'unable'. Plants therefore measure only the must_not_match half of a rule. An import- or graph-based entry cannot be guarded by a plant row with this harness.",
+    "evidence": "Every recording run reads 'fitness unable, 64 rules, 117 files, 0 hits; one import rule NOT RUN'. Validate listed it as not reached."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "The harness copies untracked, non-ignored files into its scratch tree. Run evidence under .taad/slices/<id>/ must be written after the recording run and must never contain a .cs file, or a *.cs rule could read it. The risk spike ran from a clean clone for this reason. Validate did not test the .cs case (not-run).",
+    "evidence": "Spike constraint on spikes#62. Design component 'Run evidence record'. The build wrote recording-run.json and the stdout file only after the run."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "This PC has no machine-wide .NET 10 SDK, and a worktree with no .dotnet/ downloads SDK 10.0.401 through eng/dotnet.ps1 on its first harness run (Q-003 permits it; about 1 minute). Use --dotnet-from a sibling worktree such as SL-074 to skip that. After the first run, the tree's own .dotnet gives 6-8 s scratch builds and a 17-20 s `--scenario all`. The engine is the taad_v3 checkout's backend at faecfc3, run with %APPDATA%/taad3/venv/Scripts/python.exe. No packaged taad3 exists.",
+    "evidence": "Both spikes recorded this. The build's first run downloaded into .dotnet/. Validate reran on the tree's own SDK with no --dotnet-from and got 17 s."
+   },
+   {
+    "kind": "process",
+    "lesson": "A recorded AS-RECORDED run does not show that a plant row discriminates. Validate mutated the rows outside the tree: drop `also_settled`, relabel the rule, flip fire to quiet, remove a settled twin. Each gave a distinct verdict (STRAY-HIT, MISSED plus STRAY-HIT, FIRED-WHEN-EXEMPT). Do this for any slice that adds or edits plant rows, and keep the mutants, because they are currently thrown away.",
+    "evidence": "validations#94 mutation run exited 1 with all four mutants caught. Nothing in the repo keeps them."
+   },
+   {
+    "kind": "process",
+    "lesson": "A risk spike that builds a scratch plants file must save it into .taad/slices/<id>/. If the spike's plant text lives only in %TEMP% and a clipped record, the build cannot transcribe the rows and has to re-derive them. It worked here only because the recording run re-verified every row.",
+    "evidence": "F21 anchor, F22 and F23 were re-derived and labelled in the row notes. Build-slice deviation 2 says a search of fsa-rules-* and a depth-4 search for plants-spike.json found nothing."
+   }
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "dimension": "unfounded-assumptions",
+    "severity": "minor",
+    "what": "The design assumed RuleCases.ps1 holds literals counting plants.json rows or must-fire IDs, and built case 9, the +4 bump decision and amendment 3 on that. The premise was never checked. No such literal exists. The critique should have asked to see the literal before scoping an edit to it. (critique did not run, by sizing.)",
+    "caught_by": "build: the builder's grep for 35/39/19/23/48/52/F17-F23. O-009 was then discharged as 'nothing to bump'."
+   },
+   {
+    "gate": "critique",
+    "dimension": "test-coverage",
+    "severity": "minor",
+    "what": "No design case asked whether any RuleCases case actually exercises the new must-fire rows. C-008's $MustFire is fixed at 1..16, so F17-F23 are asserted nowhere. SL-040's F17-F19 had the same gap, and this design copied the pattern without noticing. A critique should have asked which test fails if F20-F23 go stale.",
+    "caught_by": "build-slice, then restated by validate-slice as 'not reached'. Neither fixed it."
+   }
+  ],
+  "unknowns": [
+   "Do F20-F23 (and F01-F19) keep their recorded outcomes on a taad_v3 HEAD other than faecfc3? The engine HEAD is recorded only in .taad/slices/SL-075/recording-run.json, not in plants.json, and no packaged taad3 exists to pin to. The design chose not to write it into plants.json.",
+   "Would a *.cs file under .taad/slices/<id>/ disturb the clean baseline? The scratch copy takes untracked files and Fitness has *.cs globs. Validate did not plant one, and the design marked it 'material false'.",
+   "Can the scratch copy be given a code graph so Fitness reaches 'pass' instead of 'unable', without breaking the rule that outcomes are recorded from real runs? The design called this a separate slice, and nobody has sized it."
+  ],
+  "candidates": [
+   {
+    "title": "Derive C-008's $MustFire from the F-rows in plants.json so F17-F23 are asserted by a rule case (and fix the stale C-006 title at RuleCases.ps1:620)",
+    "urgency": "soon",
+    "why": "C-008 is fixed at 1..16, so SL-040's F17-F19 and SL-075's F20-F23 have no rule case showing them bite. Build and validate both raised it. Code review also flagged the C-006 title as stale ('exit 2 naming the path' vs the new exit 0 CLEAN check), and the same edit can fix it."
+   },
+   {
+    "title": "Keep the row-mutation check as a RuleCases case (drop also_settled, relabel the rule, flip fire to quiet, remove a settled twin)",
+    "urgency": "someday",
+    "why": "Validate ran four mutants of F20-F23 and got a distinct verdict for each, but they ran from a temp file and were discarded. Without them, only a hand-run recording run shows the rows are discriminating."
+   },
+   {
+    "title": "Give the harness's scratch copy a code graph so Fitness can reach 'pass' and the import rule 'the provider does not use the code it checks' runs",
+    "urgency": "someday",
+    "why": "Every recording run shows 'fitness unable ... one import rule NOT RUN'. F20-F23 are measured only on the must_not_match half. The design rejected it as over-built for SL-075, and validate listed it as not reached."
+   },
+   {
+    "title": "Make the harness keep or copy a scratch plants file into the slice folder when run with --keep or a --plants path",
+    "urgency": "someday",
+    "why": "spikes#62's plants-spike.json could not be found, so F21's anchor and all of F22 and F23 had to be re-derived. A small harness change would stop the next spike's plant text being lost."
+   }
+  ]
+ }
+}
