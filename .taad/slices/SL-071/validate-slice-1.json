@@ -1,0 +1,191 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-071",
+ "stage": "validate-slice",
+ "attempt": 1,
+ "at": "2026-09-28T08:36:06.873Z",
+ "head": "350591c3758c7ea85cd749dfdb092efa27e788d1",
+ "run_id": 1851,
+ "summary": "All six findings are fixed in the tree. The build is clean and the full suite passes (394). Fitness op=check holds on a freshly rebuilt graph. The published exe ran correctly against three real targets:\n- a real NTFS temp tree with one file under three hardlinked names;\n- the whole local D:\\ drive (527,495 files, 97 links);\n- the Z:\\ network share (134,338 files).\n\nEach run completed with no spurious file-ID note, which is the regression HF-001's value-based rule could have caused. On both drive roots the volume-in-use figure is positive and matches DriveInfo's total minus free: D: 125.4 GB, Z: 3.6 GB.\n\nI ran my own mutation check: with HF-001's old class-based flag put back, all 4 new cases fail. I then restored the file, rebuilt and re-ran.\n\nTwo cases were only checked in code, never on a real volume: a volume that answers the extended class but lists files with no ID, and a per-user quota where free exceeds total. The first is covered through the ScanOptions.ListedFileId test seam on a real NTFS tree, the second through TryUsedBytes fed the two figures.\n\nThe loop shape is healthy. Build attempt 2 was caused by code-review, changed 3 src files and discharged O-003 and O-004. That is progress, not a loop. One minor doc drift, already recorded by code-review, still stands: Kernel32.cs:146-147 does not mention the past-long.MaxValue case. It does not block.",
+ "payload": {
+  "status": "complete",
+  "verdict": "passes",
+  "contact": "real",
+  "summary": "All six findings are fixed in the tree. The build is clean and the full suite passes (394). Fitness op=check holds on a freshly rebuilt graph. The published exe ran correctly against three real targets:\n- a real NTFS temp tree with one file under three hardlinked names;\n- the whole local D:\\ drive (527,495 files, 97 links);\n- the Z:\\ network share (134,338 files).\n\nEach run completed with no spurious file-ID note, which is the regression HF-001's value-based rule could have caused. On both drive roots the volume-in-use figure is positive and matches DriveInfo's total minus free: D: 125.4 GB, Z: 3.6 GB.\n\nI ran my own mutation check: with HF-001's old class-based flag put back, all 4 new cases fail. I then restored the file, rebuilt and re-ran.\n\nTwo cases were only checked in code, never on a real volume: a volume that answers the extended class but lists files with no ID, and a per-user quota where free exceeds total. The first is covered through the ScanOptions.ListedFileId test seam on a real NTFS tree, the second through TryUsedBytes fed the two figures.\n\nThe loop shape is healthy. Build attempt 2 was caused by code-review, changed 3 src files and discharged O-003 and O-004. That is progress, not a loop. One minor doc drift, already recorded by code-review, still stands: Kernel32.cs:146-147 does not mention the past-long.MaxValue case. It does not block.",
+  "checks": [
+   {
+    "what": "Solution build",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build FsAnalyser.slnx",
+    "outcome": "passed",
+    "evidence": "Build succeeded. 0 Warning(s) 0 Error(s)"
+   },
+   {
+    "what": "Full default test suite",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx",
+    "outcome": "passed",
+    "evidence": "Passed! - Failed: 0, Passed: 394, Skipped: 0, Total: 394, Duration: 23 s"
+   },
+   {
+    "what": "SL-063 bug catalog (drives TopLevelRowText through the App converter after the HF-003 change)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-063-DoneRowFinality/SL-063-DoneRowFinality.Tests.csproj",
+    "outcome": "passed",
+    "evidence": "Passed! - Failed: 0, Passed: 10, Total: 10"
+   },
+   {
+    "what": "Mutation: put HF-001's old flag back (`!_fullClass`) and run ListingFallbackTests",
+    "command": "replace Scanner.cs FileIdsAvailable line with the e94d2ef form; eng/dotnet.ps1 test ... --filter FullyQualifiedName~ListingFallbackTests; git checkout -- src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "outcome": "passed",
+    "evidence": "Mutant: Failed 4, Passed 1. OneFileListedWithoutAnIdIsEnoughToSaySo and all three TheExtendedClassListingNoFileIdsSaysSo cases (0/0, max/max, 0/max) fail with Assert.False() Failure; the pre-existing full-class fallback case passes under both. Source restored; git status shows no src change."
+   },
+   {
+    "what": "Touched test classes after restoring the mutation (rebuilds clean bins)",
+    "command": "eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"VolumeUsageTests|ListingFallbackTests|TopLevelTests\"",
+    "outcome": "passed",
+    "evidence": "Passed! - Failed: 0, Passed: 44"
+   },
+   {
+    "what": "Engine architecture rules (includes the SL-039 App store rule that attempt 1 broke)",
+    "command": "Fitness op=check rebuild=true",
+    "outcome": "passed",
+    "evidence": "62 rule(s) checked against 107 parsed file(s): Every declared rule holds."
+   },
+   {
+    "what": "Publish the single-file exe",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o artifacts/publish",
+    "outcome": "passed",
+    "evidence": "FsAnalyser.App -> ...\\artifacts\\publish\\"
+   },
+   {
+    "what": "HF-001 real: exe on a real NTFS temp tree, x.bin (1,000,000 B) with 3 names (y.bin, sub\\w.bin via hardlink, confirmed by fsutil hardlink list) plus a 5,000 B file",
+    "command": "eng/read-window.ps1 -Root %TEMP%\\sl071-validate\\tree (wrapped to print title/detail/counters/core)",
+    "outcome": "passed",
+    "evidence": "EXIT 0, Finished; core bytes 1,005,000 (file counted once), files 4; OutcomeDetail has no 'does not report file IDs' note."
+   },
+   {
+    "what": "HF-001 + HF-024 real: exe on the whole local D:\\ drive",
+    "command": "eng/read-window.ps1 -Root D:\\ -TimeoutSec 570",
+    "outcome": "passed",
+    "evidence": "EXIT 0, Completed, 527,495 files, 4,189 folders, 97 links, 2 unreadable, 8.0 s. No file-ID note. 'The volume reports 125.4 GB in use, so 779.2 MB of it was not seen'. DriveInfo D: total 1,000,186,310,656 - free 865,539,850,240 = 134,646,460,416 B = 125.4 GiB: matches, positive."
+   },
+   {
+    "what": "HF-001 + HF-024 real: exe on the Z:\\ network share (NTFS behind SMB)",
+    "command": "eng/read-window.ps1 -Root Z:\\ -TimeoutSec 420",
+    "outcome": "passed",
+    "evidence": "EXIT 0, Completed, 134,338 files, 15,173 folders, 0 links, 1 unreadable, 312 s. No file-ID note (the share listed a usable ID for every file). 'The volume reports 3.6 GB in use, so 30.2 MB of it was not seen'. DriveInfo Z: total 106,146,160,640 - free 102,325,784,576 = 3,820,376,064 B = 3.56 GiB: matches, positive. Counters line populated at the end (the tiny-tree run showed 0 counters only because it finished in 20 ms before the first poll)."
+   },
+   {
+    "what": "HF-006: the three reparse-tag constants are gone",
+    "command": "git grep -n -E \"IO_REPARSE_TAG_(MOUNT_POINT|SYMLINK|DFS)\" -- src tests eng",
+    "outcome": "passed",
+    "evidence": "No matches. The explanation moved into the REPARSE_TAG_NAME_SURROGATE doc (Kernel32.cs diff)."
+   },
+   {
+    "what": "HF-003: TopLevelKind deleted, TopLevelRow.Kind is EntryKind",
+    "command": "git grep -n TopLevelKind -- src tests eng",
+    "outcome": "passed",
+    "evidence": "No matches. TopLevelTracker.Seed now uses store.Kind(entry) directly with no default arm; TopLevelRow.IsFolder added so the App does not name the Store namespace."
+   },
+   {
+    "what": "HF-005: no ScanProgress.Links left",
+    "command": "git grep -n -E \"\\bLinks\\b\" -- src tests eng (excluding Totals.Links etc.)",
+    "outcome": "passed",
+    "evidence": "Only ScanTotals' positional field, comments and WindowCases.ps1 manifest objects. ScanProgress field, property and Publish write removed."
+   },
+   {
+    "what": "HF-011: VolumeSpace owns no \\\\?\\ constant or default bound; Start parameters required",
+    "command": "git grep -n -E \"Extended\\s*=|DefaultBound|VolumeSpace\\.Start\\(\" -- src tests eng",
+    "outcome": "passed",
+    "evidence": "Extended only in LongPath.cs:11; DefaultBound gone; ScanOptions.VolumeReadBound = TimeSpan.FromSeconds(30); single caller Scanner.cs:138 passes all five. IsDriveRoot/Start go through LongPath.ToDisplay (declared deviation)."
+   },
+   {
+    "what": "HF-024 under a real per-user quota",
+    "outcome": "not-run",
+    "evidence": "Enabling NTFS quotas needs an administrator and is not one of the named elevated operations; neither C:, D: nor Z: is under a quota smaller than its free space, so the free > total branch was never taken on a real volume."
+   },
+   {
+    "what": "HF-001 on a real volume that answers the extended class but lists no/sentinel IDs",
+    "outcome": "not-run",
+    "evidence": "No such volume reachable: the only non-NTFS volume is the unlettered FAT32 EFI partition (mounting needs admin), and the project's SMB loopback rig would create an SMB mapping, which this stage does not do. Covered only by ListedFileId substitution on a real NTFS tree."
+   },
+   {
+    "what": "Loop check on the slice index",
+    "command": "read .taad/slices/SL-071/index.json",
+    "outcome": "passed",
+    "evidence": "build-slice attempt 2 caused_by code-review (O-003, O-004), changed src 3 / tests 1: progress, not a loop."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "HF-001: FileIdsAvailable derived from the listed ID values, not the listing class, so the hardlink note shows whenever the store could not deduplicate a file (Scanner.cs:316)",
+    "met": "yes",
+    "how": "Scanner counts files appended with !ScanStore.HasFileId(fileId) and sets FileIdsAvailable = status != RootUnreadable && _filesWithoutId == 0. Four new cases on real NTFS trees pass, and my mutation back to !_fullClass makes all four fail. Real exe runs on a hardlinked temp tree, all of D:\\ and the Z:\\ share show no spurious note and count the hardlinked file once. The positive no-ID case was exercised only through the ListedFileId seam, never on a real no-ID volume."
+   },
+   {
+    "criterion": "HF-024: a used figure is never the wrapped negative of total - free; free > total gives no figure (Kernel32.cs:124)",
+    "met": "yes",
+    "how": "TryUsedBytes refuses free > total and a difference above long.MaxValue. AFreeFigureAboveTheQuotaTotalIsNoFigure passes (the code review's mutation showed the old guard fails it). Real D: and Z: readings through the exe are positive and equal DriveInfo's total minus free (125.4 GB, 3.6 GB). The quota case itself was not reached on a real volume."
+   },
+   {
+    "criterion": "HF-003: TopLevelKind removed; rows use EntryKind with no silent default-to-File arm",
+    "met": "yes",
+    "how": "The grep finds no TopLevelKind. The diff shows the tracker uses store.Kind(entry) directly. TopLevelTests and the SL-063 catalog pass, and Fitness holds for the App store rule."
+   },
+   {
+    "criterion": "HF-005: ScanProgress.Links either shown or removed",
+    "met": "yes",
+    "how": "Removed: the field, the property and the Publish write are gone, and the grep finds no reader."
+   },
+   {
+    "criterion": "HF-006: unused IO_REPARSE_TAG_* constants deleted",
+    "met": "yes",
+    "how": "The grep finds no match in src, tests or eng. The explanation is kept in the NAME_SURROGATE doc."
+   },
+   {
+    "criterion": "HF-011: VolumeSpace's own \\\\?\\ handling and duplicated default bound removed; Start parameters required",
+    "met": "yes",
+    "how": "The grep and the diff show it: LongPath.ToDisplay is used (a declared deviation from dropping prefix handling outright), ScanOptions owns the 30 s bound, and Start has no optional parameters. The VolumeUsageTests IsDriveRoot cases pass."
+   }
+  ],
+  "planned": [
+   {
+    "ordinal": 1,
+    "met": "yes",
+    "evidence": "HF-001: Scanner.cs sets FileIdsAvailable from _filesWithoutId == 0. Four ListingFallbackTests cases pass and all fail under my mutation back to !_fullClass. Real exe runs on the hardlinked temp tree, D:\\ (527,495 files) and Z:\\ (134,338 files) finish with no spurious note. The case of a real volume listing no IDs was not reached."
+   },
+   {
+    "ordinal": 2,
+    "met": "yes",
+    "evidence": "HF-024: TryUsedBytes refuses free > total and total - free > long.MaxValue, and the case test passes. The real D: and Z: volume figures in the exe's report are positive and match DriveInfo exactly. A real per-user quota was not reached."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "verified": "yes",
+    "evidence": "ListingFallbackTests.TheExtendedClassListingNoFileIdsSaysSo (3 cases) and OneFileListedWithoutAnIdIsEnoughToSaySo pass, and each fails when I mutate the flag back to !_fullClass."
+   },
+   {
+    "key": "O-002",
+    "verified": "yes",
+    "evidence": "VolumeUsageTests.AFreeFigureAboveTheQuotaTotalIsNoFigure passes (44/44 in the touched classes; 394/394 in the full suite)."
+   },
+   {
+    "key": "O-003",
+    "verified": "yes",
+    "evidence": "Fitness op=check with rebuild: every one of the 62 rules holds. TopLevelRowText uses !row.IsFolder, and the grep finds no TopLevelKind."
+   },
+   {
+    "key": "O-004",
+    "verified": "yes",
+    "evidence": "Kernel32.TryUsedBytes guard is `free > total || total - free > long.MaxValue`. The test asserts that (ulong.MaxValue, 0) returns false, and it passes."
+   }
+  ],
+  "not_reached": [
+   "A real volume that answers the extended directory class but lists files with no ID or a sentinel ID (HF-001's triggering case). No such volume is reachable. The FAT32 EFI partition has no letter and mounting it needs an administrator, and this stage does not create SMB mappings for the loopback rig. That case is proven only through the ScanOptions.ListedFileId seam.",
+   "A per-user NTFS quota smaller than the volume's free space (HF-024's triggering case). Enabling quotas needs an administrator and is not a named elevated operation. A session would be needed, but the arithmetic is fully covered by the pure TryUsedBytes test, so a session looks unnecessary.",
+   "The HF-024 residual left open by build: a quota above the volume's free space still gives a positive figure that mixes the quota total with the volume's free space. Nothing was checked for this case.",
+   "A whole C:\\ scan with this build. Not repeated: D:\\ and Z:\\ were used instead. C: has more special files (WOF, cloud placeholders), so whether any C: file lists ID 0 and would now raise the note was not checked on this build.",
+   "Whether MainWindow's note wording ('This drive does not report file IDs') reads correctly when only some files lacked an ID. This is left open by build, and no real volume produced the note."
+  ]
+ }
+}

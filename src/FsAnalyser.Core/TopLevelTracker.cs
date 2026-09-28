@@ -53,21 +53,16 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
         for (int i = 0; i < count; i++)
         {
             int entry = first + i;
-            TopLevelKind kind = store.Kind(entry) switch
-            {
-                EntryKind.Folder => TopLevelKind.Folder,
-                EntryKind.Link => TopLevelKind.Link,
-                _ => TopLevelKind.File,
-            };
+            EntryKind kind = store.Kind(entry);
             _rows[i] = new Row
             {
                 Name = store.Name(entry).ToString(),
                 Kind = kind,
                 Bytes = store.ChargedSize(entry),
                 OnDisk = store.ChargedOnDisk(entry),
-                Files = kind == TopLevelKind.File ? 1 : 0,
-                Folders = kind == TopLevelKind.Folder ? 1 : 0,
-                Pending = kind == TopLevelKind.Folder ? 1 : 0, // pushed by the root listing
+                Files = kind == EntryKind.File ? 1 : 0,
+                Folders = kind == EntryKind.Folder ? 1 : 0,
+                Pending = kind == EntryKind.Folder ? 1 : 0, // pushed by the root listing
             };
             if (_rows[i].Pending == 0)
                 Settle(ref _rows[i]);
@@ -187,8 +182,8 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
         ref Row r = ref _rows[i];
         TopLevelState state = r.Kind switch
         {
-            TopLevelKind.File => TopLevelState.Done,
-            TopLevelKind.Link => TopLevelState.NotFollowed,
+            EntryKind.File => TopLevelState.Done,
+            EntryKind.Link => TopLevelState.NotFollowed,
             _ when !r.Started => TopLevelState.NotRead,
             _ when r.Pending > 0 => final ? TopLevelState.StoppedPartway : TopLevelState.Reading,
             _ => r.OwnUnreadable ? TopLevelState.Unreadable : TopLevelState.Done,
@@ -209,7 +204,7 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
     private struct Row
     {
         public string Name;
-        public TopLevelKind Kind;
+        public EntryKind Kind;
         public long Bytes, OnDisk, Files, Folders, UnreadableBelow;
         public long SettledBytes, SettledOnDisk; // Bytes and OnDisk when its pending count reached 0
         public int Pending; // its own folder and every folder pushed under it, less those that exited a listing

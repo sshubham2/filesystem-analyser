@@ -1,0 +1,61 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-071",
+ "stage": "code-review",
+ "attempt": 2,
+ "at": "2026-09-28T08:33:55.240Z",
+ "head": "350591c3758c7ea85cd749dfdb092efa27e788d1",
+ "run_id": 1849,
+ "summary": "Attempt 2 fixes both findings, and nothing else in the code moved.\n\n**B1 / O-003 (the fitness rule):** fixed.\n- `TopLevelRow.IsFolder` now exists in Core (src/FsAnalyser.Core/TopLevelSnapshot.cs:64-65).\n- `TopLevelRowText.FiguresOf` tests `!row.IsFolder` (src/FsAnalyser.App/TopLevelRowText.cs:37).\n- The `using FsAnalyser.Core.Store;` line is gone.\n- In the App, only FolderTreeNode.cs and FolderTreeSession.cs still name `Core.Store` or `EntryKind`, and those are the files the rule exempts.\n- Fitness op=check, run on a freshly rebuilt graph: \"Every declared rule holds.\"\n\n**R2-m1 / O-004 (the second wrap-around):** fixed. The guard is now `free > total || total - free > long.MaxValue` (src/FsAnalyser.Core/Native/Kernel32.cs:177). The case test asserts that `(ulong.MaxValue, 0)` gives no figure.\n\n**What I ran:**\n- **Mutation check:** I put the old `free > total` guard back and ran AFreeFigureAboveTheQuotaTotalIsNoFigure. It failed with \"a used figure of -1 bytes\", so the new assert does catch the defect. The builder had not run this check. I restored the file afterwards (git status shows only the .taad files).\n- **Full default suite:** 394 passed.\n- **SL-063 bug catalog:** 10 passed.\n\n**Earlier work, re-checked:**\n- The first round's mutation checks still show that the HF-001 and HF-024 case tests catch the old behaviour.\n- The builder's account now corrects its earlier wrong claim that the fitness patterns still held.\n- The departures it carried over are all declared.\n- The one stale statement I found is a doc comment, recorded under drift.\n\nSecond round: This round found nothing new, so it stays clean.\n\nAttempt 2 added no parser, regular expression or reader, so there were no input formats to try. I went back over the three code changes looking for inputs that would break them:\n\n- **`TopLevelRow.IsFolder`** (TopLevelSnapshot.cs:64-65) just compares `Kind == EntryKind.Folder`. `Kind` is set only by the internal constructor. `TopLevelTracker.Seed` fills it from `store.Kind(entry)`, which can only be one of the store's three kinds. The SL-063 test builds rows by reflection and passes `EntryKind.Link` or `EntryKind.Folder`. The window reads it in one place, `TopLevelRowText.FiguresOf`, and no .xaml binds to it.\n- **`TryUsedBytes`** (Kernel32.cs:177) checks `free > total` first. The subtraction only runs when free ≤ total, so it cannot itself wrap below zero. A difference of exactly `long.MaxValue` passes and converts without loss. Every other unsigned pair either gives a positive figure or returns false. The one caller, `TryGetVolumeUsed`, sets `error = 0` before returning through it, and `VolumeSpace.Read` ignores the error code.\n- **The new test assert** evaluates `TryUsedBytes` before its interpolated failure message, so the message shows the value the call just wrote.\n\nThe code from attempt 1 has not changed since my earlier adversarial pass, and those checks still hold.\n\nWhat I measured this lap:\n- Fitness op=check reports every declared rule holding.\n- A mutation check shows the new assert fails, with -1, when the widened guard is taken out.\n- The full suite passes, 394 tests.\n- The SL-063 bug catalog passes, 10 tests.",
+ "payload": {
+  "status": "complete",
+  "verdict": "clean",
+  "summary": "Attempt 2 fixes both findings, and nothing else in the code moved.\n\n**B1 / O-003 (the fitness rule):** fixed.\n- `TopLevelRow.IsFolder` now exists in Core (src/FsAnalyser.Core/TopLevelSnapshot.cs:64-65).\n- `TopLevelRowText.FiguresOf` tests `!row.IsFolder` (src/FsAnalyser.App/TopLevelRowText.cs:37).\n- The `using FsAnalyser.Core.Store;` line is gone.\n- In the App, only FolderTreeNode.cs and FolderTreeSession.cs still name `Core.Store` or `EntryKind`, and those are the files the rule exempts.\n- Fitness op=check, run on a freshly rebuilt graph: \"Every declared rule holds.\"\n\n**R2-m1 / O-004 (the second wrap-around):** fixed. The guard is now `free > total || total - free > long.MaxValue` (src/FsAnalyser.Core/Native/Kernel32.cs:177). The case test asserts that `(ulong.MaxValue, 0)` gives no figure.\n\n**What I ran:**\n- **Mutation check:** I put the old `free > total` guard back and ran AFreeFigureAboveTheQuotaTotalIsNoFigure. It failed with \"a used figure of -1 bytes\", so the new assert does catch the defect. The builder had not run this check. I restored the file afterwards (git status shows only the .taad files).\n- **Full default suite:** 394 passed.\n- **SL-063 bug catalog:** 10 passed.\n\n**Earlier work, re-checked:**\n- The first round's mutation checks still show that the HF-001 and HF-024 case tests catch the old behaviour.\n- The builder's account now corrects its earlier wrong claim that the fitness patterns still held.\n- The departures it carried over are all declared.\n- The one stale statement I found is a doc comment, recorded under drift.\n\nSecond round: This round found nothing new, so it stays clean.\n\nAttempt 2 added no parser, regular expression or reader, so there were no input formats to try. I went back over the three code changes looking for inputs that would break them:\n\n- **`TopLevelRow.IsFolder`** (TopLevelSnapshot.cs:64-65) just compares `Kind == EntryKind.Folder`. `Kind` is set only by the internal constructor. `TopLevelTracker.Seed` fills it from `store.Kind(entry)`, which can only be one of the store's three kinds. The SL-063 test builds rows by reflection and passes `EntryKind.Link` or `EntryKind.Folder`. The window reads it in one place, `TopLevelRowText.FiguresOf`, and no .xaml binds to it.\n- **`TryUsedBytes`** (Kernel32.cs:177) checks `free > total` first. The subtraction only runs when free ≤ total, so it cannot itself wrap below zero. A difference of exactly `long.MaxValue` passes and converts without loss. Every other unsigned pair either gives a positive figure or returns false. The one caller, `TryGetVolumeUsed`, sets `error = 0` before returning through it, and `VolumeSpace.Read` ignores the error code.\n- **The new test assert** evaluates `TryUsedBytes` before its interpolated failure message, so the message shows the value the call just wrote.\n\nThe code from attempt 1 has not changed since my earlier adversarial pass, and those checks still hold.\n\nWhat I measured this lap:\n- Fitness op=check reports every declared rule holding.\n- A mutation check shows the new assert fails, with -1, when the widened guard is taken out.\n- The full suite passes, 394 tests.\n- The SL-063 bug catalog passes, 10 tests.",
+  "matches_design": true,
+  "findings": [],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "Unchanged since attempt 1. src/FsAnalyser.Core/Scanning/Scanner.cs:315 applies the seam, :327-328 counts files listed without an ID, and :469 sets `FileIdsAvailable = status != RootUnreadable && _filesWithoutId == 0`.\n\ntests/FsAnalyser.Core.Tests/ListingFallbackTests.cs TheExtendedClassListingNoFileIdsSaysSo (three values that mean no ID) and OneFileListedWithoutAnIdIsEnoughToSaySo scan a real NTFS hardlinked pair. The first-round mutation run showed they fail against the old rule. They pass in the 394-test run today."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "src/FsAnalyser.Core/Native/Kernel32.cs:160: TryGetVolumeUsed returns through TryUsedBytes, and :177 refuses free > total.\n\ntests/FsAnalyser.Core.Tests/VolumeUsageTests.cs AFreeFigureAboveTheQuotaTotalIsNoFigure asserts that (100 GiB, 626 GiB) gives false. It failed against the unguarded code in the first round's mutation run."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "src/FsAnalyser.Core/TopLevelSnapshot.cs:64-65 adds `public bool IsFolder => Kind == EntryKind.Folder;`. src/FsAnalyser.App/TopLevelRowText.cs:37 uses `if (!row.IsFolder)`, and the Store using is deleted.\n\nA grep of src/FsAnalyser.App for EntryKind or Core.Store finds only FolderTreeNode.cs and FolderTreeSession.cs, which the rule exempts. No .xaml maps a clr-namespace to FsAnalyser.Core.Store. Fitness op=check (rebuild=true): every declared rule holds."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "src/FsAnalyser.Core/Native/Kernel32.cs:177: `if (free > total || total - free > long.MaxValue)`. tests/FsAnalyser.Core.Tests/VolumeUsageTests.cs:103 asserts `Assert.False(Kernel32.TryUsedBytes(ulong.MaxValue, 0, out used))`.\n\nMutation check: with the guard put back to `free > total`, the test fails with 'a used figure of -1 bytes'. Restored, it passes, and the full suite passes (394)."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "tests/FsAnalyser.Core.Tests/ListingFallbackTests.cs scans a real NTFS hardlinked pair under the extended class. Through ScanOptions.ListedFileId every ID is replaced with 0, UInt128.MaxValue, or (0, ulong.MaxValue). It asserts 2000 bytes are charged and FileIdsAvailable is false. Unchanged in attempt 2. The first-round mutation run showed it fails against `!_fullClass`."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "tests/FsAnalyser.Core.Tests/VolumeUsageTests.cs AFreeFigureAboveTheQuotaTotalIsNoFigure feeds in the quota shape (100 GiB total, 626 GiB free) and now also (ulong.MaxValue, 0). It expects false for both and the ordinary figure for the reversed pair.\n\nMutation checks: removing the first-round guard fails the quota assert. Reverting only the new clause fails the second assert with -1."
+   }
+  ],
+  "drift": [
+   "src/FsAnalyser.Core/Native/Kernel32.cs:146-147: the doc on TryGetVolumeUsed's return value still lists only 'false with error 0 when it answered more free bytes than total bytes'. Since attempt 2 it also returns false with error 0 when total less free is past long.MaxValue. The cref to TryUsedBytes, whose own doc (:170-173) covers both cases, points the reader there. So the list is incomplete rather than wrong, and nothing reads the error code except VolumeSpace.Read, which discards it.",
+   "No new undeclared departure. The carried-over declared ones stand: the ListedFileId test seam, the 'no file lacked an ID' rule (a full-class scan that lists no files now reports true), LongPath.ToDisplay kept rather than dropping the prefix handling, the unbuilt quota-independent source for HF-024, and HF-005 removing the counter rather than showing it. Attempt 2 adds TopLevelRow.IsFolder, a public Core member the design did not name. It is the fix the review asked for, and the build declared it.",
+   "Nothing new departed this round. The one stale statement already recorded still stands: the return-value doc of TryGetVolumeUsed at Kernel32.cs:146-147 lists only the 'free > total' case for 'false with error 0'."
+  ],
+  "unreviewed": [],
+  "second_round": {
+   "run_id": 1850,
+   "filed": 0
+  }
+ }
+}

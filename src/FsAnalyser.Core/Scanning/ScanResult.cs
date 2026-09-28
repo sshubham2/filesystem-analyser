@@ -57,7 +57,10 @@ public sealed class ScanResult
     /// </summary>
     public int VanishedBeforeProbe { get; init; }
 
-    /// <summary>False when the volume gave no FileIds, so hardlinks could not be counted once.</summary>
+    /// <summary>
+    /// False when a file was listed without a FileId (<see cref="ScanStore.HasFileId"/>), whatever the listing class,
+    /// so the store could not count it once if it has other names; and when the root could not be read.
+    /// </summary>
     public bool FileIdsAvailable { get; init; }
 
     public TimeSpan Elapsed { get; init; }
