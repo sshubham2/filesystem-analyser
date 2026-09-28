@@ -1,0 +1,216 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-077",
+ "stage": "validate-slice",
+ "attempt": 1,
+ "at": "2026-09-28T20:50:24.597Z",
+ "head": "5c2d1ff3d66bf044830736259ce7efcd8eba1424",
+ "run_id": 2016,
+ "summary": "The fix works against real hardware. I published FsAnalyser.App.exe fresh from HEAD 5c2d1ff (src unchanged since build 1) and launched it through eng/read-window.ps1 -DefaultErrorMode, so the process error mode was 0x0 and it did not inherit this shell's 0x8003. I scanned the two real empty removable drives on this PC (E:\\ and F:\\, Removable, IsReady=False) and a folder path on one of them (E:\\some\\folder). Every run ended RootUnreadable with rootError 21 (ERROR_NOT_READY) in 7–8 ms, and the process exited 0 in about 1.3 s. Nothing blocked on a disk prompt. A temp-tree control run Completed (1 file, 2 folders, 7 bytes).\n\nCode-level checks:\n- The full default suite passed 414/414 twice.\n- Fitness: all 62 rules hold. rules-parity: AGREE (12 facts, 29 patterns).\n- Three mutations show the restore and guard tests catch real defects. Each file was restored afterwards with an identical hash, then touched and rebuilt.\n  - (A) Drop the `using` in SynchronousIoCancel.Open: 7 Facts fail, covering the success, failure, cancel/refuse/throw, both-route and multi-thread paths.\n  - (B) Make Dispose restore nothing: 9 fail, including NestedScopesUnwindInOrder and the volume-read Fact.\n  - (C) Remove the scope from TryGetVolumeUsed: TheVolumeReadRunsWithTheBoxOffAndGivesTheModeBack fails. This closes the critique's concern that the refactor had no test that could fail.\n\nThat discharges O-002 (restore on every exit path, LIFO nesting).\n\nStill open:\n- O-026 and O-027, both owed to build-slice, are still unfixed in the tree:\n  - The name list still lacks GetCompressedFileSize, FindFirstFileName, FindFirstStream, GetFileInformationByName and CreateFileTransacted.\n  - FailCriticalErrorsTests.cs:490 still has its own third `names` literal.\n  - The count Fact's doc (:484) still claims completeness.\n\n  They are minor rule-machinery findings and do not affect today's behaviour: no src calls those APIs. The merge gate will still refuse while they stand.\n- Criterion 14 (handle-based calls after media is pulled mid-scan) was scoped out by the design and not checked.\n- I did not show the empty-drive check can fail. The pre-fix exe was never run on E:\\, because that would put a modal box on the person's screen. So 'no box' rests on the fix plus the assumption that this card reader would raise one without it.\n\nThe bug report was title-only. The assumption carried from the design is that the box comes from CreateFileW on a drive with no media, and that with the flag set the call returns 21. The real runs confirm the second part.",
+ "payload": {
+  "status": "complete",
+  "verdict": "passes",
+  "contact": "real",
+  "summary": "The fix works against real hardware. I published FsAnalyser.App.exe fresh from HEAD 5c2d1ff (src unchanged since build 1) and launched it through eng/read-window.ps1 -DefaultErrorMode, so the process error mode was 0x0 and it did not inherit this shell's 0x8003. I scanned the two real empty removable drives on this PC (E:\\ and F:\\, Removable, IsReady=False) and a folder path on one of them (E:\\some\\folder). Every run ended RootUnreadable with rootError 21 (ERROR_NOT_READY) in 7–8 ms, and the process exited 0 in about 1.3 s. Nothing blocked on a disk prompt. A temp-tree control run Completed (1 file, 2 folders, 7 bytes).\n\nCode-level checks:\n- The full default suite passed 414/414 twice.\n- Fitness: all 62 rules hold. rules-parity: AGREE (12 facts, 29 patterns).\n- Three mutations show the restore and guard tests catch real defects. Each file was restored afterwards with an identical hash, then touched and rebuilt.\n  - (A) Drop the `using` in SynchronousIoCancel.Open: 7 Facts fail, covering the success, failure, cancel/refuse/throw, both-route and multi-thread paths.\n  - (B) Make Dispose restore nothing: 9 fail, including NestedScopesUnwindInOrder and the volume-read Fact.\n  - (C) Remove the scope from TryGetVolumeUsed: TheVolumeReadRunsWithTheBoxOffAndGivesTheModeBack fails. This closes the critique's concern that the refactor had no test that could fail.\n\nThat discharges O-002 (restore on every exit path, LIFO nesting).\n\nStill open:\n- O-026 and O-027, both owed to build-slice, are still unfixed in the tree:\n  - The name list still lacks GetCompressedFileSize, FindFirstFileName, FindFirstStream, GetFileInformationByName and CreateFileTransacted.\n  - FailCriticalErrorsTests.cs:490 still has its own third `names` literal.\n  - The count Fact's doc (:484) still claims completeness.\n\n  They are minor rule-machinery findings and do not affect today's behaviour: no src calls those APIs. The merge gate will still refuse while they stand.\n- Criterion 14 (handle-based calls after media is pulled mid-scan) was scoped out by the design and not checked.\n- I did not show the empty-drive check can fail. The pre-fix exe was never run on E:\\, because that would put a modal box on the person's screen. So 'no box' rests on the fix plus the assumption that this card reader would raise one without it.\n\nThe bug report was title-only. The assumption carried from the design is that the box comes from CreateFileW on a drive with no media, and that with the flag set the call returns 21. The real runs confirm the second part.",
+  "checks": [
+   {
+    "what": "Full default Core.Tests suite on the tree as committed (5c2d1ff)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+    "outcome": "passed",
+    "evidence": "Passed! - Failed: 0, Passed: 414, Skipped: 0, Total: 414, Duration 23 s; EXIT 0"
+   },
+   {
+    "what": "Fresh single-file Release publish of the App from this tree into a scratch folder",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o %TEMP%\\sl077-validate-publish",
+    "outcome": "passed",
+    "evidence": "EXIT 0; FsAnalyser.App.exe 139,899,544 bytes; HEAD 5c2d1ff3d, git status clean under src/"
+   },
+   {
+    "what": "Drive state before the real runs (the BCL's DriveInfo is guarded, so it raises no box)",
+    "command": "[IO.DriveInfo]::GetDrives() | % { Name, DriveType, IsReady }",
+    "outcome": "passed",
+    "evidence": "C:\\ Fixed True; D:\\ Fixed True; E:\\ Removable IsReady=False; F:\\ Removable IsReady=False; Z:\\ Network True"
+   },
+   {
+    "what": "Control: the published exe with process error mode 0x0 on a temp NTFS tree (a\\sub\\c.txt, 7 bytes)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/read-window.ps1 -Exe <scratch exe> -Root %TEMP%\\sl077-validate-tree -TimeoutSec 60 -DefaultErrorMode",
+    "outcome": "passed",
+    "evidence": "ERRORMODE 0x0, EXIT 0, wall 1.9 s; core {status Completed, rootError null, files 1, folders 2, bytes 7, bytesOnDisk 8, elapsedMs 24}"
+   },
+   {
+    "what": "REAL: whole-drive root scan of the empty removable drive E:\\, launched with process error mode 0x0 (no inherited SEM_FAILCRITICALERRORS)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/read-window.ps1 -Exe <scratch exe> -Root E:\\ -TimeoutSec 60 -DefaultErrorMode",
+    "outcome": "passed",
+    "evidence": "ERRORMODE 0x0, EXIT 0, wall 1.4 s (no TIMEOUT, so no blocking disk prompt); core {status RootUnreadable, rootError 21, files 0, elapsedMs 8}"
+   },
+   {
+    "what": "REAL: whole-drive root scan of the second empty removable drive F:\\, process error mode 0x0",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/read-window.ps1 -Exe <scratch exe> -Root F:\\ -TimeoutSec 60 -DefaultErrorMode",
+    "outcome": "passed",
+    "evidence": "ERRORMODE 0x0, EXIT 0, wall 1.2 s; core {status RootUnreadable, rootError 21, elapsedMs 8}"
+   },
+   {
+    "what": "REAL: folder-path scan on an empty removable drive (the folder-scan shape rather than the drive root)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/read-window.ps1 -Exe <scratch exe> -Root E:\\some\\folder -TimeoutSec 60 -DefaultErrorMode",
+    "outcome": "passed",
+    "evidence": "ERRORMODE 0x0, EXIT 0, wall 1.4 s; core {status RootUnreadable, rootError 21, elapsedMs 7}"
+   },
+   {
+    "what": "Mutation A: drop the `using` on the CriticalErrorBoxOff in SynchronousIoCancel.Open (the scope is never disposed, so nothing is restored)",
+    "command": "edit SynchronousIoCancel.cs:352, then eng/dotnet.ps1 test ... --filter FullyQualifiedName~FailCriticalErrorsTests",
+    "outcome": "passed",
+    "evidence": "Mutant killed as intended: exit 1, 7 of 13 fail: AFailedOpen..., BothRoutes..., ProbesOnSeveralThreads..., EveryFolderTheScanOpens..., AProbeOnThisThread(preset 0) and (preset 2), ACancelledOrThrowingOpen..."
+   },
+   {
+    "what": "Mutation B: CriticalErrorBoxOff.Dispose restores nothing",
+    "command": "edit Kernel32.cs Dispose to `if (false && _set)`, then the FailCriticalErrorsTests filter",
+    "outcome": "passed",
+    "evidence": "Mutant killed: exit 1, 9 of 13 fail, including NestedScopesUnwindInOrder and TheVolumeReadRunsWithTheBoxOffAndGivesTheModeBack"
+   },
+   {
+    "what": "Mutation C: TryGetVolumeUsed without the shared scope (the critique's no-op-default and unguarded-refactor concern)",
+    "command": "remove `using CriticalErrorBoxOff boxOff = CriticalErrorBoxOff.Begin();` from TryGetVolumeUsed, then the FailCriticalErrorsTests filter",
+    "outcome": "passed",
+    "evidence": "Mutant killed: exit 1, TheVolumeReadRunsWithTheBoxOffAndGivesTheModeBack fails, 12 others pass"
+   },
+   {
+    "what": "Restore the mutated sources, force a rebuild (Copy-Item had kept the old timestamps, which could have left a mutant DLL in bin), then re-run the full suite",
+    "command": "Copy-Item from backup; SHA-256 compare; set LastWriteTime=now; eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+    "outcome": "passed",
+    "evidence": "restored identical: True; git status clean under src/; FsAnalyser.Core rebuilt; 414/414 passed, EXIT 0. Mutant C would have failed the volume-read Fact, so the rebuilt DLL is not a mutant."
+   },
+   {
+    "what": "Architecture rules (Fitness), including the new twinned path-open rule",
+    "command": "mcp Fitness op=check",
+    "outcome": "passed",
+    "evidence": "62 rules checked against 113 parsed files: every declared rule holds"
+   },
+   {
+    "what": "Rule copies agree between .taad/fitness.yaml and ArchitectureRulesTests",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/rules-parity.ps1 -ExpectFacts 12",
+    "outcome": "passed",
+    "evidence": "AGREE 12 facts <- 16 twinned entries, 29 patterns; 46 settled entries not compared; EXIT 0"
+   },
+   {
+    "what": "Are O-026/O-027 (owed to build-slice) fixed in the tree?",
+    "command": "Grep GetCompressedFileSize|FindFirstFileName|FindFirstStream|GetFileInformationByName|CreateFileTransacted|'every path-taking entry point'|'Any other path call' over fitness.yaml, ArchitectureRulesTests.cs, FailCriticalErrorsTests.cs, src",
+    "outcome": "failed",
+    "evidence": "None of the five names is in the yaml or Fact patterns. FailCriticalErrorsTests.cs:490 still holds its own `const string names` literal, and :484 still says 'Any other path call or path import there changes the count'. fitness.yaml:230 matched the completeness phrase. The only GetCompressedFileSize hit is TestNative.cs:63-64 (the EntryPoint-renamed import review m1 cited)."
+   },
+   {
+    "what": "Show that the empty-drive check can fail: run the pre-fix exe (uat 14acea3) with -DefaultErrorMode on E:\\",
+    "outcome": "not-run",
+    "evidence": "Not run on purpose. If the bug is real, the run puts a modal 'There is no disk in the drive' box on the person's screen while they are using the machine, and closing it would mean operating another program's window, which I may not do."
+   },
+   {
+    "what": "Whole-drive C:\\ scan through the published exe (criterion 13's 'equally a whole-drive C:\\ scan')",
+    "outcome": "not-run",
+    "evidence": "Not run: a C:\\ scan runs the probe on all 16 logical processors for about 2-3 minutes, which breaks the half-the-processors load limit on this shared machine. The root, subfolder and probe opens on NTFS are covered by the suite, and the drive-root shape by the E:\\ and F:\\ runs."
+   },
+   {
+    "what": "Handle-based calls after media is pulled mid-scan (criterion 14)",
+    "outcome": "not-run",
+    "evidence": "Needs someone to remove a card from the reader physically while the scan runs. The design also scoped it out (C-014, non-material), and EveryFolderTheScanOpensIsOpenedWithTheBoxOff asserts that handle calls keep the thread's own mode (0x0)."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "1. open the scan root: whole-tree scan of a temp NTFS folder; the root's listing open is guard call 1 on the scan thread",
+    "met": "yes",
+    "how": "The full suite passed (414/414), including EveryFolderTheScanOpensIsOpenedWithTheBoxOff (call 1 reads 0x1). Mutant A kills that Fact. Real: the published exe's root open on E:\\ and F:\\ returned 21 into RootUnreadable without blocking. The engine-run repro (O-001) is on record and I do not re-judge it."
+   },
+   {
+    "criterion": "2. size a file with SizeProbe: probe worker thread and a direct SizeProbe.Probe on the test thread",
+    "met": "yes",
+    "how": "AProbeOnThisThreadOpensWithTheBoxOffAndGivesTheModeBack (3 presets) and ProbesOnSeveralThreadsAtOnceEachGiveTheirThreadItsModeBack (4 dedicated threads x 2 probes) pass. Mutants A and B kill both."
+   },
+   {
+    "criterion": "3. open a nested folder during the scan (OpenDirectory for non-root folders)",
+    "met": "yes",
+    "how": "EveryFolderTheScanOpensIsOpenedWithTheBoxOff scans root\\a\\sub. Exactly 4 scan-thread calls read 0x1 (the root twice, then a and a\\sub). It passes, and mutant A kills it."
+   },
+   {
+    "criterion": "4. open through the last-access-preserving route (TryOpenKeepingLastAccess)",
+    "met": "yes",
+    "how": "BothRoutesOfAFolderOpenRunWithTheBoxOff passes: KeptLastAccess is true on one fixture and false on the other (FILE_WRITE_ATTRIBUTES denied). Both read 0x1 inside and 0x2 after. I read the code: the scope is created before both CreateFile calls (SynchronousIoCancel.cs:352, 364, 394)."
+   },
+   {
+    "criterion": "5. give the thread its mode back: preset 0x0 before a direct Probe",
+    "met": "yes",
+    "how": "The Theory case preset 0 passes. Mutants A and B make that case fail."
+   },
+   {
+    "criterion": "6. give the thread its mode back: preset SEM_NOGPFAULTERRORBOX 0x2",
+    "met": "yes",
+    "how": "The Theory case preset 2 passes (exactly 0x1 inside, 0x2 after). Mutants A and B make it fail."
+   },
+   {
+    "criterion": "7. give the thread its mode back: caller already has SEM_FAILCRITICALERRORS 0x1",
+    "met": "yes",
+    "how": "The Theory case preset 1 passes. By nature it cannot tell a missing restore from a correct one, so NestedScopesUnwindInOrder carries the LIFO part: it passes, and mutant B kills it."
+   },
+   {
+    "criterion": "8. restore on a failed open (access denied err 5, missing path)",
+    "met": "yes",
+    "how": "AFailedOpenRanWithTheBoxOffAndGivesTheModeBack passes, and mutants A and B kill it. Real: error 21 on E:\\ and F:\\ went through Open's failure path to RootUnreadable in the published exe."
+   },
+   {
+    "criterion": "9. restore on a cancelled open",
+    "met": "yes",
+    "how": "ACancelledOrThrowingOpenGivesTheModeBack covers three exits: a cancel during the root open, a refusal because Cancel came first (Enter false), and an exception inside the bracket. It passes, and mutants A and B kill it."
+   },
+   {
+    "criterion": "10. no leak onto pooled threads",
+    "met": "yes",
+    "how": "Checked in the form review m3 accepted: 4 dedicated threads run probes concurrently, and each thread's mode equals its baseline after every probe. It passes, and mutants A and B kill it. The literal 'reused ThreadPool thread reads baseline' shape is not tested, by design: it is nondeterministic."
+   },
+   {
+    "criterion": "11. TryGetVolumeUsed after moving onto the shared scope",
+    "met": "yes",
+    "how": "TheVolumeReadRunsWithTheBoxOffAndGivesTheModeBack passes: the present drive answers, a free letter does not, 0x1 inside both, 0x2 after. Mutant C (scope removed) kills it, so the refactor is guarded."
+   },
+   {
+    "criterion": "12. counting rules through the guarded Open (links, hardlinks, on-disk size, long paths, unreadable folders)",
+    "met": "yes",
+    "how": "The whole default suite ran 414/414 with 0 skipped, twice. The counting-rule tests are in the default filter; only the Network and Cloud traits are excluded."
+   },
+   {
+    "criterion": "13. open a drive with no media (ERROR_NOT_READY 21 into Open's failure path); whole-drive vs folder scan",
+    "met": "yes",
+    "how": "Real: the published exe, launched with process error mode 0x0, scanned E:\\ and F:\\ (whole drive) and E:\\some\\folder (folder). All three gave RootUnreadable with rootError 21 in 7-8 ms, EXIT 0 in about 1.3 s, with no blocking prompt. Caveats: a whole-drive C:\\ scan through the exe was not run (load limit), and nobody has shown that the pre-fix exe raises the box on this reader, so the counterfactual is not shown."
+   },
+   {
+    "criterion": "14. handle-based calls during the scan after media is removed (listing, GetFileInformationByHandleEx, GetVolumeInformationByHandleW)",
+    "met": "not-checked",
+    "how": "Not guarded by this slice by design (C-014, non-material). It needs physical media removal mid-scan, which I cannot do, and whether to bring it into scope is an open question for a person."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-002",
+    "verified": "yes",
+    "evidence": "Every exit of Open lies inside the `using` declared as its first statement (SynchronousIoCancel.cs:352): return Aborted, return Settle, return 0, and exceptions from Enter or from inside the bracket. The Facts pass for the normal path (presets 0, 2, 1), the failed open, cancelled/refused/throwing opens, multi-thread probes and nested scopes. Mutant A (no `using` in Open) fails 7 of them. Mutant B (Dispose restores nothing) fails 9, including NestedScopesUnwindInOrder, which shows the inner scope gives back the outer 0x1 and the outer gives back the caller's 0x2 (LIFO)."
+   },
+   {
+    "key": "O-026",
+    "verified": "no",
+    "evidence": "Owed to build-slice and still open at 5c2d1ff. Grep finds none of GetCompressedFileSize, FindFirstFileName, FindFirstStream, GetFileInformationByName or CreateFileTransacted in fitness.yaml, ArchitectureRulesTests.cs or FailCriticalErrorsTests.cs:490. fitness.yaml:230 and FailCriticalErrorsTests.cs:484 still carry the completeness wording."
+   },
+   {
+    "key": "O-027",
+    "verified": "no",
+    "evidence": "Owed to build-slice and still open. FailCriticalErrorsTests.cs:490 still declares its own `const string names = @\"(CreateFile[AW2]?|...)\"`. It neither reads the patterns from ArchitectureRulesTests nor asserts they match, so rules-parity (which compares only the yaml and ArchitectureRulesTests) cannot see it drift."
+   }
+  ],
+  "not_reached": [
+   "Whether the pre-fix exe (uat 14acea3) actually raises the 'There is no disk in the drive' box on E:\\ or F:\\ when launched with -DefaultErrorMode. Without that run, 'no box after the fix' is not shown to be caused by the fix, since this card reader might return 21 silently either way. A person can run `eng/read-window.ps1 -Exe <pre-fix exe> -Root E:\\ -TimeoutSec 60 -DefaultErrorMode` once, ready to dismiss the box.",
+   "The scan thread's own error mode inside the real exe during the empty-drive open was not observed. Only the launch-time process mode (0x0) and the outcome (error 21, no hang) were.",
+   "An Explorer (double-click) launch of the exe on the empty drive. My runs used the launcher's CREATE_DEFAULT_ERROR_MODE start, which the risk spike found gives the same 0x0 process mode.",
+   "A whole-drive C:\\ scan through the published exe after the fix (not run: 16-thread probe load for minutes on a shared machine).",
+   "Media pulled mid-scan so that handle-based calls (listing, GetFileInformationByHandleEx, GetVolumeInformationByHandleW) hit a no-disk condition. This needs physical removal and was scoped out of the design (C-014).",
+   "Other removable hardware (USB floppy, optical drive with no disc, other card readers). Only this PC's two empty card-reader slots were reached.",
+   "Windows 10: the project targets Windows 10 and 11, and only Windows 11 build 26200 was run."
+  ],
+  "planned": []
+ }
+}
