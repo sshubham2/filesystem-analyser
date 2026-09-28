@@ -287,6 +287,11 @@ function Invoke-C004 {
     # Whole numbers only: SL-042's '35.9 to 40.2' is not the brief's figure.
     $brief = @($text -split "`n" | Where-Object { $_ -match '(?<![\d.])9(?:-| to )40(?![\d.])' })
     Check ($brief.Count -ge 1 -and @($brief | Where-Object { $_ -notmatch 'brief' }).Count -eq 0) "9-40 ms appears only as the brief's figure ($($brief.Count) line(s))"
+    # Where the brief's figure came from (review m1): SL-042's reflection, joining two SL-042 runs of different stages.
+    $reflectLine74 = ((Read-Tree '.taad/slices/SL-042/reflect-1.json') -split "`n")[73]
+    $validate = Read-Tree '.taad/slices/SL-042/validate-slice-1.json'
+    Check ((Flat $section).Contains("The slice's brief says 9-40 ms, taken from SL-042's reflection (.taad/slices/SL-042/reflect-1.json:74), which joined SL-042's validate run (9.16-9.80 ms, .taad/slices/SL-042/validate-slice-1.json) and its build run (35.9-40.2 ms).")) 'the record says the brief''s 9-40 ms joined SL-042''s validate and build runs'
+    Check ($reflectLine74.Contains('measured 9-40 ms against 250 ms') -and $validate.Contains("9.16$([char]0x2013)9.80 ms")) 'SL-042''s reflect-1.json:74 says 9-40 ms, and its validate record 9.16-9.80 ms'
 
     $flatSection = Flat $section
     $sl044 = Flat (((Read-Tree $Sl044Doc) -split "`n")[126..129] -join ' ')

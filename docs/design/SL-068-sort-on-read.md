@@ -38,8 +38,10 @@ Release, the repo-local SDK 10.0.401, .NET 10.0.12, this PC (Ryzen 9 8945H, 16 t
 - Run 3 (this build, 2026-09-28): 40.42, 36.75, 34.94, 34.35, 34.10, 34.83, 23.02, 10.16, 8.84, 10.52
 
 Every read in ms. Run 1 printed "Test Run Successful" with its exit code not captured; runs 2 and 3 exited 0. The
-Release range is **8.84 to 44.12 ms** against 250, so the slowest read, a cold first one, had 5.7 times margin. The
-slice's brief rounded this to 9-40 ms, but run 1's cold read was 44.12, so the range this record quotes is 9-44.
+Release range is **8.84 to 44.12 ms** against 250, so the slowest read, a cold first one, had 5.7 times margin.
+The slice's brief says 9-40 ms, taken from SL-042's reflection (.taad/slices/SL-042/reflect-1.json:74), which
+joined SL-042's validate run (9.16-9.80 ms, .taad/slices/SL-042/validate-slice-1.json) and its build run (35.9-40.2
+ms). The runs above reach 44.12, so this record quotes 9-44.
 
     pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests -c Release --filter "FullyQualifiedName~ScanStoreRollupTimingTests" --logger "console;verbosity=detailed"
 
@@ -56,7 +58,9 @@ Figures from other harnesses, which are not merged into that range:
 - **The same test in Debug** (this build): 44.22, 39.30, 36.83, 36.44, 37.95, 47.00, 43.27, 38.08, 40.28, 37.42, exit
   0. It is not evidence for the rule, and is recorded because the default run is Debug (see below).
 - **Memory:** a read allocates one `ChildRow[]` of 24 bytes a row (`Unsafe.SizeOf<ChildRow>` on .NET 10.0.12), so
-  2,400,000 bytes for 100,000 children, which the caller drops once it has built its rows. Nothing is kept per folder.
+  2,400,000 bytes for 100,000 children, which the caller drops once it has built its rows. Nothing is kept per
+  folder in the store; the folder tree keeps the rows it built for each folder it has opened, in that order, until
+  the session ends at the next scan (src/FsAnalyser.App/FolderTreeNode.cs:14-16 and :142-158).
 
 ## Decision: closed
 
@@ -67,8 +71,9 @@ it (src/FsAnalyser.App/FolderTreeNode.cs:147), and three settled rules keep the 
 the stored order it held in reserve is not built.
 
 This covers reading the children of a folder in a completed store, and opening it cold in the tree. Reversing it is
-expensive: a per-folder order kept in the store and maintained while the scan writes, paid out of the about 136 MiB
-of headroom SL-042's spike measured, with FolderTreeNode and the three rules changed with it.
+expensive: a per-folder order kept in the store and maintained while the scan writes, paid out of what is left of
+the memory budget (the earlier spike's layout had about 136 MiB of headroom, of which SL-042 then spent 96 MiB
+retained, .taad/slices/SL-042/reflect-1.json:84), with FolderTreeNode and the three rules changed with it.
 
 ## Not covered
 
@@ -76,7 +81,8 @@ of headroom SL-042's spike measured, with FolderTreeNode and the three rules cha
   refresh with 100,000 rows open was no-go: median 84 ms against a 50 ms bar, and a UI gap of 866 ms against 250
   (docs/design/SL-044-folder-tree.md:17-19). This closure says nothing about that. It belongs to the live-refresh
   work, and a stored order proposed there has to be maintained under concurrent scan writes, which nothing here
-  measured.
+  measured. The window already keeps one ordered copy: the rows the folder tree built for each folder it opened
+  (`FolderTreeNode.Children`), which a refresh would have to invalidate.
 - **The Scan Store line's memory figures** (699 MiB peak, 572 MB for the store). SL-042 measured the as-built store at
   652.1 MiB retained at 5,000,000 entries (docs/design/SL-042-folder-totals.md:81-84). This slice did not re-audit
   them, and does not claim the rest of the line is current.
