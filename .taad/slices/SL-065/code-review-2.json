@@ -1,0 +1,114 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-065",
+ "stage": "code-review",
+ "attempt": 2,
+ "at": "2026-09-28T02:10:51.212Z",
+ "head": "79891f4b9590de9160800b0da0f18be5a860847c",
+ "run_id": 1744,
+ "summary": "The fix for R2-M1 (obligation O-016) is in the tree and works, and I found nothing new to file.\n\n**What moved.** Between f513faf and 79891f4 only two files changed besides slice records:\n- `.taad/fitness.yaml`: the new rule's pattern and its `because` text.\n- `eng/rules-harness/plants.json`: plant rows S11 and S12, and a `_note` saying 34 rows.\n\nNothing under `src/` or `tests/window` changed, so round 1's window-case runs still describe the shipped code.\n\n**How the new pattern behaves.** I loaded it through the engine's own YAML load and ran `taad3.fitness.check` on a scratch copy of MainWindow.xaml, planting after the `<DockPanel Margin=\"16\">` anchor as the harness does:\n- The single-quoted scalar loads to exactly the intended regex.\n- It stays quiet on the clean tree, which includes OutcomeTexts with its `ScrollViewer.Style` block and DriveScroller.\n- S09, S10, S11 and S12, taken from plants.json itself, each fire at line 107.\n- It also fires on:\n  - a ListView on one line;\n  - a DataGrid behind two comments and a `ScrollViewer.Resources` block;\n  - a `>` inside a single-quoted attribute.\n- It stays quiet, correctly, on a self-closing ScrollViewer followed by a sibling list, and on a list inside a Grid (outside the rule's direct-child scope, as designed).\n\nThe only further miss is a self-closing `<ScrollViewer.Resources />` before the list. An empty property element like that is not a realistic shape, so I have not filed it.\n\n**Readers of the edited files are unaffected:**\n- Fitness check on the real tree: every rule holds.\n- rules-parity: AGREE, still 47 settled entries.\n- RuleCases C-001 to C-005: exit 0.\n- The 14 xUnit Rule tests: passed.\n\n**Statements elsewhere.** The MainWindow.xaml comment (\"The architecture rule in .taad/fitness.yaml fails a list written straight inside a ScrollViewer here\") and the S09 note are still accurate. The row count of 34 matches the file.\n\nThe C-012 deferral (\"enforced by the contract comment and the ScrollViewer rule\") now holds.\n\nSecond round: The rule this attempt ships at `.taad/fitness.yaml:810` fires on legitimate XAML, so it needs one more fix. I proposed this exact pattern in the previous review (R2-M1), so the defect is mine.\n\n**What goes wrong.** The pattern allows `<!--.*?-->` (and `<ScrollViewer.X>.*?</ScrollViewer.X>`) any number of times between the ScrollViewer tag and the list. Under `(?s)`, a lazy `.*?` still grows past the first `-->` when the rest of the pattern fails, so the match can run on to a later `-->` anywhere in the file.\n\nMainWindow.xaml already has such a later comment: the one ending at line 443, directly above `<TreeView x:Name=\"FolderTree\"` (line 444). So one comment written in the house style inside either existing ScrollViewer makes the rule fail on a ScrollViewer that holds no list.\n\n**Measured with the engine's `taad3.fitness.check`** on scratch copies of MainWindow.xaml:\n- The clean tree passes.\n- A comment as the first child of DriveScroller fails at line 114.\n- A comment between OutcomeTexts' `</ScrollViewer.Style>` and its StackPanel fails at line 289.\n\n**The fix.** Bounding both inner spans with a tempered token is enough: `<!--(?:(?!-->).)*-->` and `(?:(?!</ScrollViewer\\.\\1>).)*`. On the same copies the bounded pattern:\n- stays quiet on the clean tree and on both legitimate comments;\n- still fires on S09–S12, '>' inside an attribute, and a DataGrid after two comments and a `ScrollViewer.Resources` block;\n- stays quiet on a self-closing ScrollViewer followed by a sibling list.\n\n**Other readers of the edited files are unaffected.** They were checked in the previous pass: rules-parity AGREE, RuleCases C-001 to C-005, and the 14 Rule xUnit tests. Nothing else in the diff adds a parser or matcher. No file under `src/` changed.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The fix for R2-M1 (obligation O-016) is in the tree and works, and I found nothing new to file.\n\n**What moved.** Between f513faf and 79891f4 only two files changed besides slice records:\n- `.taad/fitness.yaml`: the new rule's pattern and its `because` text.\n- `eng/rules-harness/plants.json`: plant rows S11 and S12, and a `_note` saying 34 rows.\n\nNothing under `src/` or `tests/window` changed, so round 1's window-case runs still describe the shipped code.\n\n**How the new pattern behaves.** I loaded it through the engine's own YAML load and ran `taad3.fitness.check` on a scratch copy of MainWindow.xaml, planting after the `<DockPanel Margin=\"16\">` anchor as the harness does:\n- The single-quoted scalar loads to exactly the intended regex.\n- It stays quiet on the clean tree, which includes OutcomeTexts with its `ScrollViewer.Style` block and DriveScroller.\n- S09, S10, S11 and S12, taken from plants.json itself, each fire at line 107.\n- It also fires on:\n  - a ListView on one line;\n  - a DataGrid behind two comments and a `ScrollViewer.Resources` block;\n  - a `>` inside a single-quoted attribute.\n- It stays quiet, correctly, on a self-closing ScrollViewer followed by a sibling list, and on a list inside a Grid (outside the rule's direct-child scope, as designed).\n\nThe only further miss is a self-closing `<ScrollViewer.Resources />` before the list. An empty property element like that is not a realistic shape, so I have not filed it.\n\n**Readers of the edited files are unaffected:**\n- Fitness check on the real tree: every rule holds.\n- rules-parity: AGREE, still 47 settled entries.\n- RuleCases C-001 to C-005: exit 0.\n- The 14 xUnit Rule tests: passed.\n\n**Statements elsewhere.** The MainWindow.xaml comment (\"The architecture rule in .taad/fitness.yaml fails a list written straight inside a ScrollViewer here\") and the S09 note are still accurate. The row count of 34 matches the file.\n\nThe C-012 deferral (\"enforced by the contract comment and the ScrollViewer rule\") now holds.\n\nSecond round: The rule this attempt ships at `.taad/fitness.yaml:810` fires on legitimate XAML, so it needs one more fix. I proposed this exact pattern in the previous review (R2-M1), so the defect is mine.\n\n**What goes wrong.** The pattern allows `<!--.*?-->` (and `<ScrollViewer.X>.*?</ScrollViewer.X>`) any number of times between the ScrollViewer tag and the list. Under `(?s)`, a lazy `.*?` still grows past the first `-->` when the rest of the pattern fails, so the match can run on to a later `-->` anywhere in the file.\n\nMainWindow.xaml already has such a later comment: the one ending at line 443, directly above `<TreeView x:Name=\"FolderTree\"` (line 444). So one comment written in the house style inside either existing ScrollViewer makes the rule fail on a ScrollViewer that holds no list.\n\n**Measured with the engine's `taad3.fitness.check`** on scratch copies of MainWindow.xaml:\n- The clean tree passes.\n- A comment as the first child of DriveScroller fails at line 114.\n- A comment between OutcomeTexts' `</ScrollViewer.Style>` and its StackPanel fails at line 289.\n\n**The fix.** Bounding both inner spans with a tempered token is enough: `<!--(?:(?!-->).)*-->` and `(?:(?!</ScrollViewer\\.\\1>).)*`. On the same copies the bounded pattern:\n- stays quiet on the clean tree and on both legitimate comments;\n- still fires on S09–S12, '>' inside an attribute, and a DataGrid after two comments and a `ScrollViewer.Resources` block;\n- stays quiet on a self-closing ScrollViewer followed by a sibling list.\n\n**Other readers of the edited files are unaffected.** They were checked in the previous pass: rules-parity AGREE, RuleCases C-001 to C-005, and the 14 Rule xUnit tests. Nothing else in the diff adds a parser or matcher. No file under `src/` changed.",
+  "findings": [
+   {
+    "id": "R2-M1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "The SL-065 rule fires on legitimate XAML. Its comment alternative `<!--.*?-->` and property-element alternative `<ScrollViewer\\.(\\w+)\\b[^>]*>.*?</ScrollViewer\\.\\1>` are lazy but unbounded under (?s), so when the rest of the pattern fails they grow past the first `-->` (or closing tag) to a later one anywhere in the file. MainWindow.xaml already has a comment ending at line 443 directly above `<TreeView x:Name=\"FolderTree\"` (line 444). So a comment in the house style placed first inside DriveScroller, or after OutcomeTexts' `</ScrollViewer.Style>`, makes the rule report a list inside a ScrollViewer that holds only a StackPanel. The next slice that comments either element gets a false failing gate, pointing at line 114 or 289. The easy way out of that is to weaken or drop the rule. No plant row covers a legitimate comment inside a ScrollViewer, so plants.json cannot catch this.",
+    "evidence": ".taad/fitness.yaml:810. Measured with the engine's taad3.fitness.check (C:\\Users\\sshub\\projets\\taad_v3\\backend) on scratch copies of src/FsAnalyser.App/MainWindow.xaml:\n- clean: pass;\n- `<!-- the drive buttons, one line -->` inserted after DriveScroller's opening tag (MainWindow.xaml:114-115): fail at 114;\n- `<!-- the texts -->` inserted after OutcomeTexts' `</ScrollViewer.Style>` (MainWindow.xaml:289 onward): fail at 289.\nThe match runs to the `-->` at MainWindow.xaml:443 and then to `<TreeView x:Name=\"FolderTree\"` at 444.",
+    "fix": "At .taad/fitness.yaml:810, bound both inner spans with a tempered token:\n`'(?s)<ScrollViewer\\b(?:\"[^\"]*\"|''[^'']*''|[^>\"''])*(?<!/)>(?:\\s|<!--(?:(?!-->).)*-->|<ScrollViewer\\.(\\w+)\\b[^>]*>(?:(?!</ScrollViewer\\.\\1>).)*</ScrollViewer\\.\\1>)*<(ListView|TreeView|ListBox|DataGrid)\\b'`\nMeasured with the engine on the same copies:\n- quiet on clean, on the DriveScroller comment and on the OutcomeTexts comment;\n- fires on S09, S10, S11, S12, '>' in an attribute, and comment + `ScrollViewer.Resources` + comment + DataGrid;\n- quiet on the self-closing sibling.\nThen add a quiet plant row (expect fitness: quiet, xunit: quiet) to eng/rules-harness/plants.json: insert-after the unique anchor `</ScrollViewer.Style>` with the text `<!-- the texts -->`, so this false positive cannot return unnoticed."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": ".taad/fitness.yaml:810 now holds the single-quoted pattern, which loads to `(?s)<ScrollViewer\\b(?:\"[^\"]*\"|'[^']*'|[^>\"'])*(?<!/)>(?:\\s|<!--.*?-->|<ScrollViewer\\.(\\w+)\\b[^>]*>.*?</ScrollViewer\\.\\1>)*<(ListView|TreeView|ListBox|DataGrid)\\b`. eng/rules-harness/plants.json has S11 (comment between the tags) and S12 (ScrollViewer.Style block before the list). Engine check on a scratch copy: clean passes; S09 to S12 each fire at 107; the self-closing sibling stays quiet."
+   },
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "No src change since f513faf. S-002 and the S-008 maximized runs from round 1 stand: OutcomeTabs keeps its height across the tab click, and the unselected list reads inView=false with fullRows=0 (WindowReport.cs InView and FullRows)."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "No src change. S-007 read stripRows=1 with the header 'Unreadable folders (12,345)' at 560. My WPF probe showed the StripRows formula reads 2 when the strip wraps."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "Test-C001 unchanged and passed in round 1."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "Test-S001 unchanged and passed."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "Test-S002 unchanged and passed."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "Test-S003 unchanged and passed; MainWindow.xaml.cs HideSection and EnsureSelectedTabIsVisible unchanged."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "Test-S004 unchanged and passed."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "Test-S005 unchanged and passed."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "Test-S006 and B-008 unchanged and passed."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "Test-S007 unchanged and passed."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "Test-S008 unchanged and passed."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "Test-S008 maximized unchanged and passed."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "Test-S009 unchanged and passed."
+   }
+  ],
+  "matches_design": true,
+  "cases": [
+   {
+    "key": "C-012",
+    "exercised": "no",
+    "evidence": "Still deferred as material:false, and the reason now holds. The rule it relies on fires on the house-style shapes (comment between the tags: S11; ScrollViewer.Style block first: S12). I verified this with the engine on a planted scratch copy."
+   }
+  ],
+  "drift": [
+   "No departure the build did not declare. The rewritten `because` text is declared. One small inaccuracy in it: it says plant rows S09-S12 'prove the harness matches across newlines', but eng/rules-harness/harness.py still exits 2 at this HEAD. The rows have been proven only through the engine's fitness.check called directly, as the build's follow-up says.",
+   "No departure the build did not declare. The pattern is the reviewer's, character for character, as declared. The defect in it is filed as finding M1, not as drift."
+  ],
+  "unreviewed": [],
+  "second_round": {
+   "run_id": 1745,
+   "filed": 1
+  }
+ }
+}

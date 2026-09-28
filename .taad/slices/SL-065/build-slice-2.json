@@ -1,0 +1,81 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-065",
+ "stage": "build-slice",
+ "attempt": 2,
+ "at": "2026-09-28T02:05:20.603Z",
+ "head": "79891f4b9590de9160800b0da0f18be5a860847c",
+ "run_id": 1743,
+ "summary": "This attempt closes O-016 (review finding R2-M1), the reason validation sent the slice back. In .taad/fitness.yaml, the rule \"no list or tree is placed directly inside a ScrollViewer in the main window\" now uses the reviewer's pattern. Between the two tags it skips whitespace, XML comments and ScrollViewer property elements such as OutcomeTexts' own ScrollViewer.Style. It reads a quoted attribute value whole, so a '>' inside one does not end the tag, and it ignores a self-closing ScrollViewer. Two plant rows were added to eng/rules-harness/plants.json: S11 has a comment between the tags and S12 has a ScrollViewer.Style block before the list. I measured the new pattern with the engine's own taad3.fitness.check on a copy of this tree. It stays quiet on the clean tree, fires on S09 to S12 alone and together (at the first planted line each time), and gives the results the review predicted for its extra shapes. Swapping the old pattern back into the same copy misses S11, S12 and the '>' shape, and fires wrongly on the self-closing shape. Nothing under src/ changed in this attempt.",
+ "payload": {
+  "status": "complete",
+  "summary": "This attempt closes O-016 (review finding R2-M1), the reason validation sent the slice back. In .taad/fitness.yaml, the rule \"no list or tree is placed directly inside a ScrollViewer in the main window\" now uses the reviewer's pattern. Between the two tags it skips whitespace, XML comments and ScrollViewer property elements such as OutcomeTexts' own ScrollViewer.Style. It reads a quoted attribute value whole, so a '>' inside one does not end the tag, and it ignores a self-closing ScrollViewer. Two plant rows were added to eng/rules-harness/plants.json: S11 has a comment between the tags and S12 has a ScrollViewer.Style block before the list. I measured the new pattern with the engine's own taad3.fitness.check on a copy of this tree. It stays quiet on the clean tree, fires on S09 to S12 alone and together (at the first planted line each time), and gives the results the review predicted for its extra shapes. Swapping the old pattern back into the same copy misses S11, S12 and the '>' shape, and fires wrongly on the self-closing shape. Nothing under src/ changed in this attempt.",
+  "files": [
+   {
+    "path": ".taad/fitness.yaml",
+    "change": "modified",
+    "why": "O-016 / R2-M1: replaced the pattern of the SL-065 settled rule with the reviewer's single-quoted scalar, which skips comments and ScrollViewer property elements, reads quoted attributes whole and ignores a self-closing ScrollViewer. The rule's 'because' text now describes what the pattern skips and names plant rows S09-S12."
+   },
+   {
+    "path": "eng/rules-harness/plants.json",
+    "change": "modified",
+    "why": "O-016 / R2-M1: added S11 (a <!-- --> line between ScrollViewer and ListBox) and S12 (a ScrollViewer.Style block before the list), both expecting xunit quiet, fitness fire, at offset 0. Updated _note from 32 to 34 rows, with S09-S12 described."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-016",
+    "done": true,
+    "how": "Replaced the pattern at .taad/fitness.yaml:810 with the reviewer's pattern, verbatim. Added plant rows S11 (comment between the tags) and S12 (ScrollViewer.Style block before the list) beside S09/S10. I ran taad3.fitness.check from C:\\Users\\sshub\\projets\\taad_v3\\backend on a copy of this tree, planting each row the way harness.py does (insert-after '<DockPanel Margin=\"16\">'). New pattern: clean tree 0 hits (OutcomeTexts and DriveScroller included). S09, S10, S11 and S12 each hit alone at line 107, their first planted line. All four together hit at 107, 110, 114 and 118. '>' in an attribute: hit. ScrollViewer.Content property element: hit (line 108). Lone CR: hit. Self-closing ScrollViewer with a sibling ListBox: quiet. ScrollViewer holding only a TextBlock: quiet. The old pattern swapped back into the same copy: S11 quiet, S12 quiet, '>' quiet, self-closing sibling fires. Those are exactly the misses and the false positive the review filed. I also ran fitness.check once on the real worktree: all 62 rules load, 0 violations, and the new rule has no hit. The plant rows could not be run through eng/rules-harness/harness.py itself. It exits 2 (CANNOT MEASURE) on the same unrelated unran import rule that attempt 1 recorded."
+   }
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/rules-parity.ps1",
+    "outcome": "passed",
+    "note": "rules-parity: AGREE 11 facts <- 15 twinned entries, 27 patterns; 47 settled entries not compared. The edited rule is a settled entry, so it is counted and not compared."
+   },
+   {
+    "command": "%APPDATA%\\taad3\\venv\\Scripts\\python.exe eng/rules-harness/harness.py --engine-root C:\\Users\\sshub\\projets\\taad_v3\\backend --scenario plants --only S09,S10,S11,S12",
+    "outcome": "failed",
+    "note": "Exit 2, CANNOT MEASURE, before any row ran: 'the clean baseline is not clean ... fitness rules that did not run: [the provider does not use the code it checks]'. This is the same pre-existing cause attempt 1 recorded: a must_not_import rule on tests/CfProvider comes back UNRAN when the scratch copy has no code graph. This slice does not touch it. The scratch copy was deleted afterwards."
+   },
+   {
+    "command": "scratch copy of harness.py with fitness.check(tree, build=True), same args plus --root <repo> --plants <repo>/eng/rules-harness/plants.json",
+    "outcome": "failed",
+    "note": "Exit 2: taad3.fitness.check raised ValueError 'repo_root does not look like a project root (no .git, .svn, or .code-review-graph directory found)' on the harness's probe copy. So build=True alone does not unblock the harness (see follow-ups). The scratch copy was deleted."
+   },
+   {
+    "command": "%APPDATA%\\taad3\\venv\\Scripts\\python.exe %TEMP%\\fsa-rules-g5xch_5k\\probe.py <repo>  (taad3.fitness.check on the harness's hash-identical scratch copy of this tree, plants inserted the way harness.py inserts them)",
+    "outcome": "passed",
+    "note": "New pattern: clean 0 hits. S09, S10, S11 and S12 alone each hit at 107. All four together hit at [107,110,114,118]. gt-in-attr hit 107, content-prop hit 108, lone-CR hit 107. Self-closing sibling quiet, texts-only quiet. Old pattern: clean 0 hits, S09 and S10 hit, S11, S12 and gt-in-attr quiet (misses), self-closing sibling hit (false positive). No other rule was hit in any run. The scratch folder was deleted afterwards."
+   },
+   {
+    "command": "TAAD3_HOME=<temp> python -c \"taad3.fitness.check(<worktree root>)\"",
+    "outcome": "passed",
+    "note": "Against the real worktree: 62 rules loaded, 0 violations, and the new rule is loaded with no hit. The verdict reads 'unable' only because of the same pre-existing UNRAN import rule (no code graph without build=True). The temp home was deleted."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj -c Release --logger \"console;verbosity=minimal\"",
+    "outcome": "passed",
+    "note": "381/381 passed in 26 s, including ArchitectureRulesTests. The YAML edit breaks nothing that reads the rule files."
+   },
+   {
+    "command": "artifacts\\publish\\FsAnalyser.App.exe (the shipped app)",
+    "outcome": "not-run",
+    "note": "Not re-run in this attempt: no file under src/ or tests/window changed, and the two edited files are not part of the exe. Attempt 1 and validate-1 ran the shipped exe at f513faf. The real entry point for this change is the engine's fitness.check, which I ran on the real worktree above."
+   }
+  ],
+  "deviations": [
+   "Beyond swapping the pattern, I also rewrote the last sentences of the rule's 'because' text. The old text described a whitespace-only, S09/S10 pattern, which would have been false after the swap. It now says what the pattern skips and names S09-S12. The pattern itself is the reviewer's, character for character."
+  ],
+  "not_built": [
+   "The plant rows S09-S12 were not measured through eng/rules-harness/harness.py itself. The harness cannot measure at this HEAD, for the pre-existing reason attempt 1 recorded. They were measured with the engine's own fitness.check on a copy of the tree, planted exactly as the harness plants them."
+  ],
+  "follow_ups": [
+   "eng/rules-harness/harness.py still cannot measure (exit 2): its clean baseline fails because the must_not_import rule 'the provider does not use the code it checks' comes back UNRAN without a code graph. New finding from this attempt: calling fitness.check(tree, build=True) instead does not fix it on its own, because the engine then refuses the scratch probe copy ('no .git, .svn, or .code-review-graph directory found'). A fix has to give the scratch copy a root marker or teach check_clean about import rules known to be unran. After that, run S09-S12 through the harness.",
+   "Criterion 12 (a third TabItem added later) is enforced only by the XAML contract comment and this rule. Until the harness can measure, no runnable dotnet test or pytest proves the rule end to end. The largest-folders and by-extension slices should run the harness rows when they add their TabItems."
+  ],
+  "cases": []
+ }
+}
