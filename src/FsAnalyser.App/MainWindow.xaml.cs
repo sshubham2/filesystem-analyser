@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using FsAnalyser.Core;
@@ -13,6 +14,7 @@ using FsAnalyser.Core.Analysis;
 using FsAnalyser.Core.Native;
 using FsAnalyser.Core.Scanning;
 using Microsoft.Win32;
+using static FsAnalyser.App.FigureText;
 
 namespace FsAnalyser.App;
 
@@ -55,7 +57,6 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private CancellationTokenSource? _cancel;
     private ScanProgress? _progress;
-    private ScanResult? _result;
     private bool _scanning;
     private int _scanGeneration; // one more at every scan's start: a volume figure of an earlier scan is dropped
     private Stopwatch? _stoppingClock; // from Cancel until the scan returns; null otherwise
@@ -68,9 +69,6 @@ public partial class MainWindow : Window
     public MainWindow(string? launchPath)
     {
         InitializeComponent();
-        // Tall enough by default for the folder tree to show a screenful, but never taller than the work area; the
-        // window keeps its MinHeight whatever the screen (SL-044, review M2).
-        Height = Math.Min(Height, SystemParameters.WorkArea.Height);
         _launchPath = launchPath;
         _timer.Tick += (_, _) =>
         {
@@ -119,15 +117,26 @@ public partial class MainWindow : Window
     /// <summary>How long the last folder opened in the tree took to build their rows, in ms; null before any.</summary>
     internal double? LastFolderBuildMs => _treeSession?.LastBuildMs;
 
-    // Windows places each new window a step lower than the last, which put the foot of one this tall, where the
-    // folder tree is, up to 62 px below the work area (measured at SL-044's build over 10 launches): it is moved up
-    // so that the whole of it is on screen.
+    // Tall enough by default for the folder tree to show a screenful, but never taller than the work area; the
+    // window keeps its MinHeight whatever the screen (SL-044, review M2). Windows places each new window a step lower
+    // than the last, which put the foot of one this tall, where the folder tree is, up to 62 px below the work area
+    // (measured at SL-044's build over 10 launches): it is moved up so that the whole of it is on screen. Both against
+    // the work area of the monitor Windows placed it on, which its window handle, first here, tells (HF-019).
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
-        Rect area = SystemParameters.WorkArea;
-        if (Top + Height > area.Bottom)
-            Top = Math.Max(area.Top, area.Bottom - Height);
+        Rect area = MonitorWorkArea();
+        (Top, Height) = WorkAreaFit.Fit(Top, Height, area.Top, area.Bottom);
+    }
+
+    // In device-independent pixels, as the window's own position is; the primary's when Windows does not say.
+    private Rect MonitorWorkArea()
+    {
+        if (Monitors.WorkAreaOf(new WindowInteropHelper(this).Handle) is not { } area
+            || PresentationSource.FromVisual(this)?.CompositionTarget is not { } target)
+            return SystemParameters.WorkArea;
+        Matrix fromDevice = target.TransformFromDevice;
+        return new Rect(fromDevice.Transform(new Point(area.Left, area.Top)), fromDevice.Transform(new Point(area.Right, area.Bottom)));
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -209,7 +218,6 @@ public partial class MainWindow : Window
             return;
         _scanning = true;
         _scanGeneration++;
-        _result = null; // let the previous scan's store be collected
         LastResult = null;
         RevealStatus.Text = string.Empty;
         RevealStatus.Visibility = Visibility.Collapsed;
@@ -266,8 +274,10 @@ public partial class MainWindow : Window
         }
 
         // Always the final snapshot, never subject to the tick's skip; with none (the root never listed, or
-        // the scan failed) the list is cleared, so no row is left claiming a state that is no longer true.
-        ShowFinalTopLevel(failure is null ? result?.TopLevel : null);
+        // the scan failed) the list is cleared, so no row is left claiming a state that is no longer true. A
+        // completed scan clears it too: the folder tree takes its place (ShowOutcome), so its final rows would
+        // be sorted and bound only to be thrown away (HF-007, HF-020).
+        ShowFinalTopLevel(failure is null && result?.Status != ScanStatus.Completed ? result?.TopLevel : null);
         if (failure is not null)
             ShowProblem($"Scan failed: {path}",
                 $"The scan stopped on an error it did not expect, so nothing it read is shown.\n{failure.GetType().Name}: {failure.Message}");
@@ -352,9 +362,7 @@ public partial class MainWindow : Window
         _shownTopLevel = snapshot;
         TopLevelHeader.Text = !snapshot.Final
             ? $"Largest at the top of {snapshot.Root}, so far. Rows marked reading are still growing."
-            : !snapshot.Completed
-                ? "What was read before the stop. Rows marked not read yet or stopped partway are short."
-                : rows.Length == 0 ? $"{snapshot.Root} is empty." : $"Largest at the top of {snapshot.Root}";
+            : "What was read before the stop. Rows marked not read yet or stopped partway are short.";
         TopLevelList.ItemsSource = rows;
         TopLevelPanel.Visibility = Visibility.Visible;
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
@@ -464,7 +472,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        _result = result;
         bool finished = result.Status == ScanStatus.Completed;
         Paint(finished ? Finished : Stopped);
         OutcomeTitle.Text = finished
@@ -540,7 +547,7 @@ public partial class MainWindow : Window
 
     // The largest single files anywhere under the root, from the store of a scan that has returned, so
     // nothing writes it any more. The caption says when the list cannot be the whole tree: a stopped scan,
-    // and folders whose files the scan never saw.
+    // and folders the scan could not read in full.
     private void ShowLargestFiles(ScanResult result)
     {
         var clock = Stopwatch.StartNew();
@@ -552,7 +559,7 @@ public partial class MainWindow : Window
             ? $"No non-empty files found{part}."
             : $"Top {top.Count:N0} of {Count(result.Totals.Files, "file")} scanned{part}.";
         if (result.Unreadable.Count > 0)
-            caption += $" Files in {Count(result.Unreadable.Count, "unreadable folder")} are not included.";
+            caption += UnreadableCaption(result.Unreadable.Count);
         LargestFilesCaption.Text = caption;
 
         // Its tab may not be the selected one, so the list may be out of the visual tree, never laid out: nothing here
@@ -566,6 +573,12 @@ public partial class MainWindow : Window
         LargestFilesPanel.Visibility = Visibility.Visible;
         LargestFilesTab.Visibility = Visibility.Visible;
     }
+
+    // What the unreadable folders leave out of a list of files, for the largest files and the kinds alike. Not "not
+    // included": a folder whose listing failed partway kept what it listed, and those files are in (HF-002). Worded as
+    // the rows word such a folder, and a folder that could not be opened may have held nothing.
+    private static string UnreadableCaption(int folders) =>
+        $" Files in {Count(folders, "folder")} that could not be read (in full) may be missing.";
 
     private void HideLargestFiles()
     {
@@ -637,7 +650,7 @@ public partial class MainWindow : Window
             ? $"No files{part}."
             : $"{Count(kinds.Files, "file")} scanned{part}, sorted by extension.";
         if (result.Unreadable.Count > 0)
-            caption += $" Files in {Count(result.Unreadable.Count, "unreadable folder")} are not included.";
+            caption += UnreadableCaption(result.Unreadable.Count);
         KindsCaption.Text = caption;
 
         KindRow[] rows = KindRowText.Rows(kinds, FormatSize);
@@ -699,21 +712,6 @@ public partial class MainWindow : Window
     }
 
     private static string Win32Message(int error) => new Win32Exception(error).Message;
-
-    internal static string Count(long n, string noun) => n == 1 ? $"1 {noun}" : $"{n:N0} {noun}s";
-
-    internal static string FormatSize(long bytes)
-    {
-        string[] units = ["bytes", "KB", "MB", "GB", "TB", "PB"];
-        double value = bytes;
-        int unit = 0;
-        while (value >= 1024 && unit < units.Length - 1)
-        {
-            value /= 1024;
-            unit++;
-        }
-        return unit == 0 ? $"{bytes:N0} bytes" : $"{value:N1} {units[unit]}";
-    }
 
     private static Brush Solid(string color)
     {

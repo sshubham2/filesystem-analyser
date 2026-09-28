@@ -100,9 +100,9 @@ internal sealed class FolderTreeNode : INotifyPropertyChanged
 
     public int ChildCount => _session.Store?.ChildCount(_entry) ?? 0;
 
-    public string OnDiskText => _session.Store is null ? "" : FolderTreeRowText.Size(OnDisk);
+    public string OnDiskText => _session.Store is null ? "" : FigureText.FormatSize(OnDisk);
 
-    public string SizeText => _session.Store is null ? "" : FolderTreeRowText.Size(Size);
+    public string SizeText => _session.Store is null ? "" : FigureText.FormatSize(Size);
 
     public string ShareText => _isRoot || _session.Store is null ? "" : FolderTreeRowText.Share(Share);
 

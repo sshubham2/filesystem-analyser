@@ -906,7 +906,7 @@ function Test-C007 {
     finally { Remove-CaseFolder $case }
 }
 
-# C-008: a report from an earlier run sits at the target path.
+# C-008: a report from an earlier run sits at the target path: writable, read-only, or held open.
 function Test-C008 {
     $case = New-CaseFolder
     try {
@@ -920,6 +920,25 @@ function Test-C008 {
         CheckEqual '2' (Invoke-App @('--report', $report)) 'no root: exit code'
         Check (-not (Test-Path -LiteralPath $report)) 'no root: the stale report is gone'
         Check (-not (Test-Path -LiteralPath "$report.tmp")) 'no root: the stale .tmp is gone'
+
+        # Read-only, both of them (SL-070, HF-018): the delete-first step still deletes them, so this exit 2 leaves no
+        # file at the path either.
+        Set-Content -LiteralPath $report -Value $stale
+        Set-Content -LiteralPath "$report.tmp" -Value $stale
+        foreach ($file in $report, "$report.tmp") { (Get-Item -LiteralPath $file).Attributes = 'ReadOnly' }
+        CheckEqual '2' (Invoke-App @('--report', $report)) 'no root, read-only: exit code'
+        Check (-not (Test-Path -LiteralPath $report)) 'no root, read-only: the stale report is gone'
+        Check (-not (Test-Path -LiteralPath "$report.tmp")) 'no root, read-only: the stale .tmp is gone'
+
+        # Held open by another program that does not share delete: nothing can delete it, so the run exits 3 and the
+        # stale report stays, the one file a non-zero exit may leave (WindowReport.cs).
+        Set-Content -LiteralPath $report -Value $stale
+        $held = [System.IO.File]::Open($report, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+        try {
+            CheckEqual '3' (Invoke-App @('--report', $report)) 'no root, held open: exit code'
+        }
+        finally { $held.Dispose() }
+        Check (Test-Path -LiteralPath $report) 'no root, held open: the stale report is still there'
 
         Set-Content -LiteralPath $report -Value $stale
         CheckEqual '0' (Invoke-App @($root, '--report', $report)) 'with a root: exit code'
@@ -1525,7 +1544,7 @@ function Test-B002 {
         Check ($null -ne $read.Report) 'a report was written'
         if ($null -eq $read.Report) { return }
         CheckEqual "Finished: $root" $read.Report.window.OutcomeTitle 'OutcomeTitle'
-        CheckLargestFiles $read 2 (2 * $KiB64) 'Top 2 of 2 files scanned. Files in 1 unreadable folder are not included.'
+        CheckLargestFiles $read 2 (2 * $KiB64) 'Top 2 of 2 files scanned. Files in 1 folder that could not be read (in full) may be missing.'
         CheckEqual $true $read.Report.window.UnreadableExpander.visible 'UnreadableExpander is on screen'
         CheckEqual $true $read.Report.window.UnreadableExpander.inView 'UnreadableExpander is inside the panel'
     }
@@ -1560,7 +1579,7 @@ function Test-B003 {
             Deny-Listing $folder
             $denied += $folder
         }
-        $caption = 'Top 100 of 105 files scanned. Files in 12 unreadable folders are not included.'
+        $caption = 'Top 100 of 105 files scanned. Files in 12 folders that could not be read (in full) may be missing.'
 
         Write-Output '  the unreadable folders closed, as the ending shows them'
         $read = Read-Window $root
@@ -1937,7 +1956,7 @@ function Invoke-StoppedEnding([string] $case, [string] $root, [bool] $opened, [b
     CheckEqual 'Cancelled' $run.Report.core.status 'core.status'
     $files = ("$($run.Report.window.OutcomeDetail[0])" -split ' and ')[0]
     $read = [pscustomobject]@{ Report = $run.Report; Text = ($run.Report | ConvertTo-Json -Depth 8) }
-    CheckLargestFiles $read 100 $KiB64 "Top 100 of $files scanned in the part read before the scan stopped. Files in 12 unreadable folders are not included." (-not $opened)
+    CheckLargestFiles $read 100 $KiB64 "Top 100 of $files scanned in the part read before the scan stopped. Files in 12 folders that could not be read (in full) may be missing." (-not $opened)
     CheckTopLevel $run.Report.topLevel @{ rows = 36; unreadable = 12; final = $true } 'against the tree'
     Check ([int]$run.Report.topLevel.notRead -ge 1) "some slow folders were not read before the stop ($($run.Report.topLevel.notRead))"
     CheckBothLists $run.Report.window $opened $false
@@ -1973,7 +1992,7 @@ function Test-B007 {
     try {
         $root = Join-Path $case 'tree'
         $denied = New-TopsTree $root
-        $unread = ' Files in 12 unreadable folders are not included.'
+        $unread = ' Files in 12 folders that could not be read (in full) may be missing.'
 
         Write-Output '  Completed, the root''s rows as the folder tree draws them, at the default size'
         CheckTopsTree (Invoke-TreeRun $root @{ FSA_HOOK_WALK = '1' }) $root
@@ -3397,7 +3416,7 @@ function New-SectionsTree([string] $root, [int] $denied) {
     , $folders
 }
 
-function Format-Unreadable([int] $n) { "Files in $(Format-Count $n 'unreadable folder') are not included." }
+function Format-Unreadable([int] $n) { "Files in $(Format-Count $n 'folder') that could not be read (in full) may be missing." }
 
 # The fit of MainWindow.xaml once a section is shown: the texts within their cap, the tabs at their minimum and the
 # 10 px to spare (the outcome's row is never under its 292 px minimum), and texts and tabs inside the panel with its
