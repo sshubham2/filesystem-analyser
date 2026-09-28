@@ -120,24 +120,7 @@ public class CancelledFolderTests
         using var reader = new DirectoryReader(guard);
         Assert.Equal(0, guard.OpenDirectory(tree.ExtendedRoot, keepLastAccess: true, out var handle));
         const int ThirdBuffer = 4; // call 1 was the open
-        if (duringTheCall)
-        {
-            guard.AfterCall = call =>
-            {
-                if (call != ThirdBuffer)
-                    return;
-                cts.Cancel();
-                Assert.True(SpinWait.SpinUntil(() => guard.CancelIsIssued, TimeSpan.FromSeconds(5)));
-            };
-        }
-        else
-        {
-            guard.BeforeCall = call =>
-            {
-                if (call == ThirdBuffer)
-                    cts.Cancel();
-            };
-        }
+        Scans.CancelAt(guard, cts, ThirdBuffer, duringTheCall);
 
         int error = reader.List(handle!, fullClass: false);
         guard.Close(handle!);

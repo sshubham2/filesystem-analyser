@@ -351,7 +351,7 @@ public class SynchronousIoCancelTests
         using (var cts = new CancellationTokenSource())
         using (var guard = new SynchronousIoCancel(cts.Token))
         {
-            guard.AfterCall = _ => CancelDuringTheCall(cts, guard);
+            guard.AfterCall = _ => Scans.CancelDuringTheCall(cts, guard);
             Assert.Equal(SynchronousIoCancel.Aborted, guard.OpenDirectory(tree.ExtendedRoot, keepLastAccess: true, out var discarded));
             Assert.Null(discarded); // Windows returned a handle; the aborted open does not hand it out
             Assert.Equal(1, guard.ClosesHandedOff);
@@ -362,7 +362,7 @@ public class SynchronousIoCancelTests
         using (var reader = new DirectoryReader(guard))
         {
             Assert.Equal(0, guard.OpenDirectory(tree.ExtendedRoot, keepLastAccess: true, out var handle));
-            guard.AfterCall = _ => CancelDuringTheCall(cts, guard);
+            guard.AfterCall = _ => Scans.CancelDuringTheCall(cts, guard);
             Assert.Equal(SynchronousIoCancel.Aborted, reader.List(handle!, fullClass: false));
             Assert.Equal(0, reader.Count); // Windows listed file.bin; nothing of the aborted listing is kept
             guard.Close(handle!);
@@ -371,12 +371,6 @@ public class SynchronousIoCancelTests
 
         Scans.WaitForAbortedCloses();
         AssertNoCancelLandsOnThisThread();
-    }
-
-    private static void CancelDuringTheCall(CancellationTokenSource cts, SynchronousIoCancel guard)
-    {
-        cts.Cancel();
-        Assert.True(SpinWait.SpinUntil(() => guard.CancelIsIssued, TimeSpan.FromSeconds(5)), "the canceller never marked the call");
     }
 
     [Fact]

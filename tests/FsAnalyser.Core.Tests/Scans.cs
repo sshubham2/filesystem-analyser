@@ -129,27 +129,41 @@ internal static class Scans
     public static T RunCancellingAt<T>(string root, int call, bool during, Func<string, CancellationToken, T> scan)
     {
         using var cts = new CancellationTokenSource();
-        return WithGuard(g =>
+        return WithGuard(g => CancelAt(g, cts, call, during), () => scan(root, cts.Token));
+    }
+
+    /// <summary>
+    /// Arms <paramref name="guard"/> to cancel <paramref name="cts"/> at its call <paramref name="call"/> (from 1):
+    /// before it, so the guard refuses it, or during it (<see cref="CancelDuringTheCall"/>).
+    /// </summary>
+    internal static void CancelAt(SynchronousIoCancel guard, CancellationTokenSource cts, int call, bool during)
+    {
+        if (during)
         {
-            if (during)
+            guard.AfterCall = n =>
             {
-                g.AfterCall = n =>
-                {
-                    if (n != call)
-                        return;
+                if (n == call)
+                    CancelDuringTheCall(cts, guard);
+            };
+        }
+        else
+        {
+            guard.BeforeCall = n =>
+            {
+                if (n == call)
                     cts.Cancel();
-                    Assert.True(SpinWait.SpinUntil(() => g.CancelIsIssued, TimeSpan.FromSeconds(5)), "the canceller never marked the call");
-                };
-            }
-            else
-            {
-                g.BeforeCall = n =>
-                {
-                    if (n == call)
-                        cts.Cancel();
-                };
-            }
-        }, () => scan(root, cts.Token));
+            };
+        }
+    }
+
+    /// <summary>
+    /// Cancels from inside a call that has returned, and waits until the guard's canceller has marked that
+    /// call, so the guard discards what it returned.
+    /// </summary>
+    internal static void CancelDuringTheCall(CancellationTokenSource cts, SynchronousIoCancel guard)
+    {
+        cts.Cancel();
+        Assert.True(SpinWait.SpinUntil(() => guard.CancelIsIssued, TimeSpan.FromSeconds(5)), "the canceller never marked the call");
     }
 
     /// <summary>

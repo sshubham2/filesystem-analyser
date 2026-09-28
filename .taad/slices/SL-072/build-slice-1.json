@@ -1,0 +1,65 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-072",
+ "stage": "build-slice",
+ "attempt": 1,
+ "at": "2026-09-28T08:53:53.268Z",
+ "head": "80e114a6f0eac29cfdce0d64d455563fe87b5113",
+ "run_id": 1861,
+ "summary": "HF-009 was still in the tree: CancelledFolderTests.CancelAtAnyCallCommitsOnlyWholeFolders and TopLevelTests.CancelAtAnyCallLeavesAFinalSnapshotThatAddsUpToTheTotals each had the same code for cancelling at the k-th guarded call, including the message 'the canceller never marked the call'. I added two helpers to tests/FsAnalyser.Core.Tests/Scans.cs, following the design's suggested signatures. `Scans.WithGuard<T>(Action<SynchronousIoCancel>, Func<T>)` sets SynchronousIoCancel.Created, runs the scan and clears Created in a finally. `Scans.RunCancellingAt<T>(root, call, during, Func<string, CancellationToken, T>)` owns the CTS and sets up BeforeCall, or AfterCall plus the CancelIsIssued spin, through WithGuard. Both tests now call these helpers for their baseline scan and for every cancelled scan in the loop. This change touches tests only, and the full suite passes (394/394).",
+ "payload": {
+  "status": "complete",
+  "summary": "HF-009 was still in the tree: CancelledFolderTests.CancelAtAnyCallCommitsOnlyWholeFolders and TopLevelTests.CancelAtAnyCallLeavesAFinalSnapshotThatAddsUpToTheTotals each had the same code for cancelling at the k-th guarded call, including the message 'the canceller never marked the call'. I added two helpers to tests/FsAnalyser.Core.Tests/Scans.cs, following the design's suggested signatures. `Scans.WithGuard<T>(Action<SynchronousIoCancel>, Func<T>)` sets SynchronousIoCancel.Created, runs the scan and clears Created in a finally. `Scans.RunCancellingAt<T>(root, call, during, Func<string, CancellationToken, T>)` owns the CTS and sets up BeforeCall, or AfterCall plus the CancelIsIssued spin, through WithGuard. Both tests now call these helpers for their baseline scan and for every cancelled scan in the loop. This change touches tests only, and the full suite passes (394/394).",
+  "files": [
+   {
+    "path": "tests/FsAnalyser.Core.Tests/Scans.cs",
+    "change": "modified",
+    "why": "Added WithGuard (the Created set/reset pattern) and RunCancellingAt, which now holds the only copy of the cancel-at-call-k code."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/TopLevelTests.cs",
+    "change": "modified",
+    "why": "CancelAtAnyCallLeavesAFinalSnapshotThatAddsUpToTheTotals now uses Scans.WithGuard for its baseline scan and Scans.RunCancellingAt in its loop. Its doc comment now names the shared helper."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/CancelledFolderTests.cs",
+    "change": "modified",
+    "why": "CancelAtAnyCallCommitsOnlyWholeFolders now uses Scans.WithGuard for its baseline scan and Scans.RunCancellingAt in its loop."
+   }
+  ],
+  "obligations": [],
+  "cases": [
+   {
+    "key": "HF-009",
+    "test_name": "FsAnalyser.Core.Tests.TopLevelTests.CancelAtAnyCallLeavesAFinalSnapshotThatAddsUpToTheTotals",
+    "test_command": "dotnet test tests/FsAnalyser.Core.Tests --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.TopLevelTests.CancelAtAnyCallLeavesAFinalSnapshotThatAddsUpToTheTotals\""
+   }
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.TopLevelTests.CancelAtAnyCallLeavesAFinalSnapshotThatAddsUpToTheTotals|FullyQualifiedName~FsAnalyser.Core.Tests.CancelledFolderTests.CancelAtAnyCallCommitsOnlyWholeFolders\"",
+    "outcome": "passed",
+    "note": "There was no machine-wide 10.0 SDK, so eng/dotnet.ps1 installed SDK 10.0.401 into the gitignored .dotnet/ first. Result: Passed 4, Failed 0 (both theories, before and during). Duration 3 s."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx",
+    "outcome": "passed",
+    "note": "Full default suite: Passed 394, Failed 0, Skipped 0, 25 s. The build printed no warnings or errors."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 publish src/FsAnalyser.App -c Release -o %TEMP%\\sl072-publish; FsAnalyser.App.exe <repo>\\tests --report %TEMP%\\sl072-report.json",
+    "outcome": "passed",
+    "note": "Published the app and ran it through its real --report entry point on this repo's tests folder. It exited 0 and wrote a schema-1 report: 'Finished: …\\tests', '238 files and 47 folders; 0 links not followed', '9.1 MB in files, taking 9.6 MB on disk'. This slice changes only tests, so product behaviour is unchanged by construction. I deleted the temporary publish folder and report afterwards."
+   }
+  ],
+  "deviations": [],
+  "not_built": [
+   "The finding counts the Created set/reset pattern at other sites too: CancellationTests.cs:80/203/258, CancelledFolderTests.cs:239/254, StalledShareTests.cs:54, CloudPlaceholderTests.cs:374, CloudRigTests.cs:192/237 and TopLevelRowTextTests.cs:70. None of those were changed. The design's fix says to call the helpers 'from both tests', and the minor lane allows no refactoring past the finding. WithGuard is now there for them to use."
+  ],
+  "follow_ups": [
+   "Move the remaining SynchronousIoCancel.Created set/reset sites to Scans.WithGuard: CancellationTests.cs:80/203/258, CancelledFolderTests.cs:239/254 (A995WindowsReturnsWithNoCancelIsAnUnreadableFolderAndTheScanCarriesOn), StalledShareTests.cs:54, CloudPlaceholderTests.cs:374, CloudRigTests.cs:192/237 and TopLevelRowTextTests.cs:70. Each site that does it by hand is another place a missed reset can leak the [ThreadStatic] seam into a later test on the same thread."
+  ],
+  "architecture": [],
+  "sessions": []
+ }
+}
