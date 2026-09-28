@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Windows;
@@ -28,7 +29,9 @@ using System.Windows.Threading;
 /// waits up to 120 s for the ending, then runs the steps below in this order, and closes the window: the app
 /// exits as a closed window does. Every line it logs is one JSON object with a "kind"; a step that cannot go
 /// on logs {"kind":"error","reason":...} and the window is closed. FSA_HOOK_HEIGHT makes the window that tall (at
-/// most the work area) as it loads, before the scan: a "sized" line.
+/// most the work area) as it loads, before the scan: a "sized" line, with the height the window was laid out at
+/// ("actual"). A height within the work area that the window does not take (under its MinHeight) is refused,
+/// "height not applied (asked/actual)", so a run meant for one height never runs at another (SL-080).
 /// <list type="bullet">
 /// <item>ending: how the scan ended and whether the tree is what is shown, the tree's viewport, and where the
 /// window is against the work area.</item>
@@ -57,9 +60,12 @@ using System.Windows.Threading;
 /// 50 ms while a scan runs; after the ending, 1 s of hand-off, that folder opened once, then a second scan of
 /// the same root over the open tree, to its ending and 1 s beyond. One "gap" line a phase (scan, handoff, open,
 /// rescan, rescan-handoff) with how many probes it had, their p95 and max wait and when the longest was posted
-/// (review m7); a "rescan-started" line with how long the window's StartScan held the UI thread; and on each
-/// ending line, when the first move came and the longest a move took. Every 10 ms, so that a phase of a second
-/// has enough probes for its p95 to be something other than its longest wait (the code review's M1).</item>
+/// (review m7) and got through ("maxEndAt"); a "rescan-started" line with how long the window's StartScan held the
+/// UI thread; and on each ending line, when the first move came and the longest a move took. Every 10 ms, so that
+/// a phase of a second has enough probes for its p95 to be something other than its longest wait (the code
+/// review's M1). First, a "facts" line (SL-080): the UI thread's OS id, the process's priority class, the runtime,
+/// and when the hook's clock started, in UTC and in ms since the process started, so that a trace of the run can
+/// be read on the hook's clock.</item>
 /// </list>
 /// </remarks>
 internal static class TreeMode
@@ -107,7 +113,10 @@ internal static class TreeMode
             if (Number("FSA_HOOK_HEIGHT") is int height)
                 Size(window, height);
             if (gap is not null)
+            {
+                Facts();
                 probe = Probe.Start(app);
+            }
             WaitForEnding(window, "ending", probe, first: true);
             if (probe is not null)
                 probe.Phase("handoff", TimeSpan.FromSeconds(1));
@@ -156,11 +165,41 @@ internal static class TreeMode
 
     // FSA_HOOK_HEIGHT: the window made that tall, or as tall as the work area allows, at the top of the screen, so
     // the tree has the room a person who enlarges the window gives it.
-    private static void Size(Window window, int height) => Emit("sized", Ui(() =>
+    // A height within the work area that the window does not take, under its MinHeight, is refused (SL-080); asked
+    // past the work area, it is T-003's "as tall as it goes", and the work area's height is what was meant.
+    private static void Size(Window window, int height)
     {
-        window.Top = SystemParameters.WorkArea.Top;
-        window.Height = Math.Min(height, SystemParameters.WorkArea.Height);
-        return new Dictionary<string, object?> { ["asked"] = height, ["height"] = window.Height, ["workArea"] = SystemParameters.WorkArea.Height };
+        Dictionary<string, object?> sized = Ui(() =>
+        {
+            window.Top = SystemParameters.WorkArea.Top;
+            window.Height = Math.Min(height, SystemParameters.WorkArea.Height);
+            return new Dictionary<string, object?> { ["asked"] = height, ["height"] = window.Height, ["workArea"] = SystemParameters.WorkArea.Height };
+        });
+        Settle(DispatcherPriority.Loaded);
+        double actual = Ui(() => window.ActualHeight);
+        sized["actual"] = actual;
+        Emit("sized", sized);
+        if (height <= (double)sized["workArea"]! && Math.Abs(actual - height) > 1)
+            throw new Refusal(string.Create(CultureInfo.InvariantCulture, $"height not applied ({height}/{actual})"));
+    }
+
+    // SL-080: what a trace of this run needs to be read on the hook's clock and against the right thread.
+    private static void Facts() => Emit("facts", Ui(() =>
+    {
+        using Process self = Process.GetCurrentProcess();
+        return new Dictionary<string, object?>
+        {
+            // The OS thread id, which a trace names threads by. Neither ManagedThreadId nor AppDomain.GetCurrentThreadId
+            // (the managed id on .NET: it gave 2 at SL-080's build) is it; Thread.CurrentOSThreadId is, and is internal.
+            ["uiThread"] = typeof(Thread).GetProperty("CurrentOSThreadId", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null),
+            ["priorityClass"] = self.PriorityClass.ToString(),
+            ["runtime"] = RuntimeInformation.FrameworkDescription,
+            ["renderMode"] = RenderOptions.ProcessRenderMode.ToString(), // SoftwareOnly under FSA_HOOK_RENDER=software
+            ["renderTier"] = RenderCapability.Tier >> 16,
+            ["pid"] = Environment.ProcessId,
+            ["clockOriginUtc"] = StartupHook.ClockOriginUtc.ToString("o", CultureInfo.InvariantCulture),
+            ["clockOriginSinceProcessStartMs"] = (StartupHook.ClockOriginUtc - self.StartTime.ToUniversalTime()).TotalMilliseconds,
+        };
     }));
 
     // Until the scan has returned and its ending is on screen. With a probe, the window is moved and resized every
@@ -628,6 +667,7 @@ internal static class TreeMode
                     ["p95"] = mine.Length == 0 ? null : mine[(int)Math.Ceiling(0.95 * mine.Length) - 1].Waited,
                     ["max"] = mine.Length == 0 ? null : mine[^1].Waited,
                     ["maxAt"] = mine.Length == 0 ? null : mine[^1].At, // the hook's clock when the longest was posted
+                    ["maxEndAt"] = mine.Length == 0 ? null : mine[^1].At + mine[^1].Waited, // and when it got through
                 };
             }
         }

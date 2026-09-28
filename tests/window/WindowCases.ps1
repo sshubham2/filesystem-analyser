@@ -105,7 +105,7 @@ $RigExe = Join-Path $Repo 'artifacts\stall-rig\StallRig.exe'
 $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS',
     'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND', 'FSA_HOOK_MINSIZE', 'FSA_HOOK_DRIVES',
     'FSA_HOOK_WALK', 'FSA_HOOK_RECYCLE', 'FSA_HOOK_MULTIPLY', 'FSA_HOOK_SELECT', 'FSA_HOOK_RELEASE', 'FSA_HOOK_GAP', 'FSA_HOOK_HEIGHT', 'FSA_HOOK_REVEAL', 'FSA_HOOK_STATUS',
-    'FSA_HOOK_MAXIMIZE', 'FSA_HOOK_BACK', 'FSA_HOOK_READABLE', 'FSA_HOOK_BEFORE', 'FSA_HOOK_AFTER', 'FSA_HOOK_RENAMED'
+    'FSA_HOOK_MAXIMIZE', 'FSA_HOOK_BACK', 'FSA_HOOK_READABLE', 'FSA_HOOK_BEFORE', 'FSA_HOOK_AFTER', 'FSA_HOOK_RENAMED', 'FSA_HOOK_RENDER'
 $HookedCases = 'C-002', 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
     'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003', 'R-001',
     'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009'
@@ -377,9 +377,11 @@ function Read-Window([string] $root, [int] $timeoutSec = 120) {
 }
 
 # Straight through Start-Process, for the cases about raw arguments. -ArgumentList joins an array with
-# spaces and quotes nothing.
-function Start-App($arguments, [string] $workingDirectory = [System.IO.Path]::GetTempPath()) {
-    $process = Start-Process -FilePath $Exe -ArgumentList $arguments -WorkingDirectory $workingDirectory -PassThru
+# spaces and quotes nothing. $environment (SL-080) is given to this one process alone (-Environment, pwsh 7.4+),
+# never set in this script's own $env:, so no build or other process it starts ever sees it.
+function Start-App($arguments, [string] $workingDirectory = [System.IO.Path]::GetTempPath(), [hashtable] $environment = @{}) {
+    $more = if ($environment.Count -gt 0) { @{ Environment = $environment } } else { @{} }
+    $process = Start-Process -FilePath $Exe -ArgumentList $arguments -WorkingDirectory $workingDirectory -PassThru @more
     $null = $process.Handle # without it ExitCode reads empty after the wait
     $process
 }
@@ -2238,9 +2240,9 @@ function Read-HookJson($log) {
 }
 
 # One launch of the app on $root without --report, under the hook's tree mode with $variables: the exit code (or
-# TIMEOUT) and the hook's lines, raw and as objects.
-function Invoke-TreeRun([string] $root, [hashtable] $variables = @{}, [int] $timeoutSec = 120) {
-    $run = Invoke-WithHook 'tree' $HookDll { Wait-App (Start-App "`"$root`"") $timeoutSec } $variables
+# TIMEOUT) and the hook's lines, raw and as objects. $environment goes to the app's process alone (Start-App).
+function Invoke-TreeRun([string] $root, [hashtable] $variables = @{}, [int] $timeoutSec = 120, [hashtable] $environment = @{}) {
+    $run = Invoke-WithHook 'tree' $HookDll { Wait-App (Start-App "`"$root`"" ([System.IO.Path]::GetTempPath()) $environment) $timeoutSec } $variables
     [pscustomobject]@{
         Exit  = $run.Result
         Log   = $run.Log
@@ -2698,6 +2700,111 @@ function Test-T004 {
 # bar rather than the first; so a phase that short is held to the second alone, and says so. Timing on a shared
 # machine, as M-001's: a failure here is a measurement to record, not proof of a defect by itself.
 $GapP95Floor = 20
+
+# SL-080: T-005 as a measurement of its own, for tests/window/T005Batch.ps1. Each variable is off unless set, and
+# none changes what T-005 checks.
+#   FSA_T005_HEIGHT=<px>     the window made that tall before the scan: the hook's FSA_HOOK_HEIGHT, which refuses a
+#                            height the window does not take
+#   FSA_T005_TRACE=<folder>  the app traced by EventPipe from its start (CPU samples, with rundown) into that folder as
+#                            t005-<run>-<pid>.nettrace; the variables go to the app's process alone (Start-App)
+#   FSA_T005_SAMPLE_MS=<n>   with a trace, a sample every n ms, not every 1 ms: DOTNET_EventPipeThreadSamplingRate, which
+#                            runtime 10.0.12 reads as milliseconds in hexadecimal (measured at SL-080's build: A gave
+#                            10.1 ms between samples, 5 gave 5.1 ms, 2710 held the app's exit 7 s)
+#   FSA_T005_RENDER=software WPF draws the app in software: the hook's FSA_HOOK_RENDER, for T005Batch.ps1 -Plan Render
+#   FSA_T005_TAG=<json>      {run, pair, position, warmup, arm, idleGapS} from the batch, copied into the summary line
+#   FSA_T005_SUMMARY=<file>  one JSON line appended for the run (ConvertTo-T005Summary), before T-005's own checks, so a
+#                            run that fails a bar still gives its numbers
+$T005TraceProviders = 'Microsoft-DotNETCore-SampleProfiler:0xF00000000000:5,Microsoft-Windows-DotNETRuntime:0x00000014C14FCCBD:4'
+
+function New-T005Trace($tag) {
+    if (-not $env:FSA_T005_TRACE) { return [pscustomobject]@{ Environment = @{}; Folder = $null; Prefix = $null } }
+    [void][System.IO.Directory]::CreateDirectory($env:FSA_T005_TRACE)
+    $name = if ($null -ne $tag -and $null -ne $tag.run) { $tag.run } else { [guid]::NewGuid().ToString('N').Substring(0, 8) }
+    $prefix = "t005-$name-"
+    $environment = @{
+        DOTNET_EnableEventPipe          = '1'
+        DOTNET_EventPipeOutputPath      = Join-Path $env:FSA_T005_TRACE "$prefix{pid}.nettrace" # the runtime puts its pid in
+        DOTNET_EventPipeConfig          = $T005TraceProviders
+        DOTNET_EventPipeOutputStreaming = '1'
+        DOTNET_EventPipeRundown         = '1'
+    }
+    if ($env:FSA_T005_SAMPLE_MS) { $environment.DOTNET_EventPipeThreadSamplingRate = '{0:X}' -f [int]$env:FSA_T005_SAMPLE_MS }
+    [pscustomobject]@{ Environment = $environment; Folder = $env:FSA_T005_TRACE; Prefix = $prefix }
+}
+
+# The run's own trace, by the pid the hook logged; null when there is none or it is empty.
+function Find-T005Trace($trace, $run) {
+    if ($null -eq $trace.Folder) { return $null }
+    $loaded = @($run.Log | Where-Object { $_ -cmatch '^loaded mode=tree pid=(\d+)' })
+    if ($loaded.Count -eq 0 -or $loaded[0] -notmatch 'pid=(\d+)') { return $null }
+    $path = Join-Path $trace.Folder "$($trace.Prefix)$($Matches[1]).nettrace"
+    if ((Test-Path -LiteralPath $path -PathType Leaf) -and (Get-Item -LiteralPath $path).Length -gt 0) { $path } else { $null }
+}
+
+function Value-Of($object, [string] $name) { if ($null -eq $object) { $null } else { $object.$name } }
+
+# One T-005 run as the batch reads it. A phase the hook never sampled (no gap line, or no probe in it) is written
+# with reached false and null figures, never 0. primaryMs, the one figure a batch decides on, is the larger of the
+# scan's and the rescan's longest wait, and null when either is. exitReason is 'closed' only when the hook closed
+# the window, logged no error, and the app exited 0.
+function ConvertTo-T005Summary($run, $tag, [string] $startedUtc, $traceFile) {
+    $lines = @($run.Lines)
+    $first = { param($kind) @($lines | Where-Object { $_.kind -ceq $kind }) | Select-Object -First 1 }
+    $facts = & $first 'facts'
+    $sized = & $first 'sized'
+    $errors = @($lines | Where-Object { $_.kind -ceq 'error' })
+    $exitReason = if ($run.Exit -eq 'TIMEOUT') { 'timeout' }
+    elseif ($errors.Count -gt 0) { 'hook-error: ' + (($errors | ForEach-Object reason) -join ' | ') }
+    elseif (@($lines | Where-Object { $_.kind -ceq 'closed' }).Count -eq 0) { 'no-close' }
+    elseif ([string]$run.Exit -ne '0') { "exit $($run.Exit)" }
+    else { 'closed' }
+    $endings = @{ scan = (& $first 'ending'); rescan = (& $first 'second-ending') }
+    $phases = foreach ($name in 'scan', 'handoff', 'open', 'rescan', 'rescan-handoff') {
+        $gap = @($lines | Where-Object { $_.kind -ceq 'gap' -and $_.phase -ceq $name }) | Select-Object -First 1
+        $reached = $null -ne $gap -and $null -ne $gap.max -and [int]$gap.probes -gt 0
+        $ending = $endings[$name]
+        [ordered]@{
+            name          = $name
+            reached       = $reached
+            longestWaitMs = if ($reached) { [double]$gap.max } else { $null }
+            maxAt         = if ($reached) { [double]$gap.maxAt } else { $null }
+            maxEndAt      = if ($reached -and $null -ne $gap.maxEndAt) { [double]$gap.maxEndAt } else { $null }
+            p95           = if ($reached) { [double]$gap.p95 } else { $null }
+            probes        = if ($null -ne $gap) { [int]$gap.probes } else { $null }
+            longestMoveMs = if ($null -ne $ending) { [double]$ending.longestMoveMs } else { $null }
+            moves         = if ($null -ne $ending) { [int]$ending.moves } else { $null }
+            firstMoveAt   = if ($null -ne $ending) { $ending.firstMoveAt } else { $null }
+        }
+    }
+    $scan = @($phases | Where-Object { $_.name -eq 'scan' })[0].longestWaitMs
+    $rescan = @($phases | Where-Object { $_.name -eq 'rescan' })[0].longestWaitMs
+    [ordered]@{
+        run                            = Value-Of $tag 'run'
+        pair                           = Value-Of $tag 'pair'
+        position                       = Value-Of $tag 'position'
+        warmup                         = Value-Of $tag 'warmup'
+        arm                            = Value-Of $tag 'arm'
+        idleGapS                       = Value-Of $tag 'idleGapS'
+        startedUtc                     = $startedUtc
+        exitCode                       = [string]$run.Exit
+        exitReason                     = $exitReason
+        askedHeight                    = Value-Of $sized 'asked'
+        actualHeight                   = Value-Of $sized 'actual'
+        uiThread                       = Value-Of $facts 'uiThread'
+        priorityClass                  = Value-Of $facts 'priorityClass'
+        runtime                        = Value-Of $facts 'runtime'
+        renderMode                     = Value-Of $facts 'renderMode'
+        renderTier                     = Value-Of $facts 'renderTier'
+        pid                            = Value-Of $facts 'pid'
+        clockOriginUtc                 = Value-Of $facts 'clockOriginUtc'
+        clockOriginSinceProcessStartMs = Value-Of $facts 'clockOriginSinceProcessStartMs'
+        traceFile                      = $traceFile
+        primaryMs                      = if ($null -ne $scan -and $null -ne $rescan) { [Math]::Max($scan, $rescan) } else { $null }
+        primaryPhase                   = if ($null -ne $scan -and $null -ne $rescan) { if ($rescan -gt $scan) { 'rescan' } else { 'scan' } } else { $null }
+        phases                         = @($phases)
+    }
+}
+
 function Test-T005 {
     $case = New-CaseFolder
     try {
@@ -2710,7 +2817,18 @@ function Test-T005 {
         }
         Write-Output ("        built 100,000 files and 20,000 folders in {0:N1} s" -f $clock.Elapsed.TotalSeconds)
 
-        $run = Invoke-TreeRun $root @{ FSA_HOOK_WALK = '0'; FSA_HOOK_GAP = 'big' } 300
+        $variables = @{ FSA_HOOK_WALK = '0'; FSA_HOOK_GAP = 'big' }
+        if ($env:FSA_T005_HEIGHT) { $variables.FSA_HOOK_HEIGHT = $env:FSA_T005_HEIGHT }
+        if ($env:FSA_T005_RENDER) { $variables.FSA_HOOK_RENDER = $env:FSA_T005_RENDER }
+        $tag = if ($env:FSA_T005_TAG) { $env:FSA_T005_TAG | ConvertFrom-Json } else { $null }
+        $trace = New-T005Trace $tag
+        $startedUtc = [DateTime]::UtcNow.ToString('o')
+        $run = Invoke-TreeRun $root $variables 300 $trace.Environment
+        if ($env:FSA_T005_SUMMARY) {
+            $summary = ConvertTo-T005Summary $run $tag $startedUtc (Find-T005Trace $trace $run)
+            [System.IO.File]::AppendAllText($env:FSA_T005_SUMMARY, ($summary | ConvertTo-Json -Compress -Depth 6) + "`n")
+            Write-Output ("        summary: {0}, primary {1} ms ({2}), trace {3}" -f $summary.exitReason, $summary.primaryMs, $summary.primaryPhase, (Show $summary.traceFile))
+        }
         $before = $script:Failures.Count
         CheckTreeRun $run $root
         CheckTreeEnding $run $root 'second-ending'
