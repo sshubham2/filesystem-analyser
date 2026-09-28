@@ -37,7 +37,7 @@ internal static unsafe partial class Kernel32
     /// </summary>
     public const uint REPARSE_TAG_NAME_SURROGATE = 0x20000000;
 
-    // Thread error mode: no "insert a disk" box for a drive with no media, the call fails instead.
+    // Thread error mode: no "insert a disk" box for a drive with no media, the call fails instead (CriticalErrorBoxOff).
     public const uint SEM_FAILCRITICALERRORS = 0x0001;
 
     // FILE_INFO_BY_HANDLE_CLASS
@@ -96,8 +96,28 @@ internal static unsafe partial class Kernel32
     /// <summary>The size of FILE_BASIC_INFO in winbase.h on x64, which every use of the struct is checked against.</summary>
     public const int FileBasicInfoSize = 40;
 
-    [LibraryImport("kernel32.dll", EntryPoint = "CreateFileW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
-    public static partial SafeFileHandle CreateFile(
+    /// <summary>
+    /// CreateFileW, only with the critical-error box off (SL-077): the caller hands over the
+    /// <see cref="CriticalErrorBoxOff"/> it holds, so no path is opened without one. A path on a drive with no
+    /// media then fails with ERROR_NOT_READY instead of asking for a disk.
+    /// </summary>
+    /// <exception cref="InvalidOperationException"><paramref name="boxOff"/> did not come from
+    /// <see cref="CriticalErrorBoxOff.Begin"/>, so it turned nothing off.</exception>
+    public static SafeFileHandle CreateFile(in CriticalErrorBoxOff boxOff,
+        string fileName, uint desiredAccess, uint shareMode, nint securityAttributes,
+        uint creationDisposition, uint flagsAndAttributes, nint templateFile)
+    {
+        if (!boxOff.IsArmed)
+        {
+            throw new InvalidOperationException(
+                "A path is opened only inside a CriticalErrorBoxOff from Kernel32.CriticalErrorBoxOff.Begin(). A default one turns " +
+                "nothing off, and a drive with no media would ask for a disk.");
+        }
+        return CreateFileW(fileName, desiredAccess, shareMode, securityAttributes, creationDisposition, flagsAndAttributes, templateFile);
+    }
+
+    [LibraryImport("kernel32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    private static partial SafeFileHandle CreateFileW(
         string fileName, uint desiredAccess, uint shareMode, nint securityAttributes,
         uint creationDisposition, uint flagsAndAttributes, nint templateFile);
 
@@ -147,22 +167,66 @@ internal static unsafe partial class Kernel32
     /// more free bytes than total bytes (<see cref="TryUsedBytes"/>).</returns>
     public static bool TryGetVolumeUsed(string root, out long used, out int error)
     {
-        bool modeSet = SetThreadErrorMode(SEM_FAILCRITICALERRORS, out uint oldMode);
-        try
+        using CriticalErrorBoxOff boxOff = CriticalErrorBoxOff.Begin();
+        BeforeVolumeRead?.Invoke();
+        if (!GetDiskFreeSpaceEx(root, out _, out ulong total, out ulong free))
         {
-            if (!GetDiskFreeSpaceEx(root, out _, out ulong total, out ulong free))
-            {
-                error = Marshal.GetLastPInvokeError();
-                used = 0;
-                return false;
-            }
-            error = 0;
-            return TryUsedBytes(total, free, out used);
+            error = Marshal.GetLastPInvokeError();
+            used = 0;
+            return false;
         }
-        finally
+        error = 0;
+        return TryUsedBytes(total, free, out used);
+    }
+
+    /// <summary>
+    /// Tests only: set on a thread before it calls <see cref="TryGetVolumeUsed"/>, and called there inside the
+    /// critical-error scope, just before GetDiskFreeSpaceExW, so a test can read the mode the call runs under.
+    /// </summary>
+    [ThreadStatic]
+    internal static Action? BeforeVolumeRead;
+
+    /// <summary>
+    /// The critical-error box off on this thread until Dispose (SL-077): SetThreadErrorMode(SEM_FAILCRITICALERRORS),
+    /// and the thread's previous mode back on Dispose. The one place in Core that sets an error mode. Thread-scoped
+    /// only, never the process-wide SetErrorMode, so the work inside must stay on the thread that began it. It sets
+    /// exactly SEM_FAILCRITICALERRORS, as the BCL's DisableMediaInsertionPrompt does, and nested scopes unwind in order.
+    /// </summary>
+    /// <remarks>
+    /// Made only by <see cref="Begin"/>: <c>new()</c> does not compile, and a <c>default</c> one turns nothing off, is not
+    /// <see cref="IsArmed"/>, and is refused by <see cref="CreateFile"/>. The BCL shipped that mistake twice with its own
+    /// scope (corefx #35045, dotnet/runtime #126544). A failed set is best effort, as there: the call still runs, and
+    /// nothing is restored.
+    /// </remarks>
+    public readonly struct CriticalErrorBoxOff : IDisposable
+    {
+        private readonly uint _previous;
+        private readonly bool _set;
+
+        [Obsolete("Use Kernel32.CriticalErrorBoxOff.Begin(): a CriticalErrorBoxOff made any other way turns nothing off.", error: true)]
+        public CriticalErrorBoxOff()
         {
-            if (modeSet)
-                SetThreadErrorMode(oldMode, out _);
+        }
+
+        private CriticalErrorBoxOff(bool set, uint previous)
+        {
+            IsArmed = true;
+            _set = set;
+            _previous = previous;
+        }
+
+        /// <summary>Whether this came from <see cref="Begin"/>. Not whether Windows took the mode.</summary>
+        public bool IsArmed { get; }
+
+        public static CriticalErrorBoxOff Begin() =>
+            SetThreadErrorMode(SEM_FAILCRITICALERRORS, out uint previous)
+                ? new CriticalErrorBoxOff(set: true, previous)
+                : new CriticalErrorBoxOff(set: false, 0);
+
+        public void Dispose()
+        {
+            if (_set)
+                SetThreadErrorMode(_previous, out _);
         }
     }
 

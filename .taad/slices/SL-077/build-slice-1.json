@@ -1,0 +1,307 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-077",
+ "stage": "build-slice",
+ "attempt": 1,
+ "at": "2026-09-28T16:23:09.197Z",
+ "head": "98faaaedfc32b0d93c790c3b9688615ba5368fce",
+ "run_id": 2004,
+ "summary": "I put one thread-scoped critical-error scope, `Kernel32.CriticalErrorBoxOff`, in Kernel32 and made it the outermost `using` of `SynchronousIoCancel.Open`. The scanner's root open, every subfolder open and SizeProbe's open (on whatever thread calls it) now run with SEM_FAILCRITICALERRORS set, and the thread gets its old mode back on every way out. TryGetVolumeUsed now uses the same scope, so it is the only place in src that calls SetThreadErrorMode. The CreateFileW import is now private. The only way to open a path is `Kernel32.CreateFile(in CriticalErrorBoxOff, ...)`: `new CriticalErrorBoxOff()` does not compile, and a `default` scope makes it throw. TryGetVolumeUsed has a test-only hook inside the scope. The engine-added settled SL-077 rule is replaced by a twinned entry with a wider pattern, plus its xUnit Fact and harness plant rows. The repro command now exits 0. The full suite passes (413 tests), the rules harness shows 55 of 55 rows AS-RECORDED, and the published exe completed a whole-drive scan of D:\\.",
+ "payload": {
+  "status": "complete",
+  "summary": "I put one thread-scoped critical-error scope, `Kernel32.CriticalErrorBoxOff`, in Kernel32 and made it the outermost `using` of `SynchronousIoCancel.Open`. The scanner's root open, every subfolder open and SizeProbe's open (on whatever thread calls it) now run with SEM_FAILCRITICALERRORS set, and the thread gets its old mode back on every way out. TryGetVolumeUsed now uses the same scope, so it is the only place in src that calls SetThreadErrorMode. The CreateFileW import is now private. The only way to open a path is `Kernel32.CreateFile(in CriticalErrorBoxOff, ...)`: `new CriticalErrorBoxOff()` does not compile, and a `default` scope makes it throw. TryGetVolumeUsed has a test-only hook inside the scope. The engine-added settled SL-077 rule is replaced by a twinned entry with a wider pattern, plus its xUnit Fact and harness plant rows. The repro command now exits 0. The full suite passes (413 tests), the rules harness shows 55 of 55 rows AS-RECORDED, and the published exe completed a whole-drive scan of D:\\.",
+  "files": [
+   {
+    "path": "src/FsAnalyser.Core/Native/Kernel32.cs",
+    "change": "modified",
+    "why": "New `CriticalErrorBoxOff` readonly struct with `Begin()` factory. The only other way to construct it is a parameterless constructor marked [Obsolete(error: true)], so `new()` fails to compile (CS0619). Dispose restores the mode only if the set succeeded, and a `default` scope is not IsArmed. The CreateFileW import is private; the public `CreateFile(in CriticalErrorBoxOff, ...)` wrapper throws on an unarmed scope. TryGetVolumeUsed now uses the scope, and a [ThreadStatic] test-only `BeforeVolumeRead` hook runs inside that scope."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs",
+    "change": "modified",
+    "why": "`using Kernel32.CriticalErrorBoxOff boxOff = Kernel32.CriticalErrorBoxOff.Begin();` is the first statement of Open, so it covers Enter, both CreateFile routes, AfterCall, Exit and Close. The scope is passed to the direct CreateFile and to TryOpenKeepingLastAccess, which now takes it as an `in` parameter."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/FailCriticalErrorsTests.cs",
+    "change": "added",
+    "why": "The repro stage's Fact is kept unchanged, with two usings added at the top. Next to it are new Facts for: nested-folder opens, both open routes, a Probe Theory with presets 0x0/0x2/0x1, failed opens, cancelled/refused/throwing opens, concurrent probes on dedicated threads, the volume read through its hook, an unarmed scope, and nested scopes."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/TestNative.cs",
+    "change": "modified",
+    "why": "The repro stage's ThreadErrorMode/SetThreadErrorMode helpers, which the design says to keep as they are. I did not edit this file."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs",
+    "change": "modified",
+    "why": "New Fact PathOpensGoOnlyThroughTheGuardedOpen: the widened path-API pattern over src/FsAnalyser.Core, with Kernel32.cs and SynchronousIoCancel.cs excepted."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "change": "modified",
+    "why": "New twinned entry 'PathOpensGoOnlyThroughTheGuardedOpen (*.cs)' above the first settled marker, with (?m), including_comments: true and the widened alternation. The engine-added '# settled by SL-077' block (narrow pattern, not yet committed) is gone, so the rule is not held twice (HF-008)."
+   },
+   {
+    "path": "eng/rules-harness/plants.json",
+    "change": "modified",
+    "why": "Rows F24 (a Kernel32.CreateFile call next to the guarded open in SizeProbe.cs, which also fires FileSystemCallsGoThroughTheCancelGuard), F25 (NtOpenFile in a new Native/Ntdll.cs) and P24 (a comment inside the excepted funnel, which must stay quiet). The _note counts are updated to 42 rows."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-004",
+    "done": true,
+    "how": "TheScannersRootOpenAndSizeProbeRunWithTheCriticalErrorBoxOff (the repro Fact, unchanged) now passes. The root open, guard call 1 on the scan thread of a temp NTFS tree scan, reads mode 0x1. The exact repro command exits 0."
+   },
+   {
+    "key": "O-005",
+    "done": true,
+    "how": "The repro Fact covers a real probe worker thread: its guard is hooked through ScanOptions.Probe during a scan. AProbeOnThisThreadOpensWithTheBoxOffAndGivesTheModeBack calls SizeProbe.Probe directly on the test thread; the open (call 1) reads exactly 0x1 and EndOfFile is 10."
+   },
+   {
+    "key": "O-006",
+    "done": true,
+    "how": "EveryFolderTheScanOpensIsOpenedWithTheBoxOff scans root\\a\\sub. Exactly 4 scan-thread calls read 0x1 (the root's plain and keeping opens, then a and a\\sub), the first of them is call 1, and every other call reads 0x0. Totals.Folders is 2."
+   },
+   {
+    "key": "O-007",
+    "done": true,
+    "how": "BothRoutesOfAFolderOpenRunWithTheBoxOff has two fixtures. One folder allows write-attributes, so KeptLastAccess is true (TryOpenKeepingLastAccess route). One denies FILE_WRITE_ATTRIBUTES (0x100), so KeptLastAccess is false (fallback to the direct CreateFile). Both read 0x1 at AfterCall and restore the 0x2 preset. The scope token also makes an unscoped route fail to compile."
+   },
+   {
+    "key": "O-008",
+    "done": true,
+    "how": "AProbeOnThisThreadOpensWithTheBoxOffAndGivesTheModeBack(preset: 0): the open reads 0x1 and the thread is 0x0 after Probe."
+   },
+   {
+    "key": "O-009",
+    "done": true,
+    "how": "The same Theory with preset 0x2 (SEM_NOGPFAULTERRORBOX): the open reads exactly 0x1 (replace semantics) and the thread is 0x2 after."
+   },
+   {
+    "key": "O-010",
+    "done": true,
+    "how": "The same Theory with preset 0x1: the open reads 0x1 and the thread is still 0x1 after. NestedScopesUnwindInOrder also shows an inner scope gives back the outer scope's 0x1."
+   },
+   {
+    "key": "O-011",
+    "done": true,
+    "how": "AFailedOpenRanWithTheBoxOffAndGivesTheModeBack opens three things with a 0x2 preset: a folder denying FILE_LIST_DIRECTORY (error 5, both routes fail), a missing folder, and a file in a missing folder (both IsGone). All three read 0x1 inside, hand out no handle, and leave 0x2 after. A full scan of the same tree records the folder as unreadable with error 5 and leaves the thread at 0x2."
+   },
+   {
+    "key": "O-012",
+    "done": true,
+    "how": "ACancelledOrThrowingOpenGivesTheModeBack covers three exits, each reading 0x1 inside and restoring the 0x2 preset. (1) A scan is cancelled during its root open (AfterCall call 1 through Scans.CancelDuringTheCall) and ends Cancelled. (2) An open is refused because BeforeCall cancelled the token, and returns Aborted. (3) AfterCall throws, and the exception propagates out of OpenForAttributes."
+   },
+   {
+    "key": "O-013",
+    "done": true,
+    "how": "Built in the form review m3 accepted. The pool-reuse shape is replaced by ProbesOnSeveralThreadsAtOnceEachGiveTheirThreadItsModeBack: 4 dedicated threads, held together at a Barrier, each run 2 probes with their own guard. Half the threads carry 0x2 beforehand. Every open reads 0x1, and each thread reads its own baseline after each probe, so a reused thread gets its baseline back deterministically."
+   },
+   {
+    "key": "O-014",
+    "done": true,
+    "how": "TheVolumeReadRunsWithTheBoxOffAndGivesTheModeBack runs against %TEMP%'s drive root and a free drive letter. The present drive answers (true, error 0, used > 0) and the missing one does not (false, error != 0). The BeforeVolumeRead hook reads [0x1, 0x1] inside the scope, and the 0x2 preset is back after both calls."
+   },
+   {
+    "key": "O-015",
+    "done": true,
+    "how": "Ran the counting-rule suite unchanged (LinkTests, HardlinkTests, OnDiskSizeTests, LongPathTests, UnreadableFolderTests) through the guarded Open: 37 of 37 passed. The full default suite passed 413 of 413."
+   },
+   {
+    "key": "O-016",
+    "done": true,
+    "how": "M1: the only other constructor is a parameterless one marked [Obsolete(error: true)], so `new Kernel32.CriticalErrorBoxOff()` fails with CS0619 (checked by building a mutated copy). A `default` scope is not IsArmed, and Kernel32.CreateFile throws on it. TryGetVolumeUsed has the test-only BeforeVolumeRead hook inside the scope, and a Fact reads 0x1 there. Mutation check: TryGetVolumeUsed changed to `= default` made that Fact fail (Expected [1, 1], Actual [2, 2]); the file was restored with a matching hash. I did not add the regex ban; the disposition judged it unreliable and called the hook the reliable half."
+   },
+   {
+    "key": "O-017",
+    "done": true,
+    "how": "M2: the CreateFileW LibraryImport is private. The one public entry point is `Kernel32.CreateFile(in CriticalErrorBoxOff boxOff, ...)`, which throws InvalidOperationException when the scope is unarmed, so no CreateFile call in any file compiles without a scope. Open keeps its `using`, where AfterCall sees it, and passes the scope to both routes. Mutation check: Open's scope changed to `default` made the repro and BothRoutes fail with that InvalidOperationException. The wrapper keeps the name CreateFile, so SL-024's FileSystemCallsGoThroughTheCancelGuard still matches calls to it."
+   },
+   {
+    "key": "O-018",
+    "done": true,
+    "how": "M3 file set: the twinned .taad/fitness.yaml entry, the ArchitectureRulesTests Fact PathOpensGoOnlyThroughTheGuardedOpen, and plants.json rows F24, F25 and P24. RuleCases.ps1 already derives its counts: C-001 to C-005 all held under the new counts (12 facts, 16 twinned, 28 patterns, 46 settled). Harness invocation used: `%APPDATA%\\taad3\\venv\\Scripts\\python.exe eng/rules-harness/harness.py --engine-root C:\\Users\\sshub\\projets\\taad_v3\\backend --scenario all`, with the repo's own .dotnet SDK 10.0.401 as --dotnet-from (default --root). Result: 55 rows, 55 AS-RECORDED, 0 stray hits, exit 0. The one import rule is NOT RUN on the scratch copy, as before."
+   },
+   {
+    "key": "O-019",
+    "done": true,
+    "how": "m2: the pattern is widened to `\\b(CreateFile(W|2)?|OpenFileById|NtCreateFile|NtOpenFile|ZwCreateFile|ZwOpenFile|FindFirstFile(Ex)?W?|GetFileAttributes(Ex)?W?|GetVolumeInformationW?|GetDiskFreeSpace(Ex)?W?)\\s*\\(`. Before twinning I grepped src with it: the only hits are in the two excepted files, and there are no comment hits. Plant F25 (NtOpenFile in a new Native/Ntdll.cs) fires in both engines."
+   },
+   {
+    "key": "O-020",
+    "done": true,
+    "how": "m3: I wrote no Fact that depends on pool-thread reuse. Worker-thread restore is shown on dedicated `new Thread`s (ProbesOnSeveralThreadsAtOnce...). The deterministic restore Facts are kept: presets 0x0/0x2/0x1, and the failed, cancelled and throwing exits."
+   },
+   {
+    "key": "O-021",
+    "done": true,
+    "how": "m4: KeptLastAccess selects and reports the route. BothRoutesOfAFolderOpenRunWithTheBoxOff has one fixture where the write-attributes open succeeds (KeptLastAccess true) and one where FILE_WRITE_ATTRIBUTES is denied, so Open falls back to the direct CreateFile (false). Each asserts 0x1 at AfterCall. TryOpenKeepingLastAccess is private, has its one caller in Open, and cannot call CreateFile without the scope."
+   },
+   {
+    "key": "O-022",
+    "done": true,
+    "how": "m6: I timed 2,400,000 Begin/Dispose pairs on one thread with a Stopwatch, three runs, Debug build: 92.4, 88.5 and 91.4 ms, about 37-38.5 ns per pair. For comparison, one guarded OpenForAttributes+Close takes 15.8 µs (20,000 in 316 ms), so the scope adds about 0.24% per open and about 0.09 s over a 2.4M-open C: scan. That is well under the 1 s bar, so the guard stays inside Open, and there is still one pair per open because the wrapper takes a token rather than nesting. The scratch file was deleted after the measurement. I cannot change the design record's would_force_resynthesis myself; this number says it should read false."
+   },
+   {
+    "key": "O-001",
+    "done": true,
+    "how": "Ran `pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FailCriticalErrorsTests.TheScannersRootOpenAndSizeProbeRunWithTheCriticalErrorBoxOff\"`: 1 passed, exit 0. This is owed to validate-slice, which runs it again."
+   },
+   {
+    "key": "O-002",
+    "done": true,
+    "how": "NestedScopesUnwindInOrder: a 0x2 preset gives 0x1 in the outer scope, 0x1 in the inner, 0x1 after the inner Dispose and 0x2 after the outer. Restore on every exit path is covered by the preset Theory and by the failed, cancelled/refused/throwing and concurrent-thread Facts. All pass; validate-slice owns the final discharge."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "test_name": "FsAnalyser.Core.Tests.FailCriticalErrorsTests.TheScannersRootOpenAndSizeProbeRunWithTheCriticalErrorBoxOff",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.FailCriticalErrorsTests.TheScannersRootOpenAndSizeProbeRunWithTheCriticalErrorBoxOff\""
+   },
+   {
+    "key": "C-002",
+    "test_name": "FsAnalyser.Core.Tests.FailCriticalErrorsTests.AProbeOnThisThreadOpensWithTheBoxOffAndGivesTheModeBack (direct call on the test thread) together with FsAnalyser.Core.Tests.FailCriticalErrorsTests.TheScannersRootOpenAndSizeProbeRunWithTheCriticalErrorBoxOff (probe worker thread)",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.FailCriticalErrorsTests.AProbeOnThisThreadOpensWithTheBoxOffAndGivesTheModeBack|FullyQualifiedName~FsAnalyser.Core.Tests.FailCriticalErrorsTests.TheScannersRootOpenAndSizeProbeRunWithTheCriticalErrorBoxOff\""
+   },
+   {
+    "key": "C-003",
+    "test_name": "FsAnalyser.Core.Tests.FailCriticalErrorsTests.EveryFolderTheScanOpensIsOpenedWithTheBoxOff",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.FailCriticalErrorsTests.EveryFolderTheScanOpensIsOpenedWithTheBoxOff\""
+   },
+   {
+    "key": "C-004",
+    "test_name": "FsAnalyser.Core.Tests.FailCriticalErrorsTests.BothRoutesOfAFolderOpenRunWithTheBoxOff",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.FailCriticalErrorsTests.BothRoutesOfAFolderOpenRunWithTheBoxOff\""
+   },
+   {
+    "key": "C-005",
+    "test_name": "FsAnalyser.Core.Tests.FailCriticalErrorsTests.AProbeOnThisThreadOpensWithTheBoxOffAndGivesTheModeBack (preset: 0)",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.FailCriticalErrorsTests.AProbeOnThisThreadOpensWithTheBoxOffAndGivesTheModeBack\""
+   },
+   {
+    "key": "C-006",
+    "test_name": "FsAnalyser.Core.Tests.FailCriticalErrorsTests.AProbeOnThisThreadOpensWithTheBoxOffAndGivesTheModeBack (preset: 2)",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.FailCriticalErrorsTests.AProbeOnThisThreadOpensWithTheBoxOffAndGivesTheModeBack\""
+   },
+   {
+    "key": "C-007",
+    "test_name": "FsAnalyser.Core.Tests.FailCriticalErrorsTests.AProbeOnThisThreadOpensWithTheBoxOffAndGivesTheModeBack (preset: 1)",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.FailCriticalErrorsTests.AProbeOnThisThreadOpensWithTheBoxOffAndGivesTheModeBack\""
+   },
+   {
+    "key": "C-008",
+    "test_name": "FsAnalyser.Core.Tests.FailCriticalErrorsTests.AFailedOpenRanWithTheBoxOffAndGivesTheModeBack",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.FailCriticalErrorsTests.AFailedOpenRanWithTheBoxOffAndGivesTheModeBack\""
+   },
+   {
+    "key": "C-009",
+    "test_name": "FsAnalyser.Core.Tests.FailCriticalErrorsTests.ACancelledOrThrowingOpenGivesTheModeBack",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.FailCriticalErrorsTests.ACancelledOrThrowingOpenGivesTheModeBack\""
+   },
+   {
+    "key": "C-010",
+    "test_name": "FsAnalyser.Core.Tests.FailCriticalErrorsTests.ProbesOnSeveralThreadsAtOnceEachGiveTheirThreadItsModeBack",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.FailCriticalErrorsTests.ProbesOnSeveralThreadsAtOnceEachGiveTheirThreadItsModeBack\""
+   },
+   {
+    "key": "C-011",
+    "test_name": "FsAnalyser.Core.Tests.FailCriticalErrorsTests.TheVolumeReadRunsWithTheBoxOffAndGivesTheModeBack",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.FailCriticalErrorsTests.TheVolumeReadRunsWithTheBoxOffAndGivesTheModeBack\""
+   },
+   {
+    "key": "C-012",
+    "test_name": "FsAnalyser.Core.Tests.LinkTests, FsAnalyser.Core.Tests.HardlinkTests, FsAnalyser.Core.Tests.OnDiskSizeTests, FsAnalyser.Core.Tests.LongPathTests, FsAnalyser.Core.Tests.UnreadableFolderTests (the counting-rule suite, unchanged)",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.LinkTests|FullyQualifiedName~FsAnalyser.Core.Tests.HardlinkTests|FullyQualifiedName~FsAnalyser.Core.Tests.OnDiskSizeTests|FullyQualifiedName~FsAnalyser.Core.Tests.LongPathTests|FullyQualifiedName~FsAnalyser.Core.Tests.UnreadableFolderTests\""
+   }
+  ],
+  "deviations": [
+   "Factory name and place: the design names `Kernel32.TurnOffCriticalErrorBox()`. Accepted finding M1 requires the struct's constructor to be private, and a nested struct's private constructor cannot be reached from the containing Kernel32. So the factory lives on the struct as `Kernel32.CriticalErrorBoxOff.Begin()`; the contract allowed local naming. A C# struct always has a usable parameterless `new()`, so that constructor is declared explicitly with [Obsolete(error: true)] instead of private. `new Kernel32.CriticalErrorBoxOff()` then fails with CS0619 (verified on a mutated copy).",
+   "Architecture rule: the design's rule came into the tree as an engine-added, not yet committed '# settled by SL-077' block with the narrow pattern `\\bCreateFileW?\\s*\\(` and no twin. The design (and M3) call for an xUnit twin. eng/rules-parity.ps1 only pairs Facts with entries above the first settled marker, and SL-074 (HF-008) deleted settled copies of twinned rules as defects. So I replaced the settled block with one twinned entry, 'PathOpensGoOnlyThroughTheGuardedOpen (*.cs)'. It uses (?m) and including_comments: true as the yaml header's authoring rules require, keeps the same files and except_files, and has the pattern widened per m2. If anything in the engine looks the declared rule up by its original prose name, it will not find it.",
+   "M2 wrapper name: the scope-token wrapper is still called `Kernel32.CreateFile` (the import itself is now the private `CreateFileW`). SL-024's twinned rule FileSystemCallsGoThroughTheCancelGuard matches `\\bKernel32\\.(CreateFile|GetFileInformationByHandleEx)\\s*\\(`, and renaming the wrapper would have silently let that rule through. So SynchronousIoCancel.cs stays in the new rule's except_files. The compiler, not that exception, is what enforces the rule there."
+  ],
+  "not_built": [
+   "No end-to-end test on a removable drive with no media (design case C-013, marked non-material). No stage here can produce one; the thread-mode Facts stand in for it.",
+   "Handle-based calls (listing, GetFileInformationByHandleEx, GetVolumeInformationByHandleW) after media is pulled mid-scan are still outside the scope (design case C-014, non-material; open question to a person).",
+   "The critique's proposed regex ban on `new`/`default` CriticalErrorBoxOff was not added. The disposition judged it unreliable, since it would match Kernel32.cs itself. `new()` fails to compile via [Obsolete(error: true)] and `default` is refused at runtime by Kernel32.CreateFile, with the TryGetVolumeUsed hook Fact as the test."
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build src/FsAnalyser.Core/FsAnalyser.Core.csproj",
+    "outcome": "passed",
+    "note": "Build succeeded, 0 warnings, 0 errors, using the repo-local SDK 10.0.401 in .dotnet/."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FailCriticalErrorsTests\"",
+    "outcome": "passed",
+    "note": "First run: 11 of 12 passed. ACancelledOrThrowingOpenGivesTheModeBack failed because of a fixture bug (a file written into a folder that did not exist yet), not the product. After the fix, 12 of 12 passed (run together with the scratch cost test, 13 in total)."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FailCriticalErrorsTests.TheScannersRootOpenAndSizeProbeRunWithTheCriticalErrorBoxOff\"",
+    "outcome": "passed",
+    "note": "The engine's repro command: 1 passed, exit 0. It exited 1 before the fix."
+   },
+   {
+    "command": "mutation: Kernel32.TryGetVolumeUsed scope changed to `= default`, then FailCriticalErrorsTests run",
+    "outcome": "failed",
+    "note": "Expected failure, showing the M1 Fact bites: TheVolumeReadRunsWithTheBoxOffAndGivesTheModeBack gave Expected [1, 1], Actual [2, 2]; 11 others passed. The file was restored with an identical SHA-256."
+   },
+   {
+    "command": "mutation: SynchronousIoCancel.Open scope changed to `= default`, then the repro and BothRoutes Facts run",
+    "outcome": "failed",
+    "note": "Expected failure, showing the M2 token bites: both failed with InvalidOperationException 'A path is opened only inside a CriticalErrorBoxOff...'. The file was restored with an identical hash."
+   },
+   {
+    "command": "mutation: Open scope changed to `new Kernel32.CriticalErrorBoxOff()`, then eng/dotnet.ps1 build of Core",
+    "outcome": "failed",
+    "note": "Expected: error CS0619 (obsolete, error), so `new()` does not compile. After restoring the file (hash matched), a rebuild gave 0 errors."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/rules-parity.ps1 -ExpectFacts 12 (and under powershell.exe with no argument)",
+    "outcome": "passed",
+    "note": "AGREE: 12 facts <- 16 twinned entries, 28 patterns; 46 settled entries not compared. Exit 0 under both shells. With -ExpectFacts 11, CANNOT-READ (exit 2), as expected."
+   },
+   {
+    "command": "%APPDATA%\\taad3\\venv\\Scripts\\python.exe eng/rules-harness/harness.py --engine-root C:\\Users\\sshub\\projets\\taad_v3\\backend --scenario all",
+    "outcome": "passed",
+    "note": "Clean baseline: xunit 12 Facts, 0 hits; fitness 62 rules, 0 hits. 55 rows, 55 AS-RECORDED (including new F24, F25 and P24), 0 stray hits, exit 0. The one import rule is NOT RUN on the scratch copy, as before."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-001 (and C-002, C-003, C-004, C-005)",
+    "outcome": "passed",
+    "note": "Each exited 0 with 'All checks held.' The derived counts follow the new twin, and no literal needed editing."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+    "outcome": "passed",
+    "note": "Full default-filter suite: 413 passed, 0 failed, 0 skipped, 27 s. No warnings in the build output."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --no-build --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.LinkTests|...HardlinkTests|...OnDiskSizeTests|...LongPathTests|...UnreadableFolderTests\"",
+    "outcome": "passed",
+    "note": "The counting-rule suite, unchanged: 37 of 37 passed."
+   },
+   {
+    "command": "scratch Fact ScratchScopeCost.MeasureScopeCost (deleted after the run)",
+    "outcome": "passed",
+    "note": "2,400,000 Begin/Dispose pairs: 92.4, 88.5 and 91.4 ms (about 37-38.5 ns per pair, Debug build). 20,000 guarded OpenForAttributes+Close: 316.1 ms (15.80 µs per open)."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o artifacts/publish",
+    "outcome": "passed",
+    "note": "Single-file self-contained FsAnalyser.App.exe, 139,899,544 bytes, into the gitignored artifacts/."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/read-window.ps1 -Root D:\\ -TimeoutSec 400",
+    "outcome": "passed",
+    "note": "The published exe, launched as it is used, did a whole-drive scan of the real D:\\ (NTFS, fixed): EXIT 0, core status Completed, 527,495 files, 4,189 folders, 97 links not followed, 124.6 GB (133,801,209,473 bytes), 2 unreadable folders, read in 7.8 s. The volume-used figure answered ('125.4 GB in use') through the refactored TryGetVolumeUsed. The ERROR_NOT_READY path was not exercised: this machine has no removable drive (drives are C: fixed, D: fixed, Z: network)."
+   }
+  ],
+  "follow_ups": [
+   "Decide the design's open question: should handle-based calls after media removal (listing, GetFileInformationByHandleEx, GetVolumeInformationByHandleW) come into scope? The process-wide SetErrorMode(SEM_FAILCRITICALERRORS) at App startup (review m1, deferred) is the candidate answer. With the scope in place, each of those calls could instead take a one-line `using`.",
+   "The design record's decidable disagreement on per-open cost is still marked would_force_resynthesis: true. The measurement (about 37 ns per pair against 15.8 µs per open) says it should read false. Its key_decision rejecting a process-wide call should also be restated on the grounds m1's disposition gives.",
+   "At merge, check that the engine does not add a '# settled by SL-077' block again under the old prose name. It would duplicate the twinned entry (the HF-008 shape SL-074 removed) and make F24 and F25 need also_settled."
+  ]
+ }
+}

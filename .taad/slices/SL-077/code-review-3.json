@@ -1,0 +1,246 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-077",
+ "stage": "code-review",
+ "attempt": 3,
+ "at": "2026-09-28T20:43:06.195Z",
+ "head": "4b0016fe0c9af845b7413a2ec9ed2806f499182f",
+ "run_id": 2013,
+ "summary": "I reviewed the tree as it now stands (5c2d1ff). Attempt 2 changed no src; it touched .taad/fitness.yaml, ArchitectureRulesTests.cs, FailCriticalErrorsTests.cs, plants.json and eng/read-window.ps1.\n\nWhat I re-ran myself, all holding:\n- Full default suite: 414/414 passed.\n- rules-parity -ExpectFacts 12: AGREE, 12 facts, 16 twinned entries, 29 patterns.\n- Fitness check: all 62 rules hold.\n\nThe empty-drive check the previous review asked for is real and I repeated it. E:\\ and F:\\ are still Removable with IsReady=False. `eng/read-window.ps1 -Root E:\\ -TimeoutSec 60 -DefaultErrorMode` printed ERRORMODE 0x0, then EXIT 0 in 1.5 s. The same run on F:\\ gave ERRORMODE 0x0, EXIT 0, core.status=RootUnreadable, rootError=21, elapsedMs=8. So the published exe, launched without SEM_FAILCRITICALERRORS in its process mode, gets error 21 back from an empty removable drive and does not hang.\n\nThe launcher code is sound on inspection:\n- The bit inversion (raw ^ 1) matches how GetErrorMode reads the mode.\n- The handle is taken while the process is still suspended.\n- The default path is unchanged.\n\nTwo defects remain, both in the rule machinery this attempt widened:\n1. The shared name list still misses path-taking calls this project's own domain uses. GetCompressedFileSizeW is already imported in the repo, renamed through EntryPoint in TestNative.cs:63-64. FindFirstFileNameW is the call for listing a hardlink's names. Yet the rule's `because` and the new count Fact's doc both claim completeness.\n2. The same alternation now lives in three literals. Parity keeps only two of them in step, and the third (the count Fact) can drift silently the next time the list grows.\n\nBoth are minor. The fix itself is still correct and verified.\n\nSecond round: This round found nothing new worth a person's time. This verdict covers only this round. My first round on this tree still stands, including its needs-fixes verdict: m1 (the name list misses GetCompressedFileSizeW, FindFirstFileNameW, FindFirstStreamW, GetFileInformationByName and CreateFileTransactedW) and m2 (the count Fact's third, unsynchronised copy of the name list).\n\nI walked every reader, matcher and boundary this attempt added.\n\nThe Kernel32 count Fact:\n- File.ReadAllLines strips a BOM and splits CRLF, LF and a lone CR. TrimStart handles tabs.\n- Skipping lines that start with `//` removes only true comment lines; `///` doc lines holding `cref=\"CreateFile\"` are among them.\n- A trailing or block comment that names a call is counted. That errs toward failing, not passing.\n- The expected list is already in ordinal order.\n- Two inputs can get past it: a call with a line break between the name and `(`, and a `//` comment followed by U+2028. Both need formatting nobody writes, so I did not file them.\n\nThe two regex patterns, in yaml and in the Fact:\n- Verbatim, raw and u8 string forms of an entry-point name all contain `\"Name\"` and match.\n- Concatenation (`\"CreateFile\" + \"W\"`) still matches through the optional suffix.\n- Only interpolated or split entry points escape, which is contrived.\n- The yaml parses: Fitness checked 62 rules, all holding. rules-parity reads the doubled-quote literal: AGREE at 29 patterns.\n\nHoles I checked and found closed:\n- A new partial `Kernel32.*.cs` file is not excepted, so a direct `CreateFileW(` in it fires the rule.\n- SynchronousIoCancel.cs can reach path APIs only through existing imports: CreateFile needs the scope token, and GetDiskFreeSpaceEx is private. A new path import fires either the rule (any other Native file) or the count Fact (Kernel32.cs).\n\nThe `-DefaultErrorMode` launcher in eng/read-window.ps1:\n- `$Exe` is made absolute before CreateProcessW (lines 33-35).\n- If reading the child's error mode fails, the catch terminates the child and closes both handles.\n- The handle is taken while the child is suspended, so ExitCode and Kill work on the GetProcessById object.\n- ResumeThread failure is detected (uint.MaxValue).\n- The STARTUPINFO layout is correct.\n- Unlike Start-Process, CreateProcessW gets no working directory, so a relative `-Root` resolves against pwsh's process directory rather than `$PWD`. The two differ only when the script runs in-process after Set-Location, which no caller does, so I did not file it.\n\nI re-ran the check on E:\\ and F:\\ in my first round (ERRORMODE 0x0, EXIT 0, RootUnreadable/21).",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "I reviewed the tree as it now stands (5c2d1ff). Attempt 2 changed no src; it touched .taad/fitness.yaml, ArchitectureRulesTests.cs, FailCriticalErrorsTests.cs, plants.json and eng/read-window.ps1.\n\nWhat I re-ran myself, all holding:\n- Full default suite: 414/414 passed.\n- rules-parity -ExpectFacts 12: AGREE, 12 facts, 16 twinned entries, 29 patterns.\n- Fitness check: all 62 rules hold.\n\nThe empty-drive check the previous review asked for is real and I repeated it. E:\\ and F:\\ are still Removable with IsReady=False. `eng/read-window.ps1 -Root E:\\ -TimeoutSec 60 -DefaultErrorMode` printed ERRORMODE 0x0, then EXIT 0 in 1.5 s. The same run on F:\\ gave ERRORMODE 0x0, EXIT 0, core.status=RootUnreadable, rootError=21, elapsedMs=8. So the published exe, launched without SEM_FAILCRITICALERRORS in its process mode, gets error 21 back from an empty removable drive and does not hang.\n\nThe launcher code is sound on inspection:\n- The bit inversion (raw ^ 1) matches how GetErrorMode reads the mode.\n- The handle is taken while the process is still suspended.\n- The default path is unchanged.\n\nTwo defects remain, both in the rule machinery this attempt widened:\n1. The shared name list still misses path-taking calls this project's own domain uses. GetCompressedFileSizeW is already imported in the repo, renamed through EntryPoint in TestNative.cs:63-64. FindFirstFileNameW is the call for listing a hardlink's names. Yet the rule's `because` and the new count Fact's doc both claim completeness.\n2. The same alternation now lives in three literals. Parity keeps only two of them in step, and the third (the count Fact) can drift silently the next time the list grows.\n\nBoth are minor. The fix itself is still correct and verified.\n\nSecond round: This round found nothing new worth a person's time. This verdict covers only this round. My first round on this tree still stands, including its needs-fixes verdict: m1 (the name list misses GetCompressedFileSizeW, FindFirstFileNameW, FindFirstStreamW, GetFileInformationByName and CreateFileTransactedW) and m2 (the count Fact's third, unsynchronised copy of the name list).\n\nI walked every reader, matcher and boundary this attempt added.\n\nThe Kernel32 count Fact:\n- File.ReadAllLines strips a BOM and splits CRLF, LF and a lone CR. TrimStart handles tabs.\n- Skipping lines that start with `//` removes only true comment lines; `///` doc lines holding `cref=\"CreateFile\"` are among them.\n- A trailing or block comment that names a call is counted. That errs toward failing, not passing.\n- The expected list is already in ordinal order.\n- Two inputs can get past it: a call with a line break between the name and `(`, and a `//` comment followed by U+2028. Both need formatting nobody writes, so I did not file them.\n\nThe two regex patterns, in yaml and in the Fact:\n- Verbatim, raw and u8 string forms of an entry-point name all contain `\"Name\"` and match.\n- Concatenation (`\"CreateFile\" + \"W\"`) still matches through the optional suffix.\n- Only interpolated or split entry points escape, which is contrived.\n- The yaml parses: Fitness checked 62 rules, all holding. rules-parity reads the doubled-quote literal: AGREE at 29 patterns.\n\nHoles I checked and found closed:\n- A new partial `Kernel32.*.cs` file is not excepted, so a direct `CreateFileW(` in it fires the rule.\n- SynchronousIoCancel.cs can reach path APIs only through existing imports: CreateFile needs the scope token, and GetDiskFreeSpaceEx is private. A new path import fires either the rule (any other Native file) or the count Fact (Kernel32.cs).\n\nThe `-DefaultErrorMode` launcher in eng/read-window.ps1:\n- `$Exe` is made absolute before CreateProcessW (lines 33-35).\n- If reading the child's error mode fails, the catch terminates the child and closes both handles.\n- The handle is taken while the child is suspended, so ExitCode and Kill work on the GetProcessById object.\n- ResumeThread failure is detected (uint.MaxValue).\n- The STARTUPINFO layout is correct.\n- Unlike Start-Process, CreateProcessW gets no working directory, so a relative `-Root` resolves against pwsh's process directory rather than `$PWD`. The two differ only when the script runs in-process after Set-Location, which no caller does, so I did not file it.\n\nI re-ran the check on E:\\ and F:\\ in my first round (ERRORMODE 0x0, EXIT 0, RootUnreadable/21).",
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "The widened name list `(CreateFile[AW2]?|OpenFileById|(Nt|Zw)(Create|Open)File|(Nt|Zw)Query(Full)?AttributesFile|FindFirstFile(Ex)?[AW]?|GetFileAttributes(Ex)?[AW]?|GetVolumeInformation[AW]?|GetDiskFreeSpace(Ex)?[AW]?)` leaves out several path-taking Win32 calls. Neither of its patterns matches them, as a call or as an entry-point string, and the Kernel32 count Fact does not count them. I ran the exact patterns with .NET Regex; each returned call=False and string=False on these inputs:\n- `Win.GetCompressedFileSizeW(path, ...)`\n- `[LibraryImport(..., EntryPoint = \"GetCompressedFileSizeW\")] ... CompressedSize(...)`\n- `FindFirstFileNameW(`\n- `FindFirstStreamW(`\n- `GetFileInformationByName(`\n- `CreateFileTransactedW(`\n\nThe first two belong to this project's own domain. On-disk size is a counting rule, and the repo already imports GetCompressedFileSizeW, renamed through EntryPoint (tests/FsAnalyser.Core.Tests/TestNative.cs:63-64), in the exact form plant F26 was written to catch. Hardlinks counted once is also a counting rule, and FindFirstFileNameW is the call that lists a hardlink's names. Either one moved into Core, in a new Native file or in Kernel32.cs, opens a path with the box on. It passes the xUnit Fact, Fitness, and Kernel32MakesOnlyThePathCallsThatRunInsideTheScope. Meanwhile the texts claim completeness. The fitness.yaml `because` says 'widened to every path-taking entry point', and the count Fact's doc says 'Any other path call or path import there changes the count, and fails here'.",
+    "evidence": ".taad/fitness.yaml, PathOpensGoOnlyThroughTheGuardedOpen (both must_not_match patterns and the `because`). tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs, the PathOpensGoOnlyThroughTheGuardedOpen patterns. tests/FsAnalyser.Core.Tests/FailCriticalErrorsTests.cs, Kernel32MakesOnlyThePathCallsThatRunInsideTheScope `names` and its doc comment. tests/FsAnalyser.Core.Tests/TestNative.cs:63-64: `[DllImport(\"kernel32.dll\", EntryPoint = \"GetCompressedFileSizeW\", ...)] private static extern uint GetCompressedFileSize(string path, out uint high);`.",
+    "fix": "Add `GetCompressedFileSize[AW]?|FindFirstFileName[AW]?|FindFirstStream[AW]?|GetFileInformationByName|CreateFileTransacted[AW]?` to the shared name list, in both yaml patterns, both ArchitectureRulesTests patterns and the count Fact. Reword 'every path-taking entry point' and 'Any other path call or path import' to 'the named path-taking entry points', so the texts stop promising a completeness a name list cannot give. Re-run rules-parity and the harness; the pattern count stays 29."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "over-engineering",
+    "claim": "The path-API alternation now exists as three separate literals: the yaml entry, the ArchitectureRulesTests Fact, and a third `const string names` in FailCriticalErrorsTests.Kernel32MakesOnlyThePathCallsThatRunInsideTheScope. rules-parity (RuleCopiesAgreeTests) compares only the first two. The third can fall behind the rule with every check green. On the next widening, which this rule has had on every review lap so far and which finding m1 asks for again, the rule would catch a new name everywhere except Kernel32.cs. Kernel32.cs is the one file excepted from the rule, and the count Fact is the only thing holding it.",
+    "evidence": "tests/FsAnalyser.Core.Tests/FailCriticalErrorsTests.cs, Kernel32MakesOnlyThePathCallsThatRunInsideTheScope: `const string names = @\"(CreateFile[AW2]?|...)\";`. tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs holds the same alternation inside two verbatim literals, and .taad/fitness.yaml inside two YAML strings. rules-parity reports '12 facts <- 16 twinned entries, 29 patterns', a comparison of the yaml against ArchitectureRulesTests only.",
+    "fix": "Keep ArchitectureRulesTests' literals as the source, since rules-parity reads them. In the count Fact, drop the third literal. Either read the two patterns out of ArchitectureRulesTests.cs's PathOpensGoOnlyThroughTheGuardedOpen source, or at least assert that `names` occurs verbatim in both of that Fact's patterns, so a widening that misses the count Fact fails a test."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "src is unchanged since 98faaae; the engine lists no src file among the 9 that differ. TheScannersRootOpenAndSizeProbeRunWithTheCriticalErrorBoxOff passed inside my full-suite run on this tree (414/414). The exact filtered command exited 0 when I ran it on the same src in the earlier round."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "The `using` scope in SynchronousIoCancel.cs:352 and Kernel32.cs:170, and Dispose at Kernel32.cs:226-230, are unchanged. NestedScopesUnwindInOrder and the preset, failed, cancelled/refused/throwing and dedicated-thread restore Facts passed in the 414/414 run."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "Unchanged: the scope is outermost in Open (SynchronousIoCancel.cs:352), with one pair per open."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "Repro Fact unchanged, passed in 414/414."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "Repro Fact (probe worker) and the AProbeOnThisThread Theory, unchanged, passed."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "EveryFolderTheScanOpensIsOpenedWithTheBoxOff (a\\sub), unchanged, passed."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "BothRoutesOfAFolderOpenRunWithTheBoxOff (KeptLastAccess true/false), unchanged, passed."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "Theory InlineData(0u), passed."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "Theory InlineData(0x2), passed."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "Theory InlineData(0x1) and NestedScopesUnwindInOrder, passed."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "AFailedOpenRanWithTheBoxOffAndGivesTheModeBack, unchanged, passed."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "ACancelledOrThrowingOpenGivesTheModeBack, unchanged, passed."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "ProbesOnSeveralThreadsAtOnceEachGiveTheirThreadItsModeBack (the dedicated-thread form review m3 accepted), passed."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "TheVolumeReadRunsWithTheBoxOffAndGivesTheModeBack, with the BeforeVolumeRead hook inside the scope, passed."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "Counting-rule classes unchanged, passed within 414/414."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "Kernel32.cs:206-224 (Obsolete(error) parameterless ctor, private armed ctor, IsArmed) and the wrapper refusal at :108-115 are unchanged. AScopeNotMadeByBegin and the volume-hook Fact pass."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "Private CreateFileW (Kernel32.cs:119-122) and the token wrapper (:106) are unchanged. Kernel32.cs's own residual is now covered by the count Fact; see findings m1/m2 for its limits."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "The yaml twinned entry, the ArchitectureRulesTests Fact and plants F24/F25/F26/P24 are present. rules-parity AGREE, 29 patterns. The plants.json _note count of 43 rows (26 F, 4 P, 13 S) matches the rows."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "Superseded by the wider R2-m2 list, which is present in the yaml and the Fact."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "No Fact depends on pool-thread reuse. Unchanged."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "BothRoutes asserts KeptLastAccess per fixture. Unchanged."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "One set/restore pair per open; the wrapper nests no scope. The timing is builder-reported."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "eng/read-window.ps1 has a -DefaultErrorMode switch: CreateProcessW with CREATE_SUSPENDED|CREATE_DEFAULT_ERROR_MODE, the child's mode read through NtQueryInformationProcess(12) ^ 1, the handle taken before ResumeThread. I re-ran it. E:\\: IsReady=False, then ERRORMODE 0x0, EXIT 0 in 1.5 s. F:\\: ERRORMODE 0x0, EXIT 0, core.status=RootUnreadable, rootError=21, elapsedMs=8. The published exe (artifacts/publish, written 2026-09-29T02:09) postdates the last src commit. Not shown: that this check fails on the pre-fix exe (declared follow-up)."
+   },
+   {
+    "key": "O-024",
+    "discharged": "yes",
+    "evidence": "The .taad/fitness.yaml `because` and the ArchitectureRulesTests doc now say the compiler holds SynchronousIoCancel.cs but not Kernel32.cs. FailCriticalErrorsTests.Kernel32MakesOnlyThePathCallsThatRunInsideTheScope counts Kernel32.cs's code-line matches against [CreateFile, CreateFileW×2, GetDiskFreeSpaceEx×2, GetDiskFreeSpaceExW], and it passed. Its coverage is limited to the name list (finding m1), and its copy of the list is unsynchronised (finding m2)."
+   },
+   {
+    "key": "O-025",
+    "discharged": "yes",
+    "evidence": "Both the yaml and the Fact now carry `[AW]?` in the call pattern plus a second string-literal pattern. Plant F26 (a renamed EntryPoint=\"CreateFileW\" import in a new Native file) is in plants.json. rules-parity AGREE at 29 patterns; Fitness holds on the tree. The harness figure of 56/56 is builder-reported; I did not re-run it (it needs the engine backend path)."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "Repro Fact samples the scan-thread guard's call 1 (the root open) on a temp tree."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "Repro Fact hooks the probe worker's own guard; the AProbeOnThisThread Theory calls Probe directly on the test thread."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "EveryFolderTheScanOpensIsOpenedWithTheBoxOff builds a\\sub and counts four box-off opens."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "BothRoutesOfAFolderOpenRunWithTheBoxOff asserts KeptLastAccess true, and false where FILE_WRITE_ATTRIBUTES is denied."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "Theory InlineData(0u)."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "Theory InlineData(0x2)."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "Theory InlineData(0x1), plus NestedScopesUnwindInOrder."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "AFailedOpenRanWithTheBoxOffAndGivesTheModeBack: error 5 folder, missing folder, missing file."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "ACancelledOrThrowingOpenGivesTheModeBack: cancel inside the root open's bracket, a refused Enter, and a throwing AfterCall."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "Dedicated-thread form review m3 accepted: 4 threads at a Barrier, 2 probes each, baseline checked after each."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "TheVolumeReadRunsWithTheBoxOffAndGivesTheModeBack: the %TEMP% drive root and a free letter, with the hook reading 0x1 inside."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "Counting-rule classes unchanged, passed in 414/414."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "Exercised by the end-to-end launch, not an xUnit test. I re-ran `eng/read-window.ps1 -Root E:\\ / F:\\ -DefaultErrorMode` on real empty removable drives (IsReady=False). Child process mode was 0x0, the run exited 0 in about 1.5 s with RootUnreadable/21, and there was no timeout. The disposition ruled out an opt-in Fact."
+   },
+   {
+    "key": "C-014",
+    "exercised": "no",
+    "evidence": "Handle-based calls after media is pulled mid-scan remain out of scope (design open question). Pulling media mid-scan still needs a person."
+   }
+  ],
+  "drift": [
+   "The build declared its departures: the call pattern also carries (Nt|Zw)Query(Full)?AttributesFile and ZwQueryAttributesFile, beyond R2-m2's fix, and eng/read-window.ps1 gained a -DefaultErrorMode launch the design never named. I found no undeclared departure in this attempt.",
+   "eng/read-window.ps1's new header says a run where the app raises the box 'ends in TIMEOUT and the box is left for a person to answer'. But the TIMEOUT path then calls $process.Kill() (line 165). Whether the hard-error box survives its process being killed is unmeasured, so the second half of that sentence is a guess.",
+   "The empty-drive check has not been shown able to fail: the pre-fix exe was never run with -DefaultErrorMode on E:\\, because doing so would put a modal box on the person's screen. 'No box' therefore rests on the fix plus the unmeasured assumption that this card reader raises a box without it. The build declared this as a follow-up for a person.",
+   "Still pending in the design record: would_force_resynthesis: true on per-open cost, and the key_decision's rejection grounds for a process-wide call (m1 disposition). At merge, watch for the engine re-adding a '# settled by SL-077' block under the design's prose rule name. That would duplicate the twinned entry (HF-008), and F24, F25 and F26 would then need also_settled."
+  ],
+  "matches_design": true,
+  "unreviewed": [
+   ".taad/slices/SL-077/build-slice-1.json, build-slice-2.json, code-review-1.json, code-review-2.json, index.json: stage records, not code. Their content reached me in the brief."
+  ],
+  "second_round": {
+   "run_id": 2014,
+   "filed": 0
+  }
+ }
+}
