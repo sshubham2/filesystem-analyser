@@ -12,8 +12,14 @@
 # H-002  An armed hook refuses what it cannot do, says why and presses nothing (case C-026): a marker that
 #        never appears (refused 60 s after the hook loaded), stop with no FSA_HOOK_CANCEL_DELAY_MS, and
 #        throw mode with FSA_HOOK_ARMED set.
+# H-003  The hook's own callbacks on the UI thread refuse, and never hand the app an exception (HF-028).
+#        FSA_HOOK_RENAMED reads one of the window's refresh state as if the app had renamed it: LastRefresh under
+#        watch, read after every refresh of the results list at Background priority, and SkippedRefreshes under
+#        measure, read as the app's StartScan collapses ScanningPanel. Either way the run ends as the app's own,
+#        exit 0 with a report, and the hook logs 'refused mode=m reason=InvalidOperationException: the window
+#        has no name'. Before SL-073 both ended in the app's exit 70, with no report and no refused line.
 #
-# -Case All runs both, about 90 s. Exit 0 when every check held, 1 when any failed.
+# -Case All runs all three, about 100 s. Exit 0 when every check held, 1 when any failed.
 #
 # Why a script of its own: any change to WindowCases.ps1 makes the person's network pass stale (the
 # staleness rule in docs/design/SL-020-scanner.md), so these cases are not added there. They reuse its
@@ -22,7 +28,7 @@
 
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('All', 'H-001', 'H-002')]
+    [ValidateSet('All', 'H-001', 'H-002', 'H-003')]
     [string] $Case
 )
 
@@ -34,7 +40,7 @@ $script:Failures = [System.Collections.Generic.List[string]]::new()
 # ---- WindowCases.ps1's helpers and settings, by name ----
 
 $Helpers = 'Show', 'Check', 'CheckEqual', 'New-CaseFolder', 'New-File', 'New-SmallTree', 'New-LargeTree', 'Remove-CaseFolder',
-    'Update-App', 'Update-Hook', 'Start-App', 'Wait-App', 'Invoke-WithHook', 'Field', 'Read-Stopping', 'CheckCloseEscape'
+    'Update-App', 'Update-Hook', 'Start-App', 'Wait-App', 'Invoke-WithHook', 'Invoke-HookedRun', 'Show-Exit', 'Field', 'Read-Stopping', 'CheckCloseEscape'
 $Settings = 'Exe', 'HookProject', 'HookDll', 'HookVariables', 'KiB64'
 $parseErrors = $null
 $source = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'WindowCases.ps1'), [ref]$null, [ref]$parseErrors)
@@ -193,9 +199,33 @@ function Test-H002 {
     }
 }
 
+# H-003: the hook's callbacks on the UI thread with a window property gone (HF-028). New-LargeTree scans for a
+# second or more, so the results list refreshes mid-scan and watch's Background callback runs before any Cancel.
+function Test-H003 {
+    $shapes = @(
+        [pscustomobject]@{ Mode = 'watch'; Renamed = 'LastRefresh' }
+        [pscustomobject]@{ Mode = 'measure'; Renamed = 'SkippedRefreshes' }
+    )
+    foreach ($shape in $shapes) {
+        Write-Output "  $($shape.Mode) with $($shape.Renamed) gone"
+        $case = New-CaseFolder
+        try {
+            $root = Join-Path $case 'large'
+            [void](New-LargeTree $root)
+            $run = Invoke-HookedRun $shape.Mode $root (Join-Path $case 'report.json') @{ FSA_HOOK_RENAMED = $shape.Renamed }
+            foreach ($line in $run.Log) { Write-Output "        hook: $line" }
+            $reason = "refused mode=$($shape.Mode) reason=InvalidOperationException: the window has no $($shape.Renamed)"
+            Check (@($run.Log | Where-Object { $_ -ceq $reason }).Count -ge 1) "the hook refused, saying why ($(Show $reason))"
+            Check ($run.Exit -eq '0') "the app ended as its own, exit 0, not the 70 of a fault the hook handed it (actual $(Show-Exit $run.Exit))"
+            Check ($null -ne $run.Report) 'a report was written'
+        }
+        finally { Remove-CaseFolder $case }
+    }
+}
+
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { 'H-001', 'H-002' } else { @($Case) }
+$cases = if ($Case -eq 'All') { 'H-001', 'H-002', 'H-003' } else { @($Case) }
 Update-Hook
 Update-App
 $failed = @()

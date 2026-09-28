@@ -43,4 +43,17 @@ internal static class TestNative
             throw new Win32Exception(error, $"FSCTL_SET_SPARSE on {path} failed: {new Win32Exception(error).Message}");
         }
     }
+
+    [DllImport("kernel32.dll", EntryPoint = "GetCompressedFileSizeW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetCompressedFileSize(string path, out uint high);
+
+    /// <summary>What <paramref name="path"/> takes on disk, as the volume reports it, compressed or not.</summary>
+    public static long SizeOnDisk(string path)
+    {
+        uint low = GetCompressedFileSize(path, out uint high);
+        int error = Marshal.GetLastWin32Error();
+        if (low == uint.MaxValue && error != 0)
+            throw new Win32Exception(error, $"GetCompressedFileSize on {path} failed: {new Win32Exception(error).Message}");
+        return ((long)high << 32) | low;
+    }
 }

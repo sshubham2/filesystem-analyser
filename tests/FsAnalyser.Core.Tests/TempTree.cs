@@ -6,7 +6,7 @@ using System.Text;
 namespace FsAnalyser.Core.Tests;
 
 /// <summary>
-/// A real folder tree under %TEMP%\fsa-tests\&lt;guid&gt;, on NTFS. Every step that fails throws with
+/// A real folder tree under %TEMP%\fsa-tests\&lt;guid&gt;, on NTFS and not compressed. Every step that fails throws with
 /// Windows' own error text; nothing is skipped. Dispose removes deny ACEs first, then links, then the
 /// trees, and throws if anything was left behind.
 /// </summary>
@@ -27,7 +27,26 @@ internal sealed class TempTree : IDisposable
         if (format != "NTFS")
             throw new InvalidOperationException($"%TEMP% ({temp}) is on {format}. The counting-rule tests need NTFS.");
         Root = Path.Combine(TestsRoot, _id);
-        Directory.CreateDirectory(Root);
+        CreateRoot(Root);
+    }
+
+    // A folder made under an NTFS-compressed one is compressed too, and there TextFile compresses with no Compress():
+    // every on-disk and probe count would shift with no cause named (HF-027). Refused by name, and removed again. The
+    // refusal names the folder the root was made in, which carries the attribute (fsa-tests, made compressed under a
+    // compressed %TEMP% and left so), and the one remedy measured to clear it and all it holds: compact /u /s:"folder".
+    // Plain compact /u, or /u /s "folder", clears that folder's own attribute only (SL-073 review, R2-m2).
+    internal static void CreateRoot(string root)
+    {
+        Directory.CreateDirectory(root);
+        if (System.IO.File.GetAttributes(root).HasFlag(FileAttributes.Compressed))
+        {
+            Directory.Delete(root);
+            string parent = Path.GetDirectoryName(root)!;
+            throw new InvalidOperationException(
+                $"{root} came out NTFS-compressed and was removed: {parent} is NTFS-compressed, so every tree made in it is too, " +
+                "and the counting-rule tests need files that take their own size on disk. Uncompress it and all it holds with " +
+                $"compact /u /s:\"{parent}\", or point TEMP and TMP at a folder that is not compressed.");
+        }
     }
 
     /// <summary>The tree's root folder, as a person would write it.</summary>
