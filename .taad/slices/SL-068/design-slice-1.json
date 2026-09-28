@@ -1,0 +1,254 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-068",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-28T03:23:01.204Z",
+ "head": "656653629761b142b51396973f92075807b6c231",
+ "run_id": 1781,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "This is a documentation-only slice. The build check measured sort-on-read as already built and green: ChildrenLargestFirst sorts on every read and stores nothing, Release timing runs were 9-44 ms against a 250 ms budget, and 34 of 34 ScanStore and ArchitectureRules tests passed. The proposal already cut the ADR tooling, the in-repo copy of the architecture record and the new fitness rule (over_engineering_flag was raised and is respected). What is left is one short decision doc, one appended pointer line, and one clause replaced in a record outside the repo. All three are cheap to reverse, and no code or test changes. I took the proposal whole and changed four things against reality. (1) The engine line now says 'Core read of 100,000 children', because the 9-44 ms figure comes from the Core timing test. SL-044's 44-47.5 ms sort comes from a different harness and must not be merged into the same range. (2) The verbatim old and new wording in the decision doc is labelled 'text submitted for the edit'. It is not the current record, so it is not the in-repo mirror the proposal forbids. (3) The doc states who wrote the rule, SL-042's design and not the person, so the person can override the closure. (4) Reopen condition 2 (a cold open reaching 500 ms) has no automated check, and the doc says so. Only the Core test at 250 ms runs unattended. The one gap I cannot design away is the engine-record edit. The build check found no write path from this worktree, and SL-042 hit the same wall. The design gives the builder a truthful fallback (report 'not applied', leave the criterion unknown) and puts the fork in open_questions.",
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal, taken whole with four wording and labelling changes at the seams. over_engineering_flag was true and its trims were kept. The engine-record write path is unresolved and is not presented as solved."
+   }
+  ],
+  "components": [
+   {
+    "name": "Sort-on-read decision record",
+    "lives_at": "docs/design/SL-068-sort-on-read.md",
+    "responsibility": "New file of about 40 lines, using the headings of the other docs/design/SL-0xx files. Sections: question; the rule it was held to, quoting docs/design/SL-042-folder-totals.md:45 and :120-126 and naming SL-042's design (not the person) as its author; measurements, each with its command and harness; decision CLOSED (no child order is stored, ChildrenLargestFirst sorts a temporary index per call); not covered; reopen conditions; text submitted for the engine's Scan Store line. Measurements: Core timing test, Release, two runs on 2026-09-28, exit 0, 8.98-44.12 ms against 250 ms (tests/FsAnalyser.Core.Tests/ScanStoreRollupTimingTests.cs:21-79); SL-042 build figures 35.9-40.2 ms; SL-044 window cold open 97.9-141.9 ms, of which the sort was 44-47.5 ms (docs/design/SL-044-folder-tree.md:127-151); temporary index about 400 KB at 100,000 children. Not covered: re-sorting during live refresh (SL-044 NO-GO, median 84 ms against a 50 ms bar) is a separate question. Reopens if: the Core test exceeds 250 ms in Release (a single slow run is re-run first, and a Debug number does not count); a measured cold open of 100,000 children reaches 500 ms (manual, via the published exe's --report, with no automated check); or a feature needs an order that cannot be computed from sizes.",
+    "key_interactions": "Cites ChildrenLargestFirst, FolderTreeNode, the fitness rules and the timing test by file:line and changes none of them. It is the in-repo evidence for the engine record edit."
+   },
+   {
+    "name": "SL-042 design doc forward pointer",
+    "lives_at": "docs/design/SL-042-folder-totals.md",
+    "responsibility": "Append one dated line after the paragraph that ends at line 126: 'Closed in SL-068 (2026-09-28) on these measurements; see docs/design/SL-068-sort-on-read.md.' Lines 120-126 stay byte-identical, because they record what SL-042 knew then. The pointer stops 'not a decision on the person's behalf' and 'the line there still needs the same edit' from reading as still pending.",
+    "key_interactions": "The only edit to an existing tracked file. docs/design/SL-044-folder-tree.md is not touched: its 'not needed now' already fits a closed question with reopen conditions."
+   },
+   {
+    "name": "Engine Scan Store architecture line",
+    "responsibility": "Outside the repo. Replace one clause. Remove ', and the children of each folder sorted largest first' from the 'Also holds ...' sentence so it ends at 'and the rolled-up totals per folder.' Then add: 'No child order is stored: a folder's children are ordered largest first on each read (ChildrenLargestFirst sorts a temporary index per call; Core read of 100,000 children measured 9-44 ms in Release against a 250 ms budget).' Everything else in the line, budget figures included, stays as is. The builder applies this only through a write path the engine gives the build stage. If there is none, it records 'not applied', leaves criterion 1 at unknown and creates no in-repo stand-in.",
+    "key_interactions": "The next slice's prompt is assembled from this record, which is why the slice exists. The same wording sits in the decision doc as submitted text, so validate can compare it with what the record says."
+   },
+   {
+    "name": "Reopen trip wire (existing, unchanged)",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ScanStoreRollupTimingTests.cs",
+    "responsibility": "The 100,000-child ordered-read timing test at a 250 ms budget in Release is the only automated signal that would reopen the question. The builder checks whether the default run includes it (no Trait excluded by Core.Tests' VSTestTestCaseFilter) and writes what it finds into the decision record. If it is excluded, the record says it runs only when invoked explicitly.",
+    "key_interactions": "Run with: pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests -c Release --filter \"FullyQualifiedName~ScanStoreRollupTimingTests\" --logger \"console;verbosity=detailed\""
+   }
+  ],
+  "contracts": [
+   {
+    "name": "Scan Store architecture line (engine record) clause replacement",
+    "kind": "function",
+    "notes": "The engine record is not a code API. Old clause: 'and the children of each folder sorted largest first'. New sentence: 'No child order is stored: a folder's children are ordered largest first on each read (ChildrenLargestFirst sorts a temporary index per call; Core read of 100,000 children measured 9-44 ms in Release against a 250 ms budget).' Figures come from the build check's two Release runs (8.98-44.12 ms), not from the slice text's '9-40'. The measured block outranks the brief.",
+    "error_cases": "No write path from the build stage: report 'not applied', leave criterion 1 unknown, create no in-repo copy. The record's text no longer contains the old clause: apply nothing and report the text actually found."
+   },
+   {
+    "name": "ScanStore.ChildrenLargestFirst (existing, unchanged)",
+    "kind": "function",
+    "notes": "src/FsAnalyser.Core/Store/ScanStore.Rollup.cs:50-76. Orders a folder's children largest first on every call and stores nothing. Consumed at src/FsAnalyser.App/FolderTreeNode.cs:147. .taad/fitness.yaml:513 and :547 keep the window from adding a second sort. This slice cites it and does not touch it."
+   },
+   {
+    "name": "Reopen trip wire: 100,000-child ordered-read timing test",
+    "kind": "cli",
+    "notes": "Command as in the component above. Green means every read is under 250 ms in Release. Decision record wording says which suite runs it.",
+    "error_cases": "A read over 250 ms in Release: re-run once, and if it holds, the question reopens. A Debug number does not reopen it. The 500 ms cold-open condition has no automated check and is measured by hand."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Close the question by applying SL-042's pre-registered rule ('no order is stored unless criterion 6's timing test fails') to the measured result. The doc names SL-042's design as the rule's author and marks the closure as overridable by the person.",
+    "reversibility": "cheap",
+    "rationale": "SL-042 declined to decide 'on the person's behalf'. A rule written before the measurement and then applied to it closes the question without a new judgement. The slice text itself asks for the closure. That the rule predates the figures is unverified, so the builder checks it with git log -p."
+   },
+   {
+    "decision": "Record 'no child order is stored; sort on each read' as the Scan Store's architecture.",
+    "reversibility": "expensive",
+    "rationale": "Reversing means a per-folder order kept in the store and maintained under concurrent scan writes, taken from the ~136 MiB headroom SL-042 measured, and FolderTreeNode and the fitness rules would change. That cost is why proof came first, and the proof exists. Recording it adds no cost, because the code already works this way."
+   },
+   {
+    "decision": "Limit the closure to the read and cold-expand path on a completed store. Re-sorting during live refresh (SL-044 NO-GO, 84 ms against 50 ms) is stated as not covered.",
+    "reversibility": "cheap",
+    "rationale": "9-44 ms was measured on a finished store, not on repeated re-sorts during a scan. Claiming refresh would overstate the evidence, and the spike stage already assigned that question to the live-refresh work."
+   },
+   {
+    "decision": "Use the existing ScanStoreRollupTimingTests (250 ms, Release) as the reopen trip wire. Add no new test and no new fitness rule.",
+    "reversibility": "cheap",
+    "rationale": "It measures the quantity the rule names, with about 5.7x margin at the worst reading. The window-side second sort is already forbidden at .taad/fitness.yaml:513. A regex for 'stored order' in Core would guess at code shapes nobody has written."
+   },
+   {
+    "decision": "Put the closure in a new docs/design/SL-068-sort-on-read.md and append a pointer to the SL-042 doc. Do not rewrite lines 120-126.",
+    "reversibility": "cheap",
+    "rationale": "Matches the one-doc-per-slice convention (SL-042, SL-044, SL-056). A grep for 'sort-on-read' finds the decision. Historical wording stays intact and is superseded, not edited."
+   },
+   {
+    "decision": "Keep no in-repo mirror of the engine's architecture record. The old and new wording in the decision doc is labelled 'text submitted for the edit'.",
+    "reversibility": "cheap",
+    "rationale": "A second copy of the record is a second source of truth, and its drift is how the 'stored' line went stale while the code sorted on read."
+   },
+   {
+    "decision": "Replace only the child-order clause. Leave the line's budget figures (699 MiB peak, 572 MB store) even though SL-044 measured the as-built store at 652 MiB. The doc says the memory figures are not re-audited.",
+    "reversibility": "cheap",
+    "rationale": "The memory budget is a separate fact with its own measurements. Folding it in would widen a docs slice into re-auditing the architecture, and the doc must not claim the whole line is now current."
+   }
+  ],
+  "coherence_check": "One proposal, so there is no composition across proposals and nothing here has yet survived a disagreement. The reviewer should argue first with three points: (a) the engine-record edit has no known write path, and the design only gives an honest fallback; (b) the 'pre-registered rule' framing rests on line 45 of the SL-042 doc predating the timing figures, which is unverified; (c) whether a new SL-068 doc beats appending the closure to the SL-042 doc. I checked the proposal's own pieces against each other and against the survey, and changed four things at the seams. First, the proposal quoted 9-44 ms (Core test) beside SL-044's 44-47.5 ms sort (window harness). Those are different harnesses and their ranges are not merged. The engine line says 'Core read' and the doc names each harness. Second, 'keep no in-repo mirror' conflicted with 'put the verbatim wording in the doc'. The doc's wording is now labelled submitted text, not the record. Third, the reopen condition 'cold open reaches 500 ms' looked as if it were enforced, but only the 250 ms Core test runs unattended. The doc says the 500 ms condition is manual. Fourth, leaving the line's 699/572 MiB figures untouched while SL-044 measured 652 MiB means the line stays partly stale. The doc says so, and the closure does not claim the whole line is current. architecture_rules is empty on purpose. The design settles a recorded sentence and a doc, and it changes no import or code shape. Sort-on-read is already enforced on the window side by .taad/fitness.yaml:513 and :547. Any new regex for 'stored order' in Core would guess at code that does not exist. A rule invented to fill the field would be worse than none. stack_chosen is empty: this slice decided no language, runtime or tool, and the docs are Markdown in the existing docs/design convention.",
+  "cases": [
+   {
+    "behaviour": "apply the engine-record clause edit",
+    "shape": "the build stage has no write path to the engine's architecture record (the state the build check found, and the state SL-042's build hit)",
+    "why": "The edit cannot be made with file tools in this worktree. The failure mode is a build that claims the edit, or creates an in-repo copy of the record to satisfy criterion 1. Expected: 'not applied' reported, criterion 1 left unknown, verbatim wording in the decision doc.",
+    "material": true
+   },
+   {
+    "behaviour": "apply the engine-record clause edit",
+    "shape": "the record's current text no longer contains the old clause (already edited or reworded)",
+    "why": "A blind replace would corrupt the line or double-apply. Expected: apply nothing and report the text actually found.",
+    "material": true
+   },
+   {
+    "behaviour": "append the forward pointer to the SL-042 doc",
+    "shape": "line 126 is not the end of its paragraph or section, or other content follows it",
+    "why": "An append 'after line 126' could land inside a list or paragraph and change what lines 120-126 say. Check that git diff shows only added lines and that lines 120-126 are byte-identical.",
+    "material": true
+   },
+   {
+    "behaviour": "quote measurements in the decision record",
+    "shape": "the brief says 9-40 ms, the measured runs say 8.98-44.12 ms, and SL-044's 44-47.5 ms sort comes from the window harness",
+    "why": "Quoting the brief's figure or merging two harnesses' ranges misstates the evidence. The doc's numbers must equal the recorded test output and name their harness.",
+    "material": true
+   },
+   {
+    "behaviour": "frame the closure as a pre-registered rule applied to a result",
+    "shape": "line 45 of the SL-042 doc arrived in the same commit as the timing figures (b5c2b62 or a3d3860) instead of before them",
+    "why": "If rule and result arrived together, 'rule applied to result' is untrue. Check with git log -p -- docs/design/SL-042-folder-totals.md. If they arrived together, the doc says so.",
+    "material": true
+   },
+   {
+    "behaviour": "reopen the question when the read gets slow",
+    "shape": "the timing test carries a Trait excluded by Core.Tests' default VSTestTestCaseFilter, or the default run is not Release",
+    "why": "The trip wire would never fire unattended, and the doc would overstate the safeguard. The build check ran it only with an explicit --filter. Expected: the doc states how it runs.",
+    "material": true
+   },
+   {
+    "behaviour": "state what the closure covers",
+    "shape": "a reader applies it to mid-scan live-refresh re-sorting (SL-044 NO-GO, median 84 ms against a 50 ms bar)",
+    "why": "9-44 ms was measured on a finished store. Without an explicit 'Not covered' section the closure reads as dismissing the refresh NO-GO, or invites a stored order without noticing it must be maintained under concurrent scan writes. Check that the section exists and cites SL-044.",
+    "material": true
+   },
+   {
+    "behaviour": "docs-only diff leaves the code and tests alone",
+    "shape": "the diff touches src/, tests/ or .taad/fitness.yaml, or a fitness rule or test reads docs/design/**",
+    "why": "The slice claims no code change, and the 34 ScanStore and ArchitectureRules tests plus the timing test were green before the edit. Expected: git diff --stat shows only docs/design paths, and the same 34 tests and the timing test pass after it. Whether any rule reads docs was not checked.",
+    "material": true
+   },
+   {
+    "behaviour": "read a 100,000-child folder's children largest first",
+    "shape": "an empty folder, a single child, or children with tied sizes",
+    "why": "Not owed by this slice: ChildrenLargestFirst is unchanged, and the existing ScanStore ordering tests are the place for those shapes. Whether they cover ties and empties was not checked, so the next slice can disagree.",
+    "material": false
+   },
+   {
+    "behaviour": "judge a reopen from a timing number",
+    "shape": "one slow Release run under machine load, or a Debug-configuration run over 250 ms",
+    "why": "Judged not worth a test. It is a wording rule in the doc (Release only, re-run once before reopening), and the worst reading has about 5.7x margin.",
+    "material": false
+   },
+   {
+    "behaviour": "state the Scan Store budget figures",
+    "shape": "the engine line's 699 MiB peak and 572 MB store differ from SL-044's as-built 652 MiB store",
+    "why": "Deliberately not fixed here: a separate fact with its own measurements, owned by a slice about memory. The doc says the memory figures are not re-audited, and the closure must not claim the whole line is current.",
+    "material": false
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Clinical trials and registered reports (pre-registration)",
+   "pattern": "The rule is written before the data. Closing the question means applying that rule to the result, and the report gives the rule, the result, what the endpoint did not cover, and what would change the conclusion. It is a framing for the decision doc's wording and structure, not a mechanism, and it adds no component.",
+   "transfer_found": true,
+   "rationale": "SL-042 already wrote 'no order is stored unless criterion 6's timing test fails' at line 45, and its doc called the later measurement 'not a decision on the person's behalf'. Applying the stated rule to the stated result removes that objection without a new judgement. It is a small, real fit. The author of the rule is SL-042's design, not the person, so the doc says that and leaves the closure open to override.",
+   "invariants": [
+    {
+     "precondition": "The rule was written before the measurement it is applied to",
+     "status": "must-verify",
+     "evidence": "docs/design/SL-042-folder-totals.md:45 and :120-126 state the rule. Both SL-042 build commits (b5c2b62, a3d3860) touched the doc. Check with git log -p that line 45 predates the figures at :88. If not, the doc says the rule and the result arrived together."
+    },
+    {
+     "precondition": "The result holds on today's code, not only on SL-042's build",
+     "status": "holds",
+     "evidence": "Build check, 2026-09-28: two Release runs, exit 0, 9.46-44.12 ms and 8.98-39.01 ms against 250 ms. 34 of 34 ScanStore and ArchitectureRules tests passed."
+    },
+    {
+     "precondition": "What was measured matches the promise at its own granularity: a 100,000-child folder opens on screen in under 0.5 s",
+     "status": "holds",
+     "evidence": "docs/design/SL-044-folder-tree.md:127-151: cold open 97.9-141.9 ms, sort 44-47.5 ms. The 250 ms Core budget is a sub-budget of the 500 ms on-screen promise. The two figures come from different harnesses and stay separate in the doc."
+    },
+    {
+     "precondition": "The reopen trigger keeps running after the rule is applied",
+     "status": "must-verify",
+     "evidence": "The build check ran the test only with an explicit --filter. Nobody checked whether it carries a Trait that the default VSTestTestCaseFilter excludes, or whether the default run uses Release."
+    }
+   ]
+  },
+  "prior_art": [
+   {
+    "pattern": "The Architecture Decision Record: a short record of context, decision and consequences with a status, superseded rather than edited. This is the shape of the SL-068 doc and of the append-only pointer in the SL-042 doc.",
+    "where": "Michael Nygard, 'Documenting Architecture Decisions' (2011)",
+    "authority": "community",
+    "basis": "recalled",
+    "source_date": "2011"
+   },
+   {
+    "pattern": "The fitness function: an automated check guards an architectural decision and signals when it no longer holds. The existing 250 ms timing test plays that role and is the reopen trigger.",
+    "where": "Ford, Parsons, Kua, 'Building Evolutionary Architectures'",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "A file-tree library exposes a pluggable child comparator applied when the tree is built for display, rather than requiring children to be stored in display order.",
+    "where": "https://cdn.jsdelivr.net/npm/@pierre/trees@1.0.0-beta.6/dist/utils/sortChildren.d.ts",
+    "authority": "oss",
+    "basis": "cited"
+   },
+   {
+    "pattern": "The contrasting case: a stored child order (fractional index) is kept because the order is editorial and cannot be recomputed from data. Largest-first can always be recomputed from sizes, so a stored copy is not justified here. This also gives one reopen condition: an order the data cannot supply.",
+    "where": "https://github.com/maravilla-labs/raisindb/commit/468c54028c5ce8d0c446d4b4eaea0804b5a55f48",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-07-26"
+   }
+  ],
+  "whats_new": [
+   "docs/design/SL-068-sort-on-read.md: decision record covering the question, the rule and its author, measurements with commands and harness names, the decision (CLOSED), what is not covered (live-refresh re-sort), reopen conditions, and the submitted engine-line wording",
+   "One dated pointer line appended after the paragraph ending at docs/design/SL-042-folder-totals.md:126",
+   "Replacement wording for the child-order clause in the engine's Scan Store architecture line, applied only if a write path exists"
+  ],
+  "whats_reused": [
+   "ScanStore.ChildrenLargestFirst at src/FsAnalyser.Core/Store/ScanStore.Rollup.cs:50-76 (unchanged)",
+   "FolderTreeNode's consumption at src/FsAnalyser.App/FolderTreeNode.cs:147 (unchanged)",
+   "Fitness rules at .taad/fitness.yaml:513 and :547 that keep the window from adding a second sort (unchanged)",
+   "tests/FsAnalyser.Core.Tests/ScanStoreRollupTimingTests.cs:21-79 as the reopen trip wire (unchanged)",
+   "eng/dotnet.ps1 Release test command as the recorded way to re-measure",
+   "Measurements already on record: the build check's two runs, SL-042's 35.9-40.2 ms, SL-044's 97.9-141.9 ms cold open"
+  ],
+  "taste_disagreements": [
+   "A new docs/design/SL-068-sort-on-read.md plus a pointer, versus appending a 'Closed' section to the SL-042 doc in place. The design follows the one-doc-per-slice convention. The single-file alternative touches one fewer file.",
+   "Pointer line appended to the SL-042 doc, versus editing lines 120-126 in place. Appending keeps the history, and in-place editing leaves no stale 'still open' wording.",
+   "No fitness rule or new test guards 'no stored order' in Core. Someone may want a rule anyway, even though it would rest on a guessed code shape.",
+   "Carrying the old and new wording verbatim in the decision doc, versus only the new sentence. The doc labels it submitted text and not a copy of the record."
+  ],
+  "open_questions": [
+   "How does the engine's Scan Store architecture line actually get edited? The build check found no write path from this worktree, and SL-042's build hit the same wall, which is why this slice exists. If the build stage has no path, someone with access to the engine record must apply the clause, or the slice can only pass with criterion 1 unmet and unknown. Should validate accept that, or must the edit be seen in the record itself?"
+  ],
+  "channeled_experts": [
+   "Michael Nygard (architecture decision records)",
+   "Neal Ford (fitness functions)",
+   "Brian Nosek (pre-registration and registered reports)"
+  ]
+ }
+}
