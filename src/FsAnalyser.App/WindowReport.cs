@@ -24,7 +24,9 @@ namespace FsAnalyser.App;
 /// --report has no value, there is no root, or there is any other argument. Exit 3: the report could not
 /// be written. Exit 70: an unhandled exception on the UI thread, or any other end without a report, such
 /// as the window closed before its ending. Every non-zero exit leaves no file at &lt;file&gt;, so an
-/// absent file means this run has no report. eng/read-window.ps1 runs the exe and prints the result; it
+/// absent file means this run has no report. A file already there is deleted before the run, read-only
+/// or not; the one exception is a file another program holds open without sharing delete, which nothing
+/// can delete: that run exits 3 and leaves it where it was. eng/read-window.ps1 runs the exe and prints the result; it
 /// quotes the arguments, which Start-Process does not.
 ///
 /// Schema 1, JSON, pure ASCII (non-ASCII is written as \uXXXX):

@@ -63,8 +63,8 @@ public partial class App : Application
         {
             if (Directory.Exists(report) || !Directory.Exists(Path.GetDirectoryName(report)))
                 throw new IOException($"{report} is a folder, or its folder does not exist.");
-            File.Delete(report);
-            File.Delete(report + ".tmp");
+            DeleteFirst(report);
+            DeleteFirst(report + ".tmp");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -115,5 +115,15 @@ public partial class App : Application
             }
         };
         window.Show();
+    }
+
+    // A read-only file there is deleted too (HF-018): File.Delete refuses one, which left an earlier run's report at the
+    // path after an exit that promises none. One another program holds open without sharing delete still throws.
+    private static void DeleteFirst(string file)
+    {
+        var info = new FileInfo(file);
+        if (info.Exists && info.IsReadOnly)
+            info.IsReadOnly = false;
+        info.Delete();
     }
 }

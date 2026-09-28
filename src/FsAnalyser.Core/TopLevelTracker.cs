@@ -98,6 +98,7 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
         {
             r.Started = true;
             r.OwnUnreadable = unreadable;
+            r.OwnListedPartway = unreadable && _store!.ChildCount(folder) > 0; // its listing is committed by now
         }
         else if (unreadable)
         {
@@ -198,6 +199,7 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
         return new TopLevelRow(r.Name, path, r.Kind, state, r.Bytes, r.OnDisk, r.Files, r.Folders, r.UnreadableBelow)
         {
             Revised = r.Revised,
+            ListedPartway = state == TopLevelState.Unreadable && r.OwnListedPartway,
         };
     }
 
@@ -213,6 +215,7 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
         public int Pending; // its own folder and every folder pushed under it, less those that exited a listing
         public bool Started; // its own folder has exited its listing
         public bool OwnUnreadable;
+        public bool OwnListedPartway; // its own folder's listing failed after something was listed in it
         public bool Revised; // built Done with figures other than the settled ones; never cleared
         public bool Dirty;
     }

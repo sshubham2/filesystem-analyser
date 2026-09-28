@@ -30,7 +30,8 @@ public enum TopLevelState
     /// <summary>The scan was cancelled while folders under it were still to be listed.</summary>
     StoppedPartway,
 
-    /// <summary>Its own folder could not be opened or listed. Anything under it that was listed is counted.</summary>
+    /// <summary>Its own folder could not be opened or listed. Anything under it that was listed is counted, and
+    /// <see cref="TopLevelRow.ListedPartway"/> says whether anything was.</summary>
     Unreadable,
 
     /// <summary>A junction or symbolic link: recorded, never entered, charged 0 bytes.</summary>
@@ -89,6 +90,13 @@ public sealed class TopLevelRow
     /// for the rest of the scan, even if a later correction brings the figures back.
     /// </summary>
     public bool Revised { get; init; }
+
+    /// <summary>
+    /// An Unreadable row whose own folder's listing failed partway (HF-002): what was listed before the error is kept
+    /// and counted, so the folder was opened and not read in full. False on an Unreadable row that could not be opened
+    /// or listed at all, and on every other state.
+    /// </summary>
+    public bool ListedPartway { get; init; }
 }
 
 /// <summary>
