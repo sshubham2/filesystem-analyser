@@ -20,7 +20,7 @@ using System.Windows.Threading;
 /// <code>
 ///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|watch|measure|rescan|expand|hide|kinds|size|tree
 ///   FSA_HOOK_LOG=&lt;file&gt;  [FSA_HOOK_ARMED=&lt;marker file&gt;  FSA_HOOK_CANCEL_DELAY_MS=&lt;n&gt;  FSA_HOOK_CLOSE_DELAY_MS=&lt;n&gt;]
-///   [FSA_HOOK_SLOW_REFRESH_MS=&lt;n&gt;]  (watch and measure only)
+///   [FSA_HOOK_SLOW_REFRESH_MS=&lt;n&gt;]  [FSA_HOOK_RENAMED=LastRefresh|SkippedRefreshes|SkipsNextRefresh]  (watch and measure only)
 ///   [FSA_HOOK_MISSING=&lt;the root folder, under %TEMP%&gt;]  (rescan only)
 ///   [FSA_HOOK_READABLE=&lt;a folder under %TEMP%&gt;  FSA_HOOK_BEFORE=&lt;a tab's x:Name&gt;  FSA_HOOK_AFTER=&lt;a tab's x:Name&gt;]  (rescan only)
 ///   [FSA_HOOK_EXPAND=1]  (watch only; a folder's path for tree)  [FSA_HOOK_MINSIZE=1]  (watch, expand and kinds only)
@@ -152,7 +152,9 @@ using System.Windows.Threading;
 /// </list>
 /// FSA_HOOK_SLOW_REFRESH_MS=n (watch and measure only) sleeps n ms on the UI thread inside every refresh of
 /// the list, as a slow machine would, so the window's rule that a refresh over 100 ms skips the next tick is
-/// exercised.
+/// exercised. FSA_HOOK_RENAMED=name (watch and measure only, SL-073) reads that one of the window's refresh state
+/// as if the app had renamed it, so a case can show the hook's own callbacks on the UI thread refuse ("refused
+/// mode=m reason=InvalidOperationException: the window has no name") and never hand the app an exception.
 /// </remarks>
 internal class StartupHook
 {
@@ -167,6 +169,9 @@ internal class StartupHook
     internal static readonly Stopwatch Clock = new();
     private static readonly object LogGate = new();
     private static string? _logPath;
+
+    // FSA_HOOK_RENAMED (watch and measure only, SL-073): one of the window's refresh state properties, read as missing.
+    private static readonly string? Renamed = Environment.GetEnvironmentVariable("FSA_HOOK_RENAMED") is { Length: > 0 } renamed ? renamed : null;
 
     // The stopping log's state: written and read on the UI thread only.
     private static Stopwatch? _sinceCancel;
@@ -296,6 +301,11 @@ internal class StartupHook
             if (pad is not null)
             {
                 Log($"refused mode={mode} reason=FSA_HOOK_SLOW_REFRESH_MS is for watch and measure only");
+                return;
+            }
+            if (Renamed is not null)
+            {
+                Log($"refused mode={mode} reason=FSA_HOOK_RENAMED is for watch and measure only");
                 return;
             }
             if (mode == "size")
@@ -861,8 +871,16 @@ internal class StartupHook
                             // Below Loaded and Render: the window has timed this refresh and laid the list out.
                             app.Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
                             {
-                                seen.RefreshMs.Add(WindowState<TimeSpan>(window, "LastRefresh").TotalMilliseconds);
-                                seen.Containers = Math.Max(seen.Containers, Containers(found));
+                                try
+                                {
+                                    seen.RefreshMs.Add(WindowState<TimeSpan>(window, "LastRefresh").TotalMilliseconds);
+                                    seen.Containers = Math.Max(seen.Containers, Containers(found));
+                                }
+                                catch (Exception e)
+                                {
+                                    // Never onto the dispatcher: the app would take it for its own fault and exit 70.
+                                    Log($"refused mode={mode} reason={e.GetType().Name}: {e.Message}");
+                                }
                             });
                         });
                     return found;
@@ -975,16 +993,25 @@ internal class StartupHook
             bool logged = false;
             DependencyPropertyDescriptor.FromProperty(UIElement.VisibilityProperty, panel.GetType()).AddValueChanged(panel, (_, _) =>
             {
-                if (logged || panel.Visibility == Visibility.Visible)
-                    return;
-                logged = true;
-                ended.Set();
-                double[] input;
-                lock (inputMs)
-                    input = [.. inputMs];
-                Log($"measured refreshes={seen.RefreshMs.Count} refreshP95={P95(seen.RefreshMs)} refreshMax={Max(seen.RefreshMs)} " +
-                    $"probes={input.Length} inputP95={P95(input)} inputMax={Max(input)} " +
-                    $"skipped={WindowState<int>(window, "SkippedRefreshes")} rows={list.Items.Count} containers={seen.Containers}");
+                try
+                {
+                    if (logged || panel.Visibility == Visibility.Visible)
+                        return;
+                    logged = true;
+                    ended.Set();
+                    double[] input;
+                    lock (inputMs)
+                        input = [.. inputMs];
+                    Log($"measured refreshes={seen.RefreshMs.Count} refreshP95={P95(seen.RefreshMs)} refreshMax={Max(seen.RefreshMs)} " +
+                        $"probes={input.Length} inputP95={P95(input)} inputMax={Max(input)} " +
+                        $"skipped={WindowState<int>(window, "SkippedRefreshes")} rows={list.Items.Count} containers={seen.Containers}");
+                }
+                catch (Exception e)
+                {
+                    // Never into the app's StartScan, whose finally collapses ScanningPanel: it would take it for its own
+                    // fault and exit 70.
+                    Log($"refused mode=measure reason={e.GetType().Name}: {e.Message}");
+                }
             });
             return null;
         });
@@ -1020,9 +1047,10 @@ internal class StartupHook
         return count;
     }
 
-    // The window's refresh state (MainWindow's internal LastRefresh, SkippedRefreshes, SkipsNextRefresh).
+    // The window's refresh state (MainWindow's internal LastRefresh, SkippedRefreshes, SkipsNextRefresh). The one
+    // FSA_HOOK_RENAMED names is read as if the app had renamed it.
     private static T WindowState<T>(Window window, string property) =>
-        (T)(window.GetType().GetProperty(property, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(window)
+        (T)((property == Renamed ? null : window.GetType().GetProperty(property, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))?.GetValue(window)
             ?? throw new InvalidOperationException($"the window has no {property}"));
 
     private static string P95(IReadOnlyCollection<double> ms)

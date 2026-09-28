@@ -6,7 +6,7 @@ using System.Text;
 namespace FsAnalyser.Core.Tests;
 
 /// <summary>
-/// A real folder tree under %TEMP%\fsa-tests\&lt;guid&gt;, on NTFS. Every step that fails throws with
+/// A real folder tree under %TEMP%\fsa-tests\&lt;guid&gt;, on NTFS and not compressed. Every step that fails throws with
 /// Windows' own error text; nothing is skipped. Dispose removes deny ACEs first, then links, then the
 /// trees, and throws if anything was left behind.
 /// </summary>
@@ -27,7 +27,21 @@ internal sealed class TempTree : IDisposable
         if (format != "NTFS")
             throw new InvalidOperationException($"%TEMP% ({temp}) is on {format}. The counting-rule tests need NTFS.");
         Root = Path.Combine(TestsRoot, _id);
-        Directory.CreateDirectory(Root);
+        CreateRoot(Root);
+    }
+
+    // A folder made under an NTFS-compressed one is compressed too, and there TextFile compresses with no Compress():
+    // every on-disk and probe count would shift with no cause named (HF-027). Refused by name, and removed again.
+    internal static void CreateRoot(string root)
+    {
+        Directory.CreateDirectory(root);
+        if (System.IO.File.GetAttributes(root).HasFlag(FileAttributes.Compressed))
+        {
+            Directory.Delete(root);
+            throw new InvalidOperationException(
+                $"{root} came out NTFS-compressed: %TEMP% or a folder above it is set to compress. The counting-rule tests " +
+                "need files that take their own size on disk. Uncompress %TEMP% (compact /u) or point TEMP and TMP elsewhere.");
+        }
     }
 
     /// <summary>The tree's root folder, as a person would write it.</summary>
