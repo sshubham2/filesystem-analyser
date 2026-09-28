@@ -45,4 +45,45 @@ public class ListingFallbackTests
         Assert.Equal(normal.Totals with { Bytes = 2050, BytesOnDisk = fallback.Totals.BytesOnDisk }, fallback.Totals);
         Assert.Empty(Scans.UnderLinks(fallback.Store));
     }
+
+    /// <summary>
+    /// HF-001: a volume can answer the extended class and still list a file with no ID, or with one of the "no ID"
+    /// values ScanStore.HasFileId rules out. The store charges every name of such a file in full, so the scan must
+    /// not say that file IDs were available.
+    /// </summary>
+    [Theory]
+    [InlineData(0UL, 0UL)]
+    [InlineData(ulong.MaxValue, ulong.MaxValue)]
+    [InlineData(0UL, ulong.MaxValue)]
+    public void TheExtendedClassListingNoFileIdsSaysSo(ulong high, ulong low)
+    {
+        using var tree = new TempTree();
+        string x = tree.File("x.txt", 1000);
+        TempTree.Hardlink(tree.PathOf("y.txt"), x);
+        var noId = new UInt128(high, low);
+
+        ScanResult result = Scans.Run(tree.Root, new ScanOptions { ListedFileId = _ => noId });
+
+        Assert.Equal(ScanStatus.Completed, result.Status);
+        Assert.Equal(2000, result.Totals.Bytes); // both names charged: the store had no ID to count the file once by
+        Assert.False(result.FileIdsAvailable);
+    }
+
+    /// <summary>HF-001: one file listed without an ID is enough, since any other name it has was charged in full.</summary>
+    [Fact]
+    public void OneFileListedWithoutAnIdIsEnoughToSaySo()
+    {
+        using var tree = new TempTree();
+        string x = tree.File("x.txt", 1000);
+        TempTree.Hardlink(tree.PathOf("y.txt"), x);
+        string z = tree.File("z.txt", 50);
+        ScanResult normal = Scans.Run(tree.Root);
+        UInt128 zId = normal.Store.FileId(Scans.Find(normal, z));
+
+        ScanResult result = Scans.Run(tree.Root, new ScanOptions { ListedFileId = id => id == zId ? UInt128.Zero : id });
+
+        Assert.True(normal.FileIdsAvailable);
+        Assert.Equal(1050, result.Totals.Bytes); // x and y still counted once
+        Assert.False(result.FileIdsAvailable);
+    }
 }
