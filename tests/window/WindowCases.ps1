@@ -2718,18 +2718,21 @@ $T005TraceProviders = 'Microsoft-DotNETCore-SampleProfiler:0xF00000000000:5,Micr
 
 function New-T005Trace($tag) {
     if (-not $env:FSA_T005_TRACE) { return [pscustomobject]@{ Environment = @{}; Folder = $null; Prefix = $null } }
-    [void][System.IO.Directory]::CreateDirectory($env:FSA_T005_TRACE)
+    # Absolute: the app runs in %TEMP%, where a relative folder would be another one, and no trace would be found
+    # (SL-080 code review R2-M2).
+    $folder = [System.IO.Path]::GetFullPath($env:FSA_T005_TRACE, (Get-Location).ProviderPath)
+    [void][System.IO.Directory]::CreateDirectory($folder)
     $name = if ($null -ne $tag -and $null -ne $tag.run) { $tag.run } else { [guid]::NewGuid().ToString('N').Substring(0, 8) }
     $prefix = "t005-$name-"
     $environment = @{
         DOTNET_EnableEventPipe          = '1'
-        DOTNET_EventPipeOutputPath      = Join-Path $env:FSA_T005_TRACE "$prefix{pid}.nettrace" # the runtime puts its pid in
+        DOTNET_EventPipeOutputPath      = Join-Path $folder "$prefix{pid}.nettrace" # the runtime puts its pid in
         DOTNET_EventPipeConfig          = $T005TraceProviders
         DOTNET_EventPipeOutputStreaming = '1'
         DOTNET_EventPipeRundown         = '1'
     }
     if ($env:FSA_T005_SAMPLE_MS) { $environment.DOTNET_EventPipeThreadSamplingRate = '{0:X}' -f [int]$env:FSA_T005_SAMPLE_MS }
-    [pscustomobject]@{ Environment = $environment; Folder = $env:FSA_T005_TRACE; Prefix = $prefix }
+    [pscustomobject]@{ Environment = $environment; Folder = $folder; Prefix = $prefix }
 }
 
 # The run's own trace, by the pid the hook logged; null when there is none or it is empty.
@@ -2826,7 +2829,7 @@ function Test-T005 {
         $run = Invoke-TreeRun $root $variables 300 $trace.Environment
         if ($env:FSA_T005_SUMMARY) {
             $summary = ConvertTo-T005Summary $run $tag $startedUtc (Find-T005Trace $trace $run)
-            [System.IO.File]::AppendAllText($env:FSA_T005_SUMMARY, ($summary | ConvertTo-Json -Compress -Depth 6) + "`n")
+            [System.IO.File]::AppendAllText([System.IO.Path]::GetFullPath($env:FSA_T005_SUMMARY, (Get-Location).ProviderPath), ($summary | ConvertTo-Json -Compress -Depth 6) + "`n")
             Write-Output ("        summary: {0}, primary {1} ms ({2}), trace {3}" -f $summary.exitReason, $summary.primaryMs, $summary.primaryPhase, (Show $summary.traceFile))
         }
         $before = $script:Failures.Count

@@ -109,9 +109,12 @@ internal static class TreeMode
             if (release is not null && select is null)
                 throw new Refusal("FSA_HOOK_RELEASE needs FSA_HOOK_SELECT: the row a person had selected before picking a new folder");
 
+            int? height = Number("FSA_HOOK_HEIGHT");
+            if (height is int asked)
+                SizeOnLoad(app, asked);
             window = WaitForWindow();
-            if (Number("FSA_HOOK_HEIGHT") is int height)
-                Size(window, height);
+            if (height is int wanted)
+                Sized(window, wanted);
             if (gap is not null)
             {
                 Facts();
@@ -164,21 +167,44 @@ internal static class TreeMode
     }
 
     // FSA_HOOK_HEIGHT: the window made that tall, or as tall as the work area allows, at the top of the screen, so
-    // the tree has the room a person who enlarges the window gives it.
-    // A height within the work area that the window does not take, under its MinHeight, is refused (SL-080); asked
-    // past the work area, it is T-003's "as tall as it goes", and the work area's height is what was meant.
-    private static void Size(Window window, int height)
-    {
-        Dictionary<string, object?> sized = Ui(() =>
+    // the tree has the room a person who enlarges the window gives it. It is set in a Loaded class handler, which runs
+    // ahead of the window's own Loaded handler and so before that handler starts the scan (size mode's way): no move
+    // or resize of the hook's lands between the scan's start and the first probe (SL-080 code review M1). Written on
+    // the UI thread, read by the hook's thread after a dispatcher call.
+    private static Dictionary<string, object?>? _sized;
+
+    private static void SizeOnLoad(Application app, int height) =>
+        EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent, new RoutedEventHandler((sender, _) =>
         {
+            var window = (Window)sender;
+            if (_sized is not null || !ReferenceEquals(window, app.MainWindow))
+                return;
+            bool scanning = Shown(window, "ScanningPanel");
             window.Top = SystemParameters.WorkArea.Top;
             window.Height = Math.Min(height, SystemParameters.WorkArea.Height);
-            return new Dictionary<string, object?> { ["asked"] = height, ["height"] = window.Height, ["workArea"] = SystemParameters.WorkArea.Height };
-        });
+            _sized = new Dictionary<string, object?>
+            {
+                ["asked"] = height,
+                ["height"] = window.Height,
+                ["workArea"] = SystemParameters.WorkArea.Height,
+                ["scanning"] = scanning, // whether the scan had started when the window was sized: never, if in time
+                ["ms"] = StartupHook.Clock.ElapsedMilliseconds,
+            };
+        }));
+
+    // The height the window was laid out at. One the window did not take within the work area (under its MinHeight) is
+    // refused (SL-080); asked past the work area, it is T-003's "as tall as it goes", and the work area's is what was
+    // meant. So is a window that loaded, or started its scan, before the hook could size it.
+    private static void Sized(Window window, int height)
+    {
         Settle(DispatcherPriority.Loaded);
-        double actual = Ui(() => window.ActualHeight);
+        (Dictionary<string, object?>? sized, double actual) = Ui(() => (_sized, window.ActualHeight));
+        if (sized is null)
+            throw new Refusal("the window loaded before the hook could size it");
         sized["actual"] = actual;
         Emit("sized", sized);
+        if (sized["scanning"] is true)
+            throw new Refusal("the scan had started before the hook sized the window");
         if (height <= (double)sized["workArea"]! && Math.Abs(actual - height) > 1)
             throw new Refusal(string.Create(CultureInfo.InvariantCulture, $"height not applied ({height}/{actual})"));
     }

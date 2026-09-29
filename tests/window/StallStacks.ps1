@@ -32,8 +32,11 @@
 #     half its samples are in it, which is not an answer by itself but the trigger for T005Batch.ps1 -Plan Render;
 #     otherwise NAMED.
 #   - For the whole run: CANNOT-READ when there is no trace, dotnet-trace cannot be installed or run, the UI thread
-#     has no samples, the idle share of the UI thread is under 60% (the pump's wait is not what this reader takes it
-#     for), or the primary phase matched no stretch.
+#     has no samples, the idle share of the UI thread is under 25% (the pump's wait is not what this reader takes it
+#     for), or the primary phase matched no stretch. The design had 60%; SL-080's first traced T-005 run was idle
+#     49.4%, every idle sample in Dispatcher.GetMessage, because the hook's moves hold the UI thread in SyncFlush.
+#   - The sample interval is the nettrace header's (1,000,000 ns by default, 10,000,000 ns under FSA_T005_SAMPLE_MS=10,
+#     both measured at SL-080's build); the spacing seen on the UI thread is reported beside it as observedSampleMs.
 
 param(
     [string] $Trace,
@@ -294,6 +297,10 @@ function Read-Run($speedscope, $line, [DateTime] $traceStartUtc, [double] $sampl
         }
     }
     $more.idleShare = [Math]::Round($idleTime / $allTime, 3)
+    # The spacing of the UI thread's samples as seen, beside the header's interval: the 10th percentile of the gaps
+    # between one stack and the next (a stack that stays the same hides the samples in between).
+    $gaps = @(for ($i = 1; $i -lt $segments.Count; $i++) { $d = $segments[$i].Start - $segments[$i - 1].Start; if ($d -gt 0.05) { $d } }) | Sort-Object
+    $more.observedSampleMs = if (@($gaps).Count -gt 0) { [Math]::Round(@($gaps)[[int][Math]::Floor(0.1 * (@($gaps).Count - 1))], 2) } else { $null }
     $more.idleLeaf = if ($idleLeaves.Count -gt 0) { $names[($idleLeaves.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 1).Key] } else { $null }
     if ($idleTime / $allTime -lt 0.25) {
         return New-Result 'CANNOT-READ' ('the UI thread is idle {0:P0} of the trace, under 25%: its idle frames are not the pump''s wait this reader looks for' -f ($idleTime / $allTime)) $more
@@ -345,8 +352,8 @@ function Read-Run($speedscope, $line, [DateTime] $traceStartUtc, [double] $sampl
         }
         if ($null -eq $best -or $bestOverlap -lt 0.8 * $wait) {
             $entry.verdict = 'CANNOT-READ'
-            $entry.reason = if ($null -eq $best) { 'no stretch within ±20% of the hook''s wait: no busy stretch overlaps it' }
-            else { 'no stretch within ±20% of the hook''s wait (best: busy {0:N0} ms of its {1:N0})' -f $bestOverlap, $wait }
+            $entry.reason = if ($null -eq $best) { 'no busy stretch covers 80% of the hook''s wait: none overlaps it' }
+            else { 'no busy stretch covers 80% of the hook''s wait (best: busy {0:N0} ms of its {1:N0})' -f $bestOverlap, $wait }
             if ($null -ne $best) { $entry.startMs = [Math]::Round($best.Start, 1); $entry.durMs = [Math]::Round($best.End - $best.Start, 1) }
             $entry
             continue
@@ -385,7 +392,12 @@ function Invoke-Read([string] $trace, [string] $summaryPath, [int] $run) {
     catch {
         return New-Result 'CANNOT-READ' $_.Exception.Message @{ run = $run }
     }
-    $speedscope = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json -Depth 64
+    # A converted file that does not parse (a conversion cut short) is removed, so the next reading converts again.
+    try { $speedscope = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json -Depth 64 }
+    catch {
+        Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
+        return New-Result 'CANNOT-READ' "$file could not be read, and was removed so the next reading converts the trace again: $($_.Exception.Message)" @{ run = $run }
+    }
     $result = Read-Run $speedscope $line $header.StartUtc ($header.SamplingNs / 1e6)
     $result.samplingNs = $header.SamplingNs
     $result

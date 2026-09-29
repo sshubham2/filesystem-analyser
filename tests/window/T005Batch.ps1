@@ -11,7 +11,10 @@
 # stacks-<n>.json, and verdict.json. Exit 0 with a verdict (inconclusive and no-stall-this-batch are verdicts), 1 when
 # the batch stopped, 2 when the hook, the app or dotnet-trace could not be built or installed. T-005's own failures
 # (its 1 s bar) are data, not errors. -Reread runs no T-005: it reads the runs.jsonl and traces already in -Out again
-# under the same rules, for a batch whose reading failed after its runs.
+# under the same rules, for a batch whose reading failed after its runs. Either way every scheduled run must have
+# exactly one summary line that stands in its pair, or the batch stops; a live batch refuses an -Out that already holds
+# a runs.jsonl. -Out is made absolute. A run's process gets none of this shell's FSA_T005_*, FSA_HOOK_*,
+# DOTNET_EventPipe* or DOTNET_STARTUP_HOOKS variables, only its arm's.
 #
 # The schedules. Run 0 is a warm-up, run and discarded. Then blocks of four, in adjacent pairs, the arms swapped in
 # the second pair of each block (ABBA), so a stall that drifts over minutes lands on both arms alike:
@@ -23,8 +26,8 @@
 #
 # The batch stops, exit 1, rather than leave a hole in a pair, when a run writes no summary line; ends any way but the
 # hook closing the window (a crash, a timeout, a hook error, a refused height); ran at another height or render mode
-# than its arm; or never reached its scan or rescan phase (a null phase, never averaged as 0). The drive must be a
-# fixed NTFS volume.
+# than its arm, or was traced (wrote a trace) when its arm is not, or not when it is; or never reached its scan or
+# rescan phase (a null phase, never averaged as 0). The drive must be a fixed NTFS volume.
 #
 # The rules, fixed before any run. A run's figure is primaryMs: the larger of its scan's and its rescan's longest
 # wait (the probe's, every 10 ms). No other phase is decided on. A run stalls at 250 ms or more.
@@ -123,6 +126,7 @@ function Test-RunLine($line, $item) {
     elseif ($line.exitReason -ne 'closed') { "run $($item.run) did not end with the hook closing the window: $($line.exitReason) (exit $($line.exitCode))" }
     elseif ($null -eq $line.actualHeight -or [Math]::Abs([double]$line.actualHeight - $item.arm.height) -gt 1) { "run $($item.run) ran at $(if ($null -eq $line.actualHeight) { 'no reported height' } else { "$($line.actualHeight) px" }), not its arm's $($item.arm.height) px" }
     elseif ($software -ne ($item.arm.render -eq 'software')) { "run $($item.run) rendered $(if ($software) { 'in software' } else { "in $($line.renderMode)" }), not its arm's $($item.arm.render)" }
+    elseif (($null -ne $line.traceFile) -ne [bool]$item.arm.trace) { "run $($item.run) was $(if ($null -ne $line.traceFile) { 'traced' } else { 'not traced (no trace written)' }), not its arm's $(if ($item.arm.trace) { 'traced' } else { 'untraced' })" }
     elseif (-not $scan.reached) { "run $($item.run): the hook never reached its scan phase (a null phase would leave a hole in its pair)" }
     elseif (-not $rescan.reached) { "run $($item.run): the hook never reached its rescan phase (a null phase would leave a hole in its pair)" }
     else { $null }
@@ -149,6 +153,26 @@ function Invoke-Batch($schedule, [scriptblock] $runner, [string] $summary) {
     [pscustomobject]@{ Stopped = $false; Reason = $null; Run = $null }
 }
 
+# Every scheduled run resolved to exactly one summary line that can stand in its pair, whether the batch just ran or
+# is read again (-Reread); a missing, doubled, stray or invalid line stops it (SL-080 code review m1).
+function Resolve-Lines($schedule, $lines) {
+    $stop = { param($run, $why) [pscustomobject]@{ Stopped = $true; Reason = $why; Run = $run; Lines = $null } }
+    foreach ($line in $lines) {
+        if (@($schedule | Where-Object run -eq $line.run).Count -eq 0) { return & $stop $line.run "a summary line for run $($line.run), which this plan's schedule does not have" }
+    }
+    foreach ($item in $schedule) {
+        $mine = @($lines | Where-Object run -eq $item.run)
+        if ($mine.Count -eq 0) { return & $stop $item.run "run $($item.run) has no summary line" }
+        if ($mine.Count -gt 1) { return & $stop $item.run "run $($item.run) has $($mine.Count) summary lines" }
+        if (Test-RunLine $mine[0] $item) { return & $stop $item.run (Test-RunLine $mine[0] $item) }
+    }
+    [pscustomobject]@{ Stopped = $false; Reason = $null; Run = $null; Lines = @($lines) }
+}
+
+# What a run's process is given of this shell's environment: none of the variables that choose an arm or trace it,
+# so a shell left with one set cannot trace an untraced run or change its rate or render mode (SL-080 review R2-m4).
+$ArmVariables = '^(FSA_T005_|FSA_HOOK_|DOTNET_EventPipe|DOTNET_EnableEventPipe$|DOTNET_STARTUP_HOOKS$)'
+
 # One real run: WindowCases.ps1 -Case T-005 as its own process, with its variables given to it alone.
 function Invoke-T005Run($item, $gap, [string] $out, [string] $temp, [int] $sampleMs) {
     $psi = [System.Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path)
@@ -156,6 +180,7 @@ function Invoke-T005Run($item, $gap, [string] $out, [string] $temp, [int] $sampl
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
+    foreach ($key in @($psi.Environment.Keys | Where-Object { $_ -match $ArmVariables })) { [void]$psi.Environment.Remove($key) }
     $psi.Environment['TEMP'] = $temp
     $psi.Environment['TMP'] = $temp
     $psi.Environment['FSA_T005_SUMMARY'] = Join-Path $out 'runs.jsonl'
@@ -171,6 +196,21 @@ function Invoke-T005Run($item, $gap, [string] $out, [string] $temp, [int] $sampl
     $output = $process.StandardOutput.ReadToEndAsync()
     if (-not $process.WaitForExit($RunTimeoutSec * 1000)) { $process.Kill($true); $process.WaitForExit() }
     Set-Content -LiteralPath (Join-Path $out "run-$($item.run).log") -Value ($output.Result + $errors.Result + "EXIT $($process.ExitCode)") -Encoding utf8NoBOM
+}
+
+# One traced run's stacks through StallStacks.ps1 ($script). Its stacks-<n>.json from an earlier reading is deleted
+# first, and a reader that fails is CANNOT-READ with its own words, never the file an earlier reading left (SL-080
+# code review R2-m5).
+function Invoke-StackReader([string] $script, $line, [string] $out) {
+    $file = Join-Path $out "stacks-$($line.run).json"
+    if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }
+    $output = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $script -Trace "$($line.traceFile)" -Summary (Join-Path $out 'runs.jsonl') -Run $line.run -Out $file 2>&1)
+    $exit = $LASTEXITCODE
+    if ($exit -ne 0 -or -not (Test-Path -LiteralPath $file)) {
+        $why = (@($output | ForEach-Object { "$_".Trim() } | Where-Object { $_ }) | Select-Object -Last 3) -join ' | '
+        return [pscustomobject]@{ run = $line.run; verdict = 'CANNOT-READ'; blockedUnder = $null; reason = "StallStacks.ps1 exited $exit and wrote no stacks: $why" }
+    }
+    Get-Content -LiteralPath $file -Raw | ConvertFrom-Json -Depth 16
 }
 
 # ---- The verdicts ----
@@ -292,14 +332,19 @@ function Get-RenderVerdict($pairs, $lines) {
 # The batch, then its verdict; $runner runs one item, $reader reads one traced run's stacks. Returns the exit code.
 function Invoke-Plan([string] $plan, $schedule, [scriptblock] $runner, [scriptblock] $reader, [string] $out, [int] $sampleMs, [int] $high, [bool] $reread = $false) {
     $summary = Join-Path $out 'runs.jsonl'
-    $batch = if ($reread) { [pscustomobject]@{ Stopped = $false } } else { Invoke-Batch $schedule $runner $summary }
     $verdictFile = Join-Path $out 'verdict.json'
+    if (-not $reread -and (Test-Path -LiteralPath $summary)) {
+        Say "FAILED: $summary already holds a batch, whose lines this one's would be paired with; give a new -Out, or -Reread to read that one again"
+        return 1
+    }
+    $batch = if ($reread) { [pscustomobject]@{ Stopped = $false } } else { Invoke-Batch $schedule $runner $summary }
+    if (-not $batch.Stopped) { $batch = Resolve-Lines $schedule @(Read-Runs $summary) }
     if ($batch.Stopped) {
         [ordered]@{ plan = $plan; verdict = 'stopped'; stoppedAt = $batch.Run; reason = $batch.Reason } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $verdictFile -Encoding utf8NoBOM
         Say "STOPPED at run $($batch.Run): $($batch.Reason)"
         return 1
     }
-    $lines = @(Read-Runs $summary | Where-Object { -not $_.warmup })
+    $lines = @($batch.Lines | Where-Object { -not $_.warmup })
     $result = switch ($plan) {
         'Height' { Get-HeightVerdict @(Get-Pairs $schedule $lines { param($i) $i.arm.height -eq $high }) $lines $high }
         'Render' { Get-RenderVerdict @(Get-Pairs $schedule $lines { param($i) $i.arm.render -eq 'software' }) $lines }
@@ -368,23 +413,40 @@ function Invoke-SelfTest([string] $only) {
             $lineOf[[int]$p.Name] = ConvertTo-T005Summary $run $tag '2026-09-29T00:00:00.0000000Z' $null | ConvertTo-Json -Depth 16 | ConvertFrom-Json -Depth 16 -DateKind String
         }
         $stackOf = $fixture.stacks
+        # A batch already in -Out: its lines (and any extra ones) for -Reread, or a stray one a live batch must refuse.
+        $summaryPath = Join-Path $out 'runs.jsonl'
+        if ($fixture.reread) {
+            foreach ($k in @($lineOf.Keys | Sort-Object)) { if ($null -ne $lineOf[$k]) { Add-Content -LiteralPath $summaryPath -Value ($lineOf[$k] | ConvertTo-Json -Compress -Depth 16) -Encoding utf8NoBOM } }
+            foreach ($x in @($fixture.extraLines)) { if ($null -ne $x) { Add-Content -LiteralPath $summaryPath -Value ($x | ConvertTo-Json -Compress -Depth 16) -Encoding utf8NoBOM } }
+        }
+        if ($fixture.existing) { Add-Content -LiteralPath $summaryPath -Value '{"run":0}' -Encoding utf8NoBOM }
         $runner = {
             param($item, $gap)
             $ran.Add($item.run)
             if ($null -ne $lineOf[$item.run]) { Add-Content -LiteralPath (Join-Path $out 'runs.jsonl') -Value ($lineOf[$item.run] | ConvertTo-Json -Compress -Depth 16) -Encoding utf8NoBOM }
         }.GetNewClosure()
         $reader = { param($line, $o) $stackOf."$($line.run)" }.GetNewClosure()
-        try { $code = Invoke-Plan $fixture.plan $schedule $runner $reader $out ([int]$fixture.sampleMs) 860 6>$null }
+        if ($fixture.crashReader) {
+            # The real reader, over a StallStacks.ps1 that throws, with an earlier reading's stacks left in -Out.
+            $crash = Join-Path $out 'crash.ps1'
+            Set-Content -LiteralPath $crash -Value "throw 'the reader broke'" -Encoding utf8NoBOM
+            foreach ($k in $lineOf.Keys) { Set-Content -LiteralPath (Join-Path $out "stacks-$k.json") -Value "{`"run`":$k,`"verdict`":`"NAMED`",`"blockedUnder`":`"an earlier reading`"}" -Encoding utf8NoBOM }
+            $reader = { param($line, $o) Invoke-StackReader $crash $line $o }
+        }
+        try { $code = Invoke-Plan $fixture.plan $schedule $runner $reader $out ([int]$fixture.sampleMs) 860 ([bool]$fixture.reread) 6>$null }
         catch { $code = "threw: $($_.Exception.Message)" }
         $verdict = if (Test-Path -LiteralPath (Join-Path $out 'verdict.json')) { Get-Content -LiteralPath (Join-Path $out 'verdict.json') -Raw | ConvertFrom-Json -Depth 16 } else { $null }
         $e = $fixture.expect
         $problems = @(
             if ([string]$code -ne [string]$e.exit) { "exit $code, expected $($e.exit)" }
-            if ($null -eq $verdict) { 'no verdict.json' }
+            if ($e.noVerdict) { if ($null -ne $verdict) { "a verdict.json was written ($($verdict.verdict))" } }
+            elseif ($null -eq $verdict) { 'no verdict.json' }
             elseif ($verdict.verdict -cne $e.verdict) { "verdict $($verdict.verdict), expected $($e.verdict)" }
+            if ($null -ne $e.ran -and $ran.Count -ne [int]$e.ran) { "ran $($ran.Count) runs, expected $($e.ran)" }
+            if ($e.stackReason -and @($verdict.stacks | Where-Object { "$($_.reason)" -notmatch $e.stackReason }).Count -gt 0) { "a run's stacks do not match '$($e.stackReason)': $(@($verdict.stacks | ForEach-Object reason) -join ' / ')" }
             if ($null -ne $e.orderEffect -and $verdict.orderEffect -ne $e.orderEffect) { "orderEffect $($verdict.orderEffect), expected $($e.orderEffect)" }
             if ($e.stoppedAt -ne $null -and $verdict.stoppedAt -ne $e.stoppedAt) { "stopped at $($verdict.stoppedAt), expected $($e.stoppedAt)" }
-            if ($e.stoppedAt -ne $null -and ($ran.Count -eq 0 -or $ran[-1] -ne $e.stoppedAt)) { "ran up to run $($ran[-1]), expected to stop at $($e.stoppedAt)" }
+            if ($e.stoppedAt -ne $null -and -not $fixture.reread -and ($ran.Count -eq 0 -or $ran[-1] -ne $e.stoppedAt)) { "ran up to run $($ran[-1]), expected to stop at $($e.stoppedAt)" }
             if ($e.reason -and "$($verdict.reason)" -notmatch $e.reason) { "reason '$($verdict.reason)' does not match '$($e.reason)'" }
             if ($e.next -and "$($verdict.next)" -notmatch $e.next) { "next '$($verdict.next)' does not match '$($e.next)'" }
             if ($e.blockedUnder -and $verdict.blockedUnder -cne $e.blockedUnder) { "blockedUnder $($verdict.blockedUnder), expected $($e.blockedUnder)" }
@@ -426,6 +488,9 @@ if ($null -eq $volume -or $volume.FileSystem -ne 'NTFS' -or $volume.DriveType -n
     exit 1
 }
 if (-not $Out) { $Out = Join-Path $Repo ("artifacts\sl080\{0}-{1:yyyyMMdd-HHmmss}" -f $Plan.ToLowerInvariant(), (Get-Date)) }
+# Absolute: each run's app works in %TEMP%, where a relative folder is another one and its traces are lost (SL-080 code
+# review R2-M2).
+$Out = [System.IO.Path]::GetFullPath($Out, (Get-Location).ProviderPath)
 [void][System.IO.Directory]::CreateDirectory($Out)
 $temp = "${letter}:\fsa-sl080-temp"
 [void][System.IO.Directory]::CreateDirectory($temp)
@@ -453,10 +518,5 @@ if ($Plan -eq 'Trace') {
 $schedule = @(New-Schedule $Plan $HighHeight $LowHeight)
 Say "T-005 batch: -Plan $Plan on $Drive ($temp), $($schedule.Count) runs, out $Out"
 $runner = { param($item, $gap) Invoke-T005Run $item $gap $Out $temp $SampleMs }
-$reader = {
-    param($line, $o)
-    $file = Join-Path $o "stacks-$($line.run).json"
-    $null = & pwsh -NoProfile -ExecutionPolicy Bypass -File $StackReader -Trace "$($line.traceFile)" -Summary (Join-Path $o 'runs.jsonl') -Run $line.run -Out $file
-    if (Test-Path -LiteralPath $file) { Get-Content -LiteralPath $file -Raw | ConvertFrom-Json -Depth 16 } else { [pscustomobject]@{ run = $line.run; verdict = 'CANNOT-READ'; reason = 'StallStacks.ps1 wrote nothing' } }
-}
+$reader = { param($line, $o) Invoke-StackReader $StackReader $line $o }
 exit (Invoke-Plan $Plan $schedule $runner $reader $Out $SampleMs $HighHeight $Reread.IsPresent)
