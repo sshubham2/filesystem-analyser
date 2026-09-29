@@ -1,0 +1,113 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-084",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-09-29T08:13:29.502Z",
+ "head": "0b56a0f70b335cb7f54ae3974fb08d899c26ec1f",
+ "run_id": 2149,
+ "summary": "SL-084 fixed the false 'N files could not be opened' note for app-execution aliases and AF_UNIX sockets. SizeProbe.Probe now retries once through a new SynchronousIoCancel.OpenReparsePointForAttributes when the first open returns exactly 1920. The first open stays at flags 0 so the WOF, dedup and cloud filters still answer. The acceptance repro went from exit 1 to 0, 425 Core tests pass, and on real input WindowsApps failures fell from 114 to 0. On the user profile they fell from 238 to 119, and the 119 left are cloud files failing with 363, kept counted by scope. The code change was small. Most of the cost was upstream rework and test scaffolding: a native reparse-plant helper, a per-instance failed-retry seam, and two rewritten fitness rules.",
+ "payload": {
+  "status": "complete",
+  "reason": "Reflection on SL-084 written from the recorded stage accounts. Nothing blocked it. Every number quoted is taken from a stage record and was not re-run.",
+  "summary": "SL-084 fixed the false 'N files could not be opened' note for app-execution aliases and AF_UNIX sockets. SizeProbe.Probe now retries once through a new SynchronousIoCancel.OpenReparsePointForAttributes when the first open returns exactly 1920. The first open stays at flags 0 so the WOF, dedup and cloud filters still answer. The acceptance repro went from exit 1 to 0, 425 Core tests pass, and on real input WindowsApps failures fell from 114 to 0. On the user profile they fell from 238 to 119, and the 119 left are cloud files failing with 363, kept counted by scope. The code change was small. Most of the cost was upstream rework and test scaffolding: a native reparse-plant helper, a per-instance failed-retry seam, and two rewritten fitness rules.",
+  "estimate_error": "Sized medium / medium risk. The code size was about right: 7 files touched, one new branch, a new open entry point, 11 tests. The risk tier was pointed at the wrong thing. The retry mechanism was settled by the first spike, and nothing in build, review or validation contradicted it. The real risk was scope: which failures the fix should and should not remove from the note. The 363 cloud residue and the dedup-without-filter case (m7) were where the design had to decide. The upstream loop cost more than the code. Repro ran 3 times, the risk spike 2, the design 2 and the critique 2. That happened on a title-only bug report. Expect roughly double the upstream reruns whenever the raising reflection carries no measured split of the failure.",
+  "learned": [
+   {
+    "kind": "codebase",
+    "lesson": "AF_UNIX fixtures on Windows: a .NET Socket.Dispose deletes its own socket file. A test that binds, disposes and then scans has no file to test and passes vacuously. Keep the socket bound for the whole scan and dispose it before TempTree, as ReparsePointProbeTests.AnAfUnixSocketBoundForTheWholeScanIsSizedFromItsOwnHandle does. To leave a stale file, use raw ws2_32 bind plus closesocket. Put this in the brief of any slice that needs a socket file.",
+    "evidence": "repro #2 halted because the socket file was gone at line 36. The temp-tree spike then re-derived the same fact independently as its criterion (a) and no-go'd."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "The first open in SizeProbe must stay at flags 0, and only the 1920 retry may carry FILE_FLAG_OPEN_REPARSE_POINT. Fitness rule A exempts SynchronousIoCancel.cs as a whole, so it cannot see the flag move onto OpenForAttributes. The only guard is the behavioural pin TheFirstOpenOfAnAliasStillFailsAndOnlyTheRetryOpensIt. Any slice that edits SynchronousIoCancel.cs or SizeProbe.cs must keep that test. Moving the flag would bypass wof.sys, cldflt and dedup for every file and no plain-tree size test would notice.",
+    "evidence": "Design coherence_check; code-review confirmed OpenForAttributes at SynchronousIoCancel.cs:242-243 opens with flags 0. O-006 discharged by that pin."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "The known floor of ProbeFailed noise on this PC is now 119 cloud files failing with 363 (tags 0x9000001A and 0x9000701A, no RECALL or OFFLINE bit). A %USERPROFILE% scan still shows '119 files could not be opened'. Treat 119 as the baseline in the next slice that touches the note or ProbeFailures, not as a regression. U-004 already recorded 363 as a cloud skip/unknown class.",
+    "evidence": "builds#193 and validations#103: pre-fix 119×1920 + 119×363 = 238; fixed 0×1920 + 119×363."
+   },
+   {
+    "kind": "design",
+    "lesson": "The schema-1 --report (WindowReport.cs) carries neither ScanResult.ProbeFailures nor OutcomeNotes, so any validation plan that says 'run through --report and expect N probe failures' cannot run. Check WindowReport.cs when writing a design's validation case. Without that check, validate has to build a DOTNET_STARTUP_HOOKS shim and a pre-fix exe from git archive to see the window's own note. That hook ships nowhere, so a regression in the note would not show in any shipped artefact.",
+    "evidence": "builds#193 LEFT OPEN: a no-retry exe gave a report identical to the fixed one. Validate observed case 14 only via its own hook."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "The test seam of choice on SynchronousIoCancel is a per-instance override (OverrideQueryError, now OverrideReparseRetryError). SL-082's process-wide static listing failpoint is the pattern to avoid for probe-branch tests. The suite has no native reparse helper: junctions and hardlinks come from cmd.exe mklink via TempTree.Run. The alias plant is a DeviceIoControl FSCTL_SET_REPARSE_POINT helper added in TestNative.cs, and NTFS accepts it on a non-empty file unelevated. Reuse that helper rather than re-deriving it.",
+    "evidence": "M2's decision text; builds#193 deviations 1 and 2; O-005 measured the plant on 12345 bytes."
+   },
+   {
+    "kind": "risk",
+    "lesson": "A whole-drive risk spike must be scoped to the slice's stated tags and must list the known out-of-scope error classes from the U-entries. The c-drive spike demanded that every remaining failure be 5, 32 or delete-pending. It could not be met, because U-004 had already recorded 363 as a cloud refusal class. The spike no-go'd on 119 out-of-scope files although it proved the mechanism (119/119 1920s fixed). A person or the engine then had to override it ('built anyway despite a no-go'). The same falsifier, written with 363 named as expected residue, would have gone straight to go.",
+    "evidence": "risk-spike #1 halted with 1 go and 2 no-go. Risk-spike #2 passed only as a built-anyway override, scoped to O-028. c-drive headline: 'retry fixed 119/119 1920s; 119 cloud files still fail 363'."
+   },
+   {
+    "kind": "process",
+    "lesson": "The reflection that raised this 'now' candidate carried only a title and no measured split. SL-056's validate had measured 238 reparse-point ProbeFailed entries and its code review had already proposed the exact retry (code-review-1.json:22), but the count was never split by error code. The 1920/363 split (119/119) first appeared in this slice's spike. When a reflection raises a count-defect candidate, its why should carry the per-error breakdown, so the next slice's scope (aliases and sockets, not cloud) is fixed before the spike is written and not assumed by every stage.",
+    "evidence": "'nothing beyond the title was written down'. The validate stage recorded 'Assumption forced by the thin report'. SL-056 validate-slice-1.json:98 gave 238 unsplit."
+   },
+   {
+    "kind": "process",
+    "lesson": "A design that lists an open question as 'does not block' still halts the design stage until somebody answers it. Put non-blocking questions in the design's decided-by-scope list, or answer them at brief time. The 363-cloud question cost a full design rerun even though the design stated it did not block.",
+    "evidence": "design-slice #1 halted: 'the design raised 1 question nobody has answered'. Design-slice #2 passed with identical content plus acceptance."
+   },
+   {
+    "kind": "process",
+    "lesson": "The critique filed findings about fitness rules and the parity convention without reading the files. 5 of its 10 findings were overridden (M1, m1, m4, m5, m6), and four of the five turned on text one grep away: rule 3 at fitness.yaml:704-712 only forbids NtOpenFile; the engine matches code only (fitness.yaml:665); the 'settled by SL-' marker means no xUnit twin (eng/rules-parity.ps1:30-33). The design also imported 'rule 3 allows the flag' as unproven when reading rule 3 was one grep. For a slice that edits a fenced file, the design stage should quote the fencing rule and the critique should quote fitness.yaml before filing rule findings.",
+    "evidence": "Decisions on M1, m4, m5 with the text of the rules; O-002 discharged by reading fitness.yaml:704-712."
+   }
+  ],
+  "what_went_wrong": [
+   "The defect was known at SL-056 and shipped anyway. SL-056's code review proposed the exact retry (code-review-1.json:22) and SL-056's validate measured 238 reparse-point ProbeFailed entries on a real profile scan. The fix landed as a follow-up only after the reflection raised it. It was never split by error code, which is why this slice met 363 late.",
+   "Repro ran 3 times. #1 halted on SDK resolution (global.json wants 10.0.100 and the machine has 8.0/9.0, although eng/dotnet.ps1 bootstraps .dotnet under Q-003). #2 halted because the repro's own using-block disposed the socket and .NET deleted the file. Neither is the bug. The second is a fixture fact the temp-tree spike then re-learned from scratch.",
+   "The risk spike ran 2 times. Both no-gos were about scope (363 cloud files, a Dispose-deleted fixture), not the mechanism, and the second run passed only as an override of a no-go. The falsifier was written without the 363 class that U-004 already documented.",
+   "The design ran twice and the critique twice. The design halted on a question it called non-blocking. The critique's 10 findings waited on a person and then were answered by a model, and 5 were overridden for facts sitting in repo files the critic had not read. The critique review was skipped by sizing.",
+   "Design case 14 (validate through --report, expect 0 probe failures) was written without checking that WindowReport.cs carries a probe figure. Build discovered it could not run. Validate had to write its own DOTNET_STARTUP_HOOKS shim and a pre-fix exe. C4 is proven only by that unshipped hook and the Core-level measurement.",
+   "Two design claims about existing test infrastructure were wrong and were found only at build. There is no reparse/junction native helper to extend (junctions come from cmd.exe mklink). ProbePassTests holds no ACL refusal Fact (the only one is OnDiskSizeTests' wof-denied.txt).",
+   "The design record still cites U-004 as the reason for having no gate, though accepted finding m7 said to correct that citation. The code review had to record it as drift (O-013 territory). Validate could not reach a real delete race, a real 995 cancel, or real ACL denies in the published exe, so those branches are proven only by testhost Facts and the simulated-error seam."
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "dimension": "unfounded-assumptions",
+    "severity": "minor",
+    "what": "Design case 14 and the '--report' validation plan assume the shipped schema-1 report exposes ScanResult.ProbeFailures or OutcomeNotes. WindowReport.cs has neither. One grep of src for ProbeFailures would have shown that the note is unobservable through --report. The critique found 10 other issues and never checked the design's validation observable.",
+    "caught_by": "build (builds#193 LEFT OPEN), then code-review drift"
+   },
+   {
+    "gate": "critique",
+    "dimension": "unfounded-assumptions",
+    "severity": "minor",
+    "what": "The design said the alias plant 'reuses or extends the suite's existing reparse/junction native helper'. No such helper exists: junctions and hardlinks are created with cmd.exe mklink via TempTree.Run. The design itself listed this as 'still unverified' and the critique did not turn it into a finding. The builder had to add a new DeviceIoControl FSCTL_SET_REPARSE_POINT plant to TestNative.cs.",
+    "caught_by": "build (builds#193 deviation 1)"
+   },
+   {
+    "gate": "critique",
+    "dimension": "test-coverage",
+    "severity": "minor",
+    "what": "The design's case 6 relied on 'the existing ProbePassTests refusal Facts' as proof that the retry hides no genuine refusal. ProbePassTests has no ACL-refusal Fact. The only one is OnDiskSizeTests' wof-denied.txt, which is a WOF file, not the plain-file refusal the case needs. The critique accepted the citation without opening the test file, so the plain-file refusal Fact had to be written new.",
+    "caught_by": "build (builds#193 deviation 2)"
+   }
+  ],
+  "unknowns": [
+   "What does an OPEN_REPARSE_POINT handle report for the 119 stopped-provider cloud files (err 363, tags 0x9000001A/0x9000701A)? Does it give a usable size, and would using it bypass cldflt in a way that changes cloud counting under U-004/U-019? Nobody has measured it, and any change to what counts as 'could not be opened' depends on it.",
+   "What tags did the other 5 of the profile's 119 pre-fix 1920 failures carry, given that WindowsApps accounts for 114 aliases? Are there real third-party AF_UNIX sockets or another reparse tag on this profile? They all disappeared after the fix but were never identified.",
+   "What does a dedup-optimized file on a volume without the dedup filter return on its first open, and does the unguarded retry then charge stub figures silently? This is accepted by argument only (m7, O-013). No such volume was ever scanned, nor was ReFS, removable, network or Windows 10.",
+   "Does a real delete race between the first open and the retry, and a real 995 cancel of the retry open, behave as the simulated-error seam and code reading say? Neither was reached with the shipped exe."
+  ],
+  "candidates": [
+   {
+    "title": "Expose ProbeFailures, vanishedBeforeProbe and the outcome notes in the schema-1 --report",
+    "urgency": "soon",
+    "why": "WindowReport.cs carries neither ScanResult.ProbeFailures nor OutcomeNotes. A no-retry exe and the fixed exe produced identical reports, so no shipped artefact can show the 'N files could not be opened' note. SL-084's validate had to write a throwaway DOTNET_STARTUP_HOOKS shim and build a pre-fix exe from git archive to see it, and design case 14 could not run as written. Every later scanner slice that changes what counts as a probe failure will hit the same gap. This is an App change for its own slice (builds#193 LEFT OPEN)."
+   },
+   {
+    "title": "Measure what an OPEN_REPARSE_POINT handle reports for the 119 stopped-provider cloud files (err 363) before deciding whether they stay in 'could not be opened'",
+    "urgency": "soon",
+    "why": "The fixed profile scan still shows '119 files could not be opened'. These are cloud-tagged files (0x9000001A/0x9000701A, no RECALL/OFFLINE bit) with error 363, kept counted by scope. The design says changing that needs its own slice that measures the bypass first (U-004, U-019). It is not shipped-wrong behaviour today, so it waits for a person. It is tied to the design's still-open question, so raise it as measurement work and do not treat it as a decision."
+   }
+  ]
+ }
+}

@@ -1,0 +1,386 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-084",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-29T07:09:04.148Z",
+ "head": "c3b5eb6853f16912f923a34a95ccf1f1aab0aebe",
+ "run_id": 2139,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "The practice proposal is the core of this design and survives the checks against what has been measured. (1) Survey: nothing is built yet. SizeProbe.Probe (SizeProbe.cs:38-45) makes one open through SynchronousIoCancel.OpenForAttributes with flags 0 (SynchronousIoCancel.cs:239-240). Nothing in src uses FILE_FLAG_OPEN_REPARSE_POINT or 1920. The proposal adds exactly the missing retry at exactly that seam. (2) Spike reparse-retry-opens-aliases-and-sockets (GO): in the published exe, 114 aliases and 2 sockets fail the first open with 1920. The same open with 0x00200000 succeeds, the probe's FileStandardInfo query works on that handle, and every FileId matches the listing. The mechanism is settled by measurement, not argued. (3) Spike c-drive (NO-GO): its verdict does not question the mechanism. The retry fixed 119 of the 119 1920 failures on C:. It went no-go because 119 cloud-tagged files still fail with 363. The spike offered two options, and the design takes the second one: 363 counts as a genuine refusal in this slice. The slice title already scopes cloud tags out, and retrying them with OPEN_REPARSE_POINT would bypass cldflt and change cloud counting under U-004/U-019 with no measurement behind it. (4) Spike temp-tree (NO-GO): its needs-first is met because the socket fixture stays bound for the whole scan, as the repro does. The same spike showed an APPEXECLINK planted under testhost gives 1920 and ProbeFailed, so aliases can get a default-suite test. (5) The retry is keyed on the error code alone, with no gate on the listing's tag or reparse bit. That matches U-004's warning not to lean on the tag or reparse bit in a standalone exe, and it leaves the ScanOptions.Probe delegate untouched. (6) The practice designer's over_engineering_flag was followed. There is no libuv-style reopen loop, no tag allowlist, no reading of reparse data, and no check of FileId or tag after the retry. The report was only a title, so three assumptions carry into the build. 'Charged' in C1 means the entries SizeProbe.IsEligible admits. 'Sized from its own handle' means FileStandardInfo read from the retried handle. The fix covers every tag whose first open fails with 1920, not only the two tags the title names.",
+  "components": [
+   {
+    "name": "Win32 constants in Core's Kernel32.cs (the interop class the survey cites at Kernel32.cs:20)",
+    "responsibility": "Adds FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000 and ERROR_CANT_ACCESS_FILE = 1920 next to the existing FILE_FLAG_BACKUP_SEMANTICS. Adds no new P/Invoke.",
+    "key_interactions": "The flag is referenced only from SynchronousIoCancel.cs and the error code only from SizeProbe.cs. Architecture rules A and B enforce both. The definition lines themselves are excluded from both rules by lookahead."
+   },
+   {
+    "name": "SynchronousIoCancel.OpenReparsePointForAttributes",
+    "responsibility": "The same open as OpenForAttributes (FILE_READ_ATTRIBUTES, share read|write|delete, OPEN_EXISTING, through the same private Open, so still CreateFileW), except that dwFlags = FILE_FLAG_OPEN_REPARSE_POINT. OpenForAttributes itself stays at flags 0.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs",
+    "key_interactions": "Its only caller is SizeProbe.Probe, on the 1920 path. It runs on the scan worker that made the first open, so CancelSynchronousIo reaches it exactly as it reaches the first open. Because it is still a CreateFileW open, the SL-045 SYNCHRONIZE-deny refusal semantics carry over unchanged. The comments at :219 and :237 are rewritten to say the flag is not used on the first open and is used only on the 1920 retry. SL-056 fitness rule 3 must be read before this file is edited."
+   },
+   {
+    "name": "SizeProbe.Probe single retry",
+    "responsibility": "If OpenForAttributes returns exactly 1920, the first handle is disposed and OpenReparsePointForAttributes is called once. If that succeeds, FileStandardInfo is queried on the new handle as today (SizeProbe.cs:49) and returned with error 0. If it fails, the retry's error is returned. Every other first-open error (5, 32, delete-pending, 363, 995, gone) is returned unchanged and never retried.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/SizeProbe.cs",
+    "key_interactions": "The signature is unchanged, so ScanOptions.Probe, Scanner.Correct and every test and spike wrapper still bind. The comment at :9 is updated. This is the only place in src allowed to name 1920 (rule B)."
+   },
+   {
+    "name": "Scanner.Correct (unchanged)",
+    "responsibility": "Still turns a probe error other than gone into EntryFlags.ProbeFailed and _probeFailures++. After the fix it no longer receives 1920 for aliases or sockets. If a file is deleted between the two opens, the retry returns error 2 or 3 and this code's existing gone branch handles it.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "key_interactions": "Scanner.cs:420-429. Rule B forbids special-casing 1920 here."
+   },
+   {
+    "name": "MainWindow probe-failure note (unchanged)",
+    "responsibility": "'N files could not be opened to read their true size on disk' is still shown whenever ProbeFailures > 0. Aliases and sockets drop out of N because ProbeFailures no longer counts them, and that is how C4 is met.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "key_interactions": "MainWindow.xaml.cs:492-493. Rule B forbids filtering 1920 here."
+   },
+   {
+    "name": "Core.Tests reparse-point probe Facts",
+    "responsibility": "Default-suite Facts on a real %TEMP% TempTree, needed because the repro project is outside FsAnalyser.slnx. (1) Scan a tree holding an AF_UNIX socket whose socket stays bound for the whole scan, and dispose the socket before TempTree. (2) Scan a tree holding an IO_REPARSE_TAG_APPEXECLINK (0x8000001B) file planted with FSCTL_SET_REPARSE_POINT. (3) Call SizeProbe.Probe directly on an alias planted over N bytes and assert error 0 and EndOfFile == N. (4) Call OpenForAttributes directly on the alias and assert it still fails with 1920. (5) Scan and probe an alias with a SYNCHRONIZE deny and assert it stays ProbeFailed with a refusal error. None of these is skipped: if an AF_UNIX bind or a reparse plant fails, the Fact fails and shows Windows' error.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ReparsePointProbeTests.cs",
+    "key_interactions": "The alias plant reuses or extends the suite's existing reparse/junction native helper, parameterised by tag, because the InteropLivesOnlyInNative tests-scope rule forbids new P/Invoke outside the tests' native class. The SYNCHRONIZE deny follows the SL-045 conditional: the deny is on S, not RA."
+   },
+   {
+    "name": "SL-084 repro test (acceptance, untouched)",
+    "responsibility": "Passes unchanged once SizeProbe retries. Its exit code 0 is the slice's acceptance criterion. It stays outside FsAnalyser.slnx.",
+    "lives_at": "tests/bugs/SL-084-ReparseProbeRetry/ReparseProbeRetryTests.cs"
+   },
+   {
+    "name": "Fitness rules (.taad/fitness.yaml)",
+    "responsibility": "Read SL-056 rule 3 first. If it forbids FILE_FLAG_OPEN_REPARSE_POINT or 0x00200000 in SynchronousIoCancel.cs, narrow it so the flag is allowed only in OpenReparsePointForAttributes and OpenForAttributes stays at flags 0, and change its xUnit twin at the same time. Add architecture rules A and B below.",
+    "lives_at": ".taad/fitness.yaml",
+    "key_interactions": "Whether rules A and B each need an xUnit twin in ArchitectureRulesTests follows the project's parity convention. rules-parity and RuleCases expectations must be taken from the baseline run, never written as literals (SL-069 conditional)."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "SizeProbe.Probe",
+    "kind": "function",
+    "error_cases": "First open fails with 1920 and the retry opens: sizes from the retried handle, error 0. First open fails with 1920 and the retry fails: the retry's error is returned (2/3 means gone; 5, 32 or delete-pending means a refusal). Any other first-open error, including 363 and cancellation (995): returned as is, with no retry. The retry happens at most once per file.",
+    "notes": "The signature is unchanged. It still makes exactly one FileStandardInfo query, on whichever handle opened. The invalid first handle is disposed before the retry."
+   },
+   {
+    "name": "SynchronousIoCancel.OpenReparsePointForAttributes",
+    "kind": "function",
+    "auth_model": "Unelevated Medium-IL user token. FILE_READ_ATTRIBUTES only and never data access, so nothing is hydrated and no content is read.",
+    "error_cases": "The same set as OpenForAttributes, with the same hung-open cancellation, because it goes through the same private Open on the same thread.",
+    "notes": "New and internal. It is the only file open in src that passes FILE_FLAG_OPEN_REPARSE_POINT."
+   },
+   {
+    "name": "ScanResult.ProbeFailures / EntryFlags.ProbeFailed",
+    "kind": "function",
+    "notes": "The meaning is unchanged: files that were genuinely refused. After this slice those are errors 5, 32 and delete-pending, and still 363 on cloud-tagged files whose provider is not running (about 119 on C:, by decision)."
+   },
+   {
+    "name": "Window note 'N files could not be opened to read their true size on disk'",
+    "kind": "ui",
+    "notes": "No code change (MainWindow.xaml.cs:492-493). N drops by the number of aliases and sockets in the scan."
+   },
+   {
+    "name": "Acceptance command",
+    "kind": "cli",
+    "error_cases": "A non-zero exit means the slice is not done.",
+    "notes": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-084-ReparseProbeRetry/SL-084-ReparseProbeRetry.Tests.csproj must exit 0. The Core.Tests suite must also stay green, including the 106 OnDiskSize, ProbePass, SynchronousIoCancel, LongPath and EntryClassifier tests the survey ran green."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Retry exactly once, keyed only on error 1920 from the first open. Do not gate on the listing's reparse bit or tag.",
+    "reversibility": "cheap",
+    "rationale": "The c-drive spike found every 1920 on C: was on a reparse file, and the retry fixed 119 of 119. The flag changes nothing on a non-reparse file, so a stray 1920 there fails twice and is still recorded. U-004 warns against relying on tag or reparse-bit visibility in a standalone exe, and a gate would widen the ScanOptions.Probe delegate for no measured gain."
+   },
+   {
+    "decision": "The first open stays at flags 0. FILE_FLAG_OPEN_REPARSE_POINT is used only by the new retry entry point.",
+    "reversibility": "cheap",
+    "rationale": "WOF, dedup and cloud files must go through their filters, and they never reach the retry because their first open succeeds (SL-056 code-review-1.json:22). Moving the flag to the first open would bypass wof.sys and cldflt for millions of files. Rule A and the 'first open on an alias still returns 1920' case both enforce this."
+   },
+   {
+    "decision": "The retry goes through a new named entry point on SynchronousIoCancel, never a raw CreateFileW in SizeProbe.",
+    "reversibility": "cheap",
+    "rationale": "This keeps the hung-open cancellation on the second open and on the same worker thread. It keeps the CreateFileW route that SL-045's SYNCHRONIZE-deny refusal semantics depend on. It also keeps every file open inside the file SL-056 rule 3 fences. The spikes' harnesses called CreateFileW directly, and rule A stops that shape from being copied into Core."
+   },
+   {
+    "decision": "A failed retry reports the retry's error, not the original 1920.",
+    "reversibility": "cheap",
+    "rationale": "The retry is the more recent answer. A file deleted between the two opens is 'gone', not ProbeFailed, and an ACL or sharing refusal stays a refusal."
+   },
+   {
+    "decision": "Error 363 (ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING on cloud-tagged files with no RECALL or OFFLINE bit) is not retried and stays ProbeFailed. Of the two options the c-drive spike's no-go offered, this takes 'the completion criterion allows 363 as a genuine refusal'.",
+    "reversibility": "cheap",
+    "rationale": "The slice is scoped to non-link, non-cloud tags. Opening cloud files with OPEN_REPARSE_POINT bypasses cldflt and changes cloud counting (U-004, U-019), and nobody has measured what that handle reports. The spike's no-go concerned what is still counted, not whether the retry works: it fixed all 119 of the 1920 failures."
+   },
+   {
+    "decision": "No change to Scanner.Correct, ScanResult, EntryFlags, EntryClassifier or the window.",
+    "reversibility": "cheap",
+    "rationale": "The defect is one missing open. C4 follows from C2 and C3 because the note depends only on ProbeFailures. Rule B forbids fixing it downstream by filtering 1920."
+   },
+   {
+    "decision": "Regression coverage goes into Core.Tests: a bound AF_UNIX socket, a planted APPEXECLINK, a direct probe of an alias over N bytes, the first-open pin, and a refused alias. The repro project stays outside FsAnalyser.slnx.",
+    "reversibility": "cheap",
+    "rationale": "The testing constraint requires a real temp-tree test for any scanner slice, and the repro is not in the default suite. No test covers aliases today. The temp-tree spike showed the socket file disappears once disposed and the alias plant works unelevated under testhost."
+   },
+   {
+    "decision": "SL-056 fitness rule 3 is read before building and amended only if it forbids the flag. If it does, it is narrowed to 'the flag only in OpenReparsePointForAttributes, OpenForAttributes at flags 0', and its xUnit twin changes in the same commit.",
+    "reversibility": "expensive",
+    "rationale": "The rule has several consumers: the fitness engine, the xUnit twin, rules-parity and RuleCases with its SL-069 baseline offsets. It must never be routed around by opening files outside SynchronousIoCancel."
+   },
+   {
+    "decision": "No check of the file's tag or FileId after the retry. The window between the two opens is accepted.",
+    "reversibility": "cheap",
+    "rationale": "If an entry becomes a link between the two opens, the retry sizes the link itself (a few bytes). It never follows the link and never double-counts. The spike found retried FileIds matched the listing on all 116 targets. An extra query per retry is the over-building the practice designer flagged in libuv #4663."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "This was the only proposal, and it was taken nearly whole. Added here: two architecture rules (the flag only in SynchronousIoCancel.cs; 1920 named only in SizeProbe.cs); three test cases the proposal did not list (first open on an alias still returns 1920, an alias planted over N bytes probes to EndOfFile N, a refused alias stays ProbeFailed); and an open question for a person on the 363 follow-up. The proposal's over_engineering_note was cut off at 20000 characters, so anything after the cut was not seen."
+   }
+  ],
+  "coherence_check": "There was one proposal, so there is no composition to check. Nothing in this design has been argued with by anyone yet, and the reviewer should be the first to dispute it. What was checked instead was consistency with measured facts. (a) Survey line references (SizeProbe.cs:38-45 and :49, SynchronousIoCancel.cs:219/237/239-240, Scanner.cs:420-429, MainWindow.xaml.cs:492-493) match the seams the proposal edits. (b) Both spike no-gos are dealt with, not ignored. The socket fixture stays bound because Socket.Dispose deletes the file. The 363 files are explicitly left as refusals, as the spike's second option allowed. (c) SL-045's conditional: the retry is still a CreateFileW through the private Open, so the SYNCHRONIZE-deny refusal fixture still refuses it. A move to NtOpenFile would break that, and the design forbids it. (d) SL-077: SizeProbe runs on scan worker threads. The retry is inside Probe on the same thread, so the thread-targeted CancelSynchronousIo still reaches it. (e) U-004: there is no tag or reparse-bit gating, and directories are untouched, so its rule treating a 1920 on a directory as skip/unknown stands. (f) Q-004 and U-005: every eligible file is still sized from a handle, and no listing figure is newly trusted. Rule B stops anyone reintroducing listing-trust by filtering 1920 downstream. One seam was tightened. Rule A exempts SynchronousIoCancel.cs as a whole, so a regex alone cannot catch the flag moving onto OpenForAttributes. The material case 'first open on an alias still returns 1920' closes that gap. A regex tying the flag to the method name was rejected because it would fire on correct code written in the two-line style of OpenForAttributes at :239-240. Still unverified: the content of SL-056 fitness rule 3 (nobody at design time read it); whether the suite's existing reparse/junction helper can be parameterised by tag under InteropLivesOnlyInNative; and whether NTFS accepts FSCTL_SET_REPARSE_POINT on a non-empty file (case 3). The build settles all three, and none of them changes a boundary or a contract.",
+  "architecture_rules": [
+   {
+    "name": "only the 1920 retry opens a file without its filters",
+    "files": "src/FsAnalyser.Core/**/*.cs",
+    "must_not_match": [
+     "\\bFILE_(FLAG_)?OPEN_REPARSE_POINT\\b(?!\\s*=[^=])",
+     "[,(|]\\s*0x0*200000[uU]?\\b"
+    ],
+    "except_files": [
+     "src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs"
+    ],
+    "because": "The flag makes the open skip wof.sys, cldflt and dedup. Any open carrying it other than the 1920 retry would charge raw NTFS figures for WOF, deduplicated and cloud files. That is a counting defect that no size test on a plain temp tree notices. Today no code line in src matches (the survey found the flag only in comments). The constant's own definition line (`= 0x00200000`) is excluded by the lookahead and the character class."
+   },
+   {
+    "name": "a refused metadata open is decided in the probe, never filtered downstream",
+    "files": "src/**/*.cs",
+    "must_not_match": [
+     "\\bERROR_CANT_ACCESS_FILE\\b(?!\\s*=[^=])",
+     "(?:[=!]=\\s*|\\b(?:case|is)\\s+)1920\\b",
+     "\\b1920\\s*=>"
+    ],
+    "except_files": [
+     "src/FsAnalyser.Core/Scanning/SizeProbe.cs"
+    ],
+    "because": "The fix is to size these files from their own handle. Special-casing 1920 in Scanner.Correct, ScanResult or MainWindow would make the repro pass while hiding the failure. The entry would be charged its unprobed listing figure (U-005, Q-004: the listing is not trusted for size), and a real 1920 the retry cannot open would disappear from 'could not be opened'. Today nothing in src matches. The constant's definition is excluded by the lookahead."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "scan a folder and size each file from its own handle",
+    "shape": "it holds an AF_UNIX socket file whose socket stays bound for the whole scan",
+    "why": "Tag 0x80000023 has no handler, so the first open fails with 1920 and only the retry sizes the file. Socket.Dispose deletes the file (temp-tree spike), so a fixture that disposes before scanning passes vacuously. The repro discharges this case, and a Core.Tests twin is owed because the repro is outside FsAnalyser.slnx.",
+    "material": true
+   },
+   {
+    "behaviour": "scan a folder and size each file from its own handle",
+    "shape": "it holds an app-execution alias (tag 0x8000001B) planted with FSCTL_SET_REPARSE_POINT on a %TEMP% file",
+    "why": "No test covers C3 anywhere today. Under testhost the plant gives 1920 and ProbeFailed before the fix (temp-tree spike). The test asserts no ProbeFailed flag and ScanResult.ProbeFailures == 0.",
+    "material": true
+   },
+   {
+    "behaviour": "probe one file directly with SizeProbe.Probe",
+    "shape": "an alias planted on a file that already holds N bytes",
+    "why": "This proves the result is FileStandardInfo from the retried handle (EndOfFile == N) and not a swallowed error returned as zeros. A retry that returned (0, 0, error 0) would pass both scan cases above. If NTFS refuses to plant on a non-empty file, the build must say so and not quietly drop the assertion.",
+    "material": true
+   },
+   {
+    "behaviour": "open a file for attributes (the first, filtered open)",
+    "shape": "the planted alias, opened with OpenForAttributes directly",
+    "why": "It must still fail with 1920. This pins OpenForAttributes at flags 0. Rule A exempts SynchronousIoCancel.cs as a whole, so this is the only check that the flag did not move onto the first open, which would bypass wof, cldflt and dedup for every file.",
+    "material": true
+   },
+   {
+    "behaviour": "probe one file directly with SizeProbe.Probe",
+    "shape": "a plain file with no reparse point",
+    "why": "The first open succeeds and the retry must never run, and sizes must be unchanged. The existing 106 OnDiskSize, ProbePass, SynchronousIoCancel and LongPath tests discharge this and must stay green.",
+    "material": true
+   },
+   {
+    "behaviour": "scan a folder and size each file from its own handle",
+    "shape": "a plain file refused by a SYNCHRONIZE deny (error 5)",
+    "why": "Only 1920 triggers the retry. The existing ProbePassTests refusal Facts prove the retry does not hide a genuine refusal. Per SL-045 the deny must be on SYNCHRONIZE, not on RA.",
+    "material": true
+   },
+   {
+    "behaviour": "scan a folder and size each file from its own handle",
+    "shape": "a planted alias with a SYNCHRONIZE deny",
+    "why": "This is the only reachable shape where the retry itself is refused. It may instead be refused on the first open with error 5, if NTFS checks access before handling the reparse point. Either way the entry must stay ProbeFailed with a refusal error and be counted. Without this case, a retry that returned 1920 or 0, or leaked the invalid first handle, would ship with nothing exercising it.",
+    "material": true
+   },
+   {
+    "behaviour": "probe one file directly with SizeProbe.Probe",
+    "shape": "the file is deleted between the first open and the retry",
+    "why": "Not worth a test: it needs a race injected into a static SynchronousIoCancel that has no seam for one. The retry's error 2 or 3 flows unchanged into Scanner.Correct's existing gone branch.",
+    "material": false
+   },
+   {
+    "behaviour": "scan a folder and size each file from its own handle",
+    "shape": "a cloud-tagged file whose provider is not running (error 363, no RECALL or OFFLINE bit)",
+    "why": "Not worth a test: the retry runs only on exactly 1920, so 363 takes the same unchanged path as error 5 in the refusal case. A stopped-provider fixture exists only behind the opt-in Cloud=CF-SYNC-ROOT trait, which the default filter excludes. Leaving it ProbeFailed in this slice is deliberate.",
+    "material": false
+   },
+   {
+    "behaviour": "probe one file directly with SizeProbe.Probe",
+    "shape": "the first open hangs and is cancelled (error 995)",
+    "why": "Not worth a test: 995 is not 1920, so there is no retry. Cancellation is the shared private Open that SynchronousIoCancelTests cover, and the retry runs on the same worker thread inside Probe.",
+    "material": false
+   },
+   {
+    "behaviour": "probe one file directly with SizeProbe.Probe",
+    "shape": "an alias at a path longer than MAX_PATH",
+    "why": "Not worth a test: the retry passes the identical path string through the same Open that LongPathTests cover, and the flag does not touch path parsing. AF_UNIX's ~108-character sun_path limit rules out a long-path socket.",
+    "material": false
+   },
+   {
+    "behaviour": "scan a folder and size each file from its own handle",
+    "shape": "an AF_UNIX socket file left on disk by a process that closed it with raw ws2_32 bind + closesocket",
+    "why": "Not worth a test: the probe does not branch on whether the socket is bound. The first spike measured deadraw.sock and the retry opened it. The fixture would need new ws2_32 P/Invoke in the tests under InteropLivesOnlyInNative, for no new branch.",
+    "material": false
+   },
+   {
+    "behaviour": "show the scan's notes in the window",
+    "shape": "a scan whose only reparse-point files are aliases and sockets",
+    "why": "Not worth a test: MainWindow.xaml.cs:492-493 adds the note only when ProbeFailures > 0, so the scan cases asserting ProbeFailures == 0 discharge C4. By constraint there is no App test project.",
+    "material": false
+   },
+   {
+    "behaviour": "scan a real folder with the published single-file exe",
+    "shape": "%LOCALAPPDATA%\\Microsoft\\WindowsApps (114 real aliases on this PC)",
+    "why": "No xUnit test is owed, but validate should run this through --report and expect 0 probe failures. Testhost and the published exe differ (SL-043 long paths), and the real aliases are the ones users hit. The first spike already ran the published exe with the retry over all 114.",
+    "material": false
+   }
+  ],
+  "decidable_disagreements": [],
+  "taste_disagreements": [
+   "The retry is a new named entry point (OpenReparsePointForAttributes), not a flags parameter on OpenForAttributes. The named method is what makes the flag's single use enforceable by rule A and easy to find with grep.",
+   "The regression is duplicated into Core.Tests, not the repro project added to FsAnalyser.slnx. Adding it would be one line, but the tests/bugs projects have been kept out of the solution.",
+   "A failed retry reports the retry's error, not the original 1920. This changes only which refusal code appears in a diagnostic, not the count.",
+   "The new Facts go in a new file, ReparsePointProbeTests.cs, rather than being added to ProbePassTests.cs."
+  ],
+  "open_questions": [
+   "Should files on a cloud sync root whose provider is not running (error 363, tags 0x9000001A and 0x9000701A with no RECALL or OFFLINE bit, about 119 on C:) keep counting toward 'N files could not be opened'? SL-084 leaves them there by scope and does not block on the answer. Changing it needs its own slice that measures what a cldflt-bypassing open reports for such files before any counting changes."
+  ],
+  "stack_chosen": [],
+  "whats_new": [
+   "Kernel32.cs: constants FILE_FLAG_OPEN_REPARSE_POINT (0x00200000) and ERROR_CANT_ACCESS_FILE (1920)",
+   "SynchronousIoCancel.OpenReparsePointForAttributes: the same cancellable CreateFileW open as OpenForAttributes, plus the reparse-point flag",
+   "SizeProbe.Probe: one retry on 1920 that returns the retried handle's FileStandardInfo or the retry's error",
+   "Rewritten comments at SizeProbe.cs:9 and SynchronousIoCancel.cs:219 and :237: flag not used on the first open, used only on the 1920 retry",
+   "tests/FsAnalyser.Core.Tests/ReparsePointProbeTests.cs: bound-socket scan, planted-alias scan, direct probe of an alias over N bytes, first-open-still-1920 pin, refused-alias Facts",
+   "Tag-parameterised reparse plant in the tests' existing native helper (needed for APPEXECLINK)",
+   "Fitness rule A: FILE_(FLAG_)OPEN_REPARSE_POINT and 0x00200000 used only in SynchronousIoCancel.cs",
+   "Fitness rule B: 1920 / ERROR_CANT_ACCESS_FILE handled only in SizeProbe.cs",
+   "Conditional: narrowed wording of SL-056 fitness rule 3 and its xUnit twin, only if reading the rule shows it forbids the flag"
+  ],
+  "whats_reused": [
+   "SynchronousIoCancel's private Open and its thread-targeted hung-open cancellation",
+   "SizeProbe's FileStandardInfo query and result shape; ScanOptions.Probe delegate signature",
+   "Scanner.Correct's gone-vs-ProbeFailed classification (Scanner.cs:420-429), unchanged",
+   "ScanResult.ProbeFailures and EntryFlags.ProbeFailed, unchanged",
+   "MainWindow's probe-failure note (MainWindow.xaml.cs:492-493), unchanged",
+   "EntryClassifier's surrogate-bit link rule and its classification of AppExecLink as a File",
+   "TempTree fixture and its cleanup (the temp-tree spike found it removes the planted alias)",
+   "The suite's existing reparse/junction native helper",
+   "ProbePassTests' SYNCHRONIZE-deny refusal Facts, as proof that the retry hides no genuine refusal",
+   "The untracked repro project tests/bugs/SL-084-ReparseProbeRetry, unchanged, as the acceptance test"
+  ],
+  "channeled_experts": [
+   "CPython os.stat Windows maintainers (bpo-37834 unhandled-reparse-tag retry, recalled)",
+   "Ken Brown / Cygwin AF_UNIX (FILE_OPEN_REPARSE_POINT when the tag has no handler)",
+   "vtjnash on libuv #4663 (fallback opens and TOCTOU)"
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Language-runtime stat() on Windows (CPython os.stat, libc++ std::filesystem, libuv fs_stat)",
+   "pattern": "Open through the filter stack first. If that fails with ERROR_CANT_ACCESS_FILE, reopen the reparse point itself and report metadata for the entry as it is, without following it.",
+   "transfer_found": true,
+   "rationale": "A runtime's lstat-like path and this probe want the same thing: metadata for a named entry that the caller has already decided not to follow. Trying first and retrying second keeps filtered files (WOF, dedup, cloud) resolving through their filters, which the counting rules depend on.",
+   "invariants": [
+    {
+     "precondition": "The probe needs metadata only (FILE_READ_ATTRIBUTES plus FileStandardInfo), never file content",
+     "status": "holds",
+     "evidence": "The probe's only query is FileStandardInfo (SizeProbe.cs:49). Spike reparse-retry-opens-aliases-and-sockets: that query succeeds on the retried handle for 114 aliases and 2 sockets."
+    },
+    {
+     "precondition": "Entries that reach the probe are never name-surrogate links, so opening the reparse point itself never replaces a target the caller wanted",
+     "status": "holds",
+     "evidence": "U-004 conditional: links are identified by the surrogate bit and skipped. EntryClassifier.cs:11 and EntryKind.cs:9 classify AppExecLink as a File, and SizeProbe.IsEligible admits only non-link files."
+    },
+    {
+     "precondition": "Files that need their filter (WOF, dedup, cloud with a running provider) succeed on the first open and so never reach the retry",
+     "status": "holds",
+     "evidence": "SL-056 code-review-1.json:22. c-drive spike: the 119 remaining cloud failures are 363, not 1920, so a retry keyed on 1920 never touches them."
+    },
+    {
+     "precondition": "The retried handle describes the same file the listing recorded",
+     "status": "holds",
+     "evidence": "Spike reparse-retry-opens-aliases-and-sockets: retried FileIds match the listing on all 116 targets."
+    },
+    {
+     "precondition": "The retry runs on the same worker thread as the first open, so thread-targeted cancellation reaches it",
+     "status": "holds",
+     "evidence": "The retry is inside SizeProbe.Probe and goes through the same private Open. SL-077 measured SizeProbe running on the scan's worker threads."
+    },
+    {
+     "precondition": "SL-056 fitness rule 3 allows FILE_FLAG_OPEN_REPARSE_POINT in SynchronousIoCancel.cs",
+     "status": "must-verify",
+     "evidence": "The survey says the rule fences how SynchronousIoCancel.cs opens files but not what it forbids. The comments at SynchronousIoCancel.cs:219 and :237 say the flag is not used. The build reads the rule before editing the file."
+    }
+   ]
+  },
+  "prior_art": [
+   {
+    "pattern": "Applications using CreateFile should specify FILE_FLAG_OPEN_REPARSE_POINT when opening a file that is a reparse point",
+    "where": "https://learn.microsoft.com/en-us/windows/win32/fileio/reparse-points-and-file-operations",
+    "authority": "official",
+    "basis": "cited"
+   },
+   {
+    "pattern": "An app execution alias cannot be opened by a plain CreateFile: it fails with ERROR_CANT_ACCESS_FILE because nothing resolves the APPEXECLINK tag",
+    "where": "https://cygwin.com/pipermail/cygwin-patches/2025q4/014496.html",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2025-12-19"
+   },
+   {
+    "pattern": "AF_UNIX socket files fail NtOpenFile/NtCreateFile with STATUS_IO_REPARSE_TAG_NOT_HANDLED. Fix: add FILE_OPEN_REPARSE_POINT for known non-link reparse points",
+    "where": "https://cygwin.com/pipermail/cygwin-patches/2020q3/010665.html",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2020-09-29"
+   },
+   {
+    "pattern": "fstat of AppExecLink via a fallback open with FILE_FLAG_OPEN_REPARSE_POINT. The reviewer warns of a TOCTOU window in a separate second open and proposes a larger reopen loop across every CreateFileW; this design rejects the loop as over-building",
+    "where": "https://github.com/libuv/libuv/pull/4663",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2024-12-27 (updated 2026-02-11)"
+   },
+   {
+    "pattern": "std::filesystem status() on an AF_UNIX socket fails with ERROR_CANT_ACCESS_FILE because the open lacks FILE_FLAG_OPEN_REPARSE_POINT; CPython's os.stat avoids it by reopening with the flag",
+    "where": "https://github.com/llvm/llvm-project/pull/213233",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-07-31"
+   },
+   {
+    "pattern": "CPython os.stat (bpo-37834, 3.8+): on ERROR_CANT_ACCESS_FILE from a traversing open, reopen with FILE_FLAG_OPEN_REPARSE_POINT and stat the unhandled reparse point itself",
+    "where": "CPython Modules/posixmodule.c win32_xstat_impl",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "STATUS_IO_REPARSE_TAG_NOT_HANDLED (0xC0000279) maps to Win32 ERROR_CANT_ACCESS_FILE (1920), so the NT-level Cygwin symptom and this probe's 1920 are the same failure",
+    "where": "Windows NTSTATUS-to-Win32 error mapping (RtlNtStatusToDosError)",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ]
+ }
+}

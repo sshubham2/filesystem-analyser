@@ -18,6 +18,9 @@ internal static unsafe partial class Kernel32
     public const uint FILE_SHARE_ALL = 0x1 | 0x2 | 0x4; // read | write | delete
     public const uint OPEN_EXISTING = 3;
     public const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+    // Opens the reparse point itself, past its filter: wof.sys, cldflt and dedup do not answer. Only the probe's 1920
+    // retry passes it (SynchronousIoCancel.OpenReparsePointForAttributes, SL-084).
+    public const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
 
     // File attributes. Only EntryClassifier may look at the reparse bit.
     public const uint FILE_ATTRIBUTE_DIRECTORY = 0x10;
@@ -60,6 +63,7 @@ internal static unsafe partial class Kernel32
     public const int ERROR_INVALID_PARAMETER = 87;
     public const int ERROR_DIRECTORY = 267;
     public const int ERROR_OPERATION_ABORTED = 995;
+    public const int ERROR_CANT_ACCESS_FILE = 1920; // a reparse tag no filter handles: an AF_UNIX socket, an app alias
 
     [StructLayout(LayoutKind.Sequential)]
     public struct FILE_STANDARD_INFO

@@ -8,10 +8,16 @@ namespace FsAnalyser.Core.Tests;
 internal static class TestNative
 {
     private const uint FSCTL_SET_SPARSE = 0x000900C4;
+    private const uint FSCTL_SET_REPARSE_POINT = 0x000900A4;
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DeviceIoControl(SafeFileHandle device, uint ioControlCode, IntPtr inBuffer, int inBufferSize,
+        IntPtr outBuffer, int outBufferSize, out int bytesReturned, IntPtr overlapped);
+
+    [DllImport("kernel32.dll", EntryPoint = "DeviceIoControl", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeviceIoControlIn(SafeFileHandle device, uint ioControlCode, byte[] inBuffer, int inBufferSize,
         IntPtr outBuffer, int outBufferSize, out int bytesReturned, IntPtr overlapped);
 
     private const uint SPI_GETWORKAREA = 0x0030;
@@ -41,6 +47,23 @@ internal static class TestNative
         {
             int error = Marshal.GetLastWin32Error();
             throw new Win32Exception(error, $"FSCTL_SET_SPARSE on {path} failed: {new Win32Exception(error).Message}");
+        }
+    }
+
+    /// <summary>
+    /// Sets a reparse point with a Microsoft tag (REPARSE_DATA_BUFFER: tag, data length, reserved, then
+    /// <paramref name="data"/>) on the file <paramref name="file"/> was opened on for writing. The file keeps its data.
+    /// </summary>
+    public static void SetReparsePoint(SafeFileHandle file, string path, uint tag, byte[] data)
+    {
+        var buffer = new byte[8 + data.Length];
+        BitConverter.GetBytes(tag).CopyTo(buffer, 0);
+        BitConverter.GetBytes(checked((ushort)data.Length)).CopyTo(buffer, 4);
+        data.CopyTo(buffer, 8);
+        if (!DeviceIoControlIn(file, FSCTL_SET_REPARSE_POINT, buffer, buffer.Length, IntPtr.Zero, 0, out _, IntPtr.Zero))
+        {
+            int error = Marshal.GetLastWin32Error();
+            throw new Win32Exception(error, $"FSCTL_SET_REPARSE_POINT (tag 0x{tag:X8}) on {path} failed: {new Win32Exception(error).Message}");
         }
     }
 
