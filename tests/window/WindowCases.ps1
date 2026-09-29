@@ -3034,10 +3034,12 @@ function Test-T007 {
 # T-008 (SL-082): an FSA_HOOK_FAIL_LISTING the hook cannot arm ends the app before its Main, so no case reads an
 # unfaulted scan as a faulted one (review m7). Each value in a launch of its own, in report mode under the hook's
 # size mode, where an armed hook would let the app size its window, scan and write its report with exit 0: two parts
-# instead of three, a page that is not a number, and two values Core refuses, page 1 and error 0. Each must end
-# within the timeout on the exception thrown out of the hook's Initialize (0xE0434352, the runtime's unhandled
-# exception, measured at SL-082's build), with no report written and the hook's refusal its only line. A Core member the hook
-# cannot find is WindowMutants.ps1's NoFailListingMember.
+# instead of three, a page or an error that is not a number, and the values Core refuses: page 1, error 0, error 18
+# (ERROR_NO_MORE_FILES, which would end the listing at the page with no error, so the folder would read complete), an
+# empty name and a name holding a path separator (review m1, O-017). Each must end within the timeout on the
+# exception thrown out of the hook's Initialize (0xE0434352, the runtime's unhandled exception, measured at SL-082's
+# build), with no report written and the hook's refusal, naming its own reason, its only line. A Core member the
+# hook cannot find is WindowMutants.ps1's NoFailListingMember.
 function Test-T008 {
     $case = New-CaseFolder
     try {
@@ -3048,6 +3050,10 @@ function Test-T008 {
             @{ Value = 'folder1|two|995'; Reason = '^fail-listing refused reason=FormatException: the page ''two'' is not a whole number$' }
             @{ Value = 'folder1|1|995'; Reason = '^fail-listing refused reason=ArgumentOutOfRangeException: .*\(Parameter ''page''\)' }
             @{ Value = 'folder1|2|0'; Reason = '^fail-listing refused reason=ArgumentOutOfRangeException: .*\(Parameter ''win32Error''\)' }
+            @{ Value = 'folder1|2|x'; Reason = '^fail-listing refused reason=FormatException: the error ''x'' is not a whole number$' }
+            @{ Value = 'folder1|2|18'; Reason = '^fail-listing refused reason=ArgumentOutOfRangeException: .*\(Parameter ''win32Error''\) Actual value was 18\.$' }
+            @{ Value = '|2|995'; Reason = '^fail-listing refused reason=ArgumentException: '''' is not one folder''s name \(Parameter ''folderName''\)$' }
+            @{ Value = 'a\b|2|995'; Reason = '^fail-listing refused reason=ArgumentException: ''a\\b'' is not one folder''s name \(Parameter ''folderName''\)$' }
         )
         for ($i = 0; $i -lt $bad.Count; $i++) {
             $value = $bad[$i].Value

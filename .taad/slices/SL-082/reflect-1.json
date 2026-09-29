@@ -1,0 +1,129 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-082",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-09-29T05:14:53.713Z",
+ "head": "cd235cadf287e51d81537933e9a0e557b3f92acc",
+ "run_id": 2107,
+ "summary": "SL-082 was opened as a \"bug fix\" from an old SL-044 reflection candidate, but nothing was broken. Half the scope (the Core scanner test) had been delivered by SL-070 (cb201b4), and the other half had no way to make a listing fail partway. The slice added a dormant, name-and-page-keyed listing failpoint to Core (`SynchronousIoCancel.FailListingOf` and `ListingError`, consulted in `DirectoryReader.List`). The hook arms it from `FSA_HOOK_FAIL_LISTING`. Two window cases, T-007 and T-008, and two mutants were added. It passed validation, but O-017 (T-008 feeds only 4 of the 8 refusal shapes) is still open at reflect, and the 'could not be read in full' row has never been reached by a failure Windows itself produced.",
+ "payload": {
+  "status": "complete",
+  "reason": "Reflection on SL-082 written from the full record. The bug report was a title only, so I assumed the scope the build-check and design agreed on: the Core test already existed and only the window case, plus the fault seam it needs, was owed.",
+  "summary": "SL-082 was opened as a \"bug fix\" from an old SL-044 reflection candidate, but nothing was broken. Half the scope (the Core scanner test) had been delivered by SL-070 (cb201b4), and the other half had no way to make a listing fail partway. The slice added a dormant, name-and-page-keyed listing failpoint to Core (`SynchronousIoCancel.FailListingOf` and `ListingError`, consulted in `DirectoryReader.List`). The hook arms it from `FSA_HOOK_FAIL_LISTING`. Two window cases, T-007 and T-008, and two mutants were added. It passed validation, but O-017 (T-008 feeds only 4 of the 8 refusal shapes) is still open at reflect, and the 'could not be read in full' row has never been reached by a failure Windows itself produced.",
+  "estimate_error": "Tier was right and type was wrong. Medium risk fits, because the build edits the scanner's hot listing loop (`DirectoryReader.List`) and the project rule (Q-002) cuts scanner-touching slices above the default tier. But the slice was typed \"bug fix\" with a title-only report and described as \"add a window case\". In practice it needed a production-side Core seam, hook arming, two cases and two mutants, and half the stated scope already existed. Repro therefore had nothing to reproduce, and build-check and risk-spike both spent a cycle re-discovering the SL-070 test and the missing seam. Pre-build stages ran twice each (repro, build-check, spike, critique), while the build was a single pass over about 6 files. A coverage-gap slice from a reflection candidate should open as test/tooling, skip repro, and start with a \"what already exists\" check.",
+  "learned": [
+   {
+    "kind": "process",
+    "lesson": "Reflection candidates go stale. Before opening a slice from one, grep tests/ and git log for later slices that touched the same symbols. SL-070 added the Core half of this slice's scope and did not update docs/design/SL-044-folder-tree.md, so both the doc and the candidate kept describing a gap that was half closed.",
+    "evidence": "Build-check verdict 'partial': TopLevelRowTextTests.cs (commit cb201b4, 'SL-070 build attempt 1', fixing HF-002) already drives Scanner.Scan with error 995 at a folder's third buffer, and passes 3/3. SL-044 doc lines 116-117 still said no case could make a listing fail partway."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "A listing that fails partway cannot be produced by real I/O here, so do not spike it again. Local NTFS checks the ACL at open time only, and deleting the folder mid-enumeration truncates silently. The SMB loopback client fetched a 3,000-entry folder in one QUERY_DIRECTORY call per handle. The route is the failpoint: `SynchronousIoCancel.FailListingOf(name, page, win32Error)`, armed via `FSA_HOOK_FAIL_LISTING='<leaf>|<page>|<error>'` (only when `FSA_HOOK_MODE` is also set). It fires for every folder with that leaf name for the life of the process, rescans included, and never on the root. The mutants are not in `WindowCases.ps1 -Case All`. Run them by name with `WindowMutants.ps1 -Mutant ListingFailsAnyFolder` or `NoFailListingMember`.",
+    "evidence": "Spike 2 ran two NTFS experiments (all 500 files still listed after the ACL revoke; silent truncation on delete). Spike 4's diagnostic logged one QUERY_DIRECTORY call returning 3,002 entries. Code review notes the drift; the build and code review both state that the mutants have to be named."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "Tree-row evidence in window cases comes from tree mode's WALK 'tree-row' lines (childCount, size, onDisk, drawn note, expander), not from the schema-1 report. WindowReport.cs:91-93 records Q-016: FolderTree reports layout only, never a row's name or figures. WALK opens rows with 1 to 1000 children (WalkLimit) and brings each child into view before reading it, so virtualization does not cut the counts. Fixtures need K ≤ 1000. Read TreeMode.cs:38-43, 318-357 and 876-895 before designing any new tree assertion.",
+    "evidence": "The M2, m3 and m6 dispositions replaced the design's 'Expand-by-name step' and 'Tree rows in the window report' components. Both duplicated WALK or violated Q-016, and the WindowReport.cs change was never built. Spike 3's 'go' on additive schema-1 fields was for a route the build did not take."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "Sizing constants for listing fixtures: DirectoryReader uses a 64 KiB buffer, and a FILE_ID_EXTD_DIR_INFO record is 88 bytes plus 2 per name character, rounded to 8. With 46-character names that is about 184 bytes, or about 355 entries per page, so 2,000 files span 6 pages. Every listing ends with an ERROR_NO_MORE_FILES query, so 'page' counts query calls and the failpoint replaces only a call that returned 0. A leak check on a sibling folder needs that sibling to be multi-page and to list before the faulted one (a-<tag> before p-<tag>).",
+    "evidence": "M1 and m4 dispositions; New-PartwayTree built P and Q at 2,000 files each; T-007 P kept 355 of 2,000; the ListingFailsAnyFolder mutant made T-007 fail on Q's childCount and on the failpoint firing twice."
+   },
+   {
+    "kind": "risk",
+    "lesson": "Any error-injection seam in DirectoryReader must refuse win32Error 0 and 18 (ERROR_NO_MORE_FILES): both end the loop by returning 0, so a truncated folder would look complete with no Unreadable flag. 995 with `LastCallAborted` false is deliberately 'an error like any other' (DirectoryReader.cs:90-93). If the SL-039/040/080 stall work changes how an unasked 995 is treated, T-007 failing is the intended signal.",
+    "evidence": "The builder added the error-18 refusal itself as a deviation (SynchronousIoCancel.cs:149-150; DirectoryReader.cs:115-116). The m5 finding (use another code) was overridden on the strength of DirectoryReader.cs:90-93 and SynchronousIoCancel.cs:116-118."
+   },
+   {
+    "kind": "process",
+    "lesson": "Do not mark a design question would_force_resynthesis when a file read settles it. Rules-parity treats every fitness.yaml entry after the first '# settled by SL-' marker as settled and never compares it (rules-parity.ps1:387-391), so a new slice architecture rule needs no xUnit twin. fitness.yaml:312-320 already bars FSA_HOOK_/StartupHook/FsaWindowHook across src/**, and no rule over Core/Scanning bans static or reflection-armed members. The design stage should read fitness.yaml and rules-parity.ps1 first.",
+    "evidence": "M3, m1 and m2 were overridden by exactly these lines, and O-010 was discharged by adding the members to the existing SynchronousIoCancel class. The rules-parity run reports AGREE."
+   },
+   {
+    "kind": "process",
+    "lesson": "The risk spike inherited 'already-built Core partial-listing seam' from a build-check 'present' verdict that measured something different: a test-process-only global per-call counter (OverrideQueryError), not a per-folder seam a startup hook can arm. When the build-check says a criterion is present, the spike must name the symbol and confirm it exists before writing experiments. Otherwise the first experiment goes no-go and the ones that depend on it go blocked.",
+    "evidence": "Spike 1's no-go said 'Could not find what the method names ... anywhere in the project's real source'; spike 2 was blocked behind it; spike 4 ran out of turns. The engine then built anyway against the spike's own advice (an injectable reader plus a Core Fact), and the design chose the failpoint instead."
+   },
+   {
+    "kind": "process",
+    "lesson": "An accepted-pending code-review finding at the end of the loop did not send the slice back to build, so validate passed and reflect opened with O-017 still open. Check open obligations at reflect and commit. Validate stood in with an uncommitted temp driver, and its first attempt failed because it built log and report filenames from the raw 'a\\b' value. The repo has no regression check for the empty-name, path-separator, error-18 or non-numeric-error refusals.",
+    "evidence": "Rework line: code-review ran 2 times, build-slice once. O-017 status 'open, owed to build-slice'. T-008's $bad table (WindowCases.ps1:3046-3051) still holds 4 rows. Validate's own list marks the 'First attempt at the O-017 values' as failed."
+   },
+   {
+    "kind": "estimate",
+    "lesson": "Full `WindowCases.ps1 -Case All` takes about 650 s and was run in full by build, code review and validate. Budget for that when a slice touches the window harness, and do not open more than one full re-run per stage unless a stage changes code.",
+    "evidence": "Validate: '48 passed in 652 s'. The build and code-review accounts each also report a 48-case full pass; N-001..N-004 need -IncludeNetwork and did not run."
+   }
+  ],
+  "what_went_wrong": [
+   "The slice was opened from a stale reflection candidate. The Core scanner test had existed since SL-070 (cb201b4). Repro ran twice and build-check ran twice before the loop settled on 'half already built'.",
+   "It was typed as a bug fix with a title-only report, so repro had nothing to reproduce. It halted, then passed with 'no reproduction'. A whole stage cycle was spent on a slice that is missing coverage for correct code.",
+   "The risk spike was written against a seam that did not exist. One experiment was no-go, one blocked, one ran out of turns, and one (schema-1 fields) proved a route the build did not take. The engine's decision to 'build anyway' proposed an injectable reader plus a Core Fact, which the design then discarded. The spike's real yield (no per-folder seam exists; NTFS cannot fail partway) was already written in SL-044's design doc.",
+   "The design imported components that already existed or were barred by Q-016 (an expand-by-name step and schema-1 tree-row fields). It also left the fitness/rules-parity question open as would_force_resynthesis when a file read settles it. All of this surfaced only through critique dispositions.",
+   "Critique filed 12 findings: 6 accepted and 6 overridden by facts in the repo (M3, m1, m2, m5, m6, m8). Half the review was answered by files the critique had not read (TreeMode.cs, fitness.yaml, DirectoryReader.cs, ScanStore.cs). Critique-review was skipped by the sizing rule, so nothing measured that noise.",
+   "The build departed from the design in 8 declared ways: the failpoint moved to SynchronousIoCancel, a fired-callback was added, extra refusals were added, the WindowReport change was dropped, and so on. The design had named the wrong file and the wrong report route, so the build corrected it.",
+   "O-017 was accepted-pending from code review but never went back to build. Validate passed with it open. T-008 feeds 4 of 8 refusal shapes, and the missing four were checked only by an uncommitted temp driver, whose first attempt failed on its own filename bug.",
+   "The 'row under test' was reached only through the injected failpoint. No failure Windows produced, and no mouse or keyboard toggle of the partial row's expander, was ever exercised. The slice's stated goal ('an ordinary user cannot make it happen') is met by simulation only."
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "what": "The critique never asked which values of the injected win32Error make DirectoryReader.List end the listing as if complete. 0 and 18 (ERROR_NO_MORE_FILES) return 0 from the loop, so a truncated P would look complete with no Unreadable flag and no note. The design's FailListingOf contract refused only page < 2 and an empty name. m1 probed the NTSTATUS-vs-Win32 layer but not the value space.",
+    "dimension": "contract-gaps",
+    "severity": "minor",
+    "caught_by": "build (the builder added the refusals for error 0/18, a path separator and a non-numeric error as declared deviations); code review then found that T-008 did not feed them (O-017)"
+   },
+   {
+    "gate": "critique",
+    "what": "The critique did not ask whether the hook reaches its arming code when only FSA_HOOK_FAIL_LISTING is set. The design said the variable 'sits alongside FSA_HOOK_MODE' and 'does not add a new mode', but StartupHook.Initialize returns early without a mode. The new variable is inert alone, and a case that set only it would silently run an unfaulted scan.",
+    "dimension": "contract-gaps",
+    "severity": "minor",
+    "caught_by": "build (documented in the hook header and listed as a left-open item); T-007's first check would fail such a case"
+   },
+   {
+    "gate": "critique",
+    "what": "The critique's m7 asked for a single malformed-value sub-case. The design contract lists several distinct refusal shapes (empty name, page < 2, missing Core member), and the build added more. Nothing required a feeding row per refusal, so T-008 shipped feeding 4 shapes and the missing-member shape was covered only by a mutant. The empty-name refusal that the contract names is unfed.",
+    "dimension": "test-coverage",
+    "severity": "minor",
+    "caught_by": "code-review (finding m1, O-017); still open at reflect"
+   },
+   {
+    "gate": "critique",
+    "what": "The critique proposed adding per-row names and figures to window.FolderTree (M2's fix and m3's rows[] fix). That contradicts WindowReport.cs:91-93 (Q-016: layout only, never a row's name or figures), and TreeMode's WALK already writes tree-row lines. It never checked for an existing expand or row-dump mechanism, and its m6 finding presumed the expand step did not exist. The design and spike 3 had built on the same wrong route.",
+    "dimension": "cross-cutting-conformance",
+    "severity": "minor",
+    "caught_by": "finding disposition (the M2, m3 and m6 'because' notes cite WindowReport.cs:91-93 and TreeMode.cs:38-43, 318-357)"
+   }
+  ],
+  "unknowns": [
+   "Does a real mid-listing error, such as a share dropping between pages, reach DirectoryReader.List as a Win32 error after at least one page with LastCallAborted false? Validate inferred this from where the failpoint sits (after io.Query, before the error check). Spike 2 showed local NTFS cannot produce it, and spike 4 found the SMB client returned all 3,000 entries in one QUERY_DIRECTORY call. Nothing has shown that any real source pages a listing.",
+   "On a machine with WER's crash UI enabled, does T-008's 0xE0434352 exit hold the process for the 30 s timeout on each launch? Every launch here ended within about a second, so it is unmeasured elsewhere. It matters more once O-017 raises T-008 from 4 to 8 launches."
+  ],
+  "candidates": [
+   {
+    "title": "Add the four unfed refusal rows to T-008's $bad table (O-017)",
+    "urgency": "now",
+    "why": "O-017 is accepted-pending, owed to build-slice, and still open at reflect. T-008 (WindowCases.ps1:3046-3051) feeds 4 of 8 refusal shapes. The unfed ones are: empty name; 'a\\b|2|995' (separator); 'folder1|2|18' (ArgumentOutOfRangeException for win32Error); 'folder1|2|x' (FormatException). Error 18 matters most, because a regression there gives a truncated P with no Unreadable flag and no failpoint message. Validate ran all four by hand against the shipped exe (all refused), but only with an uncommitted temp driver. Build the log and report filenames from a sanitized tag, not the raw value."
+   },
+   {
+    "title": "Window case that opens the partial row's expander with real input",
+    "urgency": "someday",
+    "why": "Validate's 'not reached': P's expander was opened by tree mode's WALK setting the container open, not by a mouse or keyboard toggle on the drawn glyph. The slice text names the row's expander as the thing under test. The case would need an input path that toggles the drawn glyph, whether via UI Automation or via the existing hook's key or mouse route, if one exists."
+   },
+   {
+    "title": "Make T-008 independent of the machine's Windows Error Reporting UI",
+    "urgency": "someday",
+    "why": "T-008 asserts the runtime's unhandled-exception exit 0xE0434352 for a startup-hook throw. With WER's UI enabled, a crash dialog could hold each launch until the 30 s timeout (validate's 'not reached'; build-slice's left-open item). O-017 raises the launches from 4 to 8. The rules-parity greps show the hook is barred from Environment.Exit, so the guard has to be set at launch (error mode or WER DontShowUI for the child) rather than by changing how the hook exits."
+   },
+   {
+    "title": "Let WindowCases.ps1 run a named group (touched area plus a smoke set) for review and validate",
+    "urgency": "someday",
+    "why": "`-Case All` took 652 s at validate, and build, code review and validate each ran the full 48 cases. This slice's two new cases and two mutants are self-contained. Mutants are already run by name only, so a group flag would fit how the suite is used, but validate's 'existing cases unaffected' check would still need one full run per slice."
+   }
+  ]
+ }
+}
