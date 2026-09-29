@@ -218,6 +218,22 @@ public class ArchitectureRulesTests
             @"(?<!\?)\?\s*UnreadableKind\.(NothingListed|ListedPartway)\b");
     }
 
+    /// <summary>
+    /// Nothing in the app hands Explorer its select switch (SL-088, criterion 3). U-114 measured that switch, given a path
+    /// of 300 or 1000 characters, silently opening another folder with no dialog and no error code, so a launch with it,
+    /// fallback or not, lands the person in the wrong place with no signal. The reveal goes through the shell's parse
+    /// and open-and-select calls alone. Every spelling is caught: the switch as its own argument, in upper case, or
+    /// followed by a space and a quote, which SL-047's settled pattern let through. No file is exempt, ShellReveal.cs
+    /// included, and comments are matched too; SelectSwitchRuleTests feeds this pattern the shapes it must catch and the
+    /// look-alikes it must leave.
+    /// </summary>
+    [Fact]
+    public void NothingInTheAppHandsExplorerItsSelectSwitch()
+    {
+        AssertNoMatch(Files("src", "*.cs"),
+            @"/[Ss][Ee][Ll][Ee][Cc][Tt]\b");
+    }
+
     private static IEnumerable<string> Files(string folder, params string[] patterns) =>
         patterns
             .SelectMany(p => Directory.EnumerateFiles(Path.Combine(Repo, folder), p, SearchOption.AllDirectories))

@@ -517,7 +517,7 @@ public class FailCriticalErrorsTests
     /// pattern is a line holding one verbatim literal that ends in ',' or ');', and the one ending in ');' is the last.
     /// Compiled with RegexOptions.Multiline, as that Fact compiles them.
     /// </summary>
-    private static List<Regex> FactPatterns(string file, string fact)
+    internal static List<Regex> FactPatterns(string file, string fact)
     {
         var literal = new Regex(@"^\s*@""((?:[^""]|"""")*)""\s*(,|\);)\s*$");
         string[] lines = File.ReadAllLines(file);
@@ -537,7 +537,7 @@ public class FailCriticalErrorsTests
         return patterns;
     }
 
-    private static string FindRepo()
+    internal static string FindRepo()
     {
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
         {

@@ -10,11 +10,17 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 
+// Each target's line also carries revealStartQpc (SL-088): Stopwatch.GetTimestamp() as the Open in Explorer command
+// starts to execute, taken in a class handler for the command's PreviewExecuted, which only reads, so a window case can
+// time the landing it sees in Explorer from the click with the same system-wide clock (qpcFrequency ticks a second).
+// With FSA_HOOK_REVEAL_GATE=<file>, once the scan has ended the hook writes <file>.ready and waits up to 60 s for <file>
+// before the first target, so a case can change the tree the scan found, as a person's delete would, before the click.
 internal static class RevealMode
 {
     private static Application _app = null!;
     private static readonly TimeSpan EndingDeadline = TimeSpan.FromSeconds(30);
     private const int Poll = 50;
+    private static long _revealStartQpc;
 
     internal static void Drive()
     {
@@ -25,6 +31,9 @@ internal static class RevealMode
         Window? window = null;
         try
         {
+            Ui(() => EventManager.RegisterClassHandler(typeof(Window), CommandManager.PreviewExecutedEvent,
+                new ExecutedRoutedEventHandler(OnPreviewExecuted), handledEventsToo: true));
+
             string? revealEnv = Environment.GetEnvironmentVariable("FSA_HOOK_REVEAL");
             if (string.IsNullOrWhiteSpace(revealEnv))
             {
@@ -55,6 +64,9 @@ internal static class RevealMode
                 // Wait for scan to complete normally
                 WaitForScanToEnd(window);
             }
+
+            if (Environment.GetEnvironmentVariable("FSA_HOOK_REVEAL_GATE") is { Length: > 0 } gate)
+                WaitAtGate(gate);
 
             foreach (string target in targets)
             {
@@ -87,6 +99,24 @@ internal static class RevealMode
                 {
                 }
             });
+        }
+    }
+
+    private static void OnPreviewExecuted(object sender, ExecutedRoutedEventArgs e)
+    {
+        if (e.Command is RoutedUICommand { Name: "OpenInExplorer" })
+            Interlocked.Exchange(ref _revealStartQpc, Stopwatch.GetTimestamp());
+    }
+
+    private static void WaitAtGate(string gate)
+    {
+        File.WriteAllText(gate + ".ready", "");
+        var since = Stopwatch.StartNew();
+        while (!File.Exists(gate))
+        {
+            if (since.Elapsed > TimeSpan.FromSeconds(60))
+                throw new InvalidOperationException($"FSA_HOOK_REVEAL_GATE: {gate} did not appear within 60 s.");
+            Thread.Sleep(10);
         }
     }
 
@@ -141,6 +171,7 @@ internal static class RevealMode
         }
 
         object? initialOutcome = Ui(() => GetLastOutcome(window));
+        Interlocked.Exchange(ref _revealStartQpc, 0);
 
         // The menu is opened as ContextMenuService opens it on a right-click (its PlacementTarget, then IsOpen) and is
         // left to the app: the row it acts on is whatever the app's own Opened handler put in its Tag, which is read and
@@ -244,6 +275,7 @@ internal static class RevealMode
         }
 
         object? initialOutcome = Ui(() => GetLastOutcome(window));
+        Interlocked.Exchange(ref _revealStartQpc, 0);
         Flush();
         bool captured = Ui(() => ReferenceEquals(menu.Tag, row));
 
@@ -449,7 +481,9 @@ internal static class RevealMode
             ["shown"] = shown,
             ["reason"] = reason,
             ["hresult"] = hresult,
-            ["status"] = status
+            ["status"] = status,
+            ["revealStartQpc"] = Interlocked.Read(ref _revealStartQpc),
+            ["qpcFrequency"] = Stopwatch.Frequency
         };
     }
 
