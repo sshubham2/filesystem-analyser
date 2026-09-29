@@ -208,7 +208,7 @@ public class CancelledFolderTests
 
         Assert.Equal(ScanStatus.Completed, result.Status);
         int big = Scans.Find(result, tree.PathOf("big"));
-        Assert.Equal(new UnreadableFolder(big, SynchronousIoCancel.Aborted), Assert.Single(result.Unreadable));
+        Assert.Equal(new UnreadableFolder(big, SynchronousIoCancel.Aborted, UnreadableKind.ListedPartway), Assert.Single(result.Unreadable));
         Assert.Equal(EntryFlags.Unreadable, result.Store.Flags(big));
         Assert.InRange(result.Store.ChildCount(big), 1, 1999); // what the first two buffers listed
         Assert.Equal(1, result.Store.ChildCount(Scans.Find(result, tree.PathOf("z")))); // the scan carried on

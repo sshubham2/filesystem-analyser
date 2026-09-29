@@ -179,6 +179,45 @@ public class ArchitectureRulesTests
             @"""(CreateFile[AW2]?|CreateFileTransacted[AW]?|OpenFileById|(Nt|Zw)(Create|Open)File|(Nt|Zw)Query(Full)?AttributesFile|FindFirstFile(Ex)?[AW]?|FindFirstFileName[AW]?|FindFirstStream[AW]?|GetFileAttributes(Ex)?[AW]?|GetFileInformationByName|GetCompressedFileSize[AW]?|GetVolumeInformation[AW]?|GetDiskFreeSpace(Ex)?[AW]?)""");
     }
 
+    /// <summary>
+    /// The unreadable-folders list reads the scan's record and never the filesystem (SL-087, Done-when #7). A list that
+    /// asked the disk about a folder again would describe the drive as it is now, not the scan it belongs to, and could
+    /// hang on a dropped share or meet the same refusals on the UI thread. Windows' message for a code, through
+    /// Win32Exception, is the one lookup it makes, and no pattern here matches it. The App has implicit usings, so
+    /// System.IO is in scope with no token naming it: Path.Exists, the stream readers and the Info and RandomAccess
+    /// types are named here too (review m4). A tripwire on names: a call through a helper in another file, an alias or
+    /// a global:: spelling passes it. Comments are matched too.
+    /// </summary>
+    [Fact]
+    public void TheUnreadableViewTouchesNoFileSystem()
+    {
+        AssertNoMatch(Files(@"src\FsAnalyser.App", "UnreadableRows.cs"),
+            @"\b(File|Directory)\.\w+\s*\(",
+            @"\bnew\s+(FileInfo|DirectoryInfo|FileStream|DriveInfo|FileSystemWatcher)\b",
+            @"\bSystem\.IO\b",
+            @"\b(Kernel32|Scanner|DirectoryReader|SizeProbe)\.",
+            @"\[\s*(Dll|Library)Import\b",
+            @"\bPath\.Exists\b",
+            @"\bnew\s+(StreamReader|StreamWriter)\b",
+            @"\b(DriveInfo|RandomAccess|File(System)?Info)\.");
+    }
+
+    /// <summary>
+    /// The App never decides how much of a failed folder was listed (SL-087, Done-when #3): the kind is the engine's,
+    /// read off its record, so the list cannot disagree with the engine about a folder. The compiler holds the rest of
+    /// it: the record's constructor is internal to Core and nothing on it can be set, so the App cannot make a record
+    /// or copy one with another kind (review M3). This catches the kind chosen by a ternary, the shape a kind worked
+    /// out again from a child count takes; a switch or an if/else passes it. The pattern holds on the '?' line alone,
+    /// so a ternary laid out over three lines, as this repo writes them, fails here as well as in Fitness, which
+    /// matches the whole file (review R2-m1); '??' is not a ternary and is left out. Comments are matched too.
+    /// </summary>
+    [Fact]
+    public void TheAppNeverDecidesAFailedFolderKind()
+    {
+        AssertNoMatch(Files(@"src\FsAnalyser.App", "*.cs"),
+            @"(?<!\?)\?\s*UnreadableKind\.(NothingListed|ListedPartway)\b");
+    }
+
     private static IEnumerable<string> Files(string folder, params string[] patterns) =>
         patterns
             .SelectMany(p => Directory.EnumerateFiles(Path.Combine(Repo, folder), p, SearchOption.AllDirectories))

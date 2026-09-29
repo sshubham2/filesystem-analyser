@@ -496,16 +496,12 @@ public partial class MainWindow : Window
         OutcomeNotes.Text = string.Join("\n", notes);
         OutcomeNotes.Visibility = notes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
-        if (result.Unreadable.Count > 0)
+        // One row per failed folder in the scan's record, in path order, and the header counts those rows (SL-087).
+        IReadOnlyList<UnreadableRow> unreadable = UnreadableRows.Build(result.Unreadable, result.Store.GetPath);
+        if (unreadable.Count > 0)
         {
-            UnreadableTab.Header = $"Unreadable folders ({result.Unreadable.Count:N0})";
-            UnreadableList.ItemsSource = result.Unreadable
-                .Select(u =>
-                {
-                    string path = result.Store.GetPath(u.Entry);
-                    return new UnreadableRow(path, $"{path}  ({Win32Message(u.Win32Error)})");
-                })
-                .ToList();
+            UnreadableTab.Header = $"Unreadable folders ({unreadable.Count:N0})";
+            UnreadableList.ItemsSource = unreadable;
             UnreadableTab.Visibility = Visibility.Visible;
         }
         else
@@ -727,12 +723,6 @@ public partial class MainWindow : Window
 
     /// <summary>One row of the largest-files list: the texts it shows, and the on-disk bytes it was ranked by.</summary>
     internal sealed record LargestFileRow(long OnDisk, string OnDiskText, string SizeText, string Path);
-
-    /// <summary>One row of the unreadable-folders list: carries a clean path for reveal and display text for the list.</summary>
-    internal sealed record UnreadableRow(string Path, string Text)
-    {
-        public override string ToString() => Text;
-    }
 
     private static string PathOf(object? row) => row switch
     {
