@@ -1,0 +1,216 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-088",
+ "stage": "validate-slice",
+ "attempt": 1,
+ "at": "2026-09-29T14:12:30.633Z",
+ "head": "c3cc860edeb2bf5bfcfa580eded00e39f0a98718",
+ "run_id": 2259,
+ "summary": "Only the refusal side of SL-088 was checked against the real system. The landing side was not run. I did a fresh single-file publish (one 139,912,344-byte FsAnalyser.App.exe plus pdbs). Against that exe, window case R-002 step (e) passed twice on this desktop, against the real shell and real Explorer: gone\\ was deleted after the scan, and revealing victim.bin from its tree row logged Failed / NoLongerExists / 0x80070002. The status line said \"'victim.bin' no longer exists where the scan found it, so Explorer was not opened. Rescan to refresh.\" Explorer showed no new, moved, re-selected or newly visible window from launch until 2 s after exit, and the fixture and its deny ACEs were cleaned up. The full default suite passed (496/496), and all 69 Fitness rules hold, including the select-switch rule. A grep of src finds no Process.Start, ShellExecute or explorer launch; only ShellReveal.cs calls the shell.\n\nThe landing half was never run: R-002 steps a–d (deny-all folders, 161/300/1000-character files, the cold first reveal within 1000 ms, a pre-opened parent) and R-001 (the existing SC-007 cases). That half is what criteria 1, 2, 4 and 5 need. Those steps open Explorer windows on the person's desktop and then close them with Shell.Application .Quit(). That is operating another program's windows, which this run may not do. No elevation op would help; a person has to run them. So planned items 1, 2, 4 and 5 are not-checked. Model and spike evidence supports them: the new Walk makes the same SHParseDisplayName / SHOpenFolderAndSelectItems(pidl,0,NULL,0) calls on an STA thread that landed 36/36 and 12/12 in the spikes. But the SL-088 build itself was never observed landing.\n\nA parse-only probe against the real shell (no window opened) confirmed open obligation O-015 as a real product defect. con.txt, aux.h, nul.log, com1.txt and prn.md all parse S_OK back to the exact file. Yet ShellReveal.Plan refuses every one as NameUnaddressable, so the app would say Explorer can't select the name, which is false, and open nothing where the reveal would have landed. Bare 'con' (0x800704B0) and 'dup.' / 'trail ' (0x80070002) really do fail the parse, so the pre-check is right for those. O-014 is also still unfixed in the tree: Compare-ExplorerState still matches on Hwnd alone and compares only $old[0], and Close-CaseWindows still skips baseline HWNDs. Both obligations are owed to build-slice and stand. Criterion 14 (Hidden+System) is not met: the spike measured 0/8 selected under the person's settings, and the design deferred it as not material.",
+ "payload": {
+  "status": "complete",
+  "verdict": "partial",
+  "contact": "real",
+  "summary": "Only the refusal side of SL-088 was checked against the real system. The landing side was not run. I did a fresh single-file publish (one 139,912,344-byte FsAnalyser.App.exe plus pdbs). Against that exe, window case R-002 step (e) passed twice on this desktop, against the real shell and real Explorer: gone\\ was deleted after the scan, and revealing victim.bin from its tree row logged Failed / NoLongerExists / 0x80070002. The status line said \"'victim.bin' no longer exists where the scan found it, so Explorer was not opened. Rescan to refresh.\" Explorer showed no new, moved, re-selected or newly visible window from launch until 2 s after exit, and the fixture and its deny ACEs were cleaned up. The full default suite passed (496/496), and all 69 Fitness rules hold, including the select-switch rule. A grep of src finds no Process.Start, ShellExecute or explorer launch; only ShellReveal.cs calls the shell.\n\nThe landing half was never run: R-002 steps a–d (deny-all folders, 161/300/1000-character files, the cold first reveal within 1000 ms, a pre-opened parent) and R-001 (the existing SC-007 cases). That half is what criteria 1, 2, 4 and 5 need. Those steps open Explorer windows on the person's desktop and then close them with Shell.Application .Quit(). That is operating another program's windows, which this run may not do. No elevation op would help; a person has to run them. So planned items 1, 2, 4 and 5 are not-checked. Model and spike evidence supports them: the new Walk makes the same SHParseDisplayName / SHOpenFolderAndSelectItems(pidl,0,NULL,0) calls on an STA thread that landed 36/36 and 12/12 in the spikes. But the SL-088 build itself was never observed landing.\n\nA parse-only probe against the real shell (no window opened) confirmed open obligation O-015 as a real product defect. con.txt, aux.h, nul.log, com1.txt and prn.md all parse S_OK back to the exact file. Yet ShellReveal.Plan refuses every one as NameUnaddressable, so the app would say Explorer can't select the name, which is false, and open nothing where the reveal would have landed. Bare 'con' (0x800704B0) and 'dup.' / 'trail ' (0x80070002) really do fail the parse, so the pre-check is right for those. O-014 is also still unfixed in the tree: Compare-ExplorerState still matches on Hwnd alone and compares only $old[0], and Close-CaseWindows still skips baseline HWNDs. Both obligations are owed to build-slice and stand. Criterion 14 (Hidden+System) is not met: the spike measured 0/8 selected under the person's settings, and the design deferred it as not material.",
+  "checks": [
+   {
+    "what": "Full default Core test suite on this tree",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx",
+    "outcome": "passed",
+    "evidence": "Passed! Failed 0, Passed 496, Skipped 0, Total 496, 22 s. Includes ShellRevealTests (Walk_OnRealTree_RefusesGoneTargetsAndLandsThePresentOne, Walk_OpenFails_*, Walk_ParseFailsOtherwise_*, Walk_TargetNoLongerExists_*), SelectSwitchRuleTests, ArchitectureRulesTests, RuleCopiesAgree."
+   },
+   {
+    "what": "Architecture rules (engine Fitness)",
+    "command": "mcp__taad3__Fitness op=check",
+    "outcome": "passed",
+    "evidence": "69 rules checked against 121 parsed files: every declared rule holds (includes the select-switch rule and the no-ancestor-fallback rule)."
+   },
+   {
+    "what": "Review: nothing in src launches explorer.exe or hands it a select switch",
+    "command": "Grep -i 'Process\\.Start|ProcessStartInfo|explorer(\\.exe)?[\"' ]|ShellExecute|OpenInExplorer|RevealAsync' over src",
+    "outcome": "passed",
+    "evidence": "No Process.Start / ProcessStartInfo / ShellExecute / explorer launch anywhere in src. The only reveal call is MainWindow.xaml.cs:775 ShellReveal.RevealAsync(path), bound from MainWindow.xaml:8-16 (the single Open in Explorer command). ShellReveal.cs imports only SHParseDisplayName, SHOpenFolderAndSelectItems and ILFree."
+   },
+   {
+    "what": "Explorer baseline before the window case (read-only, Shell.Application)",
+    "command": "(New-Object -ComObject Shell.Application).Windows() grouped by HWND",
+    "outcome": "passed",
+    "evidence": "1 Shell.Application window, 1 entry for HWND 723330. So the tabbed-window condition of O-014 was not present during my runs."
+   },
+   {
+    "what": "R-002 step (e) with the already-published exe: deleted parent, refused, nothing opened",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-002 -Step e",
+    "outcome": "passed",
+    "evidence": "Deny ACEs on both deny-all fixtures checked as unlistable. gone\\ deleted after the scan and before the click (gated). Hook: kind Failed, reason NoLongerExists, hresult -2147024894 (0x80070002), status \"'victim.bin' no longer exists where the scan found it, so Explorer was not opened. Rescan to refresh.\". 'no Explorer window opened, moved, changed its selection or showed for victim.bin ()'. PASSED: R-002, exit 0, 6.1 s. 0 stale R-002 fixtures left afterwards."
+   },
+   {
+    "what": "Fresh single-file self-contained publish of the App from this tree",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o artifacts/publish -nologo",
+    "outcome": "passed",
+    "evidence": "exit 0. The exe was rewritten at 2026-09-29T14:15:01Z (before: 13:52:16Z). Output is FsAnalyser.App.exe (139,912,344 bytes), FsAnalyser.App.pdb and FsAnalyser.Core.pdb only, so one self-contained exe."
+   },
+   {
+    "what": "R-002 step (e) rerun against the freshly published exe",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-002 -Step e",
+    "outcome": "passed",
+    "evidence": "Same result as the first run: Failed / NoLongerExists / 0x80070002, the refusal text on the status line, no Explorer change from launch to 2 s after exit. PASSED: R-002, exit 0, 6.2 s."
+   },
+   {
+    "what": "O-015: does the real shell address the names the product refuses? (parse-only, no window opened)",
+    "command": "pwsh temp probe: files created via \\\\?\\ in %TEMP%\\sl088-val-<guid>\\names. SHParseDisplayName + SHGetPathFromIDListEx on each, compared with the requested path. [FsAnalyser.Core.Native.ShellReveal]::Plan from the Release Core dll. Temp tree deleted afterwards (tempRemoved=True).",
+    "outcome": "failed",
+    "evidence": "con.txt, aux.h, nul.log, com1.txt, prn.md: parseHr=0x00000000, parsedTo == requested path exactly, yet productPlan=REFUSED(unaddressable=<name>). plain.txt: S_OK, asks-shell (control). Genuinely unaddressable: 'dup.' 0x80070002, 'con' 0x800704B0, 'trail ' 0x80070002, all refused by Plan (correct). So the product falsely refuses reserved-name-with-extension items that would land, and the status text's reason is untrue. ShellRevealTests.cs:26 pins [InlineData(@\"C:\\con.txt\", \"con.txt\")] as unaddressable."
+   },
+   {
+    "what": "O-014: are the window-test helpers still keyed on HWND alone?",
+    "command": "Read tests/window/WindowCases.ps1:3489-3526",
+    "outcome": "failed",
+    "evidence": "Unchanged. Compare-ExplorerState still does `$old = @($before.Windows | Where-Object Hwnd -eq $w.Hwnd)` and compares only $old[0].Folder/.Selected (3518-3521). Close-CaseWindows still skips `$w.Hwnd -in $baselineHwnds` (3494). The fix owed to build-slice is not in the tree. Its spurious-failure condition (a tabbed Explorer window with 2+ tabs) was not present here, so step (e) was not affected."
+   },
+   {
+    "what": "R-002 steps a, b, c, d: landing at 161/300/1000 chars, deny-all folders, cold first reveal ≤1000 ms, Explorer pre-opened on the parent",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-002 (steps b,a,c,d)",
+    "outcome": "not-run",
+    "evidence": "Not run on purpose. Each step makes Explorer open windows on the person's live desktop, and step (d) opens one directly from the case. The case then closes them through Shell.Application .Quit() (Close-CaseWindows). That is operating another program's windows, which this run may not do unattended. A person must run it. No elevation operation applies: the blocker is window control, not admin rights."
+   },
+   {
+    "what": "R-001: the existing SC-007 reveal window cases, updated for SL-088",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-001",
+    "outcome": "not-run",
+    "evidence": "Same reason as above. R-001 opens Explorer windows and quits them, and -Step exists only for R-002, so its refused 'dup.' step could not be run alone."
+   },
+   {
+    "what": "Hidden+System reveal (design case 14)",
+    "outcome": "not-run",
+    "evidence": "Out of scope by the design (C-014, not material). The spike reveal-selects-hidden-and-system-items is waiting on a person and measured H+S 0/8 selected under this PC's settings. Running it would also open and close Explorer windows."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "1. Short-path folder with a FullControl deny ACE: its parent opens with it selected",
+    "met": "not-checked",
+    "how": "R-002 step (a) exists and builds the fixture (deny checked as unlistable in my runs), but its landing was not run: it needs opening and quitting Explorer windows. The unit test only shows the real parse of a deny-all folder reaching the open (code)."
+   },
+   {
+    "criterion": "2. Item at about 161 characters, under MAX_PATH",
+    "met": "not-checked",
+    "how": "R-002 step (b) not run. The fixture path is exactly 161 characters (CheckEqual passed in my runs)."
+   },
+   {
+    "criterion": "3. File at exactly 300 characters, revealed from its biggest-files row",
+    "met": "not-checked",
+    "how": "R-002 step (b) not run."
+   },
+   {
+    "criterion": "4. File at exactly 1000 characters",
+    "met": "not-checked",
+    "how": "R-002 step (d) not run. The fixture was created at exactly 1000 characters in my runs."
+   },
+   {
+    "criterion": "5. Deny-all folder at exactly 300 characters, revealed from its tree row",
+    "met": "not-checked",
+    "how": "R-002 step (c) not run. The deny on its \\\\?\\ form was checked as unlistable in both my runs."
+   },
+   {
+    "criterion": "6. First reveal of the run, Explorer cold",
+    "met": "not-checked",
+    "how": "R-002 orders the steps b,a,c,d,e so the 161-character reveal comes first, but it was not run. The spikes' slowest landing was 934 ms, close to the 1000 ms bound."
+   },
+   {
+    "criterion": "7. Explorer already open on the target's parent with a sibling selected",
+    "met": "not-checked",
+    "how": "R-002 step (d) not run. The spike reveal-with-explorer-already-open held 12/12 with the same API calls, not with this build."
+   },
+   {
+    "criterion": "8. Refuse: target's parent deleted after the scan",
+    "met": "yes",
+    "how": "R-002 step (e) passed twice on the live desktop, the second time on a fresh single-file publish: Failed / NoLongerExists / 0x80070002, the refusal on the status line, and no Explorer window new, moved, re-selected or shown until 2 s after exit."
+   },
+   {
+    "criterion": "9. Refuse: target deleted, parent still exists",
+    "met": "yes",
+    "how": "Walk_OnRealTree_RefusesGoneTargetsAndLandsThePresentOne (real SHParseDisplayName on an STA thread, recording open) passed in the 496-test run. Code contact only, no window observed."
+   },
+   {
+    "criterion": "10. Refuse: parse succeeds but SHOpenFolderAndSelectItems fails",
+    "met": "yes",
+    "how": "Walk_OpenFails_RefusesWithItsCodeFreesTheIdListAndTriesNothingElse passed (fake shell, code contact). ShellReveal.cs:214-216 returns Refused on a non-zero open result, and the finally block frees the ID list."
+   },
+   {
+    "criterion": "11. Refuse: parse fails with a code other than not-found",
+    "met": "yes",
+    "how": "Walk_ParseFailsOtherwise_RefusesWithThatCode passed (code contact). The real probe also saw 0x800704B0 for a bare 'con', which Plan refuses before the shell is asked."
+   },
+   {
+    "criterion": "12. Rule catches ArgumentList.Add(\"/select\"), \"/SELECT,\" + p, \"/select \\\"\" + p",
+    "met": "yes",
+    "how": "SelectSwitchRuleTests passed in the suite. Fitness op=check: all 69 rules hold with 0 hits on the clean tree."
+   },
+   {
+    "criterion": "13. Rule leaves \"/selection\", \"selected\", \"Open in Explorer\" alone",
+    "met": "yes",
+    "how": "SelectSwitchRuleTests.TheRuleLeavesLookAlikesAlone passed. 'Open in Explorer' is in MainWindow.xaml and .cs and Fitness reports no hit."
+   },
+   {
+    "criterion": "14. Hidden+System target (System Volume Information, pagefile.sys)",
+    "met": "no",
+    "how": "Not measured by me. The spike measured 0/8 H+S selected under this PC's settings, and the product has no H+S handling beyond the hidden note (it reports Exact from hr==0). The design deferred this as C-014, not material."
+   }
+  ],
+  "planned": [
+   {
+    "ordinal": 1,
+    "met": "not-checked",
+    "evidence": "The landing test for a deny-all folder (R-002 steps a and c, reading Explorer's folder and selection through Shell.Application) exists but was not run. It opens Explorer windows and quits them through Shell.Application, which is operating another program's windows. My runs did confirm that both deny ACEs take (the folders are unlistable). The no-dialog / no-consent watch was not exercised."
+   },
+   {
+    "ordinal": 2,
+    "met": "not-checked",
+    "evidence": "R-002 steps b (161/300) and d (1000) were not run, for the same reason. Fixture lengths are exact (161/300/1000, CheckEqual ok). Find-Landing compares GetLongPathName-resolved paths or the name under a resolved parent, never literal 8.3 strings (read at WindowCases.ps1:3444-3459). The 1 s bound on this build is unmeasured."
+   },
+   {
+    "ordinal": 3,
+    "met": "yes",
+    "evidence": "Fitness op=check: 69/69 rules hold, including the select-switch rule. SelectSwitchRuleTests catch ArgumentList.Add(\"/select\"), upper case, and the space-quote form, and pass in the 496/496 run. A grep of src finds no Process.Start, ProcessStartInfo, ShellExecute or explorer launch. The only shell imports are SHParseDisplayName, SHOpenFolderAndSelectItems and ILFree (ShellReveal.cs:52-68), and there is no fallback path."
+   },
+   {
+    "ordinal": 4,
+    "met": "not-checked",
+    "evidence": "The assertions that carry this criterion (Check-Landing / Find-Landing: the window's folder is the parent and the only selected item is the target, timed from the hook's QPC) are in WindowCases.ps1:3444-3459 and 3999-4015, but no stage has executed them. The product itself still takes hr==0 as Exact (ShellReveal.cs:242), as designed. The open question to a person about app-side confirmation stands."
+   },
+   {
+    "ordinal": 5,
+    "met": "not-checked",
+    "evidence": "By code, the SC-007 command goes through this same reveal: MainWindow.xaml:8-16 → OnOpenInExplorer → ShellReveal.RevealAsync (MainWindow.xaml.cs:775), the only caller. R-002 (e) drove that shipped command from a tree row through the published exe. But R-001 (the existing SC-007 cases) and the new ≥300-character landing steps were not run."
+   },
+   {
+    "ordinal": 6,
+    "met": "yes",
+    "evidence": "R-002 step (e) passed twice through the published single-file exe on the live desktop. gone\\ was deleted after the scan, and the victim.bin reveal gave Failed / NoLongerExists / 0x80070002 with the status text \"'victim.bin' no longer exists where the scan found it, so Explorer was not opened. Rescan to refresh.\" Explorer showed no new, moved, re-selected or newly visible window from launch until 2 s after exit. The real-tree unit test covers the same refusal in code."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-015",
+    "verified": "no",
+    "evidence": "Still unfixed: ShellReveal.cs:138-140 still takes the reserved-name base from the text before the first dot, and ShellRevealTests.cs:26 still pins C:\\con.txt as unaddressable. A real-shell parse-only probe on this machine (Windows 11 26200) confirms the defect. con.txt, aux.h, nul.log, com1.txt and prn.md each parse S_OK back to the exact file path, while ShellReveal.Plan (Release Core dll) returns Target=null / NameUnaddressable for every one. The app would refuse a reveal that lands and show a false reason. Bare 'con' (0x800704B0), 'dup.' and 'trail ' (0x80070002) are genuinely unaddressable, and refusing them stays correct. Owed to build-slice."
+   },
+   {
+    "key": "O-014",
+    "verified": "no",
+    "evidence": "Still unfixed: Compare-ExplorerState (WindowCases.ps1:3516-3521) still matches on Hwnd alone and compares only $old[0], and Close-CaseWindows (3494) still skips baseline HWNDs. It did not bite my step (e) runs because the person had 1 Explorer window with 1 Shell.Application entry. The tabbed-window condition was not exercised, so the spurious-failure and tab-left-behind claims were not reproduced here. Owed to build-slice."
+   }
+  ],
+  "not_reached": [
+   "R-002 steps a–d on this build: whether the deny-all short and 300-character folders and the 161/300/1000-character files actually land (parent folder plus a single selected item) through the shipped exe. A person runs `pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-002`; this run may not open Explorer windows and quit them through Shell.Application.",
+   "Whether the cold first reveal (161 characters) lands within 1000 ms of the click with this build. The spikes' slowest was 934 ms with the old code path.",
+   "No #32770 error dialog and no consent.exe during deny-all reveals (R-002 a and c watch), with this build.",
+   "R-001, the existing SC-007 reveal window cases, including its refused 'dup.' step and the 300-character step 10: `pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-001`.",
+   "Step (d) behaviour with Explorer already on the parent with a sibling selected: reuse of that window versus a new one, and only the target selected.",
+   "O-014's failure mode: R-002 (e) and R-001 step 3 run while the person has a tabbed Explorer window with 2+ tabs open. Not present during this run.",
+   "Windows 10: every check here ran on Windows 11 26200 only, including the con.txt parse that O-015 depends on.",
+   "Hidden+System reveals under Windows' default Explorer settings (Hidden=2). The spike is still waiting on a person.",
+   "Landing with this build on a volume without 8.3 names (D:). Only the spike covered it, with the pre-SL-088 code."
+  ]
+ }
+}

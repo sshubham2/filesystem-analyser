@@ -822,6 +822,8 @@ public partial class MainWindow : Window
     {
         if (outcome.Reason == RevealReason.NameUnaddressable)
             return $"Explorer can't select '{outcome.UnaddressableName}' by name: it ends in a dot or space, or is a reserved device name";
+        if (outcome.Reason == RevealReason.ParsedAsAnotherItem)
+            return "Explorer reads its path as another item";
         if ((outcome.HResult & 0xFFFF0000) == 0x80070000)
             return Win32Message(outcome.HResult & 0xFFFF).TrimEnd('.');
         return $"0x{outcome.HResult:X8}";

@@ -13,11 +13,21 @@ this file is right.
   build check measured that with the item's folder deleted the grandparent still parses S_OK, so the app opened another
   folder in the item's place and called it a highlight. `RevealKind` is now `Exact` or `Failed`; the settled rule 'a
   reveal that cannot land never falls back to an ancestor' keeps the old kind from coming back.
-- **A name the shell mis-parses is refused too.** `ShellReveal.Plan` returns the one target, `RevealPlan.Target`, or no
-  target and the name when a component ends in a dot or a space or is a reserved device name (`dup.`, `con`). SL-047
-  opened that component's parent instead; that is another folder in the item's place, which criterion 6 rules out, so
-  the reveal is `Failed`, `NameUnaddressable`, with 0x8007007B, and the shell is not asked at all. The design did not
-  name this path; deleting the ancestor kind decided it, and R-001's step for `dup.` now expects the refusal.
+- **A name the shell cannot address is refused too.** `ShellReveal.Plan` returns the one target, `RevealPlan.Target`, or
+  no target and the name when a component ends in a dot or a space, or is a device name as a whole (`dup.`, `trail `,
+  `con`, `COM1`). Measured with the real parse: `dup.` parses S_OK as `dup`, `trail ` as not found, `con` and `nul` as
+  0x800704B0. SL-047 opened that component's parent instead; that is another folder in the item's place, which criterion
+  6 rules out, so the reveal is `Failed`, `NameUnaddressable`, with 0x8007007B, and the shell is not asked at all. The
+  design did not name this path; deleting the ancestor kind decided it, and R-001's step for `dup.` expects the refusal.
+  A device name with an extension (`con.txt`, `aux.h`, `nul.log`, `com1.txt`, `prn.md`, `lpt1.dat`) is not refused up
+  front (review R2-m2): on this Windows 11 each parses S_OK and resolves back to the very file, so it goes to the shell.
+- **A parse must stand for the item itself.** After an S_OK parse, `Walk` turns the ID list back into a path
+  (`SHGetPathFromIDListEx`) and refuses the reveal, `ParsedAsAnotherItem`, when that path is not the target, compared as
+  text and then with every 8.3 alias expanded (`GetLongPathNameW` on both sides), since past MAX_PATH the shell gives the
+  path back in 8.3 form. This is the backstop for any Windows that parses a name as another item (Windows 10 and
+  `con.txt` were not measured) with no rule written per version. Measured: files, a deny-all folder, a junction, file and
+  folder symlinks, `C:\`, the device names with an extension and paths of 161, 300 and 1000 characters all resolve back;
+  `dup.` resolves to `dup` and is refused.
 - **No existence check before the reveal.** The parse's HRESULT is the check: it answers S_OK for a folder with a
   deny-all ACE (build check, and the spikes' 36/36 and 12/12 landings on deny-all leaves), where a check of its own could
   refuse exactly the folders criterion 1 is about, and race the reveal besides.
@@ -26,8 +36,9 @@ this file is right.
 - **The status line says what happened.** A reveal that lands says nothing, as before (a hidden item still gets its
   note). `NoLongerExists`: "'<leaf>' no longer exists where the scan found it, so Explorer was not opened. Rescan to
   refresh." Any other refusal: "Couldn't show '<leaf>' in Explorer (<why>). Nothing was opened.", where <why> is
-  Windows' message for a FACILITY_WIN32 HRESULT, the HRESULT in hex for any other, and for a mis-parsed name what Explorer
-  cannot do with it. No dialog.
+  Windows' message for a FACILITY_WIN32 HRESULT, the HRESULT in hex for any other, for a name it cannot address what
+  Explorer cannot do with it, and for a parse that stands for another item 'Explorer reads its path as another item'.
+  No dialog.
 
 ## What the product does not check (criterion 4)
 
@@ -47,7 +58,8 @@ nothing selected in Explorer, the known gap a follow-on slice owes once that spi
 
 - `ShellRevealTests`: fake shell calls for a target that parses and lands, is gone (0x80070002, 0x80070003), fails to
   parse otherwise (0x80070005, 0x8007007B, 0x80070035, 0x80004005), parses and then fails to open (the ID list freed,
-  nothing else tried), and has a mis-parsed name (the shell never asked). `Walk_OnRealTree_RefusesGoneTargetsAndLandsThePresentOne`
+  nothing else tried), parses to another item or to none (refused before the open), and has a name the shell cannot
+  address (the shell never asked). `Walk_OnRealTree_RefusesGoneTargetsAndLandsThePresentOne`
   runs the real parse on an STA thread over a file whose folder was deleted and a file deleted from a folder that is
   still there, beside a present file and a deny-all folder that must reach the (recording) open, so the refusals cannot
   pass because the parse never worked.

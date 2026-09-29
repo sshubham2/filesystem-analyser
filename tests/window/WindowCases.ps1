@@ -3483,21 +3483,26 @@ function Test-Under([string] $folder, [string[]] $roots) {
     $false
 }
 
-# Closes the Explorer windows a reveal case opened (SL-088): only those not open at its baseline AND whose folder is one
-# of the case's own folders or under one, so a window the person opens during the run is never touched. Waits up to
-# 5 s for them to go and returns how many were still there on the last look.
-function Close-CaseWindows($baselineHwnds, [string[]] $roots) {
+# Closes the Explorer windows a reveal case opened on its own tree (SL-088). The roots are fresh GUID folders under
+# %TEMP% that nothing else has open, so an entry whose folder is one of them or under one is the case's, wherever
+# Explorer put it, a new tab in a window open before the case included (review m1). Windows 11 lists each tab of a
+# tabbed window as its own entry with the window's HWND, and whether Quit() on a tab's entry closes the tab or the whole
+# window was not measured, so an entry is quit only when every entry with its HWND is under the roots: a window of the
+# case's own tabs alone. A case tab beside anything else is never quit; it is reported, by folder. Waits up to 5 s and
+# returns the folders of the case's entries still there on the last look.
+function Close-CaseWindows([string[]] $roots) {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     do {
-        $left = 0
-        foreach ($w in @(Get-ExplorerWindows)) {
-            if ($w.Hwnd -in $baselineHwnds -or -not (Test-Under $w.Folder $roots)) { continue }
-            $left++
+        $windows = @(Get-ExplorerWindows)
+        $left = @($windows | Where-Object { Test-Under $_.Folder $roots })
+        foreach ($w in $left) {
+            $others = @($windows | Where-Object { $_.Hwnd -eq $w.Hwnd -and -not (Test-Under $_.Folder $roots) })
+            if ($others.Count -gt 0) { continue }
             try { $w.Window.Quit() } catch { }
         }
-        if ($left -gt 0) { Start-Sleep -Milliseconds 100 }
-    } while ($left -gt 0 -and $sw.Elapsed.TotalSeconds -lt 5)
-    $left
+        if ($left.Count -gt 0) { Start-Sleep -Milliseconds 100 }
+    } while ($left.Count -gt 0 -and $sw.Elapsed.TotalSeconds -lt 5)
+    $left | ForEach-Object Folder
 }
 
 # What Explorer shows: each window's HWND, folder and selection, and the visible top-level CabinetWClass windows, which
@@ -3511,14 +3516,18 @@ function Get-ExplorerState {
     }
 }
 
-# Every way $after differs from $before that a reveal would cause: a new window, one moved to another folder, one whose
-# selection changed, and a newly visible CabinetWClass. Each names the folder, so a failure says where Explorer went.
+# Every way $after differs from $before that a reveal would cause, each naming the folder, so a failure says where
+# Explorer went. Each entry is its HWND, folder and selection together, and every entry of $after that $before does not
+# hold as often is reported: a new window or tab, one moved to another folder, one whose selection changed. An HWND alone
+# is no key, since Windows 11 lists every tab of a tabbed window under the window's one HWND (review m1). A newly visible
+# CabinetWClass is reported too.
 function Compare-ExplorerState($before, $after) {
+    $held = [System.Collections.Generic.List[string]]::new()
+    foreach ($w in $before.Windows) { $held.Add("$($w.Hwnd)|$($w.Folder)|$($w.Selected)") }
     foreach ($w in $after.Windows) {
-        $old = @($before.Windows | Where-Object Hwnd -eq $w.Hwnd)
-        if ($old.Count -eq 0) { "a new Explorer window on $(Show $w.Folder) selecting $(Show $w.Selected)" }
-        elseif ($old[0].Folder -ne $w.Folder) { "the Explorer window on $(Show $old[0].Folder) moved to $(Show $w.Folder)" }
-        elseif ($old[0].Selected -ne $w.Selected) { "the Explorer window on $(Show $w.Folder) changed its selection to $(Show $w.Selected)" }
+        if (-not $held.Remove("$($w.Hwnd)|$($w.Folder)|$($w.Selected)")) {
+            'an Explorer window or tab on {0} selecting {1} that was not there before (HWND 0x{2:X})' -f (Show $w.Folder), (Show $w.Selected), $w.Hwnd
+        }
     }
     foreach ($h in $after.Cabinets) {
         if ($h -notin $before.Cabinets) { 'a newly visible Explorer window (CabinetWClass 0x{0:X})' -f $h }
@@ -3535,7 +3544,7 @@ function Watch-ExplorerUnchanged($before, [int] $ms) {
         }
         Start-Sleep -Milliseconds 25
     }
-    , $seen.ToArray()
+    $seen.ToArray()
 }
 
 # R-001 (SL-047): reveals items from all results surfaces in Windows Explorer, asserting selection, the refusal of
@@ -3543,7 +3552,6 @@ function Watch-ExplorerUnchanged($before, [int] $ms) {
 # Every landing is Find-Landing's: resolved long paths, and the target as the only selected item (SL-088).
 function Test-R001 {
     Initialize-RevealWin32
-    $baselineHwnds = @(Get-ExplorerWindows | ForEach-Object Hwnd)
 
     $case = New-CaseFolder
     $caseRoots = [System.Collections.Generic.List[string]]::new()
@@ -3610,12 +3618,12 @@ function Test-R001 {
         New-File $longFile $KiB64
         CheckEqual 300 $longFile.Length 'long file path length'
 
-        # Before every step (B3-2): close the Explorer windows this case opened, never one that was open at its baseline
-        # nor one outside the case's own folders (SL-088), and wait until they are gone, so a step's selection can only
-        # be matched by the window that step opened.
+        # Before every step (B3-2): close the Explorer windows this case opened, only ever on the case's own folders
+        # (SL-088, Close-CaseWindows), and wait until they are gone, so a step's selection can only be matched by the
+        # window that step opened.
         $closeNewWindows = {
-            $left = Close-CaseWindows $baselineHwnds $caseRoots.ToArray()
-            Check ($left -eq 0) "the Explorer windows the case opened are closed before the next step ($left left)"
+            $left = @(Close-CaseWindows $caseRoots.ToArray())
+            Check ($left.Count -eq 0) "the Explorer windows the case opened are closed before the next step ($($left.Count) left: $($left -join '; '))"
         }
 
         # 1. largest: largest_file.bin (C-001)
@@ -3852,7 +3860,7 @@ function Test-R001 {
     }
     finally {
         # Close only the windows this case opened on its own folders (SL-088)
-        [void](Close-CaseWindows $baselineHwnds $caseRoots.ToArray())
+        [void](Close-CaseWindows $caseRoots.ToArray())
         if ($denied) { Undo-DenyListing $denied }
         if ($dupDot -and [System.IO.File]::Exists($dupDot)) { [System.IO.File]::Delete($dupDot) }
         Remove-Links $links
@@ -4072,7 +4080,6 @@ function Invoke-RefusedReveal([string] $root, [string] $revealTarget, [scriptblo
 function Test-R002 {
     Initialize-RevealWin32
     Clear-StaleR002
-    $baselineHwnds = @(Get-ExplorerWindows | ForEach-Object Hwnd)
     $steps = @('b', 'a', 'c', 'd', 'e' | Where-Object { $R002Steps.Count -eq 0 -or $_ -in $R002Steps })
     $case = New-CaseFolder
     try {
@@ -4108,8 +4115,8 @@ function Test-R002 {
         }
 
         $isolate = {
-            $left = Close-CaseWindows $baselineHwnds @($case)
-            Check ($left -eq 0) "no window on the case's own tree is open before the step ($left left)"
+            $left = @(Close-CaseWindows @($case))
+            Check ($left.Count -eq 0) "no window on the case's own tree is open before the step ($($left.Count) left: $($left -join '; '))"
         }
 
         foreach ($s in $steps) {
@@ -4181,7 +4188,7 @@ function Test-R002 {
         }
     }
     finally {
-        [void](Close-CaseWindows $baselineHwnds @($case))
+        [void](Close-CaseWindows @($case))
         Remove-R002Fixture $case
     }
 }

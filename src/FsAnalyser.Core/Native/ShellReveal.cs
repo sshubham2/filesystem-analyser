@@ -15,12 +15,14 @@ public enum RevealReason
 {
     None,
     NameUnaddressable,
-    NoLongerExists
+    NoLongerExists,
+    ParsedAsAnotherItem
 }
 
 /// <summary>
 /// What a reveal will ask the shell for: the item itself, in display form, or null when one of its names is one the
-/// shell mis-parses (UnaddressableName), in which case nothing is asked.
+/// shell cannot address (UnaddressableName: a trailing dot or space, or a bare device name), in which case nothing is
+/// asked.
 /// </summary>
 public sealed record RevealPlan(string? Target, string? UnaddressableName, string Requested = "");
 
@@ -36,8 +38,9 @@ public sealed record RevealOutcome(
 
 /// <summary>
 /// Reveals an item in Windows Explorer by opening its parent with the item selected. The reveal lands on the item or
-/// is refused: an item that no longer exists, a name the shell mis-parses, or a shell call that fails opens no window
-/// at all, and never another folder in the item's place (SL-088, reversing SL-047's nearest-ancestor fallback).
+/// is refused: an item that no longer exists, a name the shell cannot address, a parse that stands for another item,
+/// or a shell call that fails opens no window at all, and never another folder in the item's place (SL-088, reversing
+/// SL-047's nearest-ancestor fallback).
 /// </summary>
 public static partial class ShellReveal
 {
@@ -66,6 +69,15 @@ public static partial class ShellReveal
 
     [LibraryImport("shell32.dll")]
     private static partial void ILFree(IntPtr pidl);
+
+    [LibraryImport("shell32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool SHGetPathFromIDListEx(IntPtr pidl, [Out] char[] pszPath, int cchPath, int uOpts);
+
+    [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    private static partial uint GetLongPathNameW(string lpszShortPath, [Out] char[] lpszLongPath, uint cchBuffer);
+
+    private const int MaxLongPath = 32767;
 
     /// <summary>
     /// Pure planner: turns a path into the one target a reveal asks the shell for, and detects unaddressable names.
@@ -121,7 +133,8 @@ public static partial class ShellReveal
 
         foreach (string part in parts)
         {
-            // The shell would parse the name as another one ('dup.' as 'dup'), so it is not asked at all.
+            // The shell cannot address the name as written ('dup.' parses as 'dup', 'trail ' as not found, a bare 'con'
+            // as the device), so it is not asked at all.
             if (IsMisparsed(part, out string badName))
                 return new RevealPlan(null, badName, display);
         }
@@ -129,15 +142,16 @@ public static partial class ShellReveal
         return new RevealPlan(Combine(root, parts, parts.Length), null, display);
     }
 
+    // A trailing dot or space, or a whole name that is a device's. A device name with an extension ('con.txt', 'aux.h')
+    // is left to the shell, which addresses it exactly on Windows 11 (SL-088 review R2-m2, measured); wherever it would
+    // not, the parse's failure or its resolving to another item refuses the reveal in Walk.
     private static bool IsMisparsed(string component, out string name)
     {
         name = component;
         if (component.EndsWith('.') || component.EndsWith(' '))
             return true;
 
-        int dot = component.IndexOf('.');
-        string baseName = dot >= 0 ? component[..dot] : component;
-        baseName = baseName.TrimEnd(' ');
+        string baseName = component.TrimEnd(' ');
 
         if (baseName.Equals("CON", StringComparison.OrdinalIgnoreCase) ||
             baseName.Equals("PRN", StringComparison.OrdinalIgnoreCase) ||
@@ -186,13 +200,14 @@ public static partial class ShellReveal
     }
 
     /// <summary>
-    /// Reveals the plan's target once: parse it, open its parent with it selected, free the ID list. The parse's HRESULT
-    /// is the existence check. A target that does not parse, or whose open fails, is refused with that HRESULT, and no
-    /// other folder is tried; 0x80070002 and 0x80070003 say it no longer exists. Exact comes from the shell's S_OK alone:
-    /// whether Explorer's window then shows the item selected is for the window cases to see (SL-088, criterion 4).
-    /// Unit-testable without calling Explorer, through the three shell calls it is given.
+    /// Reveals the plan's target once: parse it, check the ID list stands for the target itself, open its parent with it
+    /// selected, free the ID list. The parse's HRESULT is the existence check. A target that does not parse, whose ID list
+    /// resolves to another path (as 'dup.' parses to 'dup'), or whose open fails is refused, and no other folder is
+    /// tried; 0x80070002 and 0x80070003 say it no longer exists. Exact comes from the shell's S_OK alone: whether
+    /// Explorer's window then shows the item selected is for the window cases to see (SL-088, criterion 4).
+    /// Unit-testable without calling Explorer, through the shell calls it is given.
     /// </summary>
-    internal static RevealOutcome Walk(RevealPlan plan, string? requested, ParseName parse, Func<IntPtr, int> open, Action<IntPtr> free)
+    internal static RevealOutcome Walk(RevealPlan plan, string? requested, ParseName parse, Func<IntPtr, string?> pathOf, Func<IntPtr, int> open, Action<IntPtr> free)
     {
         string requestedPath = !string.IsNullOrEmpty(requested)
             ? requested
@@ -210,6 +225,9 @@ public static partial class ShellReveal
                 bool gone = hr == ERROR_FILE_NOT_FOUND_HR || hr == ERROR_PATH_NOT_FOUND_HR;
                 return Refused(requestedPath, gone ? RevealReason.NoLongerExists : RevealReason.None, null, hr);
             }
+
+            if (!SamePath(pathOf(pidl), plan.Target))
+                return Refused(requestedPath, RevealReason.ParsedAsAnotherItem, null, ERROR_INVALID_NAME_HR);
 
             hr = open(pidl);
             if (hr != 0)
@@ -256,6 +274,35 @@ public static partial class ShellReveal
 
     internal static void FreeIdList(IntPtr pidl) => ILFree(pidl);
 
+    /// <summary>The file-system path an ID list stands for, or null when it stands for none.</summary>
+    internal static string? PathOfIdList(IntPtr pidl)
+    {
+        var buffer = new char[MaxLongPath];
+        if (!SHGetPathFromIDListEx(pidl, buffer, buffer.Length, 0))
+            return null;
+        int end = Array.IndexOf(buffer, '\0');
+        return new string(buffer, 0, end < 0 ? buffer.Length : end);
+    }
+
+    // Whether the path an ID list stands for is the target. Past MAX_PATH the shell gives the path back in 8.3 form
+    // (measured at 300 and 1000 characters), so a path that differs as text is compared again with every alias expanded.
+    private static bool SamePath(string? landed, string target)
+    {
+        if (landed is null)
+            return false;
+        if (string.Equals(landed.TrimEnd('\\'), target.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+            return true;
+        return LongName(landed) is { } a && LongName(target) is { } b &&
+            string.Equals(a.TrimEnd('\\'), b.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? LongName(string path)
+    {
+        var buffer = new char[MaxLongPath];
+        uint n = GetLongPathNameW(LongPath.ToExtended(path), buffer, (uint)buffer.Length);
+        return n == 0 || n >= buffer.Length ? null : LongPath.ToDisplay(new string(buffer, 0, (int)n));
+    }
+
     /// <summary>
     /// Launches a background STA thread to reveal the item in Explorer without blocking the caller.
     /// The returned Task never faults.
@@ -287,7 +334,7 @@ public static partial class ShellReveal
                     return;
                 }
 
-                RevealOutcome outcome = Walk(plan, path, ParseDisplayName, OpenFolderAndSelect, FreeIdList);
+                RevealOutcome outcome = Walk(plan, path, ParseDisplayName, PathOfIdList, OpenFolderAndSelect, FreeIdList);
                 tcs.SetResult(outcome);
             }
             catch (Exception ex)

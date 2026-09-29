@@ -23,7 +23,6 @@ public class ShellRevealTests
     [InlineData(@"C:\folder\dup.", "dup.")]
     [InlineData(@"C:\folder\sp ", "sp ")]
     [InlineData(@"C:\con", "con")]
-    [InlineData(@"C:\con.txt", "con.txt")]
     [InlineData(@"C:\folder\NUL", "NUL")]
     [InlineData(@"C:\COM¹", "COM¹")]
     [InlineData(@"C:\CONIN$", "CONIN$")]
@@ -41,6 +40,12 @@ public class ShellRevealTests
     [InlineData(@"C:\folder\a,b;c.txt")]
     [InlineData(@"C:\folder\😀_face.txt")]
     [InlineData(@"C:\folder\%TEMP%.txt")]
+    [InlineData(@"C:\con.txt")]
+    [InlineData(@"C:\folder\aux.h")]
+    [InlineData(@"C:\nul.log")]
+    [InlineData(@"C:\folder\com1.txt")]
+    [InlineData(@"C:\prn.md")]
+    [InlineData(@"C:\con.d\inner.bin")]
     public void Plan_UnusualAddressableNames_StaysExact(string path)
     {
         RevealPlan plan = ShellReveal.Plan(path);
@@ -176,6 +181,27 @@ public class ShellRevealTests
         Assert.Equal(EFail, outcome.HResult);
     }
 
+    /// <summary>
+    /// The parse succeeded but its ID list stands for another path, or for none: refused before anything is opened, the
+    /// list freed. This is how 'dup.' parses when 'dup' is there, and how a device name with an extension would parse on
+    /// a Windows that took it for the device (SL-088 review R2-m2).
+    /// </summary>
+    [Theory]
+    [InlineData(@"C:\a\b")]
+    [InlineData(null)]
+    public void Walk_ParseStandsForAnotherItem_RefusesWithoutOpening(string? landsOn)
+    {
+        var shell = new FakeShell(parse: 0, open: 0, pathOf: _ => landsOn);
+        RevealOutcome outcome = shell.Walk(@"C:\a\b.txt");
+
+        Assert.Equal(new[] { @"C:\a\b.txt" }, shell.Parsed);
+        Assert.Empty(shell.Opened);
+        Assert.Equal(new[] { FakeShell.Pidl }, shell.Freed);
+        Assert.Equal(RevealKind.Failed, outcome.Kind);
+        Assert.Equal(RevealReason.ParsedAsAnotherItem, outcome.Reason);
+        Assert.Null(outcome.Shown);
+    }
+
     [Theory]
     [InlineData(@"C:\folder\dup.", "dup.")]
     [InlineData(@"C:\x\dir.\in.txt", "dir.")]
@@ -234,7 +260,10 @@ public class ShellRevealTests
     /// deleted from a parent that is still there, are both refused as gone with no open. The parent that survives
     /// parses, which is the folder SL-047's climb would have opened in the file's place. A present file and a folder
     /// with a deny-all ACE in the same run parse and reach the open, so a parse that cannot work in this process
-    /// (COM not initialised, say) fails here rather than passing 'never opened' for nothing.
+    /// (COM not initialised, say) fails here rather than passing 'never opened' for nothing. So do files whose names are
+    /// device names with an extension (con.txt, aux.h, nul.log, com1.txt, and a file in a folder con.d), which the shell
+    /// addresses exactly (SL-088 review R2-m2), and a file past MAX_PATH, whose ID list the shell gives back in 8.3 form.
+    /// 'dup.' asked of the shell directly, beside 'dup', parses to 'dup' and is refused before the open.
     /// </summary>
     [Fact]
     public void Walk_OnRealTree_RefusesGoneTargetsAndLandsThePresentOne()
@@ -250,6 +279,16 @@ public class ShellRevealTests
         File.Delete(deleted);
         tree.Deny(denied, 0x1F01FF); // FILE_ALL_ACCESS
         Assert.Throws<UnauthorizedAccessException>(() => Directory.GetFileSystemEntries(denied));
+        tree.Folder("reserved");
+        Directory.CreateDirectory(tree.ExtendedRoot + @"\reserved\con.d");
+        string[] reserved = [.. new[] { "con.txt", "aux.h", "nul.log", "com1.txt", @"con.d\inner.bin" }
+            .Select(name => TempTree.WriteFile(tree.ExtendedRoot + @"\reserved\" + name, 4096)[4..])];
+        string longFolder = tree.Folder(string.Join('\\', Enumerable.Repeat(new string('l', 60), 4)));
+        string beyondMaxPath = tree.File(Path.Combine(longFolder, "far.bin"), 4096);
+        Assert.True(beyondMaxPath.Length > 300, $"{beyondMaxPath.Length} characters");
+        string decoy = tree.File(@"kept\dup", 4096);
+        TempTree.WriteFile(tree.ExtendedRoot + @"\kept\dup.", 4096);
+        string dupDot = decoy + ".";
 
         var opened = new List<IntPtr>();
         int survivorParse = -1;
@@ -259,11 +298,15 @@ public class ShellRevealTests
         {
             try
             {
-                foreach (string path in new[] { victim, deleted, present, denied })
+                foreach (string path in new[] { victim, deleted, present, denied, beyondMaxPath }.Concat(reserved))
                 {
-                    outcomes[path] = ShellReveal.Walk(ShellReveal.Plan(path), path, ShellReveal.ParseDisplayName,
+                    outcomes[path] = ShellReveal.Walk(ShellReveal.Plan(path), path, ShellReveal.ParseDisplayName, ShellReveal.PathOfIdList,
                         pidl => { opened.Add(pidl); return 0; }, ShellReveal.FreeIdList);
                 }
+
+                // Past Plan, which refuses the name up front, to the shell itself.
+                outcomes[dupDot] = ShellReveal.Walk(new RevealPlan(dupDot, null, dupDot), dupDot, ShellReveal.ParseDisplayName,
+                    ShellReveal.PathOfIdList, pidl => { opened.Add(pidl); return 0; }, ShellReveal.FreeIdList);
 
                 survivorParse = ShellReveal.ParseDisplayName(tree.Root, out IntPtr survivor);
                 if (survivor != IntPtr.Zero)
@@ -289,9 +332,11 @@ public class ShellRevealTests
         }
 
         Assert.Equal(0, survivorParse);
-        Assert.Equal(RevealKind.Exact, outcomes[present].Kind);
-        Assert.Equal(RevealKind.Exact, outcomes[denied].Kind);
-        Assert.Equal(2, opened.Count);
+        foreach (string landing in new[] { present, denied, beyondMaxPath }.Concat(reserved))
+            Assert.True(outcomes[landing].Kind == RevealKind.Exact, $"{landing}: {outcomes[landing]}");
+        Assert.Equal(RevealKind.Failed, outcomes[dupDot].Kind);
+        Assert.Equal(RevealReason.ParsedAsAnotherItem, outcomes[dupDot].Reason);
+        Assert.Equal(3 + reserved.Length, opened.Count);
         Assert.All(opened, pidl => Assert.NotEqual(IntPtr.Zero, pidl));
     }
 
@@ -303,8 +348,11 @@ public class ShellRevealTests
         Assert.Throws<ArgumentException>(() => ShellReveal.Plan(path));
     }
 
-    /// <summary>The three shell calls Walk makes, answering with fixed HRESULTs and recording each call.</summary>
-    private sealed class FakeShell(int parse, int open)
+    /// <summary>
+    /// The shell calls Walk makes, answering with fixed HRESULTs and recording each call. The ID list stands for the path
+    /// parsed unless <paramref name="pathOf"/> says otherwise.
+    /// </summary>
+    private sealed class FakeShell(int parse, int open, Func<IntPtr, string?>? pathOf = null)
     {
         public static readonly IntPtr Pidl = new(0x1234);
 
@@ -313,7 +361,7 @@ public class ShellRevealTests
         public List<IntPtr> Freed { get; } = [];
 
         public RevealOutcome Walk(string path) =>
-            ShellReveal.Walk(ShellReveal.Plan(path), path, Parse, Open, Freed.Add);
+            ShellReveal.Walk(ShellReveal.Plan(path), path, Parse, pathOf ?? (_ => Parsed[^1]), Open, Freed.Add);
 
         private int Parse(string path, out IntPtr pidl)
         {
