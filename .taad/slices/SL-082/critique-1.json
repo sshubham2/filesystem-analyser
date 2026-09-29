@@ -1,0 +1,155 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-082",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-09-29T03:56:05.683Z",
+ "head": "3d5ff3268c1b5fb037796492100e48eb3f198558",
+ "run_id": 2097,
+ "summary": "The design has the right overall shape: a dormant Core failpoint keyed by folder name and page, armed from the hook, extra optional fields in the schema-1 report, and one WindowCases.ps1 case. It respects the spikes (1 no-go, 2 blocked, 3 go, 4 unfinished) and does not rebuild the Core test that was cut from the slice. The flaws are in how the window case proves things, so as specified it can pass while proving less than it claims.\n\n(1) The sibling Q is meant to catch a failpoint that fires on the wrong folder, but Q holds 'a couple of files'. It never reaches a page 2, so a failpoint that ignored the name would still pass.\n\n(2) The child count is limited to rows the tree has realized. In a virtualized tree that count depends on the viewport, so '0 < K < total' proves nothing. The size checks from spike 2 were also dropped, even though the design says it makes spike 2's criteria executable.\n\n(3) The report contract adds fields only for the named row, but the case asserts R's and Q's notes.\n\n(4) The design marks one question as would-force-resynthesis and leaves it open: whether the architecture rules allow a new static seam in Core/Scanning. The same goes for how the new fitness rule sits with the project's rules-parity twinning, given the design adds no Fact.\n\nSmaller points:\n- The failpoint sits in a different file from the substitution point it says it shares.\n- The architecture rule covers only App. The design's own property also bars Core from reading the variable.\n- Error 995 is the project's own cancel code.\n- The fixture size ('a few hundred') may fit in one 64 KiB page.\n- The expand step's timing and path are unspecified.\n- Nothing owns the bad-value case.\n\nThe bug report was only a title. I assumed what the build check and the design agree on: only the window case and the seam it needs are left to deliver.\n\nCitations checked: issue #5544 and PR #5569 in tui-cs/Terminal.Gui support the claims as decorative background (#5569 per its own summary: 'still loses the readable entries when the listing call itself throws'; the fix enumerates with IgnoreInaccessible). Two of them are cited through a third-party mirror (gitblind.noratr.app) rather than github.com. The claim that a startup hook runs before Main is backed by dotnet/runtime's host-startup-hook.md and by this project's own 45 working hook cases. No finding rests on a search that could not run.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The design has the right overall shape: a dormant Core failpoint keyed by folder name and page, armed from the hook, extra optional fields in the schema-1 report, and one WindowCases.ps1 case. It respects the spikes (1 no-go, 2 blocked, 3 go, 4 unfinished) and does not rebuild the Core test that was cut from the slice. The flaws are in how the window case proves things, so as specified it can pass while proving less than it claims.\n\n(1) The sibling Q is meant to catch a failpoint that fires on the wrong folder, but Q holds 'a couple of files'. It never reaches a page 2, so a failpoint that ignored the name would still pass.\n\n(2) The child count is limited to rows the tree has realized. In a virtualized tree that count depends on the viewport, so '0 < K < total' proves nothing. The size checks from spike 2 were also dropped, even though the design says it makes spike 2's criteria executable.\n\n(3) The report contract adds fields only for the named row, but the case asserts R's and Q's notes.\n\n(4) The design marks one question as would-force-resynthesis and leaves it open: whether the architecture rules allow a new static seam in Core/Scanning. The same goes for how the new fitness rule sits with the project's rules-parity twinning, given the design adds no Fact.\n\nSmaller points:\n- The failpoint sits in a different file from the substitution point it says it shares.\n- The architecture rule covers only App. The design's own property also bars Core from reading the variable.\n- Error 995 is the project's own cancel code.\n- The fixture size ('a few hundred') may fit in one 64 KiB page.\n- The expand step's timing and path are unspecified.\n- Nothing owns the bad-value case.\n\nThe bug report was only a title. I assumed what the build check and the design agree on: only the window case and the seam it needs are left to deliver.\n\nCitations checked: issue #5544 and PR #5569 in tui-cs/Terminal.Gui support the claims as decorative background (#5569 per its own summary: 'still loses the readable entries when the listing call itself throws'; the fix enumerates with IgnoreInaccessible). Two of them are cited through a third-party mirror (gitblind.noratr.app) rather than github.com. The claim that a startup hook runs before Main is backed by dotnet/runtime's host-startup-hook.md and by this project's own 45 working hook cases. No finding rests on a search that could not run.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "test-coverage",
+    "claim": "The leak check cannot detect the failure it exists for. Q is 'a couple of untouched files', so its listing is one page and a page-2 fault can never land on it. R is denied outright and has no pages at all. P is the only folder with a page 2. A failpoint that ignored the folder name entirely, or that used one page counter shared across folders (the exact defect spike 1 found in SynchronousIoCancel's per-call counter), would still produce: P partial, Q empty note, R 'could not be opened'. The case would pass. The design's own reason for Q ('a name-keyed failpoint that leaked onto Q would reproduce the exact false-pass risk this slice is meant to close') is therefore not met.",
+    "evidence": "Design, 'Partial-read window case + fixture': 'Q (a couple of untouched files)'. cases[4]: 'a second folder (Q) with no fault armed against it … a name-keyed failpoint that leaked onto Q would reproduce the exact false-pass risk'. Contract 'Window case': 'Fails … if the fault leaks onto Q.'",
+    "fix": "Give Q the same multi-page file count as P, and name it so it sorts, and so is listed, before P (for example 'a-<guid>' and 'p-<guid>'). An unkeyed or shared-counter failpoint then trips on Q first. Assert Q's note is empty, its child count equals its full file count, and its size equals N × file size. To settle it by running: build once with the name check removed from the failpoint and confirm the case fails."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "missing-edge-cases",
+    "claim": "The report is limited to 'rows the tree already realizes', but the folder tree is virtualized. Spike 3's JSON reports realizedRows, and the window height is steered by FSA_HOOK_HEIGHT. Once P, with hundreds or thousands of entries, is expanded, its realized child rows are bounded by the viewport. They are not K. So '>0 and < P's real full count' is true whether the fault fired or not. If the count comes from FolderTreeNode.ChildCount instead, it checks the model again, which TopLevelRowTextTests already covers, rather than the display. The design also says the case is 'spike 2's blocked criteria, made executable for the first time', yet it drops spike 2's criterion (c): P's size equals the sum of the K listed entries, the root's size equals that sum plus Q plus 0, and the rows are ordered by size. That is the only part that ties the displayed row to what was actually listed.",
+    "evidence": "Design, 'Tree rows in the window report': 'Scoped to what the tree already realizes, matching the existing realizedRows/fullRows granularity'. Contract 'Window case': 'This is spike 2's blocked partial-row-renders-as-described criteria, made executable for the first time'. Spike 2's assumption: '(c) shows a size equal to the sum of those K entries … The root's size also equals that K-sum + 2 MiB'.",
+    "fix": "For each root-level row, report the node's child count (what the expander opens onto), its displayed size in bytes, and, separately, the number of realized child rows. Use same-size, non-zero files (for example 4 KiB). Assert P's size ÷ file size equals P's child count, 0 < child count < N, realized child rows > 0, root size equals P's size plus Q's size, and the root's rows are in size order. To settle it by running: capture the report with a small FSA_HOOK_HEIGHT and compare realized child rows against ChildCount."
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "claim": "One decidable question is marked would_force_resynthesis: true and left open: do the project's architecture rules allow a new reflection-armed static seam in src/FsAnalyser.Core/Scanning? Relatedly, the design adds a fitness rule and also decides 'Add no new Core.Tests Fact'. The project keeps fitness.yaml rules paired one-for-one with Facts in ArchitectureRulesTests (eng/rules-parity.ps1, and SL-069/SL-075's twinned and settled counts), and .taad/fitness.yaml is already modified in this worktree. So the build could meet a DRIFT result from rules-parity, or a rule that bans the seam. The second would change the component this design is built around. A stage that can open files should have settled this before the design was treated as complete.",
+    "evidence": "Design decidable_disagreements[0]: 'If the harness instead forbids new mutable static surface in Scanning specifically, the seam would have to move … would_force_resynthesis: true'. Design key_decisions: 'Add no new Core.Tests Fact.' Git status: 'M .taad/fitness.yaml'. SL-069 conditional: 'settled expectation must come from the baseline's S (or the yaml item count minus the baseline's twinned M)'.",
+    "fix": "Before build, search .taad/fitness.yaml and tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs for rules over src/FsAnalyser.Core/** that mention static members, Environment, or the Scanning namespace, and run eng/rules-parity.ps1 against the modified yaml. State in the design whether the new rule gets a twin Fact (plus a harness plant row) or is recorded as settled and untwinned. If a rule forbids the seam, send the design back to design-slice."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "under-engineering",
+    "claim": "The precondition the design imported as must-verify ('fires at the same layer real failures arrive') is left to the builder to remember. The component lives in DirectoryReader.cs but claims to substitute 'at the same point SynchronousIoCancel.OverrideQueryError already injects', and that point is in SynchronousIoCancel.cs:120. That leaves two injection mechanisms in two layers. If the new check sits where the value is still an NTSTATUS, 995 (0x000003E3) counts as success under NT_SUCCESS, and the loop parses the stale buffer again. If it sits on only one of DirectoryReader's query routes (ScanOptions.ForceFullDirectoryClass implies more than one info class), a listing that takes the other route never faults. If it throws instead of returning the code, the scanner may drop the entries it already listed, and P reads as 'could not be opened'. The case would catch each of these, but only after a build.",
+    "evidence": "Design component 'Listing failpoint (Core)': lives_at 'src/FsAnalyser.Core/Scanning/DirectoryReader.cs'; 'at the same point SynchronousIoCancel.OverrideQueryError already injects'. cross_domain_transfer invariant 1: status 'must-verify'.",
+    "fix": "Put the name-and-page check at the single place OverrideQueryError already writes its Win32 code, filtered by a per-listing context that DirectoryReader sets (leaf name plus a page index reset for each listing). Every listing route then passes through one seam. State in the contract that the injected value is a Win32 error after translation."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "The architecture rule protects only half of the property the design depends on. The design says the failpoint is 'never read as an env var or flag inside Core or App', but the rule covers only src/FsAnalyser.App/**. A later convenience change in Core, such as DirectoryReader's static constructor reading FSA_HOOK_FAIL_LISTING, would not be caught. The pattern 'FailListingOf\\(' also misses reflection by string ('\"FailListingOf\"') and nameof(DirectoryReader.FailListingOf).",
+    "evidence": "architecture_rules[0]: files 'src/FsAnalyser.App/**/*.cs', must_not_match ['FSA_HOOK_FAIL_LISTING', 'FailListingOf\\\\(']. Component: 'never read as an env var or flag inside Core or App'.",
+    "fix": "Widen to files 'src/**/*.cs' with must_not_match 'FSA_HOOK_'. Add a second rule so that 'FailListingOf' (without the parenthesis) may appear only in the file that defines it."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "claim": "The report contract and the case disagree. The report component adds note, expandable, expanded and child count only 'for the named row'. The case asserts R's note ('could not be opened'), Q's empty note and 'R is not expandable', none of which the specified report carries. The builder will have to guess the real shape, and the design's one deliberate edit (the taste disagreement over report shape) was never pinned down.",
+    "evidence": "Component 'Tree rows in the window report': 'for the named row, its note …, whether it is expandable, whether it is expanded, and a count of its directly-listed children'. Component 'Partial-read window case': 'distinct from R's could not be opened and from Q's empty note … R is not expandable'.",
+    "fix": "Specify window.FolderTree.rows[] as one entry per root-level row, plus the expanded row's own entry: {name, note, expandable, expanded, childCount, sizeBytes, realizedChildRows}. Keep it optional and leave the schema at 1. No cap is needed."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "The fixture size is defined by remembering DirectoryReader's buffer size. The rationale says the fixture is 'a few hundred entries', but with a 64 KiB buffer and FileIdBothDirectoryInformation (a fixed part of about 104 bytes plus 2 bytes per name character), a few hundred short names fit in one page. The page-2 fault then never fires, and the only evidence is a missing note. The design logs 'armed' but never 'fired', so 'the fixture was too small' cannot be told apart from 'the fault fired and the row is wrong'. TopLevelRowTextTests needed about 2,000 files to fault at the third buffer.",
+    "evidence": "Design key_decisions[2]: 'this slice's fixture is a few hundred entries'. Q-004 evidence: 'DirectoryReader's 64 KiB buffer'. Build check: 'Files counted (1-1999)'.",
+    "fix": "Size P and Q at 2,000 or more files, or compute the count from the buffer size and entry size. Have the failpoint record that it fired (for example a static count the hook writes to FSA_HOOK_LOG as 'fail-listing fired <name> page 2' before the report). Make a missing 'fired' line fail the case with its own message."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "Error 995 is ERROR_OPERATION_ABORTED, the code SynchronousIoCancel's own CancelSynchronousIo stall watchdog produces. Using it ties the window case to the scanner treating a cancelled listing the same way as a failed one. A later stall note, or a check for whether a 995 was self-inflicted (the SL-039/040/080 stall work is active), would send the case down a different branch, or make it look like cancellation, without anyone having changed the partial-read path.",
+    "evidence": "Contract 'FSA_HOOK_FAIL_LISTING env var': 'the case uses <P>|2|995'. Build check: 'error 995 at a folder's third listing buffer' via SynchronousIoCancel.OverrideQueryError.",
+    "fix": "Have the window case use an error no project code produces itself, and that real listings can return partway, for example 64 (ERROR_NETNAME_DELETED) or 1117 (ERROR_IO_DEVICE)."
+   },
+   {
+    "id": "m6",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "claim": "The expand-by-name step is not specified enough to build without guessing. It does not say whether P is reachable without expanding the root first, or how the step waits for the lazily created child rows (a Dispatcher and layout pass) before the report is written. FSA_HOOK_TREE_EXPAND is introduced conditionally but is missing from the contracts. Writing the report immediately after IsExpanded=true could capture zero realized children and fail at random.",
+    "evidence": "Component 'Expand-by-name step': 'Reuses TreeMode's existing finish-scan/write-report flow if one already expands rows; otherwise adds FSA_HOOK_TREE_EXPAND=<leaf name>'.",
+    "fix": "Add FSA_HOOK_TREE_EXPAND to the contracts. Specify that it expands the path from the root to the named leaf, then waits for Dispatcher idle (ApplicationIdle priority) after UpdateLayout before the report is written, and that it logs 'expanded <name> children <n>'."
+   },
+   {
+    "id": "m7",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "Two behaviours the design lists have no component that owns them. First, the bad-value case (malformed FSA_HOOK_FAIL_LISTING, page < 2, missing member) appears in cases[1], but the window-case component describes only the valid run, so the promise to fail loudly on a bad value is never exercised. Second, the failpoint's keying and per-listing page count are new scanner code, yet the design adds no Core Fact and no disarm, and the static state lasts for the whole process. A later Core test that arms it would fault the other xUnit tests listing folders in parallel.",
+    "evidence": "cases[1]: 'arm the listing failpoint with a bad value'. key_decisions: 'Add no new Core.Tests Fact'. Contract FailListingOf(string, int, int) has no reset or scope.",
+    "fix": "Add one WindowCases.ps1 sub-case with a malformed value. It asserts a non-zero exit within the timeout, no report file, and the FSA_HOOK_LOG error line. Have FailListingOf return an IDisposable, or add a Disarm(), so any future Core use can be scoped."
+   },
+   {
+    "id": "m8",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "P contains only files. The design assumes FolderTreeNode.ChildCount counts files. If the tree counts only folder children, a files-only partial P lands on the ChildCount==0 branch and shows 'could not be opened'. The case then fails for a reason unrelated to the failpoint.",
+    "evidence": "Fixture: 'P (… same-size, similarly-named files …)'. Spike 3: note is 'could not be read in full' when ChildCount>0.",
+    "fix": "Put one subfolder in P whose name sorts first, so it lands in page 1, next to the files. Either counting rule then reaches ChildCount>0, and the expander shows a folder row as well as file rows."
+   },
+   {
+    "id": "m9",
+    "severity": "minor",
+    "dimension": "security",
+    "claim": "The transfer invariant 'It cannot be armed by an ordinary user in the shipped exe' is marked holds, but that overstates it. Any process running as the same user can set DOTNET_STARTUP_HOOKS to its own DLL and call the internal method by reflection, because the failpoint ships dormant rather than compiled out (invariant 4: fails). This is not a privilege boundary and nothing escalates, since the same user can already run code. The property that actually holds is 'no product-side flag or env var'.",
+    "evidence": "cross_domain_transfer.invariants[2]: status 'holds'. invariants[3]: 'ships dormant rather than compiled out'.",
+    "fix": "Reword the invariant to 'the product reads no flag or env var that arms it; arming requires injecting code into the process', and have architecture_rules enforce that (see m2)."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M3: an open question the design itself marks would-force-resynthesis, plus rules-parity twinning. m5: 995 is the project's own cancel code. m8: assumes files count toward ChildCount. The bug report is only a title; assumed, as the build check and design agree, that only the window case and its seam are left to build."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "M2: the child count is bounded by virtualization, and the size and order checks were dropped. m4: the fixture may fit in one 64 KiB page and there is no 'fired' signal."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "m1: two injection mechanisms in two layers, and the must-verify precondition is left to memory rather than enforced at one choke point. If it fails: an NTSTATUS-domain 995 reads as success and the stale buffer is parsed again; a second query route never faults; a throw loses the entries already listed."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none: about 15 lines in Core, no DI, no new project, no row cap. Dropping the invented 1000-row truncation cap is right; the only gap is that the per-row fields the case needs were narrowed too far (m3)."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "m3: the report adds fields only for the named row, but the case asserts R and Q. m6: FSA_HOOK_TREE_EXPAND is not in the contracts, and the expand step's path and timing are unspecified."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "A bad hook value throws out of Initialize so the exe exits, which is sound, and cleaning up the ACL fixture follows New-TopsTree. The gaps: nothing owns the bad-value case (m7), and 'fault never fired' cannot be told apart from 'wrong row' (m4)."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "The claim to make 'spike 2's criteria executable' drops spike 2's size and ordering criteria (M2). The component location (DirectoryReader) differs from the substitution point it claims to share (SynchronousIoCancel) (m1). No drift from SL-044 or the testing constraints: the case uses FsaWindowHook, WindowCases.ps1 and schema-1 --report, with no App test project."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "m2: the architecture rule covers only App, though the stated property covers Core too, and its regex misses reflection by string or nameof. M3: the new fitness rule's rules-parity twin is not addressed while the design adds no Fact."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "M1: sibling Q is single-page, so the leak check is vacuous. m7: no owner for the bad-value case, and no Core Fact or disarm for the new seam. Suggested mutation run: build with the failpoint's name check removed; the case must fail."
+   },
+   {
+    "dimension": "security",
+    "result": "m9: the 'cannot be armed by an ordinary user' invariant is overstated. Any same-user DOTNET_STARTUP_HOOKS injection can arm it, but that is not a privilege boundary. No administrator operation is needed for this slice: R's denial is an ordinary-user ACL deny through the existing Deny-Listing route."
+   }
+  ]
+ }
+}

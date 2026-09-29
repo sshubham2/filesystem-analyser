@@ -1,0 +1,164 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-082",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-09-29T04:33:44.891Z",
+ "head": "cd235cadf287e51d81537933e9a0e557b3f92acc",
+ "run_id": 2103,
+ "summary": "The code matches the design. The only departures are the ones the build declared, and the listing failpoint sits where the design needs it. In DirectoryReader.List (DirectoryReader.cs:109-124), SynchronousIoCancel.ListingError swaps the error right after io.Query returns and before the `error != 0` check. It replaces only a call that returned a page, and LastCallAborted stays false on that call, so the pages already read are kept and Scanner.FolderDone (Scanner.cs:275-285) adds the children and then sets Unreadable, unchanged. Page is a local counter per listing. The name match takes the leaf after the last '\\\\', which agrees with how LongPath.Child builds paths. The root is listed through the path-less public List overload, so it is never faulted.\n\nI re-ran everything myself rather than trusting the build's account:\n- Core.Tests: 414/414 passed.\n- Fitness: 63 rules hold.\n- rules-parity: AGREE.\n- T-007 passed: P kept 355 of 2,000 and reads 'could not be read in full'; Q is read in full; R reads 'could not be opened'; root = 9,646,080.\n- T-008 passed: 4 bad values, each exiting 0xE0434352 with no report.\n- The full `WindowCases.ps1 -Case All` passed: 48 cases, EXIT 0; N-001..N-004 not run.\n- Mutant ListingFailsAnyFolder: T-007 failed on Q and on the failpoint firing twice.\n- Mutant NoFailListingMember: T-007 failed on its first check with MissingMethodException.\n\nThe mutants run in a scratch copy, so the tree was not touched. Every matrix shape is fed by the named test. The two mutants have to be named when running WindowMutants.ps1; `-Case All` does not run them.\n\nOne minor gap: T-008 does not feed the empty-name refusal. The design contract lists that case, and the build's own extra refusals (a path separator, error 18, a non-numeric error) are not fed either.\n\nThe bug report was only a title. I assumed what the build check and the design agreed on: the Core scanner-level test already exists (it was cut from the slice), and only the window case and the seam it needs are owed.\n\nSecond round: This second pass tried to break the changed code and found nothing new beyond first round's m1, which still stands.\n\n- **The hook's value parser** (StartupHook.cs ArmFailListing) handles every awkward input loudly. Numbers are parsed with NumberStyles.None and the invariant culture, so a trailing CR/LF, whitespace, a '+' or '-' sign, an empty part, a non-ASCII digit or an int overflow each fails with FormatException. That is a logged refusal, and the app ends. '|' cannot appear in a Windows file name, so splitting on it is safe. A name with stray whitespace arms for a folder that does not exist and never fires. The design contract says the case must catch that itself, and T-007 does, with its own 'fired' check.\n- **The leaf matcher** (ListingError) behaves correctly at every edge I found:\n  - A path with no '\\\\' gives LastIndexOf -1, +1 = 0, so the whole string is compared.\n  - Scanner's child paths come from LongPath.Child and never end in '\\\\'.\n  - The root reaches List through the overload with no path.\n- **Refused error values:** ClassifyReadError (Scanner.cs:54-57) treats every non-zero error as Unreadable, except 995 while a cancel is requested. In DirectoryReader, only 18, and 2 on the first page, end a listing as complete. So refusing 0 and 18 is the complete set.\n- **Racing a cancel:** Query settles an issued cancel to Aborted (SynchronousIoCancel.cs:278-296). The failpoint, which acts only on a call that returned 0, therefore never races a cancel.\n- **Type load before Main:** reflection now loads SynchronousIoCancel before the app's Main, which runs its static initializer (CheckedKeepLastAccessInfo) early. That is a pure layout check. If it threw, the hook would log a refusal, rather than the scan faulting later.\n- **The fired callback** calls Log on the scan thread. Log swallows its own exceptions, so it cannot fault the scan.\n- **T-007's log reads:** Invoke-WithHook builds Log as @(Get-Content …), which never holds a $null, so the StartsWith filters cannot throw.\n- **The mutant's find pattern** matches under both LF and CRLF checkouts, and Set-Mutation refuses anything but exactly one match.\n- **Doc comment references:** a --no-incremental Release build of Core gives 0 warnings, so the ambiguous `<see cref=\"List\"/>` is not flagged (Core generates no documentation file).",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The code matches the design. The only departures are the ones the build declared, and the listing failpoint sits where the design needs it. In DirectoryReader.List (DirectoryReader.cs:109-124), SynchronousIoCancel.ListingError swaps the error right after io.Query returns and before the `error != 0` check. It replaces only a call that returned a page, and LastCallAborted stays false on that call, so the pages already read are kept and Scanner.FolderDone (Scanner.cs:275-285) adds the children and then sets Unreadable, unchanged. Page is a local counter per listing. The name match takes the leaf after the last '\\\\', which agrees with how LongPath.Child builds paths. The root is listed through the path-less public List overload, so it is never faulted.\n\nI re-ran everything myself rather than trusting the build's account:\n- Core.Tests: 414/414 passed.\n- Fitness: 63 rules hold.\n- rules-parity: AGREE.\n- T-007 passed: P kept 355 of 2,000 and reads 'could not be read in full'; Q is read in full; R reads 'could not be opened'; root = 9,646,080.\n- T-008 passed: 4 bad values, each exiting 0xE0434352 with no report.\n- The full `WindowCases.ps1 -Case All` passed: 48 cases, EXIT 0; N-001..N-004 not run.\n- Mutant ListingFailsAnyFolder: T-007 failed on Q and on the failpoint firing twice.\n- Mutant NoFailListingMember: T-007 failed on its first check with MissingMethodException.\n\nThe mutants run in a scratch copy, so the tree was not touched. Every matrix shape is fed by the named test. The two mutants have to be named when running WindowMutants.ps1; `-Case All` does not run them.\n\nOne minor gap: T-008 does not feed the empty-name refusal. The design contract lists that case, and the build's own extra refusals (a path separator, error 18, a non-numeric error) are not fed either.\n\nThe bug report was only a title. I assumed what the build check and the design agreed on: the Core scanner-level test already exists (it was cut from the slice), and only the window case and the seam it needs are owed.\n\nSecond round: This second pass tried to break the changed code and found nothing new beyond first round's m1, which still stands.\n\n- **The hook's value parser** (StartupHook.cs ArmFailListing) handles every awkward input loudly. Numbers are parsed with NumberStyles.None and the invariant culture, so a trailing CR/LF, whitespace, a '+' or '-' sign, an empty part, a non-ASCII digit or an int overflow each fails with FormatException. That is a logged refusal, and the app ends. '|' cannot appear in a Windows file name, so splitting on it is safe. A name with stray whitespace arms for a folder that does not exist and never fires. The design contract says the case must catch that itself, and T-007 does, with its own 'fired' check.\n- **The leaf matcher** (ListingError) behaves correctly at every edge I found:\n  - A path with no '\\\\' gives LastIndexOf -1, +1 = 0, so the whole string is compared.\n  - Scanner's child paths come from LongPath.Child and never end in '\\\\'.\n  - The root reaches List through the overload with no path.\n- **Refused error values:** ClassifyReadError (Scanner.cs:54-57) treats every non-zero error as Unreadable, except 995 while a cancel is requested. In DirectoryReader, only 18, and 2 on the first page, end a listing as complete. So refusing 0 and 18 is the complete set.\n- **Racing a cancel:** Query settles an issued cancel to Aborted (SynchronousIoCancel.cs:278-296). The failpoint, which acts only on a call that returned 0, therefore never races a cancel.\n- **Type load before Main:** reflection now loads SynchronousIoCancel before the app's Main, which runs its static initializer (CheckedKeepLastAccessInfo) early. That is a pure layout check. If it threw, the hook would log a refusal, rather than the scan faulting later.\n- **The fired callback** calls Log on the scan thread. Log swallows its own exceptions, so it cannot fault the scan.\n- **T-007's log reads:** Invoke-WithHook builds Log as @(Get-Content …), which never holds a $null, so the StartsWith filters cannot throw.\n- **The mutant's find pattern** matches under both LF and CRLF checkouts, and Set-Mutation refuses anything but exactly one match.\n- **Doc comment references:** a --no-incremental Release build of Core gives 0 warnings, so the ambiguous `<see cref=\"List\"/>` is not flagged (Core generates no documentation file).",
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "The code refuses more bad values than T-008 feeds it, including the one the design contract names. The contract's error_cases for FailListingOf say 'Empty name throws'. SynchronousIoCancel.FailListingOf (SynchronousIoCancel.cs:146-150) also refuses a name with a path separator and win32Error 18. ArmFailListing (StartupHook.cs:245-248) also refuses a non-numeric error. T-008's $bad table feeds only four values: two parts, non-numeric page, page 1, and error 0. The error-18 refusal exists because 18 would make DirectoryReader.List return 0 (DirectoryReader.cs:115-116). P would then be truncated and look complete, with no Unreadable flag. A regression in any of these four refusals goes unnoticed. The empty-name and separator refusals would still leave a case's own 'fired' check to catch it. The error-18 regression would leave P listed partway with no note, and nothing would flag it as a failpoint problem.",
+    "evidence": "tests/window/WindowCases.ps1 Test-T008: $bad holds 'folder1|2', 'folder1|two|995', 'folder1|1|995', 'folder1|2|0' only. src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs:146-150 branches on IsNullOrWhiteSpace / IndexOfAny(['\\\\','/']) / ERROR_NO_MORE_FILES. tests/window/FsaWindowHook/StartupHook.cs:247-248 branches on a non-numeric error.",
+    "fix": "Add four rows to T-008's $bad table, each with its refusal regex: '|2|995' (ArgumentException, Parameter 'folderName'), 'a\\\\b|2|995' (ArgumentException), 'folder1|2|18' (ArgumentOutOfRangeException, Parameter 'win32Error'), and 'folder1|2|x' (FormatException 'the error ''x'' is not a whole number')."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "StartupHook.cs:213 calls ArmFailListing inside Initialize, before the hook thread and before Main. Test-T007 asserts that exactly one armed line exists and that it is log[0]. My T-007 run logged 'fail-listing armed p-… page 2 error 995' first, then 'loaded mode=tree'."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "Test-T008 feeds the design's shapes: wrong part count, non-numeric page, page 1 (plus error 0). I re-ran it: all four exit -532462766, write no report, and log a single refusal line. The missing-member shape is the NoFailListingMember mutant in WindowMutants.ps1, which I ran: MissingMethodException, 0xE0434352, and T-007 failed on its first check. The contract's empty-name case is not fed (see m1)."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "New-PartwayTree writes 2,000 files named 'file-NNNN-<32hex>.bin' (46 chars, 184-byte records). My run logged 'fail-listing fired p-… page 2', and P kept 355 of 2,000."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "T-007 asserts note 'could not be read in full', 0 < k < 2000, and size = onDisk = k × 4 KiB. It passed with k = 355."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "Q is 'a-<tag>' with 2,000 files. Scanner.cs:287-296 pushes last-first, so Q is listed before P. T-007 asserts Q is read in full. I ran the ListingFailsAnyFolder mutant: it fired on a-… and p-…, and T-007 failed on Q's childCount of 355."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "R is created empty and denied through Deny-Listing (icacls /deny RD). T-007 asserts note 'could not be opened', expander false, childCount 0 and onDisk 0, and undoes the deny in finally. My run passed."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "T-007 runs with FSA_HOOK_WALK=2 and asserts rendered.expanded and nodeExpanded. It asserts 355 depth-2 children, each drawn by its own container, against a 284 px viewport. My run: walked 359, unrendered 0."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "No schema-1 change was made; WindowReport.cs is untouched. I ran `WindowCases.ps1 -Case All`: PASSED for all 48 listed cases, EXIT 0, with N-001..N-004 not run."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "This one is owed to validate-slice; this is my read of the code. At DirectoryReader.cs:109-112 the substitution runs right after io.Query and before the `error != 0` block at 113-124. The swapped call returned 0, so io.LastCallAborted is false and _count is not reset. Scanner.FolderDone (Scanner.cs:275-285) then adds the kept entries and sets Unreadable. T-007 measured 355 kept with the partial note."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "The failpoint is static members on the existing SynchronousIoCancel (SynchronousIoCancel.cs:122-166), not a new class. The Fitness check says all 63 rules hold, and rules-parity reports AGREE."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "Q has P's multi-page shape and sorts first. The ListingFailsAnyFolder mutant exists in WindowMutants.ps1, and I ran it: it passed, meaning T-007 failed exactly on the fired-once check and on the Q-in-full check."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "T-007 uses the tree-row lines. It asserts P.size = k × 4 KiB, 0 < k < 2000, drawn children = k with k × 20 > viewport, root = P + Q, and the order Q, P, R."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "T-007 asserts note, expander, childCount and size for the Q, P, R and root rows from the tree-row lines. WindowReport.cs is unchanged, as Q-016 requires."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "The fixture is 2,000 files per folder. The fired callback goes through ListingError to the hook, which logs 'fail-listing fired <name> page <n>'. T-007 has its own check for a missing fired line and asserts k ≤ 1000."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "T-008 is the bad-value case. The Disarm half was declined by the m7 disposition and is listed as not built."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "The reworded invariant is in FailListingOf's doc comment at SynchronousIoCancel.cs:135-139. Enforcement is the src/** FSA_HOOK_ rule plus the new App rule in fitness.yaml, and the Fitness check passes."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "T-007 sets FSA_HOOK_FAIL_LISTING='<P>|2|995' for P, a folder in the fixture, and asserts the armed line is log[0], before 'loaded mode=tree'. Passed in my run."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "T-008 launches separately with 'folder1|2' (arg count), 'folder1|two|995' (non-numeric page), 'folder1|1|995' (page<2) and 'folder1|2|0'. Each asserts 0xE0434352, no report, and a single refusal line. The member-not-found shape is fed by the NoFailListingMember mutant, which renames FailListingOf in a scratch copy; I ran it and it passed. That mutant runs only when named, not in -Case All."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "P holds 2,000 files with 46-char names, about 355 per 64 KiB page, so six pages. The fault is armed at page 2 and T-007 asserts the 'fired … page 2' line. Measured: 355 kept."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "T-007 asserts P's drawn note is 'could not be read in full' with 0 < childCount = 355 < 2000, which lands on FolderTreeNode's ChildCount>0 branch."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "Q is 'a-<tag>', multi-page with 2,000 files, and listed before P. T-007 asserts no note and 2,000 children. The mutant with the name check removed makes T-007 fail on Q (verified by running it)."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "R is created empty and denied through Deny-Listing (icacls /deny RD), the existing ACL route. T-007 asserts 'could not be opened', no expander, and childCount 0."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "FSA_HOOK_WALK=2 opens P through its container. T-007 asserts rendered.expanded, nodeExpanded, and 355 drawn children, more than the 284 px viewport holds."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "I ran `WindowCases.ps1 -Case All`: all 48 listed cases passed, EXIT 0; N-001..N-004 not run (they need -IncludeNetwork). No schema-1 change was made."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "Every non-hooked case in the All run launches the published exe without DOTNET_STARTUP_HOOKS. No product code references the variable or the method: the Fitness check holds for the src/** FSA_HOOK_ rule and for the new App rule over FSA_HOOK_FAIL_LISTING and FailListingOf\\(. The build also ran the published exe with the variable set and no hook, and it scanned all 2,000 files; I did not re-run that launch."
+   }
+  ],
+  "matches_design": true,
+  "drift": [
+   "I found no departure the build left undeclared. One narrowing is disclosed only as a follow-up, not labelled a deviation. The hook reads FSA_HOOK_FAIL_LISTING only when FSA_HOOK_MODE is set and the process is FsAnalyser.App.exe (StartupHook.cs:197-200, 213). That is narrower than the contract's auth_model, 'Read only when DOTNET_STARTUP_HOOKS loads FsaWindowHook'. The hook header says 'any mode', which means any mode value, not no mode at all.",
+   "The failpoint fires for every folder with that leaf name anywhere in the tree, for the whole life of the process, rescans included. The root is never faulted (DirectoryReader.cs:94). Both are declared in FailListingOf's doc comment, and the design keyed the failpoint by leaf name, so a reader expecting 'one named folder' should know it means any folder of that name."
+  ],
+  "unreviewed": [],
+  "second_round": {
+   "run_id": 2104,
+   "filed": 0
+  }
+ }
+}

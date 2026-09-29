@@ -76,7 +76,7 @@ internal sealed unsafe class DirectoryReader(SynchronousIoCancel io) : IDisposab
             return error;
         try
         {
-            return List(handle!, fullClass);
+            return List(handle!, fullClass, win32Path);
         }
         finally
         {
@@ -91,16 +91,25 @@ internal sealed unsafe class DirectoryReader(SynchronousIoCancel io) : IDisposab
     /// the error are kept, except when the guard aborted the listing: that listing keeps nothing, so a
     /// cancelled folder is never committed half read, and its handle is not used again. A 995 Windows
     /// returns with no cancel issued is an error like any other and keeps what was read.</returns>
-    public int List(SafeFileHandle directory, bool fullClass)
+    public int List(SafeFileHandle directory, bool fullClass) => List(directory, fullClass, win32Path: null);
+
+    // As List, for the folder at win32Path when there is one: the listing failpoint (SL-082,
+    // SynchronousIoCancel.FailListingOf) goes by the folder's name and the page, and stands in for what a call
+    // returned before anything below reads it, as OverrideQueryError does inside the call.
+    private int List(SafeFileHandle directory, bool fullClass, string? win32Path)
     {
         _count = 0;
         _namesUsed = 0;
         int infoClass = fullClass ? Kernel32.FileFullDirectoryRestartInfo : Kernel32.FileIdExtdDirectoryRestartInfo;
         bool first = true;
+        int page = 0;
 
         while (true)
         {
             int error = io.Query(directory, infoClass, _buffer, BufferSize);
+            page++;
+            if (win32Path is not null)
+                error = SynchronousIoCancel.ListingError(win32Path, page, error);
             if (error != 0)
             {
                 if (error == Kernel32.ERROR_NO_MORE_FILES)

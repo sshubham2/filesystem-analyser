@@ -63,7 +63,11 @@
 # first scan's store is collectable. T-005 samples the UI thread through a scan, the hand-off to the tree and a
 # second scan over an open large folder; its bars are timings on a shared machine, so like M-001 it runs only
 # when named, never in All (HF-010). T-006 is the endings that show no tree. C-002, L-003, B-003, B-007 and
-# M-001 read the tree where they read the results list after a completed scan.
+# M-001 read the tree where they read the results list after a completed scan. T-007 and T-008 (SL-082) are the row of
+# a folder whose listing failed partway: the hook arms Core's listing failpoint before the app's Main
+# (FSA_HOOK_FAIL_LISTING), which fails one named folder's listing at a page of its own, and T-007 reads that row
+# beside a folder read in full and one denied outright; T-008 is a value the hook cannot arm, which ends the app
+# before its Main.
 #
 # K-001 to K-003 (SL-046) are the files by kind, a view of the results cell chosen beside its header: the report's
 # "kinds" (per kind its id, label and totals, never an extension or a name) against a planted tree of seven kinds, and
@@ -87,7 +91,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
         'L-001', 'L-002', 'L-003', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'N-001', 'N-002', 'N-003', 'N-004',
-        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003', 'R-001',
+        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'K-001', 'K-002', 'K-003', 'R-001',
         'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009')]
     [string] $Case,
     [switch] $IncludeNetwork
@@ -105,9 +109,9 @@ $RigExe = Join-Path $Repo 'artifacts\stall-rig\StallRig.exe'
 $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS',
     'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND', 'FSA_HOOK_MINSIZE', 'FSA_HOOK_DRIVES',
     'FSA_HOOK_WALK', 'FSA_HOOK_RECYCLE', 'FSA_HOOK_MULTIPLY', 'FSA_HOOK_SELECT', 'FSA_HOOK_RELEASE', 'FSA_HOOK_GAP', 'FSA_HOOK_HEIGHT', 'FSA_HOOK_REVEAL', 'FSA_HOOK_STATUS',
-    'FSA_HOOK_MAXIMIZE', 'FSA_HOOK_BACK', 'FSA_HOOK_READABLE', 'FSA_HOOK_BEFORE', 'FSA_HOOK_AFTER', 'FSA_HOOK_RENAMED', 'FSA_HOOK_RENDER'
+    'FSA_HOOK_MAXIMIZE', 'FSA_HOOK_BACK', 'FSA_HOOK_READABLE', 'FSA_HOOK_BEFORE', 'FSA_HOOK_AFTER', 'FSA_HOOK_RENAMED', 'FSA_HOOK_RENDER', 'FSA_HOOK_FAIL_LISTING'
 $HookedCases = 'C-002', 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
-    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'K-001', 'K-002', 'K-003', 'R-001',
+    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'K-001', 'K-002', 'K-003', 'R-001',
     'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004'
 $RigOnlyCases = 'N-003', 'N-004'
@@ -2911,6 +2915,161 @@ function Test-T006 {
     finally { Remove-CaseFolder $case }
 }
 
+# ---- The folder whose listing failed partway (SL-082) ----
+
+# New-PartwayTree's two listed folders each hold this many files of this size. At 46 characters a name, a listing
+# record (FILE_ID_EXTD_DIR_INFO, 88 bytes and the name, to 8) takes 184 bytes, so one 64 KiB page lists about 355 of
+# them and 2,000 take six pages: a fault at the second page keeps the first page's, under the 1,000 children WALK
+# opens (review m4).
+$PartwayFiles = 2000
+$PartwayFileBytes = 4KB
+
+# T-007's tree under $root: Q (a-<tag>) and P (p-<tag>), $PartwayFiles files each, and R (r-<tag>), empty and denied
+# list-folder as Deny-Listing does. Q sorts first, and the scan lists folders in listing order, so Q is listed before
+# P (review M1). Returns the three names, the tag the files' names carry, and R's path for the caller to give back.
+function New-PartwayTree([string] $root) {
+    $tag = [guid]::NewGuid().ToString('N')
+    $content = [byte[]]::new($PartwayFileBytes)
+    [System.Random]::new(20).NextBytes($content)
+    foreach ($name in "a-$tag", "p-$tag") {
+        $folder = Join-Path $root $name
+        [void][System.IO.Directory]::CreateDirectory($folder)
+        for ($i = 0; $i -lt $PartwayFiles; $i++) {
+            [System.IO.File]::WriteAllBytes((Join-Path $folder ('file-{0:D4}-{1}.bin' -f $i, $tag)), $content)
+        }
+    }
+    $denied = Join-Path $root "r-$tag"
+    [void][System.IO.Directory]::CreateDirectory($denied)
+    Deny-Listing $denied
+    [pscustomobject]@{ Q = "a-$tag"; P = "p-$tag"; R = "r-$tag"; Tag = $tag; Denied = $denied }
+}
+
+# T-007 (SL-082): the row of a folder whose listing failed partway, which no ordinary user can make happen. The hook
+# arms Core's listing failpoint before the app's Main (FSA_HOOK_FAIL_LISTING, see StartupHook.cs) so that P's listing
+# fails at its second page with error 995, and its tree mode walks the tree to depth 2. The fault fired once, on P,
+# during the scan. P keeps its first page: its row reads 'could not be read in full', has an expander, is open, and
+# opens onto exactly the children it charges, each drawn by a container of its own, more of them than the viewport
+# holds (review M2): its size is that many files, and it ranks by it. Q, as large, listed before P and with no fault
+# armed against it, is read in full, so a failpoint that ignored the name or counted pages across folders fails it
+# (review M1). R, denied outright, reads 'could not be opened' with no expander. The root is P and Q together.
+function Test-T007 {
+    $case = New-CaseFolder
+    $built = $null
+    try {
+        $root = Join-Path $case 'tree'
+        $built = New-PartwayTree $root
+        $n = $PartwayFiles
+        $run = Invoke-TreeRun $root @{ FSA_HOOK_WALK = '2'; FSA_HOOK_FAIL_LISTING = "$($built.P)|2|995" }
+        $log = @($run.Log)
+        $armed = @($log | Where-Object { $_.StartsWith('fail-listing ') -and -not $_.StartsWith('fail-listing fired ') })
+        Check ($armed.Count -eq 1 -and $armed[0] -ceq "fail-listing armed $($built.P) page 2 error 995" -and $log[0] -ceq $armed[0]) "the hook armed the listing failpoint for P before the app's Main, its first line ($(Show ($armed -join ' | ')))"
+        if ($armed.Count -ne 1 -or $armed[0] -notlike 'fail-listing armed *') {
+            foreach ($line in $log) { Write-Output "        hook: $line" }
+            Write-Output "        exit $(Show-Exit $run.Exit)"
+            return
+        }
+        $before = $script:Failures.Count
+        CheckTreeRun $run $root
+        if ($script:Failures.Count -gt $before) { return }
+
+        $fired = @($log | Where-Object { $_.StartsWith('fail-listing fired ') })
+        Check ($fired.Count -gt 0) 'the failpoint fired: P''s listing reached a second page (if not, P fits one page and nothing below is a folder read partway)'
+        $endingAt = [array]::IndexOf($log, @($log | Where-Object { $_.StartsWith('{"kind":"ending"') })[0])
+        Check ($fired.Count -eq 1 -and $fired[0] -ceq "fail-listing fired $($built.P) page 2" -and [array]::IndexOf($log, $fired[0]) -lt $endingAt) "the failpoint fired once, on P at its second page, during the scan ($(Show ($fired -join ' | ')))"
+
+        $rows = @(Lines-Of $run 'tree-row')
+        $top = @($rows | Where-Object depth -eq 1 | Sort-Object order)
+        CheckEqual "$($built.Q)|$($built.P)|$($built.R)" (($top | ForEach-Object name) -join '|') 'the root''s rows are Q, P, R: largest on disk first, P charged only what was listed'
+        $q = @($top | Where-Object name -ceq $built.Q)[0]
+        $p = @($top | Where-Object name -ceq $built.P)[0]
+        $r = @($top | Where-Object name -ceq $built.R)[0]
+        if ($null -eq $q -or $null -eq $p -or $null -eq $r) {
+            Check $false "the hook read the rows of Q, P and R ($(Show (($top | ForEach-Object name) -join ', ')))"
+            return
+        }
+
+        $bad = [System.Collections.Generic.List[string]]::new()
+        if ($null -eq $q.rendered) { $bad.Add('no container drew it') }
+        elseif ($q.rendered.note -cne '' -or $q.rendered.expander -ne $true) { $bad.Add("note $(Show $q.rendered.note), expander $($q.rendered.expander)") }
+        if ([int]$q.childCount -ne $n -or [long]$q.size -ne $n * $PartwayFileBytes -or [long]$q.onDisk -ne $n * $PartwayFileBytes) { $bad.Add("childCount $($q.childCount), size $($q.size), onDisk $($q.onDisk)") }
+        Check ($bad.Count -eq 0) "Q, listed before P with no fault armed against it, was read in full: no note, an expander, $n children of $(Format-Size $PartwayFileBytes) ($(Show ($bad -join '; ')))"
+
+        $k = [int]$p.childCount
+        Write-Output ("        P kept {0:N0} of its {1:N0} files; the tree's viewport is {2:N0} px" -f $k, $n, @(Lines-Of $run 'ending')[0].viewportHeight)
+        $bad = [System.Collections.Generic.List[string]]::new()
+        if ($null -eq $p.rendered) { $bad.Add('no container drew it') }
+        else {
+            if ($p.rendered.note -cne 'could not be read in full') { $bad.Add("note $(Show $p.rendered.note)") }
+            if ($p.rendered.expander -ne $true) { $bad.Add('no expander is drawn') }
+            if ($p.rendered.expanded -ne $true -or $p.nodeExpanded -ne $true) { $bad.Add("expanded $($p.rendered.expanded), node $($p.nodeExpanded)") }
+        }
+        if ($k -le 0 -or $k -ge $n) { $bad.Add("childCount $k") }
+        if ([long]$p.size -ne $k * $PartwayFileBytes -or [long]$p.onDisk -ne $k * $PartwayFileBytes) { $bad.Add("size $($p.size), onDisk $($p.onDisk), for $k files") }
+        Check ($bad.Count -eq 0) "P, whose listing failed at its second page, reads 'could not be read in full', has an expander, is open, and charges the $k of $n files it kept ($(Show ($bad -join '; ')))"
+
+        Check ($k -le 1000) "P's $k children are few enough for the walk to open it (1,000 at most)"
+        $children = @($rows | Where-Object { $_.depth -eq 2 -and (Parent-Of $_.path) -ceq $built.P })
+        $drawn = @($children | Where-Object { $null -ne $_.rendered -and $_.rendered.name -cmatch "^file-\d{4}-$($built.Tag)\.bin$" -and $_.rendered.name -ceq $_.name })
+        $files = @($children | Where-Object { $_.entryKind -ceq 'File' -and [long]$_.size -eq $PartwayFileBytes })
+        $distinct = @($children | ForEach-Object name | Sort-Object -Unique -CaseSensitive).Count
+        Check ($children.Count -eq $k -and $drawn.Count -eq $k -and $files.Count -eq $k -and $distinct -eq $k) "P's expander opens onto exactly its $k children, each one of its files of $(Format-Size $PartwayFileBytes), drawn by a container of its own ($($children.Count) read, $($drawn.Count) drawn, $($files.Count) such files, $distinct names)"
+        $viewport = [double]@(Lines-Of $run 'ending')[0].viewportHeight
+        Check ($k * 20 -gt $viewport) "more of them than the viewport holds ($k rows of 20 px against $viewport px): the count is P's, not the screen's"
+
+        $bad = [System.Collections.Generic.List[string]]::new()
+        if ($null -eq $r.rendered) { $bad.Add('no container drew it') }
+        elseif ($r.rendered.note -cne 'could not be opened' -or $r.rendered.expander -ne $false) { $bad.Add("note $(Show $r.rendered.note), expander $($r.rendered.expander)") }
+        if ([int]$r.childCount -ne 0 -or [long]$r.onDisk -ne 0) { $bad.Add("childCount $($r.childCount), onDisk $($r.onDisk)") }
+        Check ($bad.Count -eq 0) "R, denied outright, reads 'could not be opened' and has no expander, told apart from P ($(Show ($bad -join '; ')))"
+
+        $rootRow = @($rows | Where-Object depth -eq 0)[0]
+        Check ($null -ne $rootRow -and [long]$rootRow.size -eq [long]$p.size + [long]$q.size -and $null -ne $rootRow.rendered -and $rootRow.rendered.note -ceq '') "the root is P and Q together, R adding nothing, and has no note ($(Show $rootRow.size) against $([long]$p.size + [long]$q.size))"
+    }
+    finally {
+        if ($null -ne $built) { Undo-DenyListing $built.Denied }
+        Remove-CaseFolder $case
+    }
+}
+
+# T-008 (SL-082): an FSA_HOOK_FAIL_LISTING the hook cannot arm ends the app before its Main, so no case reads an
+# unfaulted scan as a faulted one (review m7). Each value in a launch of its own, in report mode under the hook's
+# size mode, where an armed hook would let the app size its window, scan and write its report with exit 0: two parts
+# instead of three, a page or an error that is not a number, and the values Core refuses: page 1, error 0, error 18
+# (ERROR_NO_MORE_FILES, which would end the listing at the page with no error, so the folder would read complete), an
+# empty name and a name holding a path separator (review m1, O-017). Each must end within the timeout on the
+# exception thrown out of the hook's Initialize (0xE0434352, the runtime's unhandled exception, measured at SL-082's
+# build), with no report written and the hook's refusal, naming its own reason, its only line. A Core member the
+# hook cannot find is WindowMutants.ps1's NoFailListingMember.
+function Test-T008 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'small'
+        [void](New-SmallTree $root)
+        $bad = @(
+            @{ Value = 'folder1|2'; Reason = '^fail-listing refused reason=FormatException: ''folder1\|2'' is not ' }
+            @{ Value = 'folder1|two|995'; Reason = '^fail-listing refused reason=FormatException: the page ''two'' is not a whole number$' }
+            @{ Value = 'folder1|1|995'; Reason = '^fail-listing refused reason=ArgumentOutOfRangeException: .*\(Parameter ''page''\)' }
+            @{ Value = 'folder1|2|0'; Reason = '^fail-listing refused reason=ArgumentOutOfRangeException: .*\(Parameter ''win32Error''\)' }
+            @{ Value = 'folder1|2|x'; Reason = '^fail-listing refused reason=FormatException: the error ''x'' is not a whole number$' }
+            @{ Value = 'folder1|2|18'; Reason = '^fail-listing refused reason=ArgumentOutOfRangeException: .*\(Parameter ''win32Error''\) Actual value was 18\.$' }
+            @{ Value = '|2|995'; Reason = '^fail-listing refused reason=ArgumentException: '''' is not one folder''s name \(Parameter ''folderName''\)$' }
+            @{ Value = 'a\b|2|995'; Reason = '^fail-listing refused reason=ArgumentException: ''a\\b'' is not one folder''s name \(Parameter ''folderName''\)$' }
+        )
+        for ($i = 0; $i -lt $bad.Count; $i++) {
+            $value = $bad[$i].Value
+            Write-Output "  FSA_HOOK_FAIL_LISTING=$value"
+            $report = Join-Path $case "bad-$i.json"
+            $run = Invoke-HookedRun 'size' $root $report @{ FSA_HOOK_FAIL_LISTING = $value } 30
+            foreach ($line in $run.Log) { Write-Output "        hook: $line" }
+            $log = @($run.Log)
+            Check ($run.Exit -eq '-532462766') "the app ended within 30 s on the exception the hook threw out of Initialize: the runtime's 0xE0434352 (exit $(Show-Exit $run.Exit))"
+            Check ($null -eq $run.Text) 'no report was written: the app never reached an ending'
+            Check ($log.Count -eq 1 -and $log[0] -match $bad[$i].Reason) "the hook's refusal is its only line (/$($bad[$i].Reason)/): nothing ran after it"
+        }
+    }
+    finally { Remove-CaseFolder $case }
+}
+
 # ---- The files by kind (SL-046) ----
 
 # Whether the report carries "kinds" at all: absent and an empty array are two different endings.
@@ -3944,7 +4103,7 @@ function Test-S009 {
 
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006','K-001', 'K-002', 'K-003', 'R-001', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009') + $NetworkCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'K-001', 'K-002', 'K-003', 'R-001', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009') + $NetworkCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })

@@ -23,10 +23,16 @@
 #   EndingObeysSkip   ShowFinalTopLevel skips the final snapshot while a refresh skip is armed, as RefreshTopLevel
 #                     does mid-scan (SL-064). L-002 ends with the skip armed, so it fails on topLevel.final: the
 #                     list still shows a snapshot from before the ending.
+#   ListingFailsAnyFolder  The listing failpoint's name check removed (SL-082, review M1): it fails every folder's
+#                     second page. T-007 fails on Q, listed before P and read partway, and on the failpoint firing
+#                     more than once; the rows' order may fail besides, since Q and P then keep a page each.
+#   NoFailListingMember  Core's FailListingOf renamed, so the hook's reflection finds nothing to arm (SL-082). The
+#                     hook refuses and the app ends before its Main, so T-007 fails on its first check.
 
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('All', 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'CancelThrows', 'HookFailsAfterActing', 'HookCompileError', 'HookLocked', 'EndingObeysSkip')]
+    [ValidateSet('All', 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'CancelThrows', 'HookFailsAfterActing', 'HookCompileError', 'HookLocked', 'EndingObeysSkip',
+        'ListingFailsAnyFolder', 'NoFailListingMember')]
     [string] $Mutant
 )
 
@@ -36,6 +42,7 @@ $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $MainWindow = 'src\FsAnalyser.App\MainWindow.xaml.cs'
 $App = 'src\FsAnalyser.App\App.xaml.cs'
 $HookSource = 'tests\window\FsaWindowHook\StartupHook.cs'
+$IoCancel = 'src\FsAnalyser.Core\Scanning\SynchronousIoCancel.cs'
 $HookProject = 'tests\window\FsaWindowHook\FsaWindowHook.csproj'
 $HookOut = 'artifacts\window-hook'
 $script:Failures = [System.Collections.Generic.List[string]]::new()
@@ -81,6 +88,20 @@ $CaseMutants = @{
         Case = 'L-002'; Fail = '^  FAIL  topLevel.final against core \(the ending showed the final snapshot\)$'
         MayFail = '^  FAIL  topLevel\.(reading|bytes|files) against core \(the ending showed the final snapshot\)$'
         Expect = '^          actual   ''False''$'
+    }
+    ListingFailsAnyFolder = @{
+        File = $IoCancel
+        Find = [regex]::Escape("`n            || !win32Path.AsSpan(win32Path.LastIndexOf('\\') + 1).Equals(fail.FolderName, StringComparison.OrdinalIgnoreCase))")
+        Replace = ')'
+        Case = 'T-007'
+        Fail = '^  FAIL  the failpoint fired once, on P at its second page, during the scan ', '^  FAIL  Q, listed before P with no fault armed against it, was read in full: '
+        MayFail = '^  FAIL  the root''s rows are Q, P, R: '
+        Expect = '^        hook: fail-listing fired a-[0-9a-f]{32} page 2$'
+    }
+    NoFailListingMember = @{
+        File = $IoCancel; Find = [regex]::Escape('internal static void FailListingOf('); Replace = 'internal static void FailListingOfRenamed('
+        Case = 'T-007'; Fail = '^  FAIL  the hook armed the listing failpoint for P before the app''s Main, its first line '
+        Expect = '^        hook: fail-listing refused reason=MissingMethodException: ', '^        exit -532462766 \(0xE0434352\)$'
     }
 }
 
@@ -251,7 +272,7 @@ function Test-HookLocked {
 
 # ---- Run ----
 
-$names = if ($Mutant -eq 'All') { 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'CancelThrows', 'HookFailsAfterActing', 'HookCompileError', 'HookLocked', 'EndingObeysSkip' } else { @($Mutant) }
+$names = if ($Mutant -eq 'All') { 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'CancelThrows', 'HookFailsAfterActing', 'HookCompileError', 'HookLocked', 'EndingObeysSkip', 'ListingFailsAnyFolder', 'NoFailListingMember' } else { @($Mutant) }
 Use-RepoSdk
 $failed = @()
 foreach ($name in $names) {

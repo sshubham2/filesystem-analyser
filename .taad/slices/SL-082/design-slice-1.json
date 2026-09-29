@@ -1,0 +1,282 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-082",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-29T03:42:36.962Z",
+ "head": "3d5ff3268c1b5fb037796492100e48eb3f198558",
+ "run_id": 2096,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "Only one proposal was produced (practice), and reality already settled the two questions that would have decided between alternatives: spike 1 (no-go) proves no per-folder fault seam exists in Core today and that one has to be added there, keyed by folder name and page, not reused from SynchronousIoCancel's global per-call counter; spike 2 (blocked) proves local NTFS cannot produce a partial-listing failure for an ordinary user, so a real-I/O route is not available; spike 4 (unfinished, opt-in, no engine stage runs it) rules out an SMB-loopback rig as the near-term answer; spike 3 (go, 45/45) proves additive optional fields can be added to the schema-1 report without a version bump. The practice proposal's failpoint-plus-reflection-arming design is the only one of the four candidate shapes spike 1 and 4 leave standing, and it is the cheapest: about 15 lines in Core, no new abstraction, no DI, no new test project, reusing the existing FsaWindowHook/WindowCases.ps1/schema-1 infrastructure exactly as it already exists. The Core-level scanner test for the partial-listing path is already built (cut from this slice) and this design adds no duplicate of it. One deliberate edit was made to the proposal's own report-shape detail: dropped the invented '1000 rows, rowsTruncated' cap in favour of describing only the rows the tree already realizes/visible after expanding the named folder, because the existing schema-1 report already reports FolderTree state as counts (realizedRows, fullRows per spike 3's own observed JSON) rather than full row dumps, and this slice's fixture never approaches a size where a cap matters -- inventing truncation semantics nobody asked for is exactly what the over_engineering_flag on the injection question warned against, applied here to the report shape instead.",
+  "components": [
+   {
+    "name": "Listing failpoint (Core)",
+    "responsibility": "A dormant internal static seam, e.g. DirectoryReader.FailListingOf(string folderName, int page, int win32Error) with page>=2 enforced, that substitutes a real Win32 error for one named folder's Nth query result at the same point SynchronousIoCancel.OverrideQueryError already injects for TopLevelRowTextTests. Pages before N are kept, so Scanner.cs:158-166's append-then-flag-Unreadable path runs unchanged. Default is off (null/no-op), so every existing test and the shipped exe behave exactly as today.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/DirectoryReader.cs",
+    "key_interactions": "Consumed only by Scanner's existing per-folder listing loop; armed only via reflection from tests/window/FsaWindowHook, never read as an env var or flag inside Core or App."
+   },
+   {
+    "name": "Hook arming of the failpoint",
+    "responsibility": "At Initialize (before Main, before any Scanner exists), if FSA_HOOK_FAIL_LISTING='<leaf name>|<page>|<win32 error>' is set, parse it, locate the Core arming method by reflection, call it, and log 'fail-listing armed <name> page <n> error <e>' to FSA_HOOK_LOG. Any malformed value or missing member throws out of Initialize so the exe exits before the window opens, rather than silently running an unfaulted scan a case could mistake for a pass.",
+    "lives_at": "tests/window/FsaWindowHook/StartupHook.cs",
+    "key_interactions": "Sits alongside the existing FSA_HOOK_MODE (stop|throw|close) and TreeMode.cs; does not add a new mode."
+   },
+   {
+    "name": "Expand-by-name step",
+    "responsibility": "After the scan finishes and the tree is shown, expands the named row the same way a click on its expander would, before the report is written, so the report reflects P's listed children rather than only its collapsed row.",
+    "lives_at": "tests/window/FsaWindowHook/TreeMode.cs",
+    "key_interactions": "Reuses TreeMode's existing finish-scan/write-report flow if one already expands rows; otherwise adds FSA_HOOK_TREE_EXPAND=<leaf name>."
+   },
+   {
+    "name": "Tree rows in the window report",
+    "responsibility": "Extends window.FolderTree with optional fields describing the rows currently expanded/visible in the tree after the expand step: for the named row, its note (FolderTreeNode's exact displayed text), whether it is expandable, whether it is expanded, and a count of its directly-listed children. Scoped to what the tree already realizes, matching the existing realizedRows/fullRows granularity rather than inventing a full-dump-plus-cap contract this slice's fixture never needs. Schema stays '1'.",
+    "lives_at": "src/FsAnalyser.App/WindowReport.cs",
+    "key_interactions": "Reads FolderTreeNode.Note (FolderTreeNode.cs:88-90, the ChildCount>0-vs-==0 branch that produces 'could not be read in full' vs 'could not be opened') and FolderTreeSession's visible-row state. eng/read-window.ps1 passes new fields through unchanged (spike 3: 45/45 existing cases still pass)."
+   },
+   {
+    "name": "Partial-read window case + fixture",
+    "responsibility": "New-PartwayTree builds a %TEMP% root with three siblings: P (GUID-suffixed, enough same-size, similarly-named files to span 2+ listing pages), Q (a couple of untouched files), and R (denied outright via the existing Deny-Listing/New-TopsTree ACL route). The case launches the published exe under the hook with FSA_HOOK_FAIL_LISTING='<P>|2|995' and the expand-P step, reads the report, and asserts: the hook log shows 'armed' before any scan trace; P's note is exactly 'could not be read in full', distinct from R's 'could not be opened' and from Q's empty note; P is expandable, expanded, and its listed-children count is >0 and < P's real full count; R is not expandable. Fixture and ACL are cleaned up afterwards, following the existing New-TopsTree pattern.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "Reuses New-TopsTree's ACL-deny helper for R and Update-Hook for building the hook DLL."
+   },
+   {
+    "name": "SL-044 design note correction",
+    "responsibility": "Replaces the sentence recording the partial-listing row as untested (docs/design/SL-044-folder-tree.md:116-117) with a pointer to this slice's failpoint and window case.",
+    "lives_at": "docs/design/SL-044-folder-tree.md"
+   }
+  ],
+  "contracts": [
+   {
+    "name": "DirectoryReader.FailListingOf(string folderName, int page, int win32Error)",
+    "kind": "function",
+    "auth_model": "internal static; reachable only by in-process reflection from the hook DLL (gitignored artifacts/window-hook), never by an env var or flag Core or App reads directly.",
+    "error_cases": "page < 2 throws (page 1 would produce the already-covered 'could not be opened' shape, not the partial one). Empty name throws. If the named folder's listing finishes before page N, no fault fires and the case must catch that through P's note rather than assuming it fired.",
+    "notes": "Matches the leaf name case-insensitively. Fails at a real page/query boundary with a genuine Win32 code, matching how Windows itself fails a listing and matching the shape TopLevelRowTextTests already proved end to end inside Core."
+   },
+   {
+    "name": "FSA_HOOK_FAIL_LISTING env var",
+    "kind": "cli",
+    "auth_model": "Read only when DOTNET_STARTUP_HOOKS loads FsaWindowHook; the product never reads it.",
+    "error_cases": "Malformed value, missing Core member, or an exception from arming: logged to FSA_HOOK_LOG and re-thrown from Initialize, so the exe exits before the window opens rather than running the case against an unfaulted scan.",
+    "notes": "Format '<leaf name>|<page>|<win32 error>'; the case uses '<P>|2|995'."
+   },
+   {
+    "name": "Schema-1 report: window.FolderTree row state",
+    "kind": "event",
+    "auth_model": "n/a, local file written by the existing --report flag",
+    "error_cases": "Fields are absent while the tree is not shown; scoped to rows the tree currently realizes, no new fields for rows off-screen or never expanded.",
+    "notes": "Additive only, schema stays '1'. Consumers: eng/read-window.ps1 (pass-through, spike 3) and the new WindowCases.ps1 case."
+   },
+   {
+    "name": "FSA_HOOK_LOG line 'fail-listing armed <name> page <n> error <e>'",
+    "kind": "event",
+    "error_cases": "Missing line fails the case before any row is inspected.",
+    "notes": "Proves the fault was armed before Main and therefore before any Scanner existed."
+   },
+   {
+    "name": "Window case: partly-read folder row",
+    "kind": "ui",
+    "error_cases": "Fails if P reads complete, has 0 children, shares R's wording, or if the fault leaks onto Q.",
+    "notes": "This is spike 2's blocked 'partial-row-renders-as-described' criteria, made executable for the first time; nothing before this design checked the rendering, only the model (TopLevelRowTextTests)."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Add a name-and-page-keyed listing failpoint to Core (DirectoryReader), dormant unless armed by reflection from the hook.",
+    "reversibility": "cheap",
+    "rationale": "Spike 1's own no-go says this exactly: SynchronousIoCancel's error override is a global per-call counter, not folder-scoped, so it cannot fail one named folder in a fixture that lists several folders in the same pass without risking a false pass on the sibling. Spike 1's 'needs first' text describes precisely this seam."
+   },
+   {
+    "decision": "Fail at a page/query boundary with a real Win32 error, not after an arbitrary K entries mid-buffer.",
+    "reversibility": "cheap",
+    "rationale": "Windows fails a listing on a query call, never mid-buffer; this matches the shape TopLevelRowTextTests already proved through Scanner (error 995 at a later buffer) and avoids inventing a failure state the real reader never produces."
+   },
+   {
+    "decision": "Report the tree's row state as fields on what the tree already realizes/visible, not as a full row-array with an invented 1000-row cap.",
+    "reversibility": "cheap",
+    "rationale": "Spike 3 observed the current schema-1 report already describing FolderTree as counts (realizedRows, fullRows), not full dumps; this slice's fixture is a few hundred entries and never needs a cap. Adding one now would be a feature this slice does not require."
+   },
+   {
+    "decision": "Arm the fault through a dedicated FSA_HOOK_FAIL_LISTING variable rather than a new FSA_HOOK_MODE value, and keep it out of product code entirely.",
+    "reversibility": "cheap",
+    "rationale": "Lets the existing TreeMode finish-scan/expand/report flow run unchanged; keeping the seam unreachable from src/FsAnalyser.App matches the 'no product-side flag an ordinary user could set' property spike 1 was framed around."
+   },
+   {
+    "decision": "Add no new Core.Tests Fact.",
+    "reversibility": "cheap",
+    "rationale": "The scanner-level partial-listing test is already built and is cut from this slice's scope. The window case is the new failpoint's only consumer and test."
+   },
+   {
+    "decision": "Do not build an SMB-loopback or native-hook rig for a real-I/O partial listing.",
+    "reversibility": "cheap",
+    "rationale": "Spike 4 did not finish and its one finding (the real SMB client fetched each handle's whole listing in a single QUERY_DIRECTORY call) suggests the server-side fault it needed may not even be reachable that way; spike 2 already showed local NTFS cannot produce the state at all. That rig is also opt-in (Trait Network=SMB-LOOPBACK) and no engine stage runs it."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "partial",
+    "note": "Core seam + report + case design taken as the base; the report contract's row-array-plus-1000-cap detail was replaced with a shape scoped to already-realized rows."
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Distributed databases / storage engines (TiKV fail-rs, etcd gofail, FreeBSD fail points)",
+   "pattern": "Named failpoints: an injection site in production code that is off unless armed, identified by name, armed at runtime by the test harness to make an otherwise unreachable failure deterministic at the same layer real failures arrive.",
+   "transfer_found": true,
+   "rationale": "Same shape of problem: a correct error path that no ordinary user can trigger on demand, needing an end-to-end check against the shipped binary. Trades a small amount of dormant code for determinism without adding an abstraction layer, which is why it survives spike 1's no-go where a DI/filesystem-abstraction approach would not have (it would change how App builds its Scanner for one test).",
+   "invariants": [
+    {
+     "precondition": "The failpoint fires at the same layer real failures arrive, so downstream code (keep-earlier-pages, Unreadable flagging) runs unchanged.",
+     "status": "must-verify",
+     "evidence": "Must land at the same substitution point SynchronousIoCancel.OverrideQueryError already uses for TopLevelRowTextTests (3/3 passing); build must confirm the new seam sits upstream of the keep-earlier-pages logic, not a bypass of it."
+    },
+    {
+     "precondition": "It is armed before the code path under test runs.",
+     "status": "holds",
+     "evidence": "Startup hooks run before Main; the Scanner is built later in the App's own flow. Rules out spike 1's falsifier (b)."
+    },
+    {
+     "precondition": "It cannot be armed by an ordinary user in the shipped exe.",
+     "status": "holds",
+     "evidence": "Product code reads no env var or flag for this; only in-process reflection from the hook DLL, which lives only in gitignored artifacts/window-hook, can arm it."
+    },
+    {
+     "precondition": "Failpoints are compiled out of the release/shipped path.",
+     "status": "fails",
+     "evidence": "The window case runs the real Release single-file published exe, so the failpoint ships dormant rather than compiled out, on the same terms ScanOptions and SynchronousIoCancel's existing test seams already ship today."
+    }
+   ]
+  },
+  "prior_art": [
+   {
+    "pattern": "Failure mode this app already avoids: building a whole listing eagerly inside one try/catch loses every readable entry when one entry fails. A regression test must check readable entries are kept and shown, not only that nothing throws.",
+    "where": "https://github.com/tui-cs/Terminal.Gui/issues/5544",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-06-26"
+   },
+   {
+    "pattern": "The fix's own regression tests first showed entries were still lost when the listing call itself threw; the fix moved to incremental enumeration so entries listed before the failure are kept. Those tests stop at the model level -- this slice's window case covers the display level they left untested.",
+    "where": "https://gitblind.noratr.app/tui-cs/Terminal.Gui/pull/5569",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-06-30"
+   },
+   {
+    "pattern": "Injecting a full filesystem abstraction (IDirectoryInfo) to make enumeration fail -- the heavier, popular alternative, rejected here because the App hardcodes its reader and DI would change how it's built for one test.",
+    "where": "https://gitblind.noratr.app/tui-cs/Terminal.Gui/commit/125947959663def8d825bdc4dc89a58527e8e8ac",
+    "authority": "oss",
+    "basis": "cited"
+   },
+   {
+    "pattern": "A truncated page can look identical to a short, complete listing unless the output marks the truncation explicitly -- the reason the report needs the row's note, not just a child count.",
+    "where": "https://github.com/anomalyco/opencode/pull/46159",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-08-29"
+   },
+   {
+    "pattern": "Contrast case: a disk-usage tree that surfaces unreadable entries only as one aggregate footer counter, with no per-folder partial-read state -- the per-row note is the extra this app has to prove works.",
+    "where": "https://docs.rs/treescape-core/latest/src/treescape_core/scan.rs.html",
+    "authority": "oss",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Named failpoints compiled into code and armed at runtime by name from tests, compiled out without a feature flag.",
+    "where": "TiKV fail-rs",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Failpoints as codegen'd comments, armed through an env var or endpoint in test builds only.",
+    "where": "etcd gofail",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "DOTNET_STARTUP_HOOKS runs a managed Initialize() before the app's Main in the same process, including in self-contained single-file apps unless trimming disables StartupHookProvider.",
+    "where": "dotnet/runtime startup hooks feature",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "channeled_experts": [
+   "Failpoint practice from TiKV fail-rs / etcd gofail (named, dormant, armed by the harness)",
+   "Terminal.Gui #5544/#5569 regression authors (partial listing must keep and show readable entries)",
+   ".NET startup-hook in-process test instrumentation (dotnet/runtime)"
+  ],
+  "architecture_rules": [
+   {
+    "name": "the shipped App can never arm the listing failpoint itself",
+    "files": "src/FsAnalyser.App/**/*.cs",
+    "must_not_match": [
+     "FSA_HOOK_FAIL_LISTING",
+     "FailListingOf\\("
+    ],
+    "because": "the failpoint is a Core test seam, dormant like ScanOptions and SynchronousIoCancel already are; if product code read the arming variable or called the arming method directly, an ordinary user's environment could fake a directory failure the scanner never had, which breaks the 'no product-side flag' property spike 1 was framed around and this whole design rests on."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "arm the listing failpoint before the scan starts",
+    "shape": "FSA_HOOK_FAIL_LISTING is a well-formed value naming a folder present in the fixture",
+    "why": "spike 1's falsifier (b): if the Scanner or scan had already started before arming, the fault would never reach P's real listing; the hook log line is the only proof of ordering."
+   },
+   {
+    "behaviour": "arm the listing failpoint with a bad value",
+    "shape": "FSA_HOOK_FAIL_LISTING is malformed (wrong arg count, non-numeric page, page<2) or names a Core member reflection can't find",
+    "why": "if arming fails silently, the case would run an unfaulted scan and could pass while asserting nothing real -- the same thin-verification pattern the project's own reflect record already flagged as its actual leak."
+   },
+   {
+    "behaviour": "a folder's listing fails partway",
+    "shape": "the folder has enough entries to span at least 2 listing pages, and the fault lands on page 2",
+    "why": "page 1 failing produces 'could not be opened' (0 children), not the partial case; the fixture's file count and name length must be sized so children survive the fault, or the case collapses into the already-covered full-failure shape."
+   },
+   {
+    "behaviour": "the tree row for a partially-read folder",
+    "shape": "0 < K < total children were listed before the fault fired",
+    "why": "FolderTreeNode's Note branches on ChildCount>0 vs ==0; the case must land on the >0 side to reach the wording this slice exists to cover."
+   },
+   {
+    "behaviour": "an unrelated sibling folder scanned in the same pass",
+    "shape": "a second folder (Q) with no fault armed against it",
+    "why": "spike 1 found the only existing seam is a global per-call counter; a name-keyed failpoint that leaked onto Q would reproduce the exact false-pass risk this slice is meant to close."
+   },
+   {
+    "behaviour": "a fully denied folder next to the partial one",
+    "shape": "folder R denied outright via the existing ACL fixture route",
+    "why": "the slice's point is that the two rows read differently; a case exercising only one of the two wordings can't prove they are told apart."
+   },
+   {
+    "behaviour": "expanding the partial row",
+    "shape": "the row's expander is toggled open before the report is captured",
+    "why": "spike 2 never got past making the fault happen, so nothing before this has checked the expander opens onto some-but-not-all children rather than 0 or everything."
+   },
+   {
+    "behaviour": "reading the report after the schema-1 additive change",
+    "shape": "the existing WindowCases.ps1 suite, none of whose cases touch the tree's partial-read row",
+    "why": "spike 3 measured this safe in a scratch clone; this build must reconfirm 45/45 still pass in this tree, not trust a different clone's run.",
+    "material": true
+   },
+   {
+    "behaviour": "the failpoint outside the hook process",
+    "shape": "the Release single-file published exe run without DOTNET_STARTUP_HOOKS set",
+    "why": "must stay provably dormant in the shipped path, but every existing window case and every validate publish-and-run already exercises the exe without the hook, so this shape is already covered rather than newly owed.",
+    "material": false
+   }
+  ],
+  "decidable_disagreements": [
+   {
+    "question": "Does the project's own fitness/architecture-rule harness (ArchitectureRulesTests, rules-parity) permit a dormant, reflection-armed static test seam inside src/FsAnalyser.Core/Scanning, the way it already tolerates ScanOptions and SynchronousIoCancel?",
+    "positions": "The design assumes yes, by precedent of the two seams already shipping there. If the harness instead forbids new mutable static surface in Scanning specifically, the seam would have to move to a different injection mechanism or location, changing the component this design names.",
+    "would_force_resynthesis": true
+   }
+  ],
+  "taste_disagreements": [
+   "Report shape for the new row state: this design scopes it to what the tree already realizes/visible (matching the existing realizedRows/fullRows granularity) instead of the raw proposal's full row-array with an invented 1000-row truncation cap. A reviewer preferring the fuller dump for future reuse by other tree-shape cases would restore the cap; nothing in this slice's own fixture needs it."
+  ],
+  "coherence_check": "One proposal was supplied; there is no cross-proposal composition to check, and nothing here has yet been argued with by another designer. What I did check was the proposal against the reality block: spike 1 (no-go) and spike 2 (blocked) together rule out every alternative injection route the proposal itself lists as rejected (DI/filesystem abstraction, SMB-loopback, native API hooking), leaving the name-and-page-keyed Core failpoint as the only shape spike 1's own 'needs first' text describes and the only one left standing; spike 3 (go, 45/45) is the only piece of this design that was actually built and run against real code, and it supports the additive schema-1 approach as specified. I made one adjustment to the sole proposal rather than passing it through unedited: replaced its invented '1000 rows, rowsTruncated' report contract with a shape scoped to what the tree already reports as realized/visible, since spike 3's own observed JSON shows the existing schema already speaks in realized-row counts, not full dumps, and this slice's fixture (a few hundred entries) never approaches a size where a cap would matter -- inventing that policy now would be building for a case this slice does not have. I confirmed no contradiction between this design and the already-cut-from-scope Core test: this design adds no new Core.Tests Fact and does not re-verify TopLevelRowTextTests' claims; it only builds the window-level seam and case that spikes 1 and 2 found missing, which is the actual gap the slice and its originating reflection (SL-044) both name."
+ }
+}

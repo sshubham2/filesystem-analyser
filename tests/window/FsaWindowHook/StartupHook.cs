@@ -28,13 +28,16 @@ using System.Windows.Threading;
 ///   [FSA_HOOK_DRIVES=&lt;n&gt;]  (watch, expand, kinds and size only)
 ///   [FSA_HOOK_WALK, FSA_HOOK_RECYCLE, FSA_HOOK_MULTIPLY, FSA_HOOK_SELECT, FSA_HOOK_RELEASE, FSA_HOOK_GAP, FSA_HOOK_HEIGHT]  (tree only)
 ///   [FSA_HOOK_RENDER=software]  (SL-080: WPF draws the process in software, set before Main; tree mode's facts line says so)
+///   [FSA_HOOK_FAIL_LISTING=&lt;folder name&gt;|&lt;page&gt;|&lt;Win32 error&gt;]  (SL-082, any mode: Core's listing failpoint, armed
+///   before Main; see ArmFailListing)
 /// </code>
 /// tree (SL-044) reads and drives the folder tree a completed scan shows, and logs JSON lines; TreeMode.cs has
 /// all of it. It is not armed and takes no FSA_HOOK_SLOW_REFRESH_MS.
 ///
 /// The runtime calls <see cref="Initialize"/> before the app's Main, in every .NET process that inherits the
 /// variable: pwsh 7, dotnet.exe and MSBuild nodes too. So it does nothing unless FSA_HOOK_MODE is set and the
-/// process is FsAnalyser.App.exe, and nothing it does can end the host.
+/// process is FsAnalyser.App.exe, and nothing it does can end the host but one thing it does on purpose: an
+/// FSA_HOOK_FAIL_LISTING it cannot arm is thrown out of Initialize, and the app ends before its Main (SL-082).
 ///
 /// Without FSA_HOOK_ARMED every mode waits for the same thing: the window's CancelButton pressable
 /// (<see cref="Pressable"/>), which is only while a scan is running. It reads that and acts in one dispatcher
@@ -188,6 +191,7 @@ internal class StartupHook
 
     public static void Initialize()
     {
+        Exception? unarmed = null;
         try
         {
             string? mode = Environment.GetEnvironmentVariable("FSA_HOOK_MODE");
@@ -206,11 +210,56 @@ internal class StartupHook
             // dispatcher that has to be in place before the app's Main makes the window (SL-080 code review M3).
             if (mode == "tree")
                 TreeMode.BeforeMain();
-            new Thread(() => Run(mode)) { IsBackground = true, Name = "FsaWindowHook" }.Start();
+            unarmed = ArmFailListing();
+            if (unarmed is null)
+                new Thread(() => Run(mode)) { IsBackground = true, Name = "FsaWindowHook" }.Start();
         }
         catch (Exception)
         {
             // An exception out of Initialize would end the host before its Main.
+        }
+        // The one exception let out, on purpose (SL-082): the app ends before its Main, with no window and no scan.
+        if (unarmed is not null)
+            throw unarmed;
+    }
+
+    private const string FailListingType = "FsAnalyser.Core.Scanning.SynchronousIoCancel, FsAnalyser.Core";
+    private const string FailListingMethod = "FailListingOf";
+
+    // FSA_HOOK_FAIL_LISTING=<folder name>|<page>|<Win32 error> (SL-082), with any mode: arms Core's listing failpoint
+    // (SynchronousIoCancel.FailListingOf, internal, reached by name because the hook shares no code with the app) here,
+    // before the app's Main, and so before its window or any scan exists. Every listing of a folder of that name then
+    // fails with that error at that page, keeping the pages before it. It logs "fail-listing armed <name> page <n> error
+    // <e>", and "fail-listing fired <name> page <n>" from the scan thread each time a listing is failed. A value that is
+    // not three parts, a page or error that is not a whole number, a member it cannot find, or Core refusing the value
+    // (a page under 2, an error of 0 or 18) logs "fail-listing refused reason=..." and returns what Initialize throws:
+    // the app then ends before its Main, so a case never reads an unfaulted scan as a faulted one.
+    private static Exception? ArmFailListing()
+    {
+        if (Environment.GetEnvironmentVariable("FSA_HOOK_FAIL_LISTING") is not { Length: > 0 } value)
+            return null;
+        try
+        {
+            string[] parts = value.Split('|');
+            if (parts.Length != 3)
+                throw new FormatException($"'{value}' is not <folder name>|<page>|<Win32 error>");
+            if (!int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out int page))
+                throw new FormatException($"the page '{parts[1]}' is not a whole number");
+            if (!int.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out int error))
+                throw new FormatException($"the error '{parts[2]}' is not a whole number");
+            MethodInfo arm = Type.GetType(FailListingType)?.GetMethod(FailListingMethod, BindingFlags.Static | BindingFlags.NonPublic,
+                    [typeof(string), typeof(int), typeof(int), typeof(Action<string, int>)])
+                ?? throw new MissingMethodException($"the app has no {FailListingMethod}(string, int, int, Action<string, int>) on {FailListingType}");
+            Action<string, int> fired = (name, n) => Log($"fail-listing fired {name} page {n}");
+            arm.Invoke(null, [parts[0], page, error, fired]);
+            Log($"fail-listing armed {parts[0]} page {page} error {error}");
+            return null;
+        }
+        catch (Exception e)
+        {
+            Exception cause = e is TargetInvocationException { InnerException: { } inner } ? inner : e;
+            Log($"fail-listing refused reason={cause.GetType().Name}: {cause.Message}");
+            return new InvalidOperationException($"FsaWindowHook: FSA_HOOK_FAIL_LISTING was not armed: {cause.Message}", cause);
         }
     }
 

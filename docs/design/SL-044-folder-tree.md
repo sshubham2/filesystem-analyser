@@ -113,8 +113,12 @@ each is read (review M3). In `tests/window/WindowCases.ps1`:
 - B-007 (code review m1, M2) reads New-TopsTree's completed scan through tree mode as well: each of the 12
   folders the scan could not open draws no expander, 0 bytes, "0.0 %" and "could not be opened"; the other 24
   folders can be opened and have no note; and at the default size the window is 860 px tall (or the work area),
-  inside the work area, with at least 12 of the tree's rows in view. The folder whose listing failed partway is
-  not in any case: a real listing cannot be made to fail partway as an ordinary user.
+  inside the work area, with at least 12 of the tree's rows in view. A real listing cannot be made to fail partway
+  as an ordinary user, so the folder whose listing failed partway is T-007's (SL-082): the hook arms Core's listing
+  failpoint (SynchronousIoCancel.FailListingOf) before the app's Main through FSA_HOOK_FAIL_LISTING, one named
+  folder's listing fails at its second page, and its row reads "could not be read in full" and opens onto the
+  children it kept, beside a folder read in full and one that "could not be opened". T-008 is a value the hook
+  cannot arm, which ends the app before its Main.
 - C-002, L-003, B-003, B-007 and M-001 read the tree, or the report's `FolderTree`, where they read the results
   list after a completed scan.
 
