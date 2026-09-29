@@ -1,0 +1,259 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-087",
+ "stage": "validate-slice",
+ "attempt": 2,
+ "at": "2026-09-29T12:39:35.883Z",
+ "head": "7e1eab14269380671f6e7e8b28ca93b62c2642cb",
+ "run_id": 2235,
+ "summary": "This validation re-ran the slice at HEAD 7e1eab1 because build attempt 2 changed it. The attempt changed ComparePaths, rule 2's pattern, plant F30 and two tests. Both findings that held the previous validation at partial (O-022, O-023) are now fixed, and all seven Done-when items hold.\n\n**Order on a real case-sensitive folder (O-023).** A case-sensitive directory was created under %TEMP% without elevation (fsutil setCaseSensitiveInfo). It held README, readme, ReadMe, 'README b' and 'README.b'. Deny-list ACEs were set on README\\y, ReadMe, readme\\x and 'README b'. The real Scanner.Scan recorded those four folders with code 5 and kind NothingListed. UnreadableRows.Build then listed them in this order: README\\y, ReadMe, readme\\x, README b. That is the new per-name order; the old comparator would have given ReadMe, readme\\x, README\\y, README b. Sorting the whole store kept each case-variant folder's contents directly under it.\n\n**Order on real scans.** Four real scans passed: C:\\ProgramData (570 rows), %TEMP% (47 rows), C:\\ProgramData stopped at 0.7 s (67 rows), and the case-sensitive tree. On every scan:\n- rows match the record one to one;\n- kind and code come from the record, and the kind agrees with the child-count rule;\n- paths are full, reasons are one line and never empty, and each reason is either a phrase or Windows' message with the number;\n- rows are in strict order and equal an independent name-by-name reference sort.\n\nThe same order and contiguity check was also run over every path in each real store: 257,854, 584,564, 42,450 and 14 paths. There were 0 differences from the reference and no descendants separated from their folder.\n\n**Rule 2 (O-022).** The pattern is now identical in fitness.yaml and its xUnit twin. The full rules harness recorded 60 of 60 rows as expected; F30, the ternary over three lines, fires in both engines. rules-parity reports AGREE and Fitness holds all 67 rules.\n\n**Build, suite and shipped exe.**\n- The build has 0 warnings and the full suite passed 478 of 478.\n- The republished exe on C:\\ProgramData reports status Completed with the header 'Unreadable folders (570)'.\n- Window case S-007 passed.\n\n**Criterion 8, newly checked.** A scratch harness on a real temp tree failed a folder's first listing call after the open had succeeded, with codes 995 and 363. The engine recorded NothingListed with 0 children, even though 5 files were on disk. The row reads 'could not be opened: … (Windows error N)'. That is the M2 fallback the person decided on, but no test in the repo pins it.\n\n**Loop check.** Build attempt 2 came from a revoke and changed src, so this is progress, not a loop.",
+ "payload": {
+  "status": "complete",
+  "verdict": "passes",
+  "contact": "real",
+  "summary": "This validation re-ran the slice at HEAD 7e1eab1 because build attempt 2 changed it. The attempt changed ComparePaths, rule 2's pattern, plant F30 and two tests. Both findings that held the previous validation at partial (O-022, O-023) are now fixed, and all seven Done-when items hold.\n\n**Order on a real case-sensitive folder (O-023).** A case-sensitive directory was created under %TEMP% without elevation (fsutil setCaseSensitiveInfo). It held README, readme, ReadMe, 'README b' and 'README.b'. Deny-list ACEs were set on README\\y, ReadMe, readme\\x and 'README b'. The real Scanner.Scan recorded those four folders with code 5 and kind NothingListed. UnreadableRows.Build then listed them in this order: README\\y, ReadMe, readme\\x, README b. That is the new per-name order; the old comparator would have given ReadMe, readme\\x, README\\y, README b. Sorting the whole store kept each case-variant folder's contents directly under it.\n\n**Order on real scans.** Four real scans passed: C:\\ProgramData (570 rows), %TEMP% (47 rows), C:\\ProgramData stopped at 0.7 s (67 rows), and the case-sensitive tree. On every scan:\n- rows match the record one to one;\n- kind and code come from the record, and the kind agrees with the child-count rule;\n- paths are full, reasons are one line and never empty, and each reason is either a phrase or Windows' message with the number;\n- rows are in strict order and equal an independent name-by-name reference sort.\n\nThe same order and contiguity check was also run over every path in each real store: 257,854, 584,564, 42,450 and 14 paths. There were 0 differences from the reference and no descendants separated from their folder.\n\n**Rule 2 (O-022).** The pattern is now identical in fitness.yaml and its xUnit twin. The full rules harness recorded 60 of 60 rows as expected; F30, the ternary over three lines, fires in both engines. rules-parity reports AGREE and Fitness holds all 67 rules.\n\n**Build, suite and shipped exe.**\n- The build has 0 warnings and the full suite passed 478 of 478.\n- The republished exe on C:\\ProgramData reports status Completed with the header 'Unreadable folders (570)'.\n- Window case S-007 passed.\n\n**Criterion 8, newly checked.** A scratch harness on a real temp tree failed a folder's first listing call after the open had succeeded, with codes 995 and 363. The engine recorded NothingListed with 0 children, even though 5 files were on disk. The row reads 'could not be opened: … (Windows error N)'. That is the M2 fallback the person decided on, but no test in the repo pins it.\n\n**Loop check.** Build attempt 2 came from a revoke and changed src, so this is progress, not a loop.",
+  "checks": [
+   {
+    "what": "Build the solution at HEAD 7e1eab1",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build FsAnalyser.slnx --nologo -v q",
+    "outcome": "passed",
+    "evidence": "Build succeeded, 0 Warning(s), 0 Error(s). BUILD EXIT 0"
+   },
+   {
+    "what": "Full default Core.Tests suite (includes UnreadableRowsTests with the new C-005 nested case-variant expectations, UnreadableFolderTests, ArchitectureRulesTests, the 1..16000 sweep)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --no-build --nologo",
+    "outcome": "passed",
+    "evidence": "Passed! - Failed: 0, Passed: 478, Skipped: 0, Total: 478, Duration: 23 s"
+   },
+   {
+    "what": "Declared architecture rules evaluated by the engine (after a graph rebuild)",
+    "command": "mcp__taad3__Fitness op=check rebuild=true",
+    "outcome": "passed",
+    "evidence": "67 rule(s) checked against 120 parsed file(s), 125 file(s) read. Every declared rule holds."
+   },
+   {
+    "what": "Rules parity between the yaml and the xUnit twins",
+    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File eng/rules-parity.ps1",
+    "outcome": "passed",
+    "evidence": "rules-parity: AGREE 14 facts <- 18 twinned entries, 38 patterns; 49 settled entries not compared. EXIT 0"
+   },
+   {
+    "what": "Full rules harness against the real TAAD fitness engine and the xUnit twin, including F27-F30",
+    "command": "C:\\Users\\sshub\\AppData\\Roaming\\taad3\\venv\\Scripts\\python.exe eng/rules-harness/harness.py --engine-root C:\\Users\\sshub\\projets\\taad_v3\\backend --scenario all",
+    "outcome": "passed",
+    "evidence": "harness: 60 rows, 60 AS-RECORDED, 0 not, 0 stray hits. F27, F28, F29 and F30 each fire/fire, AS-RECORDED. One import rule was NOT RUN on the scratch copy because it has no code graph ('the provider does not use the code it checks'); that is the usual limit and unrelated to this slice. exit 0"
+   },
+   {
+    "what": "O-022 source check: rule 2's pattern is the same in the yaml and the twin, and a three-line plant exists",
+    "command": "git diff 0863450 7e1eab1 -- src tests eng .taad/fitness.yaml",
+    "outcome": "passed",
+    "evidence": "fitness.yaml: '(?m)(?<!\\?)\\?\\s*UnreadableKind\\.(NothingListed|ListedPartway)\\b'. ArchitectureRulesTests.TheAppNeverDecidesAFailedFolderKind: '(?<!\\?)\\?\\s*UnreadableKind\\.(NothingListed|ListedPartway)\\b'. plants.json adds F30, a three-line ternary pinned at lines {xunit:1, fitness:1}."
+   },
+   {
+    "what": "First attempt to set up the case-sensitive denied tree",
+    "command": "cmd /c mkdir … ; icacls <dir> /deny … ; icacls <dir> /remove:d …",
+    "outcome": "not-run",
+    "evidence": "The engine refused the command before it ran ('Remove-Item on system path '/c' is blocked'). Test-Path afterwards confirmed nothing was created. It was redone with [IO.Directory]::CreateDirectory and FileSystemAclExtensions deny/remove, which is the next check."
+   },
+   {
+    "what": "O-023 on a real case-sensitive directory: case-variant failed folders scanned by the real engine and listed by UnreadableRows",
+    "command": "fsutil file setCaseSensitiveInfo %TEMP%\\sl087-validate2\\csroot\\cs enable (unelevated, exit 0); folders README, readme, ReadMe, 'README b', 'README.b', Other, README\\y, README\\z-ok, readme\\x, readme\\w-ok; ListDirectory deny ACE on ReadMe, README\\y, readme\\x, 'README b'; scratch harness compiling src/FsAnalyser.App/UnreadableRows.cs against the HEAD Core dll, calling Scanner.Scan",
+    "outcome": "passed",
+    "evidence": "status=Completed record=4 rows=4, all code 5 NothingListed. Rows in order: cs\\README\\y | cs\\ReadMe | cs\\readme\\x | cs\\README b, each '— could not be opened: access denied'. That is the new per-name order; the old whole-path tie-break gives ReadMe | readme\\x | README\\y | README b. Store-wide order: cs, Other, README, README\\y, README\\z-ok, README\\z-ok\\f.txt, ReadMe, readme, readme\\w-ok, readme\\w-ok\\f.txt, readme\\x, README b, README.b. separatedDescendants=0 and refDiff=none. Deny ACEs were removed afterwards, and ReadMe listed again."
+   },
+   {
+    "what": "Real completed scan of C:\\ProgramData through the HEAD Core and the slice's UnreadableRows.Build",
+    "command": "dotnet h.dll 'C:\\ProgramData' (scratch harness)",
+    "outcome": "passed",
+    "evidence": "status=Completed 49.1s storeCount=257854 record=570 distinct=570 rows=570, partway=0, codes 5x570. Per-row checks all held: 1:1 with the record, kind and code carried, kind == ChildCount rule, full path, one-line non-empty reason, phrase or message+number, Text shape, strict ComparePaths order, equal to the reference sort. 0 failures."
+   },
+   {
+    "what": "Real completed scan of %TEMP% (codes outside the plain families)",
+    "command": "dotnet h.dll $env:TEMP",
+    "outcome": "passed",
+    "evidence": "status=Completed 41.8s storeCount=584564 record=47 rows=47, codes 363x28, 1920x2, 5x17 (13 as in validate #1, plus the 4 denied folders of this run's case-sensitive tree). Samples: '…\\online-only — could not be opened: The cloud file metadata is corrupt and unreadable. (Windows error 363)', '…\\placeholder — could not be opened: The file cannot be accessed by the system. (Windows error 1920)', '…\\reveal-root\\denied — could not be opened: access denied'. 0 failures."
+   },
+   {
+    "what": "Real stopped scan: a stopped scan's record is listed the same way",
+    "command": "dotnet h.dll 'C:\\ProgramData|700' (CancelAfter 700 ms)",
+    "outcome": "passed",
+    "evidence": "status=Cancelled 0.7s storeCount=42450 record=67 rows=67, all code 5 NothingListed, no row from the stop itself. 0 failures."
+   },
+   {
+    "what": "Store-wide sort property on real data: every path in each real store, sorted by ComparePaths, equals an independent name-by-name reference sort and keeps each folder's descendants contiguous under it",
+    "command": "same harness: all Store paths, List.Sort(ComparePaths) vs OrderBy(Ref) plus a stack check that no path's parent is already closed",
+    "outcome": "passed",
+    "evidence": "ProgramData 257,854 paths, TEMP 584,564 paths (1 case-variant group), stopped ProgramData 42,450, case-sensitive tree 14: refDiff=none and separatedDescendants=0 on all four, strictly increasing."
+   },
+   {
+    "what": "Criterion 8: a folder whose open succeeds but whose first listing call fails, on a real temp tree",
+    "command": "Scratch harness assembly named FsAnalyser.Core.Tests (Core's InternalsVisibleTo), using the same SynchronousIoCancel.Created / OverrideQueryError seam as TopLevelRowTextTests.ScanFailingPartway. It failed call start+2 (start+1 is the open; OverrideQueryError is consulted only inside Query, SynchronousIoCancel.cs:311-322) of b1 with 995 and of b2 with 363.",
+    "outcome": "passed",
+    "evidence": "Untouched scan: 0 unreadable. Failpoint scan: fired 'exit#2 call 12 -> 995; exit#3 call 14 -> 363', status=Completed, files=10 (a and c only). Records: b1 code=995 NothingListed childrenInStore=0 filesOnDisk=5; b2 code=363 NothingListed childrenInStore=0 filesOnDisk=5. Rows: '…\\b1 — could not be opened: The I/O operation has been aborted because of either a thread exit or an application request. (Windows error 995)', '…\\b2 — could not be opened: The cloud file metadata is corrupt and unreadable. (Windows error 363)'. This is the decided M2 fallback. No test in the repo pins it."
+   },
+   {
+    "what": "Republish the shipped exe from HEAD (the existing exe predated the HEAD commit)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o artifacts/publish",
+    "outcome": "passed",
+    "evidence": "The exe before was written 18:03:21, before the HEAD commit at 18:03:51. After: 18:15:52, 139,911,832 bytes. PUBLISH EXIT 0"
+   },
+   {
+    "what": "Shipped exe on a real root: status and the tab header's count",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/read-window.ps1 -Root 'C:\\ProgramData' -TimeoutSec 240",
+    "outcome": "passed",
+    "evidence": "EXIT 0; status Completed; CountersText '…570 folders unreadable'; UnreadableTab header 'Unreadable folders (570)', which equals the harness's 570 rows. The report does not carry row text or order."
+   },
+   {
+    "what": "Window case S-007 (12,345 real denied folders in the shipped window)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case S-007",
+    "outcome": "passed",
+    "evidence": "PASSED: S-007. UnreadableExpander open and inside the window, UnreadableTab header inside the window, OutcomeTabs kept its height (164 px before and after)."
+   },
+   {
+    "what": "A real partly-read folder (ListedPartway) produced by a natural failure",
+    "outcome": "not-run",
+    "evidence": "The four real scans in this run had partway=0, as did validate #1's four, which matches U-098. 'Only partly read' is exercised only by the ScanFailingPartway failpoint test on a real temp tree (in the passing suite). The opt-in SMB loopback rig was not run."
+   },
+   {
+    "what": "Display language other than English (Done-when #5)",
+    "outcome": "not-run",
+    "evidence": "This machine's display language is en-US and every message lookup resolves to en-US. No account or machine with another display language was available."
+   },
+   {
+    "what": "Cleanup: scratch folder, build servers, worktree",
+    "command": "Remove-Item -LiteralPath %TEMP%\\sl087-validate2 -Recurse -Force; .dotnet\\dotnet.exe build-server shutdown; git status --short",
+    "outcome": "passed",
+    "evidence": "Scratch folder gone (Test-Path False) and both build servers shut down. git status shows only the pre-existing .taad/slices/SL-087 entries; artifacts/ is gitignored."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "1. list the failed folders — when the record holds one not-opened entry and one partly-read entry",
+    "met": "yes",
+    "how": "ANothingListedAndAPartwayEntryGiveOneRowEachWithTheirOwnKind passes (478/478). Real: four scans (570, 47, 67 and 4 rows) matched their records one to one with kind and code carried. No real partway entry exists here."
+   },
+   {
+    "criterion": "2. list the failed folders — when the same Entry appears three times, with a different code and kind on the repeats",
+    "met": "yes",
+    "how": "AnEntryRecordedThreeTimesIsOneRowWithItsFirstKindAndCode passes. On every real scan record count equalled distinct entries, so the engine never repeats an entry in practice."
+   },
+   {
+    "criterion": "3. sort the rows — when 10,050 entries in shuffled order (U-104 shape)",
+    "met": "yes",
+    "how": "TenThousandAndFiftyShuffledEntriesAreAllListedInPathOrder passes. S-007 (12,345 real denied folders) passed in the shipped window. Store-wide sorts of 257,854 and 584,564 real paths are strict and equal the reference order."
+   },
+   {
+    "criterion": "4. sort the rows — when sibling names that straddle the separator: 'a', 'a\\b', 'a b', 'a.b', 'd1\\x' vs 'd10'",
+    "met": "yes",
+    "how": "The SiblingsThatStraddleTheSeparator… Theory passes. Real: 'README b' and 'README.b' sort after every README/ReadMe/readme subtree in the case-sensitive tree. The real-store sorts equal the name-by-name reference, with 0 separated descendants."
+   },
+   {
+    "criterion": "5. sort the rows — when two paths that differ only in letter case (a case-sensitive directory)",
+    "met": "yes",
+    "how": "The unit test with the new nested shape passes. On a real case-sensitive directory created unelevated, the failed rows came out README\\y, ReadMe, readme\\x, README b. The whole store kept README\\y and README\\z-ok under README and readme\\w-ok and readme\\x under readme. O-023 is fixed."
+   },
+   {
+    "criterion": "6. record which kind of failure happened — when a real temp folder whose open is refused by a deny ACL",
+    "met": "yes",
+    "how": "The UnreadableFolderTests deny-ACL case passes. Real: all code-5 folders across the scans (570, 17, 67 and 4, including the four ACL-denied folders made in this run) are stamped NothingListed, equal to the ChildCount rule."
+   },
+   {
+    "criterion": "7. record which kind of failure happened — when a real temp tree whose listing fails partway via the ScanFailingPartway failpoint (U-103 shape)",
+    "met": "yes",
+    "how": "UnreadableFolderTests.AFolderListedPartwayIsRecordedAsListedPartwayAndTheListSaysSo passes (real temp tree, failpoint, ListedPartway/995). No natural partway failure on this PC, so this is code contact."
+   },
+   {
+    "criterion": "8. record which kind of failure happened — when the folder opened but its listing failed before any entry came back",
+    "met": "yes",
+    "how": "Measured with a scratch harness on a real temp tree through the Query-only failpoint seam. The open succeeded and the first listing call failed with 995 or 363. Result: NothingListed with 0 children (5 files on disk), row 'could not be opened: … (Windows error N)'. This matches the person's decided M2 fallback, so the words say 'could not be opened' for a folder that did open. No test in the repo pins this case."
+   },
+   {
+    "criterion": "9. list the failed folders — when the scan was stopped while a folder was being listed",
+    "met": "yes",
+    "how": "A real stop of C:\\ProgramData at 0.7 s gave status Cancelled and 67 rows, one to one with the record and strictly ordered, with no row from the stop. The exact moment of stopping mid-listing of one folder was not controlled."
+   },
+   {
+    "criterion": "10. give a readable reason — when each code in the three plain families (22 codes)",
+    "met": "yes",
+    "how": "The 22-row Theory ACodeOfAPlainFamilyGetsItsPhrase passes. Real code-5 rows (658 in this run) read 'access denied'. Codes 32, 33 and the network family were seen only in the unit table."
+   },
+   {
+    "criterion": "11. give a readable reason — when codes outside the families that real scans record or the Done-when names: 2, 362, 363, 1920, 1921, 4390-4394",
+    "met": "yes",
+    "how": "AnotherCodeGetsWindowsOwnMessageAndItsNumber passes. Real %TEMP% rows: 363 x28 and 1920 x2 show Windows' message plus '(Windows error N)'."
+   },
+   {
+    "criterion": "12. give a readable reason — when a code with no message-table entry: 9999, 15999, 65535",
+    "met": "yes",
+    "how": "ACodeWithNoMessageStillNamesItsNumber and the 1..16000 sweep pass in the 478-test suite."
+   },
+   {
+    "criterion": "13. give a readable reason — when the system message comes back empty or whitespace (injected lookup)",
+    "met": "yes",
+    "how": "AnEmptyOrBrokenSystemMessageStillGivesAOneLineReason passes."
+   },
+   {
+    "criterion": "14. keep the view off the filesystem — when File.Exists planted in UnreadableRows.cs, with the Win32Exception call left in place",
+    "met": "yes",
+    "how": "Rules harness: F27 (File.Exists) and F28 (Path.Exists) fire/fire in both engines, the clean baseline is quiet, 60/60 AS-RECORDED. Fitness holds all 67 rules and rules-parity AGREE."
+   }
+  ],
+  "planned": [
+   {
+    "ordinal": 1,
+    "met": "yes",
+    "evidence": "Unit tests for mixed kinds and triple-recorded entries pass (478/478). Real: rows match the engine's record one to one on C:\\ProgramData (570), %TEMP% (47), stopped C:\\ProgramData (67) and a case-sensitive temp tree (4). Paths are full, with kind and code from the record and no extra rows."
+   },
+   {
+    "ordinal": 2,
+    "met": "yes",
+    "evidence": "TenThousandAndFiftyShuffledEntriesAreAllListedInPathOrder passes. Build returns only record rows (no cap, 'N more' or group rows); S-007 with 12,345 real folders passed. Real rows are strictly in ComparePaths order and equal an independent name-by-name reference sort. Whole-store sorts over 257,854 and 584,564 real paths keep every folder's descendants directly under it, including case-variant folders on a real case-sensitive directory (the O-023 fix)."
+   },
+   {
+    "ordinal": 3,
+    "met": "yes",
+    "evidence": "The kind is stamped in Scanner.FolderDone and read from UnreadableFolder.Kind; the record's constructor is internal. Real: every stamped kind equals the ChildCount rule on all four scans, and the ACL-denied folders read 'could not be opened'. 'Only partly read' is covered by the failpoint test on a real temp tree. An opened-then-failed-at-first-query folder is NothingListed (the measured M2 fallback)."
+   },
+   {
+    "ordinal": 4,
+    "met": "yes",
+    "evidence": "The 22-row plain-phrase Theory (5, 65 / 32, 33 / 18 network codes including 59 and 64) passes with exact phrases and no numbers. Real code-5 rows read 'access denied'."
+   },
+   {
+    "ordinal": 5,
+    "met": "yes",
+    "evidence": "AnotherCodeGetsWindowsOwnMessageAndItsNumber (2, 362, 363, 1920, 1921, 4390-4394) passes. Real rows: 'The cloud file metadata is corrupt and unreadable. (Windows error 363)', 'The file cannot be accessed by the system. (Windows error 1920)', and from the failpoint the 995 message plus number. Display language observable only as en-US (see not_reached)."
+   },
+   {
+    "ordinal": 6,
+    "met": "yes",
+    "evidence": "ACodeWithNoMessageStillNamesItsNumber (9999, 15999, 65535), the empty/whitespace injected-lookup test and the 1..16000 sweep pass. No empty or multi-line reason on any real row in this run."
+   },
+   {
+    "ordinal": 7,
+    "met": "yes",
+    "evidence": "The fitness.yaml entry TheUnreadableViewTouchesNoFileSystem (*.cs), its xUnit twin (green) and plants F27/F28 (fire/fire in both engines, AS-RECORDED) are in place. The Win32Exception lookup stays quiet. Fitness holds all 67 rules and rules-parity AGREE."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-022",
+    "verified": "yes",
+    "evidence": "Rule 2's pattern is '(?<!\\?)\\?\\s*UnreadableKind\\.(NothingListed|ListedPartway)\\b' in the twin and the same with (?m) in fitness.yaml. rules-parity reports AGREE. The full rules harness shows F30 (a three-line ternary) fire/fire in xUnit and Fitness, 60/60 AS-RECORDED with 0 stray hits, and the clean App tree is quiet. Fitness op=check holds all 67 rules."
+   },
+   {
+    "key": "O-023",
+    "verified": "yes",
+    "evidence": "ComparePaths now breaks case ties one name at a time (UnreadableRows.cs:128-152). The updated C-005 unit test passes (478/478). On a real case-sensitive directory created unelevated, the ACL-denied failed folders were listed as README\\y, ReadMe, readme\\x, README b. The whole-store order kept README\\y and README\\z-ok under README and readme\\w-ok and readme\\x under readme. Over 584,564 real %TEMP% paths (one case-variant group) and 257,854 ProgramData paths the order equalled an independent name-by-name reference, with 0 separated descendants."
+   }
+  ],
+  "not_reached": [
+   "A real folder listed partway (ListedPartway, 'only partly read') from a natural failure. None occurred in eight real scans across both validations (matches U-098). The label is exercised only through the ScanFailingPartway failpoint on a real temp tree, and the opt-in SMB loopback rig (U-103 shape) was not run.",
+   "A natural instance of criterion 8 (a folder opened, then failed before its first entry). It was reproduced only by injecting 995/363 at the first Query on a real temp tree. Whether the 28 real code-363 cloud rows under %TEMP%\\fsa-guard-tests failed at the open or at the first query is still unmeasured. No test in the repo pins criterion 8's NothingListed outcome.",
+   "Done-when #5's 'user's display language' on a machine whose display language is not English. Every lookup here resolves to en-US, so a wrong-language lookup would look the same.",
+   "Plain-phrase codes other than 5 from a real scan: 32/33 sharing and lock violations and the network and share family (59, 64 …). Seen only through the unit table.",
+   "Row text and row order inside the shipped window. --report serialises only the tab header ('Unreadable folders (570)') and the list layout. Row text and order were observed by compiling the same UnreadableRows.cs against the HEAD Core, not read out of the running exe.",
+   "Paths mixing '/' and '\\' separators for the same names still sort apart (noted by code review). ScanStore.GetPath only writes '\\', so no real scan here could produce it."
+  ]
+ }
+}
