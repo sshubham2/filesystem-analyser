@@ -2703,8 +2703,9 @@ $GapP95Floor = 20
 
 # SL-080: T-005 as a measurement of its own, for tests/window/T005Batch.ps1. Each variable is off unless set, and
 # none changes what T-005 checks.
-#   FSA_T005_HEIGHT=<px>     the window made that tall before the scan: the hook's FSA_HOOK_HEIGHT, which refuses a
-#                            height the window does not take
+#   FSA_T005_HEIGHT=<px>     the window made that tall as it is made, before it has a window handle, so it is never
+#                            resized before the hook's first move at any height: the hook's FSA_HOOK_HEIGHT, which
+#                            refuses a height the window does not take
 #   FSA_T005_TRACE=<folder>  the app traced by EventPipe from its start (CPU samples, with rundown) into that folder as
 #                            t005-<run>-<pid>.nettrace; the variables go to the app's process alone (Start-App)
 #   FSA_T005_SAMPLE_MS=<n>   with a trace, a sample every n ms, not every 1 ms: DOTNET_EventPipeThreadSamplingRate, which

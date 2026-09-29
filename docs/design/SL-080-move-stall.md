@@ -22,12 +22,16 @@ applied (620/644)") and the batch stops on it, measured below. 644 is the smalle
 
 `$DefaultHeight = 860` in WindowCases.ps1 (review m5) feeds no launch: it is the constant T-001's default-size
 checks compare the window against. T-005 never set a height; it ran at the XAML default. The height knob already
-existed: FSA_HOOK_HEIGHT, used by T-003 at 4000 ("as tall as the work area"). It is reused, not duplicated. It is now
-set in a Loaded class handler, which runs ahead of the window's own Loaded handler and so before that handler starts
-the scan; the "sized" line says whether the scan had started ("scanning": false in all 35 runs of the second batches,
-sized 333 to 696 ms into the hook's clock), and a window sized too late is refused. Until the code review's M1 it was set
-after the window had loaded, that is after the scan had started (below). New in it too is the refusal of a height
-within the work area that the window does not take; asking past the work area still clamps, as T-003 needs.
+existed: FSA_HOOK_HEIGHT, used by T-003 at 4000 ("as tall as the work area"). It is reused, not duplicated. It now
+sets the window's Height as the window is made: in the window's Initialized, raised at the end of its XAML, before
+`Show` gives it a window handle. The handle is created at the arm's height, as it is at a XAML default, and no arm
+is resized before the hook's first move. The "sized" line says when ("when": "Initialized" in all 34 runs of
+height-4 and height-850-2, and in T-003), and a window that already had its handle is refused. The hook reaches the
+window there through a watch on the main thread's dispatcher (`Dispatcher.Hooks.OperationPosted`), installed by the
+startup hook before the app's Main; the first operation the UI thread posts once the window exists comes before its
+XAML has ended. The height was set three other ways first, and each made the arms differ in more than their height
+(below). New in the knob too is the refusal of a height within the work area that the window does not take; asking
+past the work area still clamps, as T-003 needs (4000 was laid out at 1,032, and T-003 passed).
 
 ## The tools
 
@@ -37,8 +41,13 @@ within the work area that the window does not take; asking past the work area st
   the hook closing the window, another height, render mode or tracing than the arm's, or a phase never reached. The
   same holds when a batch is read again (-Reread): every scheduled run must have exactly one line that stands in its
   pair. A live batch refuses an -Out that already holds a runs.jsonl; -Out is made absolute; each run's process gets
-  none of the calling shell's FSA_T005_*, FSA_HOOK_*, DOTNET_EventPipe* or DOTNET_STARTUP_HOOKS variables, only its
-  arm's. `-SelfTest` runs 29 canned batches through the same code (tests/window/fixtures/T005Batch).
+  none of the calling shell's FSA_T005_*, FSA_HOOK_*, DOTNET_EventPipe*, COMPlus_EventPipe*, DOTNET_ and
+  COMPlus_EnableEventPipe or DOTNET_STARTUP_HOOKS variables, only its arm's (the runtime reads the COMPlus_ forms as
+  it reads the DOTNET_ ones). A Trace batch is routed on the sampling interval its traced runs' own traces record
+  (the nettrace header's, as StallStacks reports it), not on the -SampleMs the reading was given, so a batch read
+  again without its original flags goes where it would have gone; traced runs sampled at different intervals stop
+  the reading. `-SelfTest` runs 32 canned batches through the same code (tests/window/fixtures/T005Batch) and checks
+  the names a run's environment loses.
 - `tests/window/StallStacks.ps1`: turns one traced run into what the UI thread was in or blocked under for the
   longest wait of the scan and of the rescan, with the rules in its header. `-SelfTest` runs 13 canned timelines
   (tests/window/fixtures/StallStacks), two of them sampled every 10 ms.
@@ -55,70 +64,94 @@ within the work area that the window does not take; asking past the work area st
 Every run was at BelowNormal priority: this machine's sandbox starts every child process there (spike
 stall-rides-competing-cpu-load saw the same). Render tier 2 in every run. Runtime .NET 10.0.12.
 
-## The first batches set the height after the scan had started
+## Four ways of setting the height, and the one that leaves the arms equal
 
-height-1, trace-1 and render-1 (artifacts/sl080) ran with the hook sizing the window once it had loaded, and the
-window's own Loaded handler had started the scan by then. So every run moved the window to the top of the work area
-between the scan's start and the first probe, and in the 644 px arm resized it by 216 px too. That move took the
-scan's first-move stall on itself: the scan phase's longest wait was 76 to 251 ms in the first batches' hardware runs
-(apart from the 1.3 s kind below and one 497.8 ms), and 334 to 377 ms at 860 px once the height was set before the
-scan. The two height arms also differed in more than their
-height during the scan. Those three batches are superseded by height-2, trace-2 and render-2 below, run with the
-height set before the scan; their verdicts were no-measurable-difference, render-path and gpu-present-side. The
-second batches were started from a shell holding FSA_T005_TRACE, FSA_T005_SAMPLE_MS=5, FSA_T005_RENDER=software,
+Each Height batch below paired 860 px with a lower height. Only the last one left the two arms differing in their
+height alone.
+
+- **After the scan had started** (height-1, trace-1, render-1). The hook sized the window once it had loaded, and the
+  window's own Loaded handler had started the scan by then, so every run moved the window to the top of the work area
+  between the scan's start and the first probe, and in the 644 px arm resized it by 216 px too (code review M1). That
+  move took the scan's first-move stall on itself: the scan phase's longest wait was 76 to 251 ms in those batches'
+  hardware runs (apart from the 1.3 s kind below and one 497.8 ms). Their verdicts were no-measurable-difference,
+  render-path and gpu-present-side.
+- **In a Loaded class handler, on a window already on screen** (height-2, trace-2, render-2). The class handler runs
+  ahead of the window's own Loaded handler, so before the scan starts ("scanning": false in all 35 runs), but the
+  window is shown by then. At 860 px, the XAML default, the set did nothing to the height; at 644 px it resized a
+  shown window by 216 px, and its redraw landed in the scan (code review M3). In height-2's 644 px runs 3, 6, 11 and
+  15 the scan's longest wait was posted before the first move (at 466, 624, 490 and 480 ms on the hook's clock, the
+  first move at 574, 731, 596 and 586). The code review's four interleaved runs on C:\ changed the height by 10 px
+  alone: at 850 px the scan's longest wait was 224.4 and 224.3 ms, at 860 px 343.6 ms (the other 860 px run hit the
+  1.3 s kind, 1,400.6 ms). height-2's verdict was inconclusive.
+- **In SourceInitialized, after the handle is made and before the window is shown** (height-3, height-850, the first
+  version of this build). The shown-window resize was gone: no run had its scan's longest wait before its first move.
+  The difference was not. At 860 px the scan's longest wait was the first move's in every run, 335.9 to 354.0 ms in
+  height-3 and 223.3 to 439.4 ms in height-850, while at 644 px (78.6 to 243.5 ms) and at 850 px (73.0 to 147.4 ms)
+  it came on a later move about 2 s in, and no move of their scans held the hook more than 72.6 to 93.7 ms, against
+  130 to 237 ms at 860 px. On the scan phase 860 px was higher in 8 of 8 pairs in both batches, median ratio 2.159 against 644 px and
+  2.652 against 850 px. A 10 px difference reproduced the whole gap, so it follows the hook's resize, not the
+  height: at 860 px the set is still a no-op, and at any other height the window is resized once before it is shown.
+  On the primary figure height-3 read no-measurable-difference and height-850 inconclusive.
+- **In Initialized, before the handle is made** (height-4, height-850-2). The handle is created at each arm's height,
+  and no arm is resized before the hook's first move. height-850-2, 850 against 860 px: on the scan phase 860 px was
+  higher in 3 of 8 pairs, median ratio 0.952; where the first move held the scan's longest wait, it was 336.8 to
+  500.8 ms at 850 px and 334.3 to 346.8 ms at 860 px. On the primary figure, no-measurable-difference (4 of 8,
+  median 0.998, detectable 2.05). The arms are equal at load.
+
+So the scan-phase difference the second batches reported (860 px higher in 7 of 8 pairs, median 1.562), and the
+reading that the scan phase alone "says yes", are withdrawn: it was the hook's resize. What the first three rows show
+instead is that the scan's first-move stall, about 340 ms at any height, is paid by the window's first resize after
+its handle is made. A window resized once before the hook's first move, shown (height-2's 644 px arm, the code
+review's 850 px runs) or not yet shown (height-3's 644 px and height-850's 850 px arms), did not stall that long at
+that move. Where the cost went when the resize came before the window was shown was not measured: no probe runs
+before the window loads.
+
+The second batches were started from a shell holding FSA_T005_TRACE, FSA_T005_SAMPLE_MS=5, FSA_T005_RENDER=software,
 FSA_HOOK_HEIGHT=700 and two DOTNET_EventPipe* variables; no run was traced, sized or rendered other than its arm says.
+trace-2 and render-2 ran every run at 860 px under the Loaded class handler: the height set did nothing in either
+arm, and the move of the shown window to the top of the work area was the same in both arms. They were not run
+again. Their scan's first-move stall at 860 px (333.6 to 343.9 ms in trace-2) is height-850-2's at 860 px (334.3
+to 346.8 ms), so that move did not take the first-move stall on itself.
 
-## Does 860 px make it worse? Inconclusive on the rule; the scan phase alone, not decided on, says yes
+## Does 860 px make it worse? No measurable difference, down to 1.35x
 
-`T005Batch.ps1 -Plan Height` (artifacts/sl080/height-2): 16 runs after the warm-up, all stalling.
+`T005Batch.ps1 -Plan Height` (artifacts/sl080/height-4), the window made at each arm's height: 16 runs after the
+warm-up, all stalling.
 
 | pair | runs | first | 860 px | 644 px | 860/644 |
 |---|---|---|---|---|---|
-| 1 | 1, 2 | 860 | 519.3 | 703.4 | 0.738 |
-| 2 | 3, 4 | 644 | 415.7 | 402.0 | 1.034 |
-| 3 | 5, 6 | 860 | 567.3 | 831.3 | 0.682 |
-| 4 | 7, 8 | 644 | 381.5 | 388.7 | 0.982 |
-| 5 | 9, 10 | 860 | 719.7 | 810.4 | 0.888 |
-| 6 | 11, 12 | 644 | 399.7 | 642.6 | 0.622 |
-| 7 | 13, 14 | 860 | 409.3 | 465.4 | 0.879 |
-| 8 | 15, 16 | 644 | 673.8 | 643.9 | 1.046 |
+| 1 | 1, 2 | 860 | 432.4 | 408.9 | 1.057 |
+| 2 | 3, 4 | 644 | 384.4 | 389.3 | 0.987 |
+| 3 | 5, 6 | 860 | 1,375.6 | 1,009.1 | 1.363 |
+| 4 | 7, 8 | 644 | 1,460.6 | 1,373.5 | 1.063 |
+| 5 | 9, 10 | 860 | 736.3 | 942.3 | 0.781 |
+| 6 | 11, 12 | 644 | 937.9 | 1,407.7 | 0.666 |
+| 7 | 13, 14 | 860 | 1,370.7 | 1,379.3 | 0.994 |
+| 8 | 15, 16 | 644 | 1,376.6 | 948.4 | 1.452 |
 
 The figure is each run's primaryMs, the larger of the scan's and the rescan's longest wait, in ms, fixed as the one
-figure decided on before any run. 860 px was higher in 2 of 8 pairs, median ratio 0.884: **inconclusive**. The
-spread of the pairs' log ratios is 0.197, and the smallest ratio this batch could have told from 1 is **1.25**. The
-order check did not fire (the first run of a pair higher in 2 of 8). primaryMs was the rescan's in 15 of the 16 runs.
-
-The scan phase, reported and not decided on, reads differently:
-
-| pair | 860 px scan | 644 px scan | 860/644 |
-|---|---|---|---|
-| 1 | 346.1 | 151.0 | 2.292 |
-| 2 | 346.5 | 223.4 | 1.551 |
-| 3 | 354.1 | 225.1 | 1.573 |
-| 4 | 335.1 | 243.4 | 1.377 |
-| 5 | 336.3 | 223.1 | 1.508 |
-| 6 | 356.8 | 106.7 | 3.345 |
-| 7 | 360.9 | 465.4 | 0.775 |
-| 8 | 337.0 | 106.6 | 3.161 |
-
-860 px higher in 7 of 8 pairs, median ratio 1.562: on the scan phase alone the height rule's numbers would read
-860-worsens. It is not a verdict. The rule was fixed on primaryMs before the runs so that a batch is not read to
-taste afterwards, and picking the one phase that shows a difference after seeing it is exactly that. It is a finding
-for the next batch to test with the scan phase fixed as its figure beforehand. At 860 px the scan's longest wait was
-333.6 to 377.3 ms in every hardware run of height-2, trace-2 and render-2 but one (render-2 run 7, 663.0 ms on a later
-move); at 644 px it was 106.6 to 243.4 ms in 7 of 8 runs, and 465.4 ms once.
+figure decided on before any run. 860 px was higher in 4 of 8 pairs, median ratio 1.026: **no-measurable-difference**.
+The spread of the pairs' log ratios is 0.258, and the smallest ratio this batch could have told from 1 is **1.35**: an
+effect of 860 px smaller than about a third is not ruled out, and this is not "860 px does not worsen it". The order
+check did not fire (the first run of a pair higher in 4 of 8). primaryMs was the scan's in 14 of the 16 runs. The
+scan phase, reported and not decided on, agrees: 860 px higher in 5 of 8 pairs, median ratio 1.105.
 
 Where the stalls come, on the hook's clock and in the traces:
 
-- The scan's: its first move, about 130 ms after the app's own StartScan (trace-2: 127.9 to 130.7 ms). The probe was
-  posted 7 to 16 ms after the move began and waited 334 to 377 ms at 860 px, while the move itself held the hook
-  128 to 173 ms: the move's messages go on after the Ui call returns.
-- The rescan's: its first move, 55 to 62 ms after the rescan's StartScan; 380 to 830 ms, in two groups, about 380 to
+- The scan's first move, about 130 ms after the app's own StartScan (trace-2: 127.9 to 130.7 ms), 0.5 to 0.8 s into
+  the hook's clock. The probe was posted 7 to 16 ms after the move began. Once no arm was resized at load (height-4,
+  height-850-2), it waited 334.3 to 500.8 ms, most often 334 to 365 ms, at 644, 850 and 860 px alike, wherever the
+  first move held the scan's longest wait. In trace-2 the move itself held the hook 128 to 173 ms: the move's
+  messages go on after the Ui call returns.
+- The rescan's first move, 55 to 62 ms after the rescan's StartScan; 380 to 830 ms, in two groups, about 380 to
   420 ms and about 500 to 830 ms.
-- A third kind, about 1.3 s on one later move: 6 of the 17 runs of the superseded height-1 (1,292 to 1,381 ms), and
-  in the second batches only render-2 run 8, in software (1,264.1 ms, one move holding 1,195 ms). The brief's
-  1,318.5 ms is this kind. It is not D:\'s alone: T-005 run plainly at the end of the first build, its tree in %TEMP%
-  on C:\ and no SL-080 variable set, failed its own 1 s bar with a scan-phase wait of 1,352.6 ms.
+- A third kind, about 1.3 s on one later move, in the scan or the rescan. It was rare at first: 6 of the 17 runs of
+  height-1, and once in the second batches (render-2 run 8, in software, 1,264.1 ms, one move holding 1,195 ms). In
+  this build's batches it was the run's largest wait, at 1,250 ms or more, in 12 of 16 runs of height-3 and 7 of 16
+  of height-850, in the rescan, and in 7 of 16 of height-4 and 5 of 16 of height-850-2, in the scan, in both arms
+  alike, with a group at about 0.9 to 1.0 s beside it. The brief's 1,318.5 ms is this kind. It is not D:\'s alone: T-005 run
+  plainly at the end of the first build, its tree in %TEMP% on C:\ and no SL-080 variable set, failed its own 1 s bar
+  with a scan-phase wait of 1,352.6 ms.
 
 ## What the UI thread is blocked under: WPF's synchronous render flush on a window move or resize
 
@@ -141,7 +174,7 @@ render-path too, 4 of 4, and a single run traced at 10 ms (artifacts/sl080/sampl
 `Channel.SyncFlush` is the UI thread waiting for WPF's render thread to take its batch and answer; a move or resize
 of the window makes `HwndTarget` flush synchronously, so any time the render side takes is spent on the UI thread.
 EventPipe does not see the render thread or the desktop compositor, so the trace alone cannot say what the render
-side was doing.
+side was doing. No traced batch has been read of the 1.3 s kind.
 
 `T005Batch.ps1 -Plan Render` (artifacts/sl080/render-2) took the GPU away: 4 pairs, software and hardware
 interleaved, at 860 px, untraced.
@@ -157,18 +190,22 @@ Software lower in 2 of 4 pairs, median ratio 1.048: **render-thread-or-dwm-not-g
 runs. The spread of the log ratios is 0.812 and the smallest ratio this batch could have told from 1 is **5.41**:
 this batch rules nothing out, and whether the render side's wait is the GPU's is not settled. The superseded render-1
 read gpu-present-side (median 0.305), with the hook's own resize in every scan. The phases, reported and not decided
-on, pull apart: in software the scan's first move was 68.4 and 90.2 ms in two runs against 341.9 to 377.3 ms in
-hardware (663.0 ms once, on a later move), but the other two software runs stalled 611.2 and 1,264.1 ms on a later scan move; the rescan was lower in
-software in 4 of 4 pairs (47.0 to 404.0 ms against 399.1 to 715.4 ms, median ratio 0.455).
+on, pull apart: in software runs 1 and 5 the scan phase's longest wait was 90.2 and 68.4 ms, on a later move about
+1.7 s after the first, so the first move waited no more than that, against 341.9 to 377.3 ms at the first move in
+hardware (663.0 ms once, on a later move); the other two software runs stalled 611.2 and 1,264.1 ms on a later scan
+move. The rescan was lower in software in 4 of 4 pairs (47.0 to 404.0 ms against 399.1 to 715.4 ms, median ratio
+0.455).
 
 ## Against SL-044's narrowing
 
 SL-044 found it was not the FolderTree (de51999 stalled too, 419 to 511 ms with moves, 10 ms without) and not
 StartScan (2.8 to 7.4 ms). Those figures are context here, not an A/B: different builds, another day. This slice
 adds: not GC (spike rescan-stall-is-gc-suspension, under 1%); not CPU load from outside (spike
-stall-rides-competing-cpu-load); on the UI thread, WPF's synchronous render flush on the window's move or resize
-messages, with the SetWindowPos call itself in the longer rescan stalls. The height is inconclusive on the rule
-(detectable 1.25x), with a scan-phase difference to test. Whether the flush waits on the GPU is not settled.
+stall-rides-competing-cpu-load); not the height, to within what height-4 could detect (no measurable difference
+between 860 and 644 px, detectable 1.35x); on the UI thread, WPF's synchronous render flush on the window's move or
+resize messages, with the SetWindowPos call itself in the longer rescan stalls. The scan's first-move stall is the
+window's first resize after its handle is made, whatever its height. Whether the flush waits on the GPU is not
+settled.
 
 ## Programmatic moves, and a person's drag
 
@@ -183,12 +220,14 @@ longer rescan stalls, is the hook's call, and no trace of a drag was taken.
 ## One follow-on fix candidate
 
 Give the render thread less to flush in the first half-second of a scan, since every stall read here is the UI thread
-waiting in SyncFlush on a window move 55 to 130 ms after StartScan. Before a fix can be priced it needs two batches
-this slice has the tools for, with their figures fixed before the runs: a Height batch on the scan phase, which the
-second batch suggests 860 px worsens (7 of 8 pairs, median 1.562, not decided on), and a Render batch of 8 pairs,
-because 4 pairs could not tell software from hardware (detectable 5.41x). The main window in software
-(`HwndTarget.RenderMode = RenderMode.SoftwareOnly`) stays the one change with a measured effect in any batch (render-1
-median 0.305), and that batch is the superseded one.
+waiting in SyncFlush on a window move 55 to 130 ms after StartScan. The Height batch on the scan phase that the second
+batches pointed to is withdrawn: its difference was the hook's own resize (above), and height-4 found none. Before a
+fix can be priced it needs, with their figures fixed before the runs: a Render batch of 8 pairs, because 4 pairs could
+not tell software from hardware (detectable 5.41x); a measure of where the first resize's cost goes when the window is
+resized once before it is shown, since that took the ~340 ms off the hook's first move in height-3 and height-850 but
+nothing measured startup; and a traced batch of the 1.3 s kind, now the most frequent large stall in these batches.
+The main window in software (`HwndTarget.RenderMode = RenderMode.SoftwareOnly`) stays the one change with a measured
+effect in any batch (render-1 median 0.305), and that batch is the superseded one.
 
 ## The in-process fallback, contract only (not built)
 
@@ -209,6 +248,9 @@ Built only if a Trace batch reads cannot-read, or tracing-masks again at -Sample
 - The refusal, live: `T005Batch.ps1 -Plan Height -LowHeight 620` (artifacts/sl080/live/height-620) ran the warm-up and
   run 1 at 860 px; run 2, the first at 620 px, ended with the hook's `height not applied (620/644)` and the batch
   stopped there, exit 1, before run 3.
+- The design's "sets the window's Height once, before the first scan starts" is not enough for equal arms: the height
+  has to be set before the window has a handle, or every arm but the XAML default's is resized once before the hook's
+  first move (height-3 and height-850, above).
 - DOTNET_EventPipeThreadSamplingRate is read by runtime 10.0.12 as milliseconds in hexadecimal: "A" gave 10.1 ms
   between samples, "5" 5.1 ms, "10" (16 ms) 30.9 ms; "2710" (10 s) held the app's exit 7.5 s, and "989680" hung it.
   The option is FSA_T005_SAMPLE_MS (decimal ms, written in hex), not the design's FSA_T005_SAMPLE_NS. The nettrace

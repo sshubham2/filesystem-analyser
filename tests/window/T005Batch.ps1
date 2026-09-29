@@ -14,7 +14,8 @@
 # under the same rules, for a batch whose reading failed after its runs. Either way every scheduled run must have
 # exactly one summary line that stands in its pair, or the batch stops; a live batch refuses an -Out that already holds
 # a runs.jsonl. -Out is made absolute. A run's process gets none of this shell's FSA_T005_*, FSA_HOOK_*,
-# DOTNET_EventPipe* or DOTNET_STARTUP_HOOKS variables, only its arm's.
+# DOTNET_EventPipe*, COMPlus_EventPipe* (with DOTNET_ and COMPlus_EnableEventPipe) or DOTNET_STARTUP_HOOKS
+# variables, only its arm's.
 #
 # The schedules. Run 0 is a warm-up, run and discarded. Then blocks of four, in adjacent pairs, the arms swapped in
 # the second pair of each block (ABBA), so a stall that drifts over minutes lands on both arms alike:
@@ -44,7 +45,10 @@
 #   Trace (4 pairs; the traced runs read by StallStacks.ps1)
 #     tracing-masks             untraced runs stall in at least 3 of 4 while traced ones stall in at most 1: the
 #                               sampler hides the stall. Next: this plan once more with -SampleMs 10 (a sample every
-#                               10 ms instead of 1, review M5); if it masks again, the in-process fallback.
+#                               10 ms instead of 1, review M5); if it masks again, the in-process fallback. The interval
+#                               is the one the traced runs' own traces record (StallStacks' samplingNs), whatever
+#                               -SampleMs this reading was given; -SampleMs only when no trace could be read, and traced
+#                               runs sampled at different intervals stop the reading, exit 1 (review R2-m7).
 #     no-stall-this-batch       both at most 1 of 4
 #     inconclusive              fewer than 3 traced runs stalled
 #     cannot-read               2 or more of the stalling traced runs CANNOT-READ. Next: the in-process fallback
@@ -171,7 +175,9 @@ function Resolve-Lines($schedule, $lines) {
 
 # What a run's process is given of this shell's environment: none of the variables that choose an arm or trace it,
 # so a shell left with one set cannot trace an untraced run or change its rate or render mode (SL-080 review R2-m4).
-$ArmVariables = '^(FSA_T005_|FSA_HOOK_|DOTNET_EventPipe|DOTNET_EnableEventPipe$|DOTNET_STARTUP_HOOKS$)'
+# The runtime reads COMPlus_EnableEventPipe and COMPlus_EventPipe* as it reads the DOTNET_ forms (review m6). -match
+# ignores case, as Windows does in a variable's name.
+$ArmVariables = '^(FSA_T005_|FSA_HOOK_|(DOTNET|COMPlus)_(EventPipe|EnableEventPipe$)|DOTNET_STARTUP_HOOKS$)'
 
 # One real run: WindowCases.ps1 -Case T-005 as its own process, with its variables given to it alone.
 function Invoke-T005Run($item, $gap, [string] $out, [string] $temp, [int] $sampleMs) {
@@ -277,7 +283,17 @@ function Get-HeightVerdict($pairs, $lines, [int] $high) {
     $result
 }
 
-function Get-TraceVerdict($lines, $stacks, [int] $sampleMs) {
+# The interval the traced runs were sampled at, in ms: from their own traces' headers (samplingNs in each run's stacks),
+# so a batch read again without its original -SampleMs is still routed on the rate it ran at; this reading's -SampleMs
+# only when no stacks have one. Traced runs that disagree are a problem, not a rate (SL-080 code review R2-m7).
+function Get-SampleRate($stacks, [int] $sampleMs) {
+    $rates = @($stacks.Values | Where-Object { $null -ne $_ -and $null -ne $_.samplingNs } | ForEach-Object { [double]$_.samplingNs / 1e6 } | Sort-Object -Unique)
+    if ($rates.Count -gt 1) { return [pscustomobject]@{ Ms = $null; Source = $null; Problem = "the traced runs were sampled at different intervals ($($rates -join ', ') ms), so no one rule applies to them" } }
+    if ($rates.Count -eq 1) { return [pscustomobject]@{ Ms = $rates[0]; Source = 'the traces'; Problem = $null } }
+    [pscustomobject]@{ Ms = [double]$(if ($sampleMs -gt 0) { $sampleMs } else { 1 }); Source = '-SampleMs'; Problem = $null }
+}
+
+function Get-TraceVerdict($lines, $stacks, $rate) {
     $traced = @($lines | Where-Object { $_.arm.trace })
     $untraced = @($lines | Where-Object { -not $_.arm.trace })
     $tStall = @($traced | Where-Object { [double]$_.primaryMs -ge $Stall })
@@ -287,7 +303,7 @@ function Get-TraceVerdict($lines, $stacks, [int] $sampleMs) {
     $named = @($read | Where-Object { $_.verdict -eq 'NAMED' } | Group-Object blockedUnder | Sort-Object Count -Descending)
     $fallback = 'the in-process fallback: FSA_HOOK_MSGLOG, whose contract is in docs/design/SL-080-move-stall.md (not built unless this is reached)'
     $verdict, $next = if ($uStalls -ge 3 -and $tStall.Count -le 1) {
-        'tracing-masks', $(if ($sampleMs -le 1) { 'run -Plan Trace once more with -SampleMs 10' } else { $fallback })
+        'tracing-masks', $(if ($rate.Ms -lt 10) { 'run -Plan Trace once more with -SampleMs 10' } else { $fallback })
     }
     elseif ($uStalls -le 1 -and $tStall.Count -le 1) { 'no-stall-this-batch', 'run -Plan Trace again: a quiet batch answers nothing' }
     elseif ($tStall.Count -lt 3) { 'inconclusive', 'run -Plan Trace again' }
@@ -302,7 +318,8 @@ function Get-TraceVerdict($lines, $stacks, [int] $sampleMs) {
         untracedStalls   = "$uStalls of $($untraced.Count)"
         tracedMedianMs   = Get-Median @($traced | ForEach-Object { [double]$_.primaryMs })
         untracedMedianMs = Get-Median @($untraced | ForEach-Object { [double]$_.primaryMs })
-        sampleMs         = if ($sampleMs -gt 0) { $sampleMs } else { 1 }
+        sampleMs         = $rate.Ms
+        sampleMsFrom     = $rate.Source
         stacks           = @($read | ForEach-Object { [ordered]@{ run = $_.run; verdict = $_.verdict; blockedUnder = $_.blockedUnder; reason = $_.reason } })
         next             = $next
     }
@@ -339,23 +356,25 @@ function Invoke-Plan([string] $plan, $schedule, [scriptblock] $runner, [scriptbl
     }
     $batch = if ($reread) { [pscustomobject]@{ Stopped = $false } } else { Invoke-Batch $schedule $runner $summary }
     if (-not $batch.Stopped) { $batch = Resolve-Lines $schedule @(Read-Runs $summary) }
+    $lines = if (-not $batch.Stopped) { @($batch.Lines | Where-Object { -not $_.warmup }) }
+    $stacks = @{}
+    if (-not $batch.Stopped -and $plan -eq 'Trace') {
+        foreach ($line in @($lines | Where-Object { $_.arm.trace })) {
+            Say "reading the stacks of run $($line.run)"
+            $stacks["$($line.run)"] = & $reader $line $out
+        }
+        $rate = Get-SampleRate $stacks $sampleMs
+        if ($rate.Problem) { $batch = [pscustomobject]@{ Stopped = $true; Reason = $rate.Problem; Run = $null } }
+    }
     if ($batch.Stopped) {
         [ordered]@{ plan = $plan; verdict = 'stopped'; stoppedAt = $batch.Run; reason = $batch.Reason } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $verdictFile -Encoding utf8NoBOM
-        Say "STOPPED at run $($batch.Run): $($batch.Reason)"
+        Say "STOPPED$(if ($null -ne $batch.Run) { " at run $($batch.Run)" }): $($batch.Reason)"
         return 1
     }
-    $lines = @($batch.Lines | Where-Object { -not $_.warmup })
     $result = switch ($plan) {
         'Height' { Get-HeightVerdict @(Get-Pairs $schedule $lines { param($i) $i.arm.height -eq $high }) $lines $high }
         'Render' { Get-RenderVerdict @(Get-Pairs $schedule $lines { param($i) $i.arm.render -eq 'software' }) $lines }
-        'Trace' {
-            $stacks = @{}
-            foreach ($line in @($lines | Where-Object { $_.arm.trace })) {
-                Say "reading the stacks of run $($line.run)"
-                $stacks["$($line.run)"] = & $reader $line $out
-            }
-            Get-TraceVerdict $lines $stacks $sampleMs
-        }
+        'Trace' { Get-TraceVerdict $lines $stacks $rate }
     }
     $record = [ordered]@{ plan = $plan }
     foreach ($p in $result.GetEnumerator()) { $record[$p.Key] = $p.Value }
@@ -391,8 +410,19 @@ function Import-Summary {
 function Invoke-SelfTest([string] $only) {
     $files = @(Get-ChildItem -LiteralPath $FixtureDir -Filter '*.json' | Sort-Object Name)
     if ($only) { $files = @($files | Where-Object { $_.BaseName -eq $only }) }
-    if ($files.Count -eq 0) { Write-Output "FAILED: no fixture$(if ($only) { " named $only" }) in $FixtureDir"; $script:SelfTestFailed = $true; return }
+    $variables = -not $only -or $only -eq 'arm-variables'
+    if ($files.Count -eq 0 -and -not $variables) { Write-Output "FAILED: no fixture$(if ($only) { " named $only" }) in $FixtureDir"; $script:SelfTestFailed = $true; return }
     $failed = 0
+    # Not a batch: the names Invoke-T005Run takes out of a run's environment, in both of the runtime's prefixes and any
+    # case, and names it leaves (SL-080 code review m6).
+    if ($variables) {
+        $stripped = 'FSA_T005_TRACE', 'FSA_T005_SAMPLE_MS', 'FSA_HOOK_HEIGHT', 'DOTNET_STARTUP_HOOKS', 'DOTNET_EnableEventPipe', 'DOTNET_EventPipeOutputPath',
+        'DOTNET_EventPipeThreadSamplingRate', 'COMPlus_EnableEventPipe', 'COMPlus_EventPipeConfig', 'COMPlus_EventPipeOutputPath', 'complus_eventpipeoutputstreaming', 'Dotnet_EnableEventPipe'
+        $kept = 'TEMP', 'TMP', 'PATH', 'DOTNET_ROOT', 'DOTNET_gcServer', 'COMPlus_gcServer', 'DOTNET_EnableEventPipeX', 'COMPlus_STARTUP_HOOKSX'
+        $wrong = @(@($stripped | Where-Object { $_ -notmatch $ArmVariables } | ForEach-Object { "$_ is given to the run" }) + @($kept | Where-Object { $_ -match $ArmVariables } | ForEach-Object { "$_ is taken from the run" }))
+        if ($wrong.Count -eq 0) { Write-Output "  ok    arm-variables: $($stripped.Count) taken out, $($kept.Count) left" }
+        else { $failed++; Write-Output "  FAIL  arm-variables: $($wrong -join '; ')" }
+    }
     foreach ($file in $files) {
         $fixture = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 32 -DateKind String
         $out = Join-Path ([System.IO.Path]::GetTempPath()) ("sl080-batch-selftest\{0}" -f [guid]::NewGuid().ToString('N'))
@@ -450,6 +480,7 @@ function Invoke-SelfTest([string] $only) {
             if ($e.reason -and "$($verdict.reason)" -notmatch $e.reason) { "reason '$($verdict.reason)' does not match '$($e.reason)'" }
             if ($e.next -and "$($verdict.next)" -notmatch $e.next) { "next '$($verdict.next)' does not match '$($e.next)'" }
             if ($e.blockedUnder -and $verdict.blockedUnder -cne $e.blockedUnder) { "blockedUnder $($verdict.blockedUnder), expected $($e.blockedUnder)" }
+            if ($null -ne $e.sampleMs -and $verdict.sampleMs -ne $e.sampleMs) { "sampleMs $($verdict.sampleMs) (from $($verdict.sampleMsFrom)), expected $($e.sampleMs)" }
             if ($e.detectable -and -not ($verdict.detectableRatio -gt 1)) { "no detectableRatio above 1 ($($verdict.detectableRatio))" }
             foreach ($n in @($e.nullPhases)) {
                 if ($null -eq $n) { continue }
@@ -468,8 +499,9 @@ function Invoke-SelfTest([string] $only) {
             if ($null -ne $verdict) { Write-Output ($verdict | ConvertTo-Json -Depth 8) }
         }
     }
-    if ($failed -gt 0) { Write-Output "FAILED: $failed of $($files.Count) fixtures"; $script:SelfTestFailed = $true; return }
-    Write-Output "PASSED: $($files.Count) fixtures"
+    $total = $files.Count + [int]$variables
+    if ($failed -gt 0) { Write-Output "FAILED: $failed of $total fixtures"; $script:SelfTestFailed = $true; return }
+    Write-Output "PASSED: $total fixtures"
 }
 
 $script:SelfTestFailed = $false

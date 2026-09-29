@@ -202,6 +202,10 @@ internal class StartupHook
             // mode's facts line says which mode the process ran in.
             if (Environment.GetEnvironmentVariable("FSA_HOOK_RENDER") == "software")
                 RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
+            // Tree mode's FSA_HOOK_HEIGHT sizes the window before it has a window handle, from a watch on this thread's
+            // dispatcher that has to be in place before the app's Main makes the window (SL-080 code review M3).
+            if (mode == "tree")
+                TreeMode.BeforeMain();
             new Thread(() => Run(mode)) { IsBackground = true, Name = "FsaWindowHook" }.Start();
         }
         catch (Exception)
