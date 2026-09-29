@@ -217,7 +217,7 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
     /// <summary>
     /// Opens a directory for listing: FILE_LIST_DIRECTORY, every share mode, backup semantics, and no
     /// OPEN_REPARSE_POINT, so a link a person chose as the root is opened through to its target. The one way the
-    /// scanner gets a listing handle.
+    /// scanner gets a listing handle. A folder's 1920 is never retried: it stays unreadable (U-004).
     /// </summary>
     /// <remarks>
     /// With <paramref name="keepLastAccess"/> the listing leaves the folder's last-access time alone (SL-056): the
@@ -234,10 +234,43 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
     public int OpenDirectory(string win32Path, bool keepLastAccess, out SafeFileHandle? handle) =>
         Open(win32Path, Kernel32.FILE_LIST_DIRECTORY, Kernel32.FILE_FLAG_BACKUP_SEMANTICS, keepLastAccess, out handle);
 
-    /// <summary>Opens a file with FILE_READ_ATTRIBUTES only, never data, and without OPEN_REPARSE_POINT.</summary>
+    /// <summary>
+    /// Opens a file with FILE_READ_ATTRIBUTES only, never data, and without OPEN_REPARSE_POINT, so a WOF, dedup or
+    /// cloud file is answered by its filter. The probe's first open.
+    /// </summary>
     /// <returns>As <see cref="OpenDirectory"/>.</returns>
     public int OpenForAttributes(string win32Path, out SafeFileHandle? handle) =>
         Open(win32Path, Kernel32.FILE_READ_ATTRIBUTES, 0, keepLastAccess: false, out handle);
+
+    /// <summary>
+    /// The same open as <see cref="OpenForAttributes"/>, with OPEN_REPARSE_POINT: the reparse point itself is opened,
+    /// past any filter. Only for the probe's retry after its first open failed with ERROR_CANT_ACCESS_FILE, a tag no
+    /// filter handles, such as an AF_UNIX socket's or an app-execution alias's (SL-084). Never a first open: the flag
+    /// skips wof.sys, cldflt and dedup, whose files the first open sizes through their filters.
+    /// </summary>
+    /// <returns>As <see cref="OpenDirectory"/>, or the error <see cref="OverrideReparseRetryError"/> reports instead.</returns>
+    public int OpenReparsePointForAttributes(string win32Path, out SafeFileHandle? handle)
+    {
+        int error = Open(win32Path, Kernel32.FILE_READ_ATTRIBUTES, Kernel32.FILE_FLAG_OPEN_REPARSE_POINT, keepLastAccess: false, out handle);
+        if (OverrideReparseRetryError is not { } overrideError)
+            return error;
+        int reported = overrideError(error);
+        if (reported == error)
+            return error;
+        if (reported == 0)
+            throw new InvalidOperationException($"OverrideReparseRetryError cannot turn error {error} into an open: there is no handle to hand out.");
+        if (handle is not null)
+            Close(handle);
+        handle = null;
+        return reported;
+    }
+
+    /// <summary>
+    /// Tests only: given the error <see cref="OpenReparsePointForAttributes"/> got (0 when it opened), a failure to
+    /// report instead, as if Windows had refused the retry: a file deleted between the probe's two opens, or refused
+    /// on the second. A handle it opened is closed, not handed out. Never an open that failed made to succeed.
+    /// </summary>
+    internal Func<int, int>? OverrideReparseRetryError { get; set; }
 
     /// <summary>
     /// Whether the last open that handed out a handle gave one through which the folder's last-access time is

@@ -6,7 +6,8 @@ namespace FsAnalyser.Core.Scanning;
 
 /// <summary>
 /// Reads one file's true EndOfFile and AllocationSize. Opens with FILE_READ_ATTRIBUTES only and never reads
-/// data; without OPEN_REPARSE_POINT, so the WOF filter answers for compressed files.
+/// data; first without OPEN_REPARSE_POINT, so the WOF filter answers for compressed files, and with it only when
+/// that open fails with ERROR_CANT_ACCESS_FILE (SL-084).
 /// </summary>
 /// <remarks>
 /// Every file the scan charges is probed (SL-056), because no figure in the listing says when the listing is
@@ -35,11 +36,24 @@ internal static unsafe class SizeProbe
 
     /// <returns>0 with the file's true sizes, or the Win32 error that stopped the probe. After
     /// ERROR_OPERATION_ABORTED nothing was read, and the caller writes no size and no ProbeFailed.</returns>
+    /// <remarks>
+    /// A file whose reparse tag no filter handles, an AF_UNIX socket or an app-execution alias, refuses the first open
+    /// with ERROR_CANT_ACCESS_FILE. It is opened once more as the reparse point itself and sized from that handle; if
+    /// that open fails too, its error is the probe's, so a file deleted in between is gone, not refused. No other error
+    /// is retried: a refusal, a sharing violation, a cloud provider not running (363) or a cancel stays what it was.
+    /// A WOF or cloud file never gets here: wof.sys and cldflt are always loaded on client Windows, and answer its first
+    /// open or fail it with their own error (362, 363). The retry is keyed on the error, not on a tag, so any tag whose
+    /// first open fails with 1920 takes it. A deduplicated file on a volume whose system has no dedup filter does
+    /// (review m7): it is sized from its stub's own handle, the figures its listing gives, and is no longer one that
+    /// could not be opened. Accepted, not guarded.
+    /// </remarks>
     public static int Probe(SynchronousIoCancel io, string win32Path, out long endOfFile, out long allocationSize)
     {
         endOfFile = 0;
         allocationSize = 0;
         int error = io.OpenForAttributes(win32Path, out SafeFileHandle? handle);
+        if (error == Kernel32.ERROR_CANT_ACCESS_FILE)
+            error = io.OpenReparsePointForAttributes(win32Path, out handle);
         if (error != 0)
             return error;
 

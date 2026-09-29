@@ -853,3 +853,37 @@ rules:
       an ordinary user's environment could fake a directory failure the scanner never had, which
       breaks the 'no product-side flag' property spike 1 was framed around and this whole design
       rests on.
+
+  # settled by SL-084
+  # As its design declared them, then changed at build by the review findings the person accepted (m2, m3): each
+  # excepts Kernel32.cs, where the constant is defined, and drops the lookahead that let any assignment through, so a
+  # redefinition, a local, a named argument or an 'is 5 or 1920' elsewhere is caught. Neither has an xUnit twin;
+  # comments are not matched. ReparsePointProbeTests' first-open Fact is what holds OpenForAttributes at flags 0.
+  - name: only the 1920 retry opens a file without its filters
+    files: src/FsAnalyser.Core/**/*.cs
+    must_not_match:
+    - \bFILE_(FLAG_)?OPEN_REPARSE_POINT\b
+    - '\b(?:0x0*200000|2097152)[uU]?\b'
+    because: The flag makes the open skip wof.sys, cldflt and dedup. Any open carrying it other
+      than the 1920 retry would charge raw NTFS figures for WOF, deduplicated and cloud files.
+      That is a counting defect that no size test on a plain temp tree notices. Kernel32.cs defines
+      the constant and SynchronousIoCancel.OpenReparsePointForAttributes is the one open that passes
+      it; nothing else in Core may name it or spell its value, in hex or decimal (review m2).
+    except_files:
+    - src/FsAnalyser.Core/Native/Kernel32.cs
+    - src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs
+  - name: a refused metadata open is decided in the probe, never filtered downstream
+    files: src/**/*.cs
+    must_not_match:
+    - \bERROR_CANT_ACCESS_FILE\b
+    - '\b(?:1920|0x0*780)\b'
+    because: 'The fix is to size these files from their own handle. Special-casing 1920 in Scanner.Correct,
+      ScanResult or MainWindow would make the repro pass while hiding the failure. The entry
+      would be charged its unprobed listing figure (U-005, Q-004: the listing is not trusted
+      for size), and a real 1920 the retry cannot open would disappear from ''could not be opened''.
+      Kernel32.cs defines the constant and SizeProbe.Probe is the one place that branches on it; any
+      other spelling, bare 1920 or 0x780 included, is refused, since ''is 5 or 1920'' is this code''s
+      own idiom for a filter (review m3). No other code line in src holds either value.'
+    except_files:
+    - src/FsAnalyser.Core/Native/Kernel32.cs
+    - src/FsAnalyser.Core/Scanning/SizeProbe.cs

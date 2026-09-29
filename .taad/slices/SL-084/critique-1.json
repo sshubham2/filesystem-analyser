@@ -1,0 +1,139 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-084",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-09-29T07:22:23.899Z",
+ "head": "c3b5eb6853f16912f923a34a95ccf1f1aab0aebe",
+ "run_id": 2143,
+ "summary": "The fix itself is sound, and the spikes measured it: retry once on 1920 through SynchronousIoCancel, keep the first open at flags 0, leave 363 alone. Both spike no-gos are handled, SL-045's CreateFileW refusal route is kept, and the acceptance repro should pass. No blockers. There are two majors. (1) The plan for the unproven precondition (SL-056 fitness rule 3) tells the builder to narrow rule 3 to a regex that ties the flag to OpenReparsePointForAttributes. The design's own coherence check already rejected exactly that regex. (2) The new failed-retry branch (retry's error returned, gone vs refused) may ship with no test. Case 7 may never reach the retry, and the design dismissed a deterministic test because SynchronousIoCancel has \"no seam\", which SL-082's failpoint on that same class (cd235ca) contradicts. The minors: rules A and B leave obvious shapes uncaught; rule A may fire on comments today; twin parity is undecided; the failure of the retried handle's query is unspecified; the retry lives at one call site, when the libuv #4663 review the design channels says the fallback belongs in the shared open; dedup and cloud files on volumes without their filter will reach the retry despite the design's premise; and nobody measured the bound socket's first-open error under testhost. The bug report was only a title. I assumed its scope is what the title says (non-link, non-cloud tags), as the design did.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The fix itself is sound, and the spikes measured it: retry once on 1920 through SynchronousIoCancel, keep the first open at flags 0, leave 363 alone. Both spike no-gos are handled, SL-045's CreateFileW refusal route is kept, and the acceptance repro should pass. No blockers. There are two majors. (1) The plan for the unproven precondition (SL-056 fitness rule 3) tells the builder to narrow rule 3 to a regex that ties the flag to OpenReparsePointForAttributes. The design's own coherence check already rejected exactly that regex. (2) The new failed-retry branch (retry's error returned, gone vs refused) may ship with no test. Case 7 may never reach the retry, and the design dismissed a deterministic test because SynchronousIoCancel has \"no seam\", which SL-082's failpoint on that same class (cd235ca) contradicts. The minors: rules A and B leave obvious shapes uncaught; rule A may fire on comments today; twin parity is undecided; the failure of the retried handle's query is unspecified; the retry lives at one call site, when the libuv #4663 review the design channels says the fallback belongs in the shared open; dedup and cloud files on volumes without their filter will reach the retry despite the design's premise; and nobody measured the bound socket's first-open error under testhost. The bug report was only a title. I assumed its scope is what the title says (non-link, non-cloud tags), as the design did.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "claim": "The design imports the unproven precondition 'SL-056 fitness rule 3 allows FILE_FLAG_OPEN_REPARSE_POINT in SynchronousIoCancel.cs'. Its fallback, for the case where rule 3 forbids the flag, is a narrowing the design itself has already called unwritable. The key decision says rule 3 is 'narrowed to the flag only in OpenReparsePointForAttributes, OpenForAttributes at flags 0'. The coherence_check says 'A regex tying the flag to the method name was rejected because it would fire on correct code written in the two-line style of OpenForAttributes at :239-240.' If rule 3 does forbid the flag (the comments at SynchronousIoCancel.cs:219/237 saying the flag is NOT used suggest SL-056 fenced it deliberately), the builder must amend a rule the design marks 'expensive' (fitness engine, xUnit twin, rules-parity, RuleCases baseline offsets) to a target that cannot be written. That leaves two ways out: silently drop the protection, or write the regex that was rejected. The build-check stage named rule 3 as a constraint on SynchronousIoCancel.cs but never quoted it. That stage should have recorded the rule's text.",
+    "evidence": "key_decisions: 'SL-056 fitness rule 3 is read before building and amended only if it forbids the flag... narrowed to \"the flag only in OpenReparsePointForAttributes, OpenForAttributes at flags 0\"' (reversibility: expensive). coherence_check: 'A regex tying the flag to the method name was rejected...'. Build-check: 'SL-056's rule 3 in .taad/fitness.yaml fences how SynchronousIoCancel.cs opens files' (text not recorded). git status: .taad/fitness.yaml already modified in the worktree.",
+    "fix": "Settle the precondition before build: quote rule 3 (Select-String on .taad/fitness.yaml for SL-056 rules) into the design. If it forbids the flag, state the replacement as something that can be expressed: rule 3 drops only its flag clause for SynchronousIoCancel.cs (the same whole-file exemption rule A uses), 'OpenForAttributes at flags 0' is enforced by the case-4 behavioural Fact, and the xUnit twin is edited in the same commit. Do not prescribe a method-scoped regex."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "test-coverage",
+    "claim": "The only branch in this slice with new decision content is the failed retry: the retry's error is returned instead of 1920, error 2/3 becomes 'gone' and is not counted, and error 5/32 stays ProbeFailed. It may have no test that exercises it. Case 7 (the alias under a SYNCHRONIZE deny) is the design's only test of that branch, yet the design admits that the first open 'may instead be refused... with error 5, if NTFS checks access before handling the reparse point'. In that case the retry never runs and the Fact passes without touching the branch. The deterministic alternative, a file deleted between the two opens, was dismissed as needing 'a race injected into a static SynchronousIoCancel that has no seam for one'. The class the fix edits has just been given exactly such a seam: SL-082's dormant failpoint FailListingOf/ListingError on SynchronousIoCancel, which DirectoryReader.List consults.",
+    "evidence": "cases: 'a planted alias with a SYNCHRONIZE deny... It may instead be refused on the first open with error 5'. The 'deleted between the first open and the retry' case says 'no seam'. Commit cd235ca: 'I added a dormant listing failpoint to Core. It lives in static members FailListingOf and ListingError on the existing SynchronousIoCancel.'",
+    "fix": "Add a sibling dormant failpoint consulted only by OpenReparsePointForAttributes (for example FailReparseRetryOf/ReparseRetryError, same pattern as SL-082). Add two Facts: the retry fails with 2, so the entry is not ProbeFailed and not counted; the retry fails with 5, so the entry is ProbeFailed and counted, and the error is 5, not 1920. In case 7, call OpenForAttributes directly under the deny and assert and report which open refused, instead of accepting either outcome."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "under-engineering",
+    "claim": "The 1920 fallback lives at one caller (SizeProbe.Probe) rather than in the open seam. Rule B (1920 named only in SizeProbe.cs) then forbids moving it into the seam. Any later caller of OpenForAttributes, the only filtered file open, gets 1920 on aliases and sockets with no fallback, and nothing stops that caller from being written. The expert the design channels made the opposite point. vtjnash's review of libuv #4663 says to 'replace the first CreateFileW on this code path with this fallback' and to 'replace almost all CreateFileW calls in this fs.c file with this retry strategy', which puts the fallback in the shared open.",
+    "evidence": "components: 'SizeProbe.Probe single retry'. Rule B except_files: SizeProbe.cs only. https://github.com/libuv/libuv/pull/4663 (vtjnash review, quoted above).",
+    "fix": "Cheapest: add an architecture rule that `OpenForAttributes(` is called only from SizeProbe.cs. Cleaner: put the 1920 fallback inside SynchronousIoCancel as the attribute-open entry point, and keep the flags-0 open internal for the case-4 pin. Rules A and B then both exempt only SynchronousIoCancel.cs and Kernel32.cs."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "Rule A does not enforce 'the flag only in SynchronousIoCancel.cs'. The pattern `[,(|]\\s*0x0*200000` misses a named argument (`Open(path, flags: 0x00200000)`) and a local (`var f = 0x00200000;`). The lookahead `(?!\\s*=[^=])` exempts every assignment in every file, so `const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;` redefined in SizeProbe.cs or Scanner.cs passes. The decimal 2097152 is not covered at all. The rule's own 'because' names this as a counting defect that 'no size test on a plain temp tree notices', so the invariant currently holds only if builders remember it.",
+    "evidence": "architecture_rules[0].must_not_match: '\\\\bFILE_(FLAG_)?OPEN_REPARSE_POINT\\\\b(?!\\\\s*=[^=])', '[,(|]\\\\s*0x0*200000[uU]?\\\\b'; except_files: SynchronousIoCancel.cs only.",
+    "fix": "Add Kernel32.cs to except_files and drop the lookahead and the character class: must_not_match `\\bFILE_(FLAG_)?OPEN_REPARSE_POINT\\b` and `\\b(?:0x0*200000|2097152)[uU]?\\b`."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "Rule B can be evaded in the idioms a downstream filter would most likely use: `err is not 1920`, `err is 5 or 1920`, `1920 == err`, `.Equals(1920)`, `0x780`, and any alias constant `const int Unhandled = 1920;` (a single `=` is not matched) followed by `== Unhandled`. So 'never filtered downstream' also holds only if builders remember it.",
+    "evidence": "architecture_rules[1].must_not_match: '(?:[=!]=\\\\s*|\\\\b(?:case|is)\\\\s+)1920\\\\b', '\\\\b1920\\\\s*=>'.",
+    "fix": "Add Kernel32.cs to except_files and use `\\bERROR_CANT_ACCESS_FILE\\b` and `\\b(?:1920|0x0*780)\\b` with no lookahead, then list by file any legitimate bare 1920 the baseline finds."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "Rule A may already fire on the baseline and will probably fire after the build. The survey found the flag named in comments at SizeProbe.cs:9. SizeProbe.cs is not in rule A's except_files, and the design plans to rewrite that comment to say the flag is 'used only on the 1920 retry', which will almost certainly spell the constant. The design's claim is 'Today no code line in src matches'. That only holds if the fitness engine ignores comments, which nobody checked.",
+    "evidence": "Build-check: 'OPEN_REPARSE_POINT appears in src only in comments saying it is NOT used (SizeProbe.cs:9, SynchronousIoCancel.cs:219,237)'. whats_new: 'Rewritten comments at SizeProbe.cs:9...'. Rule A 'because': 'Today no code line in src matches'.",
+    "fix": "Run the fitness check against the current worktree (fitness.yaml is already modified with the declared rules) and grep src for FILE_FLAG_OPEN_REPARSE_POINT. If comments count, the design should say that the SizeProbe.cs comment refers to 'the reparse-point flag' without naming the constant."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "claim": "The design leaves it undecided whether rules A and B get xUnit twins ('follows the project's parity convention'). .taad/fitness.yaml is already modified in the worktree, so rules-parity.ps1 and RuleCases.ps1 (SL-069: the twinned/settled counts are derived from the yaml) will see two new rules. The builder then has to reverse-engineer the convention or take a DRIFT at code review.",
+    "evidence": "components/Fitness rules: 'Whether rules A and B each need an xUnit twin in ArchitectureRulesTests follows the project's parity convention.' git status: 'M .taad/fitness.yaml'. SL-069 conditional on derived counts.",
+    "fix": "State it: rules A and B each get an ArchitectureRulesTests twin (or are listed as settled, not twinned), and rules-parity and RuleCases must AGREE from the baseline run after the change."
+   },
+   {
+    "id": "m6",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "claim": "The retry's success path reads 'FileStandardInfo is queried on the new handle as today and returned with error 0'. The contract gives the query's own failure on the retried handle no error case. Read literally, error 0 can be returned with zeroed sizes. Case 3 would catch that only on its happy path.",
+    "evidence": "components/SizeProbe.Probe single retry: 'If that succeeds, FileStandardInfo is queried on the new handle as today (SizeProbe.cs:49) and returned with error 0.'",
+    "fix": "In the contract, say that a failed FileStandardInfo on either handle returns that query's error, and that both handles go through one shared query path."
+   },
+   {
+    "id": "m7",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "The premise that 'WOF, dedup and cloud files... never reach the retry because their first open succeeds' was measured only on C:, where their filters are attached. Optimized dedup files on a volume whose system lacks the dedup role (for example a disk from a Server machine scanned on Windows 11) fail with 0x80070780, which is 1920. Because the retry has no tag gate, those files will be reopened with OPEN_REPARSE_POINT and charged raw stub figures, and they drop out of 'could not be opened'. That is the bypass rule A calls a counting defect, reached through the permitted path. The design also cites U-004 for having no gate, but U-004 is about cloud placeholders being hidden. Spike 1 measured alias and socket tags as visible in the exe.",
+    "evidence": "key_decisions (first open stays at flags 0; retry keyed on 1920 only). https://support.arcserve.com/s/article/0x80070780-The-File-Cannot-be-Accessed-by-the-System ('The source of the backup is a deduplicated volume... the copy of the mount will fail'). https://www.foxdeploy.com/blog/recovering-your-dedeuped-files-on-windows-10.html (error 0x80070780 after dedup was lost).",
+    "fix": "Either record it as accepted (the charged figures equal the listing's, and only the note changes), or after a successful retry query FileAttributeTagInfo and keep ProbeFailed for DEDUP (0x80000013), WOF (0x80000017) and cloud (0x9xxxx01A) tags."
+   },
+   {
+    "id": "m8",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "Acceptance depends on the bound socket's first open returning exactly 1920 under testhost. Nobody measured that. The temp-tree spike could not judge its (b) for sockets because Dispose deleted the file, spike 1 measured sockets only in the published exe, and the repro asserts ProbeFailed without checking the error code. If testhost gets a different code, the retry never fires and the acceptance command stays red.",
+    "evidence": "Spike temp-tree: '(b) and (c) could not be judged on the specified fixture'. Spike 1: 'published exe'. The repro fails only at the ProbeFailed assertion (ReparseProbeRetryTests.cs:56).",
+    "fix": "In the Core.Tests bound-socket Fact, assert that OpenForAttributes on s.sock returns 1920 before scanning, which mirrors the case-4 pin for aliases. That one run settles the question."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M1: the plan for SL-056 rule 3 contradicts the design's own rejection of a method-scoped regex, and build-check never quoted the rule. m8: the socket's first-open error under testhost was never measured. The bug report was only a title, so I assumed its scope is what the title says (non-link, non-cloud tags), matching the design's three stated assumptions."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "m7: dedup and cloud files on volumes whose filter is absent return 1920 (confirmed on the web as 0x80070780) and will be retried with the filter bypassed. Long-path, cancellation (995), 363 and plain-file shapes are handled correctly by keying on exactly 1920."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "m1: the fallback sits at one caller, and rule B forbids moving it into the open seam. The vtjnash review the design channels argues the opposite."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none: one new entry point, two rules and five Facts are proportionate for a counting-path change. The reopen loop, tag allowlist and post-retry FileId check were rightly left out."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "m5: whether rules A and B get xUnit twins is undecided while fitness.yaml is already modified. m6: the failure of FileStandardInfo on the retried handle is unspecified ('returned with error 0')."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "The failed-retry branch (gone vs refused, retry's error vs 1920) is the only new error path. It is covered under M2 (possibly untested) and m6 (query failure). Cancellation between opens behaves as it already does between consecutive probes, because the retry goes through the same private Open. Nothing new there."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "Aligned with the slice title's scope, both spike no-gos, SL-045's CreateFileW refusal route, SL-077's worker-thread cancellation and U-005/Q-004 (no listing trust). The only drift is internal and is reported in M1: the rule-3 fallback contradicts the coherence_check."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "m2, m3: the regex holes in rules A and B mean both invariants hold only if builders remember them. m4: rule A may match comments in SizeProbe.cs, which is not in its except_files. Settle by running the fitness check on the current worktree."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "M2: case 7 may never reach the retry, and a deterministic failpoint was dismissed on the false premise that SynchronousIoCancel has no seam (SL-082's cd235ca added one). The other material cases (socket, alias scan, alias over N bytes, first-open pin) are well chosen."
+   },
+   {
+    "dimension": "security",
+    "result": "none: the open is FILE_READ_ATTRIBUTES only, with OPEN_REPARSE_POINT and no reparse traversal, under an unelevated token, and no content is read. Opening an unknown-tag reparse point cannot redirect anything. No admin operation is needed."
+   }
+  ]
+ }
+}

@@ -1,0 +1,137 @@
+{
+ "schema": "slice-record@1",
+ "slice": "SL-084",
+ "title": "Retry a probed reparse-point open with FILE_FLAG_OPEN_REPARSE_POINT before recording ProbeFailed (O-028)",
+ "status": "active",
+ "branch": "slice/SL-084",
+ "opened_at": "2026-09-29T06:43:53.229Z",
+ "merge_commit": null,
+ "how_to_read": "Each attempt is one line and a `details` filename in this same directory. Open a detail file ONLY when this index points you at one -- the summaries are here so you do not have to. `caused_by` is what sent the stage back; `changed` is what the attempt then touched, counted by kind. Several attempts in a row that were caused by the same stage and changed no `src` is a loop, not progress.",
+ "open": [
+  {
+   "stage": "repro",
+   "issue": "observed: Failed AnAfUnixSocketFileIsSizedNotReportedAsAFileThatCouldNotBeOpened at ReparseProbeRetryTests.cs:line 56: \"the AF_UNIX socket file was flagged ProbeFailed: its metadata open was refused and never retried with FILE_FLAG_OPEN_REPARSE_POINT\""
+  },
+  {
+   "stage": "build-check",
+   "issue": "Derived C1: when the probe's metadata open of a charged reparse-point file fails with ERROR_CANT_ACCESS_FILE (1920), it is retried with FILE_FLAG_OPEN_REPARSE_POINT before any failure is recorded: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "Derived C2: an AF_UNIX socket file (non-link, non-cloud reparse tag) in a scanned tree is sized from its own handle, is not flagged ProbeFailed, and does not count toward ScanResult.ProbeFailures: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "Derived C3: an app-execution alias (IO_REPARSE_TAG_APPEXECLINK) is likewise not recorded as ProbeFailed: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "Derived C4: such files no longer reach the user-facing note 'N files could not be opened to read their true size on disk': missing"
+  },
+  {
+   "stage": "risk-spike",
+   "issue": "c-drive-probe-failures-after-reparse-retry: needs first: The retry has to handle 363 (ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING, NTSTATUS 0xC000CF02) on cloud-tagged reparse files (0x9000001A, 0x9000701A) with no OFFLINE or RECALL attribute, or th…"
+  },
+  {
+   "stage": "risk-spike",
+   "issue": "temp-tree-af-unix-fixture-reproduces-1920: needs first: The fixture must not depend on Socket.Dispose leaving the file. Either scan while the socket is still bound, as the existing bug test does, or create the file with raw ws2_32 bind + clos…"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Should files on a cloud sync root whose provider is not running (error 363, tags 0x9000001A and 0x9000701A with no RECALL or OFFLINE bit, about 119 on C:) keep counting toward 'N files could not be opened'? SL-084 leaves them there by scope and does not block on the answer. Changing it needs its own slice that measures what a cldflt-bypassing open reports for such files before any counting changes."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The retry is a new named entry point (OpenReparsePointForAttributes), not a flags parameter on OpenForAttributes. The named method is what makes the flag's single use enforceable by rule A and easy to find with grep."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The regression is duplicated into Core.Tests, not the repro project added to FsAnalyser.slnx. Adding it would be one line, but the tests/bugs projects have been kept out of the solution."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "A failed retry reports the retry's error, not the original 1920. This changes only which refusal code appears in a diagnostic, not the count."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The new Facts go in a new file, ReparsePointProbeTests.cs, rather than being added to ProbePassTests.cs."
+  }
+ ],
+ "stages": [
+  {
+   "stage": "repro",
+   "title": "Repro",
+   "order": 1,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "build-check",
+   "title": "Build check",
+   "order": 2,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "risk-spike",
+   "title": "Risk spike",
+   "order": 3,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "design-slice",
+   "title": "Design",
+   "order": 4,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-29T07:09:04.148Z",
+     "head": "c3b5eb6853f16912f923a34a95ccf1f1aab0aebe",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique",
+   "title": "Critique",
+   "order": 5,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-29T07:22:23.899Z",
+     "head": "c3b5eb6853f16912f923a34a95ccf1f1aab0aebe",
+     "summary": "The fix itself is sound, and the spikes measured it: retry once on 1920 through SynchronousIoCancel, keep the first open at flags 0, leave 363 alone.",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique-review",
+   "title": "Critique review",
+   "order": 6,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-29T07:30:57.409Z",
+     "head": "c3b5eb6853f16912f923a34a95ccf1f1aab0aebe",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-review-1.json"
+    }
+   ]
+  }
+ ]
+}

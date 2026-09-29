@@ -119,6 +119,25 @@ internal sealed class TempTree : IDisposable
         return path;
     }
 
+    /// <summary>IO_REPARSE_TAG_APPEXECLINK, an app-execution alias's tag: no filter handles it, and it is not a link.</summary>
+    public const uint AppExecLinkTag = 0x8000001B;
+
+    /// <summary>
+    /// A file of <paramref name="length"/> bytes that is also an app-execution alias, as the ones in
+    /// %LOCALAPPDATA%\Microsoft\WindowsApps are: its reparse point is planted over the data, which it keeps. Opening it
+    /// through its tag fails with ERROR_CANT_ACCESS_FILE (1920); opening the reparse point itself does not.
+    /// </summary>
+    public string AppExecAlias(string relative, long length = 0)
+    {
+        string path = WriteFile(PathOf(relative), length);
+        // Version 3: package family, app user model ID, target, app type, each NUL-terminated. No handler reads them.
+        byte[] data = [.. BitConverter.GetBytes(3u),
+            .. Encoding.Unicode.GetBytes("Fsa.Tests_8wekyb3d8bbwe\0Fsa.Tests_8wekyb3d8bbwe!App\0C:\\Windows\\System32\\notepad.exe\00\0")];
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite);
+        TestNative.SetReparsePoint(stream.SafeFileHandle, path, AppExecLinkTag, data);
+        return path;
+    }
+
     /// <summary>NTFS (LZNT1) compression.</summary>
     public static void Compress(string path) => Run("compact.exe", "/c", path);
 
