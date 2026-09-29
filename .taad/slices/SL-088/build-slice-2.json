@@ -1,0 +1,190 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-088",
+ "stage": "build-slice",
+ "attempt": 2,
+ "at": "2026-09-29T14:20:22.714Z",
+ "head": "41f82cccfb4824deec8f3c0763188530c161741d",
+ "run_id": 2262,
+ "summary": "Attempt 2 fixes the two findings sent back and nothing else. O-015: IsMisparsed now checks the reserved-name list against the whole component (trailing spaces trimmed). Bare device names and names ending in a dot or a space are still refused up front, but con.txt, aux.h, nul.log, com1.txt and prn.md now go to the shell. As the send-back asked, Walk also checks that the parsed ID list resolves back to the target: SHGetPathFromIDListEx, compared as text and then with 8.3 aliases expanded by GetLongPathNameW. If it resolves to another item, the reveal is refused as ParsedAsAnotherItem before anything opens. O-014: Compare-ExplorerState now compares whole entries (HWND, folder and selection) as a multiset instead of keying on HWND. Close-CaseWindows drops the baseline test: it quits a case entry only when every entry sharing its HWND is under the case roots, and otherwise reports the entry by folder and leaves it open. Fixing this also exposed a bug from attempt 1, now fixed: a function return shape that made Watch-ExplorerUnchanged's empty result count as 1, so R-001 step 3 could never have passed. Results: 503/503 Core tests pass, rules-parity AGREE in both shells, the harness baseline is clean with 8/8 plants as recorded, and R-002 step (e) passes again through the republished exe.",
+ "payload": {
+  "status": "complete",
+  "summary": "Attempt 2 fixes the two findings sent back and nothing else. O-015: IsMisparsed now checks the reserved-name list against the whole component (trailing spaces trimmed). Bare device names and names ending in a dot or a space are still refused up front, but con.txt, aux.h, nul.log, com1.txt and prn.md now go to the shell. As the send-back asked, Walk also checks that the parsed ID list resolves back to the target: SHGetPathFromIDListEx, compared as text and then with 8.3 aliases expanded by GetLongPathNameW. If it resolves to another item, the reveal is refused as ParsedAsAnotherItem before anything opens. O-014: Compare-ExplorerState now compares whole entries (HWND, folder and selection) as a multiset instead of keying on HWND. Close-CaseWindows drops the baseline test: it quits a case entry only when every entry sharing its HWND is under the case roots, and otherwise reports the entry by folder and leaves it open. Fixing this also exposed a bug from attempt 1, now fixed: a function return shape that made Watch-ExplorerUnchanged's empty result count as 1, so R-001 step 3 could never have passed. Results: 503/503 Core tests pass, rules-parity AGREE in both shells, the harness baseline is clean with 8/8 plants as recorded, and R-002 step (e) passes again through the republished exe.",
+  "files": [
+   {
+    "path": "src/FsAnalyser.Core/Native/ShellReveal.cs",
+    "change": "modified",
+    "why": "IsMisparsed checks the whole component, so device names with an extension reach the shell. New RevealReason.ParsedAsAnotherItem. Walk takes a pathOf delegate and refuses when the parsed ID list does not resolve back to the target. Added PathOfIdList (SHGetPathFromIDListEx with a 32767 buffer) and SamePath/LongName (GetLongPathNameW on the \\\\?\\ form, used only when the text differs). Comments updated."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "change": "modified",
+    "why": "Status reason for the new refusal: \"Couldn't show '<leaf>' in Explorer (Explorer reads its path as another item). Nothing was opened.\""
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ShellRevealTests.cs",
+    "change": "modified",
+    "why": "Moved C:\\con.txt out of the unaddressable theory into Plan_UnusualAddressableNames_StaysExact, with aux.h, nul.log, com1.txt, prn.md and con.d\\inner.bin. Added the Walk_ParseStandsForAnotherItem_RefusesWithoutOpening theory. FakeShell gained pathOf. The real-tree test now also sends con.txt, aux.h, nul.log, com1.txt, con.d\\inner.bin and a path longer than 300 characters (8.3 path back) through the real shell, all of which must be Exact, and sends 'dup.' beside 'dup' straight to the real shell, which must be refused as ParsedAsAnotherItem."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "change": "modified",
+    "why": "Compare-ExplorerState keys on HWND|folder|selection as a multiset. Close-CaseWindows(roots) has no baseline test, quits only windows made solely of case tabs, and returns the folders still left, so the isolation checks name them. The baselineHwnds plumbing is removed from R-001 and R-002. Close-CaseWindows and Watch-ExplorerUnchanged no longer return with a unary comma, which made an empty result count as 1."
+   },
+   {
+    "path": "docs/design/SL-088-reveal-lands-or-refuses.md",
+    "change": "modified",
+    "why": "Records which names are refused up front, with the measured HRESULTs, and that device names with an extension go to the shell. Adds the resolve-back check, its measurements and its status text."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-014",
+    "done": true,
+    "how": "Compare-ExplorerState now reduces each entry to \"$Hwnd|$Folder|$Selected\" and reports every after-entry the before-state does not hold as often. A synthetic check: two tabs sharing an HWND, reordered, give 0 changes; a new case tab in a baseline window, a re-selected tab and a second identical tab are each reported; a new cabinet is still reported. Close-CaseWindows no longer uses the baseline. Whether Quit() on a tab's entry closes only that tab was not measured, because that means operating Explorer windows. So, taking the decision's safe branch, it quits an entry only when every entry with its HWND is under the case roots. A case tab beside the person's tabs is never quit; the isolation check then fails and names its folder. Synthetic probe with a fake Quit: 0 of the person's entries quit, the case-only window quit, the mixed window's case tab reported. R-002 step (e) passed with the new code against the live Explorer state."
+   },
+   {
+    "key": "O-015",
+    "done": true,
+    "how": "IsMisparsed compares the device-name list with the whole component (trailing spaces trimmed), and C:\\con.txt moved to Plan_UnusualAddressableNames_StaysExact with aux.h, nul.log, com1.txt, prn.md and con.d\\inner.bin. Measured with the real parse (no window opened): each device name with an extension parses S_OK and resolves back to the exact file on this Windows 11. dup. parses S_OK as dup, 'trail ' gives 0x80070002, and bare con and nul give 0x800704B0, so those stay refused up front. Per the send-back there is no Windows 10 rule. Instead Walk refuses any S_OK parse whose ID list does not resolve back to the target (ParsedAsAnotherItem). Walk_OnRealTree_RefusesGoneTargetsAndLandsThePresentOne proves both halves against the real shell: the reserved-with-extension files land, and dup. is refused. All passed."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-008",
+    "test_name": "FsAnalyser.Core.Tests.ShellRevealTests.Walk_OnRealTree_RefusesGoneTargetsAndLandsThePresentOne",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.ShellRevealTests.Walk_OnRealTree_RefusesGoneTargetsAndLandsThePresentOne\""
+   },
+   {
+    "key": "C-009",
+    "test_name": "FsAnalyser.Core.Tests.ShellRevealTests.Walk_OnRealTree_RefusesGoneTargetsAndLandsThePresentOne",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.ShellRevealTests.Walk_OnRealTree_RefusesGoneTargetsAndLandsThePresentOne\""
+   },
+   {
+    "key": "C-010",
+    "test_name": "FsAnalyser.Core.Tests.ShellRevealTests.Walk_OpenFails_RefusesWithItsCodeFreesTheIdListAndTriesNothingElse",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.ShellRevealTests.Walk_OpenFails_RefusesWithItsCodeFreesTheIdListAndTriesNothingElse\""
+   },
+   {
+    "key": "C-011",
+    "test_name": "FsAnalyser.Core.Tests.ShellRevealTests.Walk_ParseFailsOtherwise_RefusesWithThatCode",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.ShellRevealTests.Walk_ParseFailsOtherwise_RefusesWithThatCode\""
+   },
+   {
+    "key": "C-012",
+    "test_name": "FsAnalyser.Core.Tests.SelectSwitchRuleTests.TheRuleCatchesEveryWayOfHandingExplorerTheSwitch",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.SelectSwitchRuleTests.TheRuleCatchesEveryWayOfHandingExplorerTheSwitch\""
+   },
+   {
+    "key": "C-013",
+    "test_name": "FsAnalyser.Core.Tests.SelectSwitchRuleTests.TheRuleLeavesLookAlikesAlone",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.SelectSwitchRuleTests.TheRuleLeavesLookAlikesAlone\""
+   },
+   {
+    "key": "C-001",
+    "test_name": "tests/window/WindowCases.ps1 Test-R002 step (a): short deny-all folder from its tree row",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-002 -Step a"
+   },
+   {
+    "key": "C-002",
+    "test_name": "tests/window/WindowCases.ps1 Test-R002 step (b): 161- then 300-character files from biggest-files rows",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-002 -Step b"
+   },
+   {
+    "key": "C-003",
+    "test_name": "tests/window/WindowCases.ps1 Test-R002 step (b): 300-character file from its biggest-files row",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-002 -Step b"
+   },
+   {
+    "key": "C-004",
+    "test_name": "tests/window/WindowCases.ps1 Test-R002 step (d): 1000-character file",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-002 -Step d"
+   },
+   {
+    "key": "C-005",
+    "test_name": "tests/window/WindowCases.ps1 Test-R002 step (c): 300-character deny-all folder from its tree row",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-002 -Step c"
+   },
+   {
+    "key": "C-006",
+    "test_name": "tests/window/WindowCases.ps1 Test-R002 step (b): the 161-character reveal is the run's first, timed with no warm-up",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-002 -Step b"
+   },
+   {
+    "key": "C-007",
+    "test_name": "tests/window/WindowCases.ps1 Test-R002 step (d): Explorer already on the parent with the sibling selected",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-002 -Step d"
+   }
+  ],
+  "tests": [
+   {
+    "command": "pwsh -File <temp probe>: SHParseDisplayName + SHGetPathFromIDListEx + GetLongPathNameW on a temp tree (parse only, no window)",
+    "outcome": "passed",
+    "note": "Windows 11 26200. S_OK, resolving back exactly: con.txt, aux.h, nul.log, com1.txt, prn.md, lpt1.dat, conin$.txt, CON.TXT.bak, ' lead', a,b;c.txt, %TEMP%.txt, dup, con.d and con.d\\inner.bin, a deny-all folder, a junction, file and folder symlinks, C:\\, and 161 characters. S_OK, resolving back only after GetLongPathName (8.3 form, 83 and 183 characters): 300 and 1000 characters. dup. gives S_OK but resolves back to dup. 'trail ' gives 0x80070002. Bare con and nul give 0x800704B0. Temp tree removed, ACE taken off first."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.ShellRevealTests\"",
+    "outcome": "passed",
+    "note": "52 passed. Includes the real-tree test with the reserved-with-extension files (Exact), a path longer than 300 characters (Exact through the 8.3 path back), and dup. through the real shell (ParsedAsAnotherItem)."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx",
+    "outcome": "passed",
+    "note": "Full default suite: 503 passed, 0 failed, 0 skipped."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build src/FsAnalyser.App/FsAnalyser.App.csproj -nologo",
+    "outcome": "passed",
+    "note": "0 warnings, 0 errors."
+   },
+   {
+    "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File eng/rules-parity.ps1 (and under pwsh)",
+    "outcome": "passed",
+    "note": "AGREE 15 facts <- 19 twinned entries, 39 patterns, in both shells."
+   },
+   {
+    "command": "C:\\Users\\sshub\\AppData\\Roaming\\taad3\\venv\\Scripts\\python.exe eng/rules-harness/harness.py --engine-root C:\\Users\\sshub\\projets\\taad_v3\\backend --scenario plants --only F31,F32,F33,F34,F35,P25,P26,P27",
+    "outcome": "passed",
+    "note": "Clean baseline with the new ShellReveal code: xunit 0 hits and fitness 0 hits over 69 rules, so GetLongPathNameW and SHGetPathFromIDListEx break no rule. 8/8 AS-RECORDED. The import rule is NOT RUN on the scratch copy, as always."
+   },
+   {
+    "command": "pwsh -File <temp probe>: Compare-ExplorerState and Close-CaseWindows from WindowCases.ps1's AST with synthetic entries and a fake Get-ExplorerWindows whose Quit only records",
+    "outcome": "passed",
+    "note": "Two tabs sharing an HWND, reordered: 0 changes. A new case tab in a baseline window, a re-selected tab and a duplicate tab are each reported with their folder. Close: the person's entries were never quit, the case-only window was quit, and the case tab in the person's window was left and reported. The probe also showed the old ', @()' return counting 1 when empty (checked in pwsh: old empty 1, new empty 0, new two 2), which is now fixed."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-002 -Step e",
+    "outcome": "passed",
+    "note": "Real entry point: the case republished the exe and rebuilt the hook. The isolation check found '0 left'. victim.bin was refused as Failed/NoLongerExists with the exact status text. No Explorer window, tab, selection change or newly visible cabinet from launch until 2 s after exit, compared with the new string-keyed compare against the person's live Explorer state. The fixture was deleted and its ACEs removed (checked)."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-002 -Step a (b, c, d) and -Case R-001",
+    "outcome": "not-run",
+    "note": "Not run, as in attempt 1. They open real Explorer windows on the person's desktop, which the case then Quits through Shell.Application; step (d) also has Explorer pre-select a sibling. That is operating another program's windows, which this build may not do unattended. A person or validate runs them."
+   }
+  ],
+  "deviations": [
+   "The send-back asked for a check that the parsed ID list resolves back to the requested path. The review's fix did not ask for one, and the decision's reasoning thought the HRESULT would be enough. The check is built as RevealReason.ParsedAsAnotherItem: after an S_OK parse, Walk compares SHGetPathFromIDListEx's path with the target, as text first and then after GetLongPathNameW on both sides, because past MAX_PATH the shell gives 8.3 paths back (measured). It refuses before any open, with 0x8007007B. Walk gained a pathOf delegate for this. It adds a GetLongPathNameW import to ShellReveal.cs; that function is not among the entry points PathOpensGoOnlyThroughTheGuardedOpen names (the clean harness baseline has 0 hits).",
+   "Close-CaseWindows does not simply drop the baseline test, as m1's fix suggested. The decision required first confirming that Quit() on a tab closes only that tab, and that confirmation needs Explorer windows to be operated, which this build may not do. So it takes the decision's alternative: it quits an entry only when every entry sharing its HWND is under the case roots, and otherwise leaves the tab open and fails the isolation check with the folder named.",
+   "Not named by either finding: Watch-ExplorerUnchanged (attempt 1) and the new Close-CaseWindows returned with a unary comma. The caller's @() then counted an empty result as 1, which would always have failed R-001 step 3's no-change check. Both now return their items plainly."
+  ],
+  "not_built": [
+   "Hidden+System targets (case C-014, not material) remain out of this slice, as the design decided.",
+   "The product still does not confirm a landing through Explorer's windows (criterion 4 as designed; the open question stands). The new resolve-back check confirms only that the shell's parse stands for the item."
+  ],
+  "follow_ups": [
+   "A person, or validate with permission to open and close Explorer windows, runs `pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-002` and `-Case R-001`. That settles criteria 1, 2 and 5 and the cold 1000 ms bound.",
+   "Measure once whether Shell.Application's Quit() on one tab's entry closes only that tab (Windows 11 tabbed Explorer). If it does, Close-CaseWindows could also close a case tab that sits beside the person's tabs, instead of reporting it.",
+   "Windows 10 was not measured. There, a device name with an extension is expected to be refused by the parse's HRESULT or by the resolve-back check rather than landing. A run there would say which.",
+   "A follow-on slice for Hidden+System reveals once that spike has run at Windows' default Explorer settings."
+  ],
+  "architecture": [
+   {
+    "block": "C-004",
+    "find": "and 'open in Explorer' (explorer /select or SHOpenFolderAndSelectItems) on any item.",
+    "replace": "and 'open in Explorer' on any item, through SHParseDisplayName and SHOpenFolderAndSelectItems only (never Explorer's select switch), which opens the item's parent with the item selected or, when that cannot land, says so on the status line and opens nothing.",
+    "why": "src/FsAnalyser.Core/Native/ShellReveal.cs Walk: one parse, a check that the ID list resolves back to the target, then the open; any failure is refused and RevealKind is Exact|Failed. src/FsAnalyser.App/MainWindow.xaml.cs FormatRevealStatus holds the refusal texts. ArchitectureRulesTests.NothingInTheAppHandsExplorerItsSelectSwitch and its fitness.yaml twin forbid /select anywhere in src (rules-parity AGREE, harness F31-F35 fire). R-002 -Step e through the published exe: Failed/NoLongerExists and no Explorer window."
+   }
+  ]
+ }
+}

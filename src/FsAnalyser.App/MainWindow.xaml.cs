@@ -795,11 +795,13 @@ public partial class MainWindow : Window
                 false,
                 false,
                 hr);
-            RevealStatus.Text = $"Couldn't open Explorer: {Win32Message(hr).TrimEnd('.')} (0x{hr:X8}). '{path}'";
+            RevealStatus.Text = FormatRevealStatus(LastRevealOutcome);
             RevealStatus.Visibility = Visibility.Visible;
         }
     }
 
+    // A reveal lands or is refused (SL-088): a refusal says so on the status line and that nothing was opened, since no
+    // other folder is shown in the item's place.
     private static string FormatRevealStatus(RevealOutcome outcome)
     {
         return outcome.Kind switch
@@ -808,16 +810,23 @@ public partial class MainWindow : Window
                 $"'{GetLeafName(outcome.Requested)}' is hidden, so Explorer only highlights it if it is set to show hidden files (and protected operating system files, for system items).",
             RevealKind.Exact =>
                 string.Empty,
-            RevealKind.Ancestor when outcome.Reason == RevealReason.NameUnaddressable =>
-                $"Explorer can't select '{outcome.UnaddressableName}' by name (it ends in a dot or space, or is a reserved device name). Highlighting its folder '{outcome.Shown}' instead.",
-            RevealKind.Ancestor when outcome.Reason == RevealReason.NoLongerExists =>
-                $"No longer exists, so highlighting '{outcome.Shown}' instead: '{outcome.Requested}'",
-            RevealKind.Ancestor =>
-                $"Highlighting its folder '{outcome.Shown}'.",
-            RevealKind.Failed =>
-                $"Couldn't open Explorer: {Win32Message(outcome.HResult).TrimEnd('.')} (0x{outcome.HResult:X8}). '{outcome.Requested}'",
-            _ => string.Empty
+            _ when outcome.Reason == RevealReason.NoLongerExists =>
+                $"'{GetLeafName(outcome.Requested)}' no longer exists where the scan found it, so Explorer was not opened. Rescan to refresh.",
+            _ =>
+                $"Couldn't show '{GetLeafName(outcome.Requested)}' in Explorer ({RevealFailure(outcome)}). Nothing was opened."
         };
+    }
+
+    // Windows' message for a FACILITY_WIN32 HRESULT, and the HRESULT itself for any other.
+    private static string RevealFailure(RevealOutcome outcome)
+    {
+        if (outcome.Reason == RevealReason.NameUnaddressable)
+            return $"Explorer can't select '{outcome.UnaddressableName}' by name: it ends in a dot or space, or is a reserved device name";
+        if (outcome.Reason == RevealReason.ParsedAsAnotherItem)
+            return "Explorer reads its path as another item";
+        if ((outcome.HResult & 0xFFFF0000) == 0x80070000)
+            return Win32Message(outcome.HResult & 0xFFFF).TrimEnd('.');
+        return $"0x{outcome.HResult:X8}";
     }
 
     private static string GetLeafName(string path)

@@ -4,79 +4,66 @@ namespace FsAnalyser.Core.Tests;
 
 public class ShellRevealTests
 {
+    private const int NotFound = unchecked((int)0x80070002);
+    private const int PathNotFound = unchecked((int)0x80070003);
+    private const int EFail = unchecked((int)0x80004005);
+
     [Theory]
-    [InlineData(@"C:\folder\file.txt", @"C:\folder\file.txt", @"C:\folder", @"C:\")]
-    [InlineData(@"C:\folder\sub", @"C:\folder\sub", @"C:\folder", @"C:\")]
-    public void Plan_PlainFileAndFolder_ExactItemFirst(string path, params string[] expectedCandidates)
+    [InlineData(@"C:\folder\file.txt")]
+    [InlineData(@"C:\folder\sub")]
+    public void Plan_PlainFileAndFolder_TargetIsTheItemItself(string path)
     {
         RevealPlan plan = ShellReveal.Plan(path);
         Assert.Null(plan.UnaddressableName);
-        Assert.Equal(expectedCandidates, plan.Candidates);
+        Assert.Equal(path, plan.Target);
     }
 
     [Theory]
-    [InlineData(@"C:\dup.", "dup.", @"C:\")]
-    [InlineData(@"C:\folder\dup.", "dup.", @"C:\folder", @"C:\")]
-    [InlineData(@"C:\folder\sp ", "sp ", @"C:\folder", @"C:\")]
-    [InlineData(@"C:\con", "con", @"C:\")]
-    [InlineData(@"C:\con.txt", "con.txt", @"C:\")]
-    [InlineData(@"C:\folder\NUL", "NUL", @"C:\folder", @"C:\")]
-    [InlineData(@"C:\COM¹", "COM¹", @"C:\")]
-    [InlineData(@"C:\CONIN$", "CONIN$", @"C:\")]
-    [InlineData(@"C:\x\dir.\in.txt", "dir.", @"C:\x", @"C:\")]
-    public void Plan_UnaddressableNames_ClimbsToParentAndRecordsName(string path, string expectedBadName, params string[] expectedCandidates)
+    [InlineData(@"C:\dup.", "dup.")]
+    [InlineData(@"C:\folder\dup.", "dup.")]
+    [InlineData(@"C:\folder\sp ", "sp ")]
+    [InlineData(@"C:\con", "con")]
+    [InlineData(@"C:\folder\NUL", "NUL")]
+    [InlineData(@"C:\COM¹", "COM¹")]
+    [InlineData(@"C:\CONIN$", "CONIN$")]
+    [InlineData(@"C:\x\dir.\in.txt", "dir.")]
+    public void Plan_UnaddressableNames_RecordTheNameAndAskTheShellForNothing(string path, string expectedBadName)
     {
         RevealPlan plan = ShellReveal.Plan(path);
         Assert.Equal(expectedBadName, plan.UnaddressableName);
-        Assert.Equal(expectedCandidates, plan.Candidates);
+        Assert.Null(plan.Target);
     }
 
     [Theory]
-    [InlineData(@"C:\folder\dup", @"C:\folder\dup")]
-    [InlineData(@"C:\folder\ lead", @"C:\folder\ lead")]
-    [InlineData(@"C:\folder\a,b;c.txt", @"C:\folder\a,b;c.txt")]
-    [InlineData(@"C:\folder\😀_face.txt", @"C:\folder\😀_face.txt")]
-    [InlineData(@"C:\folder\%TEMP%.txt", @"C:\folder\%TEMP%.txt")]
-    public void Plan_UnusualAddressableNames_StaysExact(string path, string expectedFirstCandidate)
+    [InlineData(@"C:\folder\dup")]
+    [InlineData(@"C:\folder\ lead")]
+    [InlineData(@"C:\folder\a,b;c.txt")]
+    [InlineData(@"C:\folder\😀_face.txt")]
+    [InlineData(@"C:\folder\%TEMP%.txt")]
+    [InlineData(@"C:\con.txt")]
+    [InlineData(@"C:\folder\aux.h")]
+    [InlineData(@"C:\nul.log")]
+    [InlineData(@"C:\folder\com1.txt")]
+    [InlineData(@"C:\prn.md")]
+    [InlineData(@"C:\con.d\inner.bin")]
+    public void Plan_UnusualAddressableNames_StaysExact(string path)
     {
         RevealPlan plan = ShellReveal.Plan(path);
         Assert.Null(plan.UnaddressableName);
-        Assert.Equal(expectedFirstCandidate, plan.Candidates[0]);
+        Assert.Equal(path, plan.Target);
     }
 
-    [Fact]
-    public void Plan_RootShapes_CandidatesAndStopAtRoot()
+    [Theory]
+    [InlineData(@"C:\", @"C:\")]
+    [InlineData(@"C:", @"C:\")]
+    [InlineData(@"C:\a\b", @"C:\a\b")]
+    [InlineData(@"\\server\share", @"\\server\share")]
+    [InlineData(@"\\server\share\sub\file.txt", @"\\server\share\sub\file.txt")]
+    public void Plan_RootShapes_TargetIsTheItemAndABareDriveIsItsRoot(string path, string expectedTarget)
     {
-        // Drive root "C:\"
-        RevealPlan drivePlan = ShellReveal.Plan(@"C:\");
-        Assert.Null(drivePlan.UnaddressableName);
-        Assert.Single(drivePlan.Candidates);
-        Assert.Equal(@"C:\", drivePlan.Candidates[0]);
-
-        // Bare drive "C:" normalises to "C:\"
-        RevealPlan bareDrivePlan = ShellReveal.Plan(@"C:");
-        Assert.Null(bareDrivePlan.UnaddressableName);
-        Assert.Single(bareDrivePlan.Candidates);
-        Assert.Equal(@"C:\", bareDrivePlan.Candidates[0]);
-
-        // Ancestor chain never yields "C:" (only "C:\")
-        RevealPlan chainPlan = ShellReveal.Plan(@"C:\a\b");
-        Assert.DoesNotContain("C:", chainPlan.Candidates);
-        Assert.Equal(@"C:\", chainPlan.Candidates[^1]);
-
-        // UNC root stops at \\server\share
-        RevealPlan uncRootPlan = ShellReveal.Plan(@"\\server\share");
-        Assert.Null(uncRootPlan.UnaddressableName);
-        Assert.Single(uncRootPlan.Candidates);
-        Assert.Equal(@"\\server\share", uncRootPlan.Candidates[0]);
-
-        // UNC child stops at \\server\share
-        RevealPlan uncPlan = ShellReveal.Plan(@"\\server\share\sub\file.txt");
-        Assert.Null(uncPlan.UnaddressableName);
-        Assert.Equal(@"\\server\share\sub\file.txt", uncPlan.Candidates[0]);
-        Assert.Equal(@"\\server\share\sub", uncPlan.Candidates[1]);
-        Assert.Equal(@"\\server\share", uncPlan.Candidates[2]);
-        Assert.Equal(3, uncPlan.Candidates.Count);
+        RevealPlan plan = ShellReveal.Plan(path);
+        Assert.Null(plan.UnaddressableName);
+        Assert.Equal(expectedTarget, plan.Target);
     }
 
     [Theory]
@@ -85,7 +72,7 @@ public class ShellRevealTests
     public void Plan_PrefixesStripped(string extendedPath, string expectedDisplay)
     {
         RevealPlan plan = ShellReveal.Plan(extendedPath);
-        Assert.Equal(expectedDisplay, plan.Candidates[0]);
+        Assert.Equal(expectedDisplay, plan.Target);
     }
 
     [Fact]
@@ -96,13 +83,13 @@ public class ShellRevealTests
         string path300 = @"C:\" + string.Join(@"\", Enumerable.Repeat(seg, 5)) + @"\test.txt";
         Assert.True(path300.Length >= 260);
         RevealPlan plan300 = ShellReveal.Plan(path300);
-        Assert.Equal(path300, plan300.Candidates[0]);
+        Assert.Equal(path300, plan300.Target);
 
         // 600 characters path with components <= 100
         string path600 = @"C:\" + string.Join(@"\", Enumerable.Repeat(seg, 11)) + @"\test.txt";
         Assert.True(path600.Length >= 550);
         RevealPlan plan600 = ShellReveal.Plan(path600);
-        Assert.Equal(path600, plan600.Candidates[0]);
+        Assert.Equal(path600, plan600.Target);
     }
 
     [Theory]
@@ -118,94 +105,118 @@ public class ShellRevealTests
     }
 
     [Fact]
-    public void Walk_FirstCandidateSucceeds_ReturnsExact()
+    public void Walk_TargetParses_OpensItOnceFreesItAndReportsExact()
     {
-        var plan = new RevealPlan([@"C:\a\b.txt", @"C:\a", @"C:\"], null, @"C:\a\b.txt");
-        int calls = 0;
-        RevealOutcome outcome = ShellReveal.Walk(plan, c =>
-        {
-            calls++;
-            return 0; // S_OK
-        });
+        var shell = new FakeShell(parse: 0, open: 0);
+        RevealOutcome outcome = shell.Walk(@"C:\a\b.txt");
 
-        Assert.Equal(1, calls);
+        Assert.Equal(new[] { @"C:\a\b.txt" }, shell.Parsed);
+        Assert.Equal(new[] { FakeShell.Pidl }, shell.Opened);
+        Assert.Equal(new[] { FakeShell.Pidl }, shell.Freed);
         Assert.Equal(RevealKind.Exact, outcome.Kind);
         Assert.Equal(RevealReason.None, outcome.Reason);
         Assert.Equal(@"C:\a\b.txt", outcome.Shown);
         Assert.Equal(0, outcome.HResult);
     }
 
-    [Fact]
-    public void Walk_ItemDeleted_ClimbsToParent()
+    /// <summary>
+    /// SL-088 criterion 6: the item, or its parent, is gone since the scan. SL-047 climbed to the nearest ancestor that
+    /// parsed and opened it in the item's place; the reveal is refused instead, and nothing is opened.
+    /// </summary>
+    [Theory]
+    [InlineData(NotFound)]
+    [InlineData(PathNotFound)]
+    public void Walk_TargetNoLongerExists_RefusesWithoutOpeningAnything(int hr)
     {
-        var plan = new RevealPlan([@"C:\a\b.txt", @"C:\a", @"C:\"], null, @"C:\a\b.txt");
-        int calls = 0;
-        RevealOutcome outcome = ShellReveal.Walk(plan, c =>
-        {
-            calls++;
-            if (c == @"C:\a\b.txt")
-                return unchecked((int)0x80070002); // ERROR_FILE_NOT_FOUND
-            return 0; // S_OK
-        });
+        var shell = new FakeShell(parse: hr, open: 0);
+        RevealOutcome outcome = shell.Walk(@"C:\a\b.txt");
 
-        Assert.Equal(2, calls);
-        Assert.Equal(RevealKind.Ancestor, outcome.Kind);
+        Assert.Equal(new[] { @"C:\a\b.txt" }, shell.Parsed);
+        Assert.Empty(shell.Opened);
+        Assert.Empty(shell.Freed);
+        Assert.Equal(RevealKind.Failed, outcome.Kind);
         Assert.Equal(RevealReason.NoLongerExists, outcome.Reason);
-        Assert.Equal(@"C:\a", outcome.Shown);
-        Assert.Equal(0, outcome.HResult);
+        Assert.Null(outcome.Shown);
+        Assert.Equal(hr, outcome.HResult);
     }
 
-    [Fact]
-    public void Walk_EntireChainDeleted_ReturnsFailed()
+    /// <summary>
+    /// A parse that fails for any reason other than not-found is refused with its own code and is not said to be gone:
+    /// access denied, a name the shell rejects, a network path, and an HRESULT outside FACILITY_WIN32.
+    /// </summary>
+    [Theory]
+    [InlineData(unchecked((int)0x80070005))] // E_ACCESSDENIED
+    [InlineData(unchecked((int)0x8007007B))] // ERROR_INVALID_NAME
+    [InlineData(unchecked((int)0x80070035))] // ERROR_BAD_NETPATH
+    [InlineData(EFail)]
+    public void Walk_ParseFailsOtherwise_RefusesWithThatCode(int hr)
     {
-        var plan = new RevealPlan([@"C:\a\b.txt", @"C:\a", @"C:\"], null, @"C:\a\b.txt");
-        int calls = 0;
-        RevealOutcome outcome = ShellReveal.Walk(plan, _ =>
-        {
-            calls++;
-            return unchecked((int)0x80070003); // ERROR_PATH_NOT_FOUND
-        });
+        var shell = new FakeShell(parse: hr, open: 0);
+        RevealOutcome outcome = shell.Walk(@"C:\a\b.txt");
 
-        Assert.Equal(3, calls);
+        Assert.Equal(new[] { @"C:\a\b.txt" }, shell.Parsed);
+        Assert.Empty(shell.Opened);
         Assert.Equal(RevealKind.Failed, outcome.Kind);
-        Assert.Equal(unchecked((int)0x80070003), outcome.HResult);
+        Assert.Equal(RevealReason.None, outcome.Reason);
+        Assert.Null(outcome.Shown);
+        Assert.Equal(hr, outcome.HResult);
+    }
+
+    /// <summary>
+    /// The parse gave a valid ID list and the open failed: refused with the open's code, the list freed, and no other
+    /// folder parsed or opened.
+    /// </summary>
+    [Fact]
+    public void Walk_OpenFails_RefusesWithItsCodeFreesTheIdListAndTriesNothingElse()
+    {
+        var shell = new FakeShell(parse: 0, open: EFail);
+        RevealOutcome outcome = shell.Walk(@"C:\a\b.txt");
+
+        Assert.Equal(new[] { @"C:\a\b.txt" }, shell.Parsed);
+        Assert.Equal(new[] { FakeShell.Pidl }, shell.Opened);
+        Assert.Equal(new[] { FakeShell.Pidl }, shell.Freed);
+        Assert.Equal(RevealKind.Failed, outcome.Kind);
+        Assert.Equal(RevealReason.None, outcome.Reason);
+        Assert.Null(outcome.Shown);
+        Assert.Equal(EFail, outcome.HResult);
+    }
+
+    /// <summary>
+    /// The parse succeeded but its ID list stands for another path, or for none: refused before anything is opened, the
+    /// list freed. This is how 'dup.' parses when 'dup' is there, and how a device name with an extension would parse on
+    /// a Windows that took it for the device (SL-088 review R2-m2).
+    /// </summary>
+    [Theory]
+    [InlineData(@"C:\a\b")]
+    [InlineData(null)]
+    public void Walk_ParseStandsForAnotherItem_RefusesWithoutOpening(string? landsOn)
+    {
+        var shell = new FakeShell(parse: 0, open: 0, pathOf: _ => landsOn);
+        RevealOutcome outcome = shell.Walk(@"C:\a\b.txt");
+
+        Assert.Equal(new[] { @"C:\a\b.txt" }, shell.Parsed);
+        Assert.Empty(shell.Opened);
+        Assert.Equal(new[] { FakeShell.Pidl }, shell.Freed);
+        Assert.Equal(RevealKind.Failed, outcome.Kind);
+        Assert.Equal(RevealReason.ParsedAsAnotherItem, outcome.Reason);
+        Assert.Null(outcome.Shown);
     }
 
     [Theory]
-    [InlineData(unchecked((int)0x80070005))] // E_ACCESSDENIED
-    [InlineData(unchecked((int)0x80070035))] // ERROR_BAD_NETPATH
-    public void Walk_AccessDeniedOrNetworkError_StopsWithoutClimbing(int errorCode)
+    [InlineData(@"C:\folder\dup.", "dup.")]
+    [InlineData(@"C:\x\dir.\in.txt", "dir.")]
+    public void Walk_UnaddressableName_RefusesWithoutAskingTheShell(string path, string badName)
     {
-        var plan = new RevealPlan([@"C:\a\b.txt", @"C:\a", @"C:\"], null, @"C:\a\b.txt");
-        int calls = 0;
-        RevealOutcome outcome = ShellReveal.Walk(plan, _ =>
-        {
-            calls++;
-            return errorCode;
-        });
+        var shell = new FakeShell(parse: 0, open: 0);
+        RevealOutcome outcome = shell.Walk(path);
 
-        // Must stop immediately and not climb
-        Assert.Equal(1, calls);
+        Assert.Empty(shell.Parsed);
+        Assert.Empty(shell.Opened);
         Assert.Equal(RevealKind.Failed, outcome.Kind);
-        Assert.Equal(errorCode, outcome.HResult);
-    }
-
-    [Fact]
-    public void Walk_UnaddressableName_ReturnsAncestorNameUnaddressable()
-    {
-        var plan = new RevealPlan([@"C:\folder", @"C:\"], "dup.", @"C:\folder\dup.");
-        int calls = 0;
-        RevealOutcome outcome = ShellReveal.Walk(plan, _ =>
-        {
-            calls++;
-            return 0; // S_OK on C:\folder
-        });
-
-        Assert.Equal(1, calls);
-        Assert.Equal(RevealKind.Ancestor, outcome.Kind);
         Assert.Equal(RevealReason.NameUnaddressable, outcome.Reason);
-        Assert.Equal("dup.", outcome.UnaddressableName);
-        Assert.Equal(@"C:\folder", outcome.Shown);
+        Assert.Equal(badName, outcome.UnaddressableName);
+        Assert.Null(outcome.Shown);
+        Assert.Equal(path, outcome.Requested);
     }
 
     [Fact]
@@ -217,8 +228,7 @@ public class ShellRevealTests
             File.WriteAllText(temp, "test");
             File.SetAttributes(temp, FileAttributes.Hidden | FileAttributes.System);
 
-            var plan = ShellReveal.Plan(temp);
-            RevealOutcome outcome = ShellReveal.Walk(plan, _ => 0);
+            RevealOutcome outcome = new FakeShell(parse: 0, open: 0).Walk(temp);
 
             Assert.Equal(RevealKind.Exact, outcome.Kind);
             Assert.True(outcome.Hidden);
@@ -237,12 +247,97 @@ public class ShellRevealTests
     [Fact]
     public void Walk_VolumeRoot_HiddenAndSystemStayFalse()
     {
-        RevealPlan plan = ShellReveal.Plan(@"C:\");
-        RevealOutcome outcome = ShellReveal.Walk(plan, _ => 0);
+        RevealOutcome outcome = new FakeShell(parse: 0, open: 0).Walk(@"C:\");
 
         Assert.Equal(RevealKind.Exact, outcome.Kind);
         Assert.False(outcome.Hidden);
         Assert.False(outcome.System);
+    }
+
+    /// <summary>
+    /// SL-088 criterion 6 on a real tree, with the shell's own parse on an STA thread as RevealAsync runs it, and an
+    /// open that only records (no window is opened). A file whose parent was deleted after it was found, and a file
+    /// deleted from a parent that is still there, are both refused as gone with no open. The parent that survives
+    /// parses, which is the folder SL-047's climb would have opened in the file's place. A present file and a folder
+    /// with a deny-all ACE in the same run parse and reach the open, so a parse that cannot work in this process
+    /// (COM not initialised, say) fails here rather than passing 'never opened' for nothing. So do files whose names are
+    /// device names with an extension (con.txt, aux.h, nul.log, com1.txt, and a file in a folder con.d), which the shell
+    /// addresses exactly (SL-088 review R2-m2), and a file past MAX_PATH, whose ID list the shell gives back in 8.3 form.
+    /// 'dup.' asked of the shell directly, beside 'dup', parses to 'dup' and is refused before the open.
+    /// </summary>
+    [Fact]
+    public void Walk_OnRealTree_RefusesGoneTargetsAndLandsThePresentOne()
+    {
+        using var tree = new TempTree();
+        tree.Folder("gone");
+        tree.Folder("kept");
+        string victim = tree.File(@"gone\victim.bin", 4096);
+        string deleted = tree.File(@"kept\deleted.bin", 4096);
+        string present = tree.File(@"kept\present.bin", 4096);
+        string denied = tree.Folder(@"kept\denied");
+        Directory.Delete(tree.PathOf("gone"), recursive: true);
+        File.Delete(deleted);
+        tree.Deny(denied, 0x1F01FF); // FILE_ALL_ACCESS
+        Assert.Throws<UnauthorizedAccessException>(() => Directory.GetFileSystemEntries(denied));
+        tree.Folder("reserved");
+        Directory.CreateDirectory(tree.ExtendedRoot + @"\reserved\con.d");
+        string[] reserved = [.. new[] { "con.txt", "aux.h", "nul.log", "com1.txt", @"con.d\inner.bin" }
+            .Select(name => TempTree.WriteFile(tree.ExtendedRoot + @"\reserved\" + name, 4096)[4..])];
+        string longFolder = tree.Folder(string.Join('\\', Enumerable.Repeat(new string('l', 60), 4)));
+        string beyondMaxPath = tree.File(Path.Combine(longFolder, "far.bin"), 4096);
+        Assert.True(beyondMaxPath.Length > 300, $"{beyondMaxPath.Length} characters");
+        string decoy = tree.File(@"kept\dup", 4096);
+        TempTree.WriteFile(tree.ExtendedRoot + @"\kept\dup.", 4096);
+        string dupDot = decoy + ".";
+
+        var opened = new List<IntPtr>();
+        int survivorParse = -1;
+        var outcomes = new Dictionary<string, RevealOutcome>();
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                foreach (string path in new[] { victim, deleted, present, denied, beyondMaxPath }.Concat(reserved))
+                {
+                    outcomes[path] = ShellReveal.Walk(ShellReveal.Plan(path), path, ShellReveal.ParseDisplayName, ShellReveal.PathOfIdList,
+                        pidl => { opened.Add(pidl); return 0; }, ShellReveal.FreeIdList);
+                }
+
+                // Past Plan, which refuses the name up front, to the shell itself.
+                outcomes[dupDot] = ShellReveal.Walk(new RevealPlan(dupDot, null, dupDot), dupDot, ShellReveal.ParseDisplayName,
+                    ShellReveal.PathOfIdList, pidl => { opened.Add(pidl); return 0; }, ShellReveal.FreeIdList);
+
+                survivorParse = ShellReveal.ParseDisplayName(tree.Root, out IntPtr survivor);
+                if (survivor != IntPtr.Zero)
+                    ShellReveal.FreeIdList(survivor);
+            }
+            catch (Exception e)
+            {
+                failure = e;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(60)), "the reveals did not finish within 60 s");
+        Assert.Null(failure);
+
+        foreach (string gone in new[] { victim, deleted })
+        {
+            RevealOutcome outcome = outcomes[gone];
+            Assert.Equal(RevealKind.Failed, outcome.Kind);
+            Assert.Equal(RevealReason.NoLongerExists, outcome.Reason);
+            Assert.Contains(outcome.HResult, new[] { NotFound, PathNotFound });
+            Assert.Null(outcome.Shown);
+        }
+
+        Assert.Equal(0, survivorParse);
+        foreach (string landing in new[] { present, denied, beyondMaxPath }.Concat(reserved))
+            Assert.True(outcomes[landing].Kind == RevealKind.Exact, $"{landing}: {outcomes[landing]}");
+        Assert.Equal(RevealKind.Failed, outcomes[dupDot].Kind);
+        Assert.Equal(RevealReason.ParsedAsAnotherItem, outcomes[dupDot].Reason);
+        Assert.Equal(3 + reserved.Length, opened.Count);
+        Assert.All(opened, pidl => Assert.NotEqual(IntPtr.Zero, pidl));
     }
 
     [Theory]
@@ -251,5 +346,34 @@ public class ShellRevealTests
     public void Plan_EmptyOrWhitespace_ThrowsArgumentException(string path)
     {
         Assert.Throws<ArgumentException>(() => ShellReveal.Plan(path));
+    }
+
+    /// <summary>
+    /// The shell calls Walk makes, answering with fixed HRESULTs and recording each call. The ID list stands for the path
+    /// parsed unless <paramref name="pathOf"/> says otherwise.
+    /// </summary>
+    private sealed class FakeShell(int parse, int open, Func<IntPtr, string?>? pathOf = null)
+    {
+        public static readonly IntPtr Pidl = new(0x1234);
+
+        public List<string> Parsed { get; } = [];
+        public List<IntPtr> Opened { get; } = [];
+        public List<IntPtr> Freed { get; } = [];
+
+        public RevealOutcome Walk(string path) =>
+            ShellReveal.Walk(ShellReveal.Plan(path), path, Parse, pathOf ?? (_ => Parsed[^1]), Open, Freed.Add);
+
+        private int Parse(string path, out IntPtr pidl)
+        {
+            Parsed.Add(path);
+            pidl = parse == 0 ? Pidl : IntPtr.Zero;
+            return parse;
+        }
+
+        private int Open(IntPtr pidl)
+        {
+            Opened.Add(pidl);
+            return open;
+        }
     }
 }

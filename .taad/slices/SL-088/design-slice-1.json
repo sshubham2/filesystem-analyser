@@ -1,0 +1,347 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-088",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-29T13:16:22.141Z",
+ "head": "a6e18bc545ec18e678addf1527a097f56e771fbf",
+ "run_id": 2250,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "reason": "Only one proposal was handed in (practice). It matches the tree as the build check measured it and what the four spikes settled. It was taken as the core, with five seams inside it redesigned. These are listed in coherence_check.",
+  "selection_rationale": "The proposal is taken as the core because it changes only what reality says must change.\n\nWhat reality showed about the parts it keeps:\n- The three finished spikes landed with the existing TryReveal path (SHParseDisplayName, then SHOpenFolderAndSelectItems on the STA thread in RevealAsync) in every run. That held at 161, 300 and 1000 characters, on deny-all leaves, on a volume with no 8.3 names, and with Explorer already open. It held from a single-file exe with no manifest, from a long-path-aware testhost and from pwsh, with identical results (36/36, 12/12, 12/12). So the reveal mechanism, the manifest and path handling are not redesigned. Adding a longPathAware manifest or \\\\?\\ rewriting would be over-building against a measured \"go\".\n\nThe one product change:\n- The build check found exactly one contradiction between the tree and the agreed criteria. ShellReveal.Walk climbs to the nearest ancestor on 0x80070002/0x80070003 (ShellReveal.cs:280-285), and Walk_ItemDeleted_ClimbsToParent pins that. The probe showed a grandparent that parses S_OK, so today the app opens the wrong folder.\n- The proposal's product change is to delete that climb. This is the smallest change that satisfies criterion 6, and it is cheap to reverse.\n\nEverything else is proof, built where the build check found the proof missing:\n- no deny-all ACE case (R-001 only denies listing);\n- no window case at 161 or 1000 characters, and no 1 s timing;\n- a literal folder-path comparison that U-114 rules out;\n- a `/select\\s*,` rule that misses three launch spellings;\n- no deleted-parent test.\n\nTwo things were left out of scope on purpose:\n- The product does not poll ShellWindows. Criterion 4 names the tests as its check.\n- Hidden+System items stay out. That spike is unfinished and waiting on a person, and no criterion covers those items.\n\nNeither was dropped silently: both are recorded, and criterion 4's reading is an open question.",
+  "components": [
+   {
+    "name": "ShellReveal land-or-refuse",
+    "responsibility": "Walk tries the exact target once.\n- If the parse returns S_OK, it calls SHOpenFolderAndSelectItems and reports Exact.\n- Any parse failure reports Failed with the HRESULT, and the open call is never made. 0x80070002 and 0x80070003 map to RevealReason.NoLongerExists.\n- If the parse succeeds but the open call fails, it frees the PIDL and reports Failed with that HRESULT. No other folder is tried.\n\nThe ancestor loop (ShellReveal.cs:280-285) and RevealKind.Ancestor are deleted. If RevealKind already has a failure member, it is reused; otherwise `Failed` is added. If ShellReveal.Plan builds an ancestor chain for Walk to try, it is cut down to the single target. If Plan only normalises the path, it is left alone.\n\nThere is no File.Exists or Directory.Exists pre-check: the parse HRESULT is the existence check. The class comment at line 36 is rewritten to say the reveal lands or refuses. Any comment that spells Explorer's select switch literally is reworded to \"Explorer's select switch\", because the dual-written rule counts comments.",
+    "lives_at": "src/FsAnalyser.Core/Native/ShellReveal.cs",
+    "key_interactions": "MainWindow.OnOpenInExplorer (MainWindow.xaml.cs:762-775) calls it through RevealAsync (lines 334-383), which is unchanged. TryReveal (lines 311-328) is unchanged. The settled SL-047 rule still confines the shell reveal APIs to this file."
+   },
+   {
+    "name": "Reveal failure status text",
+    "responsibility": "Replaces \"No longer exists, so highlighting '<ancestor>' instead\" (MainWindow.xaml.cs:813-814).\n- NoLongerExists reads: \"'<leaf>' no longer exists where the scan found it, so Explorer was not opened. Rescan to refresh.\"\n- Any other Failed reads: \"Couldn't show '<leaf>' in Explorer (<message>). Nothing was opened.\"\n\nThe message comes from the App's existing `new Win32Exception(code).Message` lookup (MainWindow.xaml.cs:714), using the Win32 code for FACILITY_WIN32 HRESULTs and the hex HRESULT otherwise. It goes on the same status surface as today's reveal messages. There is no modal dialog. Success text is unchanged.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "key_interactions": "FormatRevealStatus (around lines 798-818) switches on the outcome. Removing Ancestor breaks the build here until the switch is updated, which is intended."
+   },
+   {
+    "name": "ShellReveal unit tests",
+    "responsibility": "Walk_ItemDeleted_ClimbsToParent (ShellRevealTests.cs:139-156) is replaced by fake-seam tests:\n- the parse returns 0x80070002: the outcome is Failed/NoLongerExists, the recording open delegate is never called, and no second parse happens;\n- the parse returns 0x80070005: Failed with that HRESULT, not NoLongerExists;\n- the parse returns S_OK and the open returns E_FAIL: Failed with E_FAIL, no retry, one parse.\n\nOne real-tree test, Walk_OnRealTree_RefusesGoneTargetsAndLandsThePresentOne, builds a %TEMP% tree holding gone\\victim.bin, a deleted leaf in a surviving parent, and a present sibling. It deletes as needed, then runs Walk with the real SHParseDisplayName on an STA thread, as RevealAsync does, and a recording open. It asserts:\n- both gone shapes give NoLongerExists and no open call;\n- the present sibling parses S_OK and reaches the recording open exactly once.\n\nWithout that last check, a parse broken in testhost (COM not initialised, for example) would pass 'open never called' vacuously. No window is opened. The test runs in the default suite.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ShellRevealTests.cs",
+    "key_interactions": "Uses the Walk seam the replaced test already drives, through the existing InternalsVisibleTo. If Walk does not yet take an open delegate, the build adds that seam; the public RevealAsync signature does not change. Plan_LongPaths_NotTruncated is kept."
+   },
+   {
+    "name": "No-select-switch architecture rule",
+    "responsibility": "The pattern '(?mi)/select\\b' is applied to src/**/*.cs, with ShellReveal.cs included and comments counted.\n\nIt is written in two places:\n- a [Fact] in ArchitectureRulesTests;\n- a single-quoted fitness.yaml entry with `including_comments: true`, placed above the first '# settled by' marker. SL-087 measured that this is the form eng/rules-parity.ps1 accepts.\n\nThe settled SL-047 rule (.taad/fitness.yaml:585-598) is left as it is.",
+    "lives_at": ".taad/fitness.yaml",
+    "key_interactions": "The twin goes in tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs. The plant rows go through tests/rules/RuleCases.ps1.\n\nThese must hit:\n- \"/select,\" + p\n- $\"/select, \\\"{p}\\\"\"\n- ArgumentList.Add(\"/select\")\n- \"/select \\\"\" + p\n- \"/SELECT,\" + p\n\nThese must not hit: \"/selection\", \"selected\", \"Open in Explorer\"."
+   },
+   {
+    "name": "U-114-safe landing comparison",
+    "responsibility": "Wait-ExplorerSelection (WindowCases.ps1:3304-3318) no longer compares literal or lower-cased paths. A new Resolve-LongPath helper resolves both sides: Add-Type GetLongPathNameW on a \\\\?\\-prefixed path with a 32767-char buffer, prefix stripped.\n\nA landing matches when some ShellWindows entry meets all three conditions:\n- its resolved Document.Folder.Self.Path equals the target's parent (OrdinalIgnoreCase);\n- SelectedItems().Count is exactly 1;\n- that item's resolved Path equals the target.\n\nName is logged, and asserted as well for folder targets (criterion 1). Windows are polled every 25 ms. Every entry is considered, because Explorer reuses a window already on the parent (spike case B).",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "All R-001 and R-002 steps use it. The step-isolation rule in R-002 is what stops the all-windows scan from matching a window left over from an earlier step."
+   },
+   {
+    "name": "Window case R-002: reveal lands or refuses",
+    "responsibility": "Builds its own temp root. The fixture holds:\n- a short-path deny-all folder with a sibling file;\n- files at exactly 161, 300 and 1000 characters, with 50-69-character components, distinct MiB sizes and a sibling each, created through long-path-capable .NET calls;\n- a deny-all folder at exactly 300 characters;\n- gone\\victim.bin.\n\nA Deny-All helper applies a FullControl deny ACE for the current SID through the .NET ACL API, so paths over 260 work. Before the scan it checks that enumeration throws UnauthorizedAccessException, so a step cannot pass on an ordinary folder.\n\nBefore every step, the case closes the windows it opened under its fixture root and asserts that none remain. Each step reveals a target no earlier step revealed.\n\nSteps:\n(a) Short deny-all folder, from its tree row. The landing matches, the selected Name equals the leaf, and from t0 until 500 ms after landing no new #32770 window owned by explorer.exe or the app appears and no consent.exe starts.\n(b) The 161-character file, then the 300-character file, from biggest-files rows. Each must land within 1000 ms. The 161 step is the run's first reveal and is not preceded by any warm-up.\n(c) The 300-character deny-all folder, from its tree row, within 1000 ms, with the same dialog and elevation watch as (a).\n(d) Through Shell.Application, open the 1000-character file's parent with its sibling selected. Then reveal the 1000-character file from its biggest-files row. It must land within 1000 ms with exactly one selected item.\n(e) Delete gone\\ with Directory.Delete and reveal victim.bin. Assert the hook reports Failed/NoLongerExists and the failure status text. For 2 s, assert: no new ShellWindows entry, no newly visible CabinetWClass, and no existing window that changed folder or selection. A failure names the offending window's folder.\n\nFinally the case removes the ACEs and deletes the tree through .NET. At start it sweeps stale fixtures from earlier runs, removing their ACEs first.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "Drives the published exe in artifacts/publish the same way R-001 does, reusing R-001's row-targeting and reveal-trigger helpers. Timing and status come from the hook log."
+   },
+   {
+    "name": "R-001 upkeep",
+    "responsibility": "Step 10's fixture is padded so its target is exactly 300 characters, whatever the length of %TEMP%, and its assertion becomes >=300. The $closeNewWindows block and the finally block Quit() only windows that were not in the baseline and whose resolved folder is under the case's fixture root. Any step expecting the Ancestor kind is rewritten to expect Failed with no window. Steps move to the shared Resolve-LongPath comparison.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "Shares the comparison and the close rule with R-002. The narrower close rule removes the build check's stated reason for not running R-001 unattended (criterion 5)."
+   },
+   {
+    "name": "Hook reveal record",
+    "responsibility": "Adds fields to the hook's existing reveal log line, only where they are missing:\n- revealStartQpc, taken with Stopwatch.GetTimestamp() in a class-level PreviewExecuted handler for the Open in Explorer command;\n- the outcome's kind, reason and HRESULT;\n- the status text shown.\n\nThe schema-1 --report output is not changed. The hook is outside FsAnalyser.slnx and is built only by Update-Hook, so the build must run Update-Hook through eng/dotnet.ps1 explicitly and grep the hook for 'Ancestor'. Otherwise a compile break, or a string-based reference to the deleted kind, stays hidden until validate.",
+    "lives_at": "tests/window/FsaWindowHook",
+    "key_interactions": "WindowCases.ps1 measures elapsed time as the QPC value of the first matching poll minus revealStartQpc. QPC is shared across processes within one boot."
+   },
+   {
+    "name": "SL-088 design note",
+    "responsibility": "Records three things:\n- SL-088 reverses SL-047's nearest-ancestor fallback under criterion 6;\n- Hidden+System targets are knowingly out of this slice while their spike waits on a person;\n- the product still reports Exact from hr==0, and only the window tests check the landing (criterion 4).",
+    "lives_at": "docs/design/SL-088-reveal-lands-or-refuses.md"
+   }
+  ],
+  "contracts": [
+   {
+    "name": "ShellReveal.RevealAsync(path) -> RevealOutcome",
+    "kind": "function",
+    "auth_model": "Runs as the ordinary user, unelevated. It must never raise a consent prompt.",
+    "error_cases": "- A parse that returns 0x80070002 or 0x80070003 gives Failed/NoLongerExists and no window.\n- Any other parse failure gives Failed with that HRESULT and no window.\n- A parse that succeeds, followed by a failed SHOpenFolderAndSelectItems, gives Failed with that HRESULT. No other folder is tried.\n- RevealKind.Ancestor no longer exists.",
+    "notes": "The kind is Exact or Failed. Exact still comes from hr==0 inside the product. Criterion 4 is held by the window tests, not by the app watching Explorer (see open question). The signature is unchanged. Consumers are MainWindow.OnOpenInExplorer and FsaWindowHook."
+   },
+   {
+    "name": "Reveal status line",
+    "kind": "ui",
+    "error_cases": "NoLongerExists: \"'<leaf>' no longer exists where the scan found it, so Explorer was not opened. Rescan to refresh.\" Any other Failed: \"Couldn't show '<leaf>' in Explorer (<message>). Nothing was opened.\" There is never a modal dialog.",
+    "notes": "Replaces MainWindow.xaml.cs:813-814. Success text is unchanged."
+   },
+   {
+    "name": "Hook reveal log record",
+    "kind": "event",
+    "notes": "One line per reveal in FSA_HOOK_LOG: path, kind, reason, hresult, status, revealStartQpc. Fields are added only where missing. It is test-only and does not touch the schema-1 --report contract."
+   },
+   {
+    "name": "WindowCases.ps1 -Case R-002 (and R-001)",
+    "kind": "cli",
+    "error_cases": "The case fails on any of these:\n- no matching window within 1000 ms on a timed step;\n- a selection count other than 1;\n- a resolved folder or selection other than the one expected;\n- a fixture-root window left open before a step;\n- a Deny-All fixture that can still be enumerated;\n- a new #32770 window owned by explorer.exe or the app, or a consent.exe process;\n- any new or re-navigated Explorer window during the deleted-parent step;\n- a missing failure status.",
+    "notes": "Needs `eng/dotnet.ps1 publish` to have produced artifacts/publish. It opens real Explorer windows and closes only the non-baseline ones under its own fixture root."
+   },
+   {
+    "name": "Architecture rule: no Explorer select switch in src",
+    "kind": "function",
+    "error_cases": "Any match of '(?mi)/select\\b' in src/**/*.cs, comments included, fails both dotnet test and Fitness. eng/rules-parity.ps1 reports DRIFT if the xUnit and yaml patterns differ.",
+    "notes": "Written in both places, above the '# settled by' marker. Plant rows cover the five spellings that must hit and the three near-misses that must not."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Delete ShellReveal.Walk's nearest-ancestor climb and RevealKind.Ancestor. Any failed parse or open reports Failed and opens no window. This reverses SL-047 on purpose.",
+    "reversibility": "cheap",
+    "rationale": "Criterion 6 is the agreed definition of done and contradicts ShellReveal.cs:280-285 directly. The build-check probe showed that with the parent deleted the grandparent parses S_OK, so the current code opens the wrong folder. Deleting the enum member makes the compiler list the in-solution consumers. The hook is outside the solution and is covered by an explicit Update-Hook build."
+   },
+   {
+    "decision": "No File.Exists or Directory.Exists pre-check. The SHParseDisplayName HRESULT is the only existence test.",
+    "reversibility": "cheap",
+    "rationale": "The build check measured S_OK on a deny-all folder and 0x80070002 for a deleted leaf and parent. A second check adds a race between check and reveal. How .NET's existence check answers on a deny-all ACE is unmeasured, and a wrong answer would refuse exactly criterion 1's folders."
+   },
+   {
+    "decision": "No app.manifest, no longPathAware entry and no \\\\?\\ rewriting in the product.",
+    "reversibility": "cheap",
+    "rationale": "The reveal-from-single-file-app-process spike landed 36/36 at 161, 300 and 1000 characters. It did so both from an exe with no longPathAware entry and from a long-path-aware testhost. The long-path-reveal-without-8dot3-names spike landed 12/12 on D: (no 8.3 names), the same as on C:."
+   },
+   {
+    "decision": "The product does not verify the landing through Shell.Application. Checking that the landing is good lives only in the window tests.",
+    "reversibility": "cheap",
+    "rationale": "Criterion 4 names the tests of criteria 1 and 2 as its check. Polling ShellWindows from the shipping exe would automate another program to guard a path the spikes proved lands. The one known Exact-without-selection shape, Hidden+System, is out of scope. Whether a person reads criterion 4 as binding the product is recorded as an open question."
+   },
+   {
+    "decision": "New rule '(?mi)/select\\b' over all of src/**/*.cs, with ShellReveal.cs and comments included. It is dual-written in xUnit and in yaml above the settled marker. The SL-047 settled rule is not edited.",
+    "reversibility": "cheap",
+    "rationale": "Every Explorer select launch contains the token. The three spellings the build check found slipping past `/select\\s*,` (a separate argument, upper case, a space before the quote) all contain it, and the word boundary spares /selection and selected. SL-087 measured that only the dual-written form keeps dotnet test and Fitness in step."
+   },
+   {
+    "decision": "Window tests compare GetLongPathNameW-resolved paths on both sides, require exactly one selected item and scan all ShellWindows entries. Each step starts with no fixture-root window open and reveals a target no earlier step revealed.",
+    "reversibility": "cheap",
+    "rationale": "U-114 is conditional on never comparing Explorer's literal strings, because they come back as 8.3 aliases at 300 and 1000 characters. Scanning all windows is needed because Explorer reuses a window already on the parent. Without step isolation, that same scan would let a window left open by an earlier step satisfy a later one, which is a false pass that breaks criterion 4."
+   },
+   {
+    "decision": "R-002 is added as a new case. R-001 is only padded to exactly 300 characters at step 10 and moved to the shared comparison and close rule.",
+    "reversibility": "cheap",
+    "rationale": "Criterion 5 needs the existing cases to keep passing plus a new case at 300 characters or more. A separate case lets the deny-all, 1000-character and deleted-parent fixtures be set up and torn down without touching SC-007's existing steps."
+   },
+   {
+    "decision": "The 1 s bound runs from a QPC timestamp taken when the Open in Explorer command executes, recorded by the hook, to the first matching poll. It is asserted on every timed step. The first timed step is the run's first reveal, with no warm-up, and the bound is not widened.",
+    "reversibility": "cheap",
+    "rationale": "Criterion 2 counts from the person's click. The spikes' slowest landing was 934 ms on a first reveal. A warm-up, or timing from the pwsh side, would hide or distort a miss that validate needs to see."
+   },
+   {
+    "decision": "Test cleanup closes only Explorer windows that were not in the baseline and whose resolved folder is under the case's own fixture root.",
+    "reversibility": "cheap",
+    "rationale": "The build check declined to run R-001 because its Quit() loop could close windows the person opens during a run. Narrowing the loop lets criterion 5 be run without anyone watching."
+   },
+   {
+    "decision": "Hidden+System targets (System Volume Information, pagefile.sys and the like) are out of this slice.",
+    "reversibility": "cheap",
+    "rationale": "The reveal-selects-hidden-and-system-items spike did not finish. Under the person's own settings (Hidden=1) it selected 0 of 8 H+S targets and 5 of 5 Hidden-only ones, and the default-settings run is waiting on the person. No criterion covers these items, so they belong to a follow-on slice on this lineage."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "This was the only proposal. It is taken whole, with five seams redesigned inside it:\n- steps are isolated so a leftover window cannot satisfy a later step;\n- step (c) targets a distinct 300-character deny-all folder instead of the file step (b) already revealed;\n- the real-tree unit test gets an STA thread and a present-sibling control;\n- the ACE is applied through the .NET ACL API and checked before the scan;\n- the dialog watch is scoped to explorer.exe and the app, and the hook gets an explicit out-of-solution build.\n\nIt raised no over-engineering flag. Its product change is a deletion."
+   }
+  ],
+  "coherence_check": "There was one proposal (practice), so there is no composition to check. Nothing in this design has survived a disagreement yet; the downstream reviewer is the first to argue with it.\n\nSeams inside the proposal, checked and redesigned where needed:\n\n(1) Stale-window false pass (criterion 4). The proposal's matcher scans all ShellWindows entries, and its steps (b) and (c) both revealed the 300-character file. Step (c) could therefore pass on step (b)'s window without the reveal doing anything. Redesign: before each step the case closes its own fixture-root windows and asserts none remain. Every step reveals a distinct target, and step (c) now targets a deny-all folder at exactly 300 characters. That swap also covers the goal's 'at any length, including folders the user cannot open' from the tree surface.\n\n(2) Vacuous unit test. 'The open delegate was never called' also holds when the real parse fails for an unrelated reason in testhost, such as COM not being initialised. Redesign: the real-tree test runs Walk on an STA thread as RevealAsync does. A present sibling in the same run must parse S_OK and reach the recording open once, and the gone shapes must report NoLongerExists specifically.\n\n(3) Silent fixture. icacls may not take a path over 260 characters, and a deny that did not apply would let steps (a) and (c) pass on an ordinary folder. Redesign: the ACE goes through the .NET ACL API, and enumeration must throw UnauthorizedAccessException before the scan.\n\n(4) Out-of-solution consumer. The proposal relied on the compiler to find every consumer of RevealKind.Ancestor. But FsaWindowHook is outside FsAnalyser.slnx, and a string or reflection reference would never break the build. The build therefore runs Update-Hook explicitly and greps the hook.\n\n(5) The #32770 watch was scoped to windows owned by explorer.exe or the app, so an unrelated program's dialog cannot fail criterion 1.\n\nChecked and kept:\n- The deleted-parent step asserts that no new window opens anywhere, not just under the fixture. SL-047's misroute went to the grandparent, and U-114's /select misroute went to Documents, so a narrower check would miss real failures. The cost is that a person opening Explorer during those 2 s fails the step; the failure names the window's folder.\n- The Core outcome (Exact or Failed, with reason and HRESULT), the status text and the hook record all use one error vocabulary.\n- The new select-switch rule and SL-047's settled rule do not conflict. The new one is strictly broader and bans the token even in ShellReveal.cs, which uses only the shell API.\n\nArchitecture rules:\n- Two are written, both for defects this slice would otherwise let back in: an Explorer select switch anywhere in src (criterion 3), and the deleted Ancestor kind (criterion 6).\n- The confinement of SHParseDisplayName and SHOpenFolderAndSelectItems to ShellReveal.cs is already settled by SL-047 and is not repeated.\n- No rule polices window-test comparisons. A regex over the 3700-line WindowCases.ps1, which nobody here has read in full, would risk firing on correct code; the Resolve-LongPath comparison is held by review and by the cases instead.\n\nDecidable disagreements: none recorded. With a single designer nothing was contested. The open reality questions (whether the cold first reveal lands within 1 s, whether R-001 passes on this tree) change pass or fail, not a boundary or contract.\n\nCriterion 5 is still unrun. Nobody has shown that R-001 passes on this tree, and validate, or a person, must run R-001 and R-002 after `eng/dotnet.ps1 publish`.",
+  "architecture_rules": [
+   {
+    "name": "nothing in the app hands Explorer its select switch",
+    "files": "src/**/*.cs",
+    "must_not_match": [
+     "/[Ss][Ee][Ll][Ee][Cc][Tt]\\b"
+    ],
+    "because": "U-114 measured explorer.exe /select,\"<path>\" at 300 and 1000 characters silently opening OneDrive\\Documents, with exit code 1, no dialog and no HRESULT. Any launch with the switch, fallback or not, lands the person in the wrong folder with no signal (criterion 3). SL-047's `/select\\s*,` misses ArgumentList.Add(\"/select\"), \"/SELECT,\" and \"/select \\\"\", so this rule covers every spelling and case with no file exempt."
+   },
+   {
+    "name": "a reveal that cannot land never falls back to an ancestor",
+    "files": "src/**/*.cs",
+    "must_not_match": [
+     "\\bRevealKind\\.Ancestor\\b"
+    ],
+    "because": "SL-088 deletes this kind to satisfy criterion 6. When a target's parent is deleted, the grandparent still parses S_OK (build-check probe), so SL-047's climb opened another folder in the target's place and called it success. Restoring the kind (for example by reverting to SL-047's Walk) brings that misroute back."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "show a folder the user cannot open in Explorer",
+    "shape": "a short-path folder with a deny-all (FullControl) ACE for the current user, not just listing denied",
+    "why": "R-001 step 14 only denies listing (icacls (RD)), so the shape criterion 1 names has never been fed in. A full deny also removes READ_ATTRIBUTES and READ_CONTROL on the target, which is where an Explorer error dialog or a UAC prompt would come from. The fixture must prove the deny took effect before the scan, or the step passes on an ordinary folder. Criteria 1 and 4.",
+    "material": true
+   },
+   {
+    "behaviour": "show an item in Explorer",
+    "shape": "the full path is about 161 characters, under MAX_PATH",
+    "why": "This is criterion 2's control. Explorer reports literal paths here, so a failure points at the matcher (Resolve-LongPath) rather than at long-path handling. Without it, a failure at 300 or 1000 characters cannot be attributed. It is also the run's first reveal (see the cold-start row).",
+    "material": true
+   },
+   {
+    "behaviour": "show an item in Explorer",
+    "shape": "a file whose full path is exactly 300 characters, revealed from its biggest-files row",
+    "why": "Just past MAX_PATH, Explorer reports the selected item's Path as an 8.3 alias (U-114). The current Wait-ExplorerSelection compares literal lower-cased folder paths, with a DirectoryInfo.FullName fallback that does not expand 8.3. The biggest-files surface has no long-path window case at all today. Criteria 2, 4 and 5.",
+    "material": true
+   },
+   {
+    "behaviour": "show an item in Explorer",
+    "shape": "a file whose full path is exactly 1000 characters",
+    "why": "Both Document.Folder.Self.Path and the selection come back as 8.3 aliases. GetLongPathNameW must get \\\\?\\ input and a 32767-character buffer, or it fails or truncates past MAX_PATH. The fixture must also be created through long-path-capable calls. Criterion 2.",
+    "material": true
+   },
+   {
+    "behaviour": "show a folder the user cannot open in Explorer",
+    "shape": "a deny-all folder whose path is exactly 300 characters, revealed from its tree row",
+    "why": "This is the goal's 'at any path length, including folders the user cannot open', and the only step that puts the tree surface and an unopenable folder above MAX_PATH. icacls may reject a path this long, so the ACE goes through the .NET ACL API and is verified. The target differs from the 300-character file, so that step's window cannot satisfy this one. Criteria 1, 2 and 5.",
+    "material": true
+   },
+   {
+    "behaviour": "show an item in Explorer",
+    "shape": "the first reveal of the run, while Explorer's reveal window is still cold",
+    "why": "The spikes' slowest landing was 934 ms, on a first reveal, when a prewarmed hidden CabinetWClass became visible. Any untimed warm-up reveal before the first timed step would hide a miss of the 1 s bound. Criterion 2.",
+    "material": true
+   },
+   {
+    "behaviour": "show an item in Explorer",
+    "shape": "an Explorer window is already open on the target's parent with a sibling selected",
+    "why": "Explorer reuses that window (spike case B). A matcher that looks only at new windows misses the landing, and one that accepts 'target among the selected' passes with the stale sibling still selected. The match needs exactly one selected item equal to the target. This is set up before the 1000-character step, so the cold-start row stays cold. Criteria 2 and 4.",
+    "material": true
+   },
+   {
+    "behaviour": "refuse a reveal that cannot land",
+    "shape": "the target's parent was deleted after the scan",
+    "why": "The grandparent parses S_OK (build-check probe), so SL-047's Walk opened it in the target's place.\n- Unit test: real parse on an STA thread. A present sibling in the same run must reach the open call, so a parse broken in testhost cannot pass vacuously. The reason must be NoLongerExists.\n- Window test: no new or re-navigated Explorer window for 2 s, and the failure status is shown.\nCriterion 6.",
+    "material": true
+   },
+   {
+    "behaviour": "refuse a reveal that cannot land",
+    "shape": "the target itself was deleted, but its parent still exists",
+    "why": "This is the commonest real case: a file removed since the scan. The old climb opened the parent with nothing selected, which looks like success. The leaf parse returns 0x80070002. It is exercised on a real temp tree in the unit test. Criterion 6.",
+    "material": true
+   },
+   {
+    "behaviour": "refuse a reveal that cannot land",
+    "shape": "the parse succeeds but SHOpenFolderAndSelectItems returns a failure HRESULT",
+    "why": "This is a second failure branch after a valid PIDL. It must report Failed with that HRESULT, free the PIDL and try no other folder. It can only be reached through a fake open delegate. Criteria 4 and 6.",
+    "material": true
+   },
+   {
+    "behaviour": "refuse a reveal that cannot land",
+    "shape": "the parse fails with a code other than not-found (such as 0x80070005 or 0x8007007B)",
+    "why": "The status text branches here. Only 0x80070002 and 0x80070003 may say 'no longer exists'. Anything else must say \"Couldn't show … Nothing was opened.\", and the message lookup has to cope with a non-FACILITY_WIN32 HRESULT. Criterion 6.",
+    "material": true
+   },
+   {
+    "behaviour": "catch an Explorer select-switch launch in source",
+    "shape": "the switch as its own argument (ArgumentList.Add(\"/select\")), in upper case (\"/SELECT,\" + p), or followed by a space and a quote (\"/select \\\"\" + p)",
+    "why": "SL-047's `/select\\s*,` misses all three (build check). They are plant rows that must hit, alongside \"/select,\" + p and $\"/select, \\\"{p}\\\"\". Criterion 3.",
+    "material": true
+   },
+   {
+    "behaviour": "catch an Explorer select-switch launch in source",
+    "shape": "text that only looks like the switch: \"/selection\", \"selected\", \"Open in Explorer\"",
+    "why": "A rule that fires on correct code gets deleted the first time it goes red. These are plant rows that must not hit. Criterion 3.",
+    "material": true
+   },
+   {
+    "behaviour": "show an item in Explorer",
+    "shape": "the target is Hidden+System (System Volume Information, pagefile.sys)",
+    "why": "This shape is not tested in this slice:\n- The spike selected 0 of 8 H+S targets under the person's Hidden=1 settings (5/5 Hidden-only). The default-settings run is waiting on the person.\n- No criterion covers these targets.\n- The product would report Exact from hr==0 with nothing selected, so this is a known criterion-4-shaped gap that a follow-on slice owes once the spike finishes.",
+    "material": false
+   }
+  ],
+  "decidable_disagreements": [],
+  "taste_disagreements": [
+   "The select-switch rule counts comments (SL-087's `including_comments: true` form), so any explanatory comment in ShellReveal.cs must avoid spelling the switch. A reviewer may prefer comments to be excluded.",
+   "R-002 as a new case versus growing R-001 with the SL-088 steps.",
+   "Adding a `Failed` kind versus reusing an existing failure member of RevealKind, and the naming of the refusal reason.",
+   "Status wording ('Rescan to refresh', 'Nothing was opened'), and keeping a refusal on the status line rather than in a dialog."
+  ],
+  "open_questions": [
+   "Criterion 4 says an exit code or HRESULT alone is never success, and names the window tests as its check. This design reads it as binding the tests only: the app still reports Exact, and shows its success text, from hr==0. The spike shows this gives a false success for Hidden+System items (0 of 8 selected under your settings). Is that acceptable for SL-088, with H+S going to a follow-on slice, or should the app itself confirm the landing through Explorer's windows before saying it succeeded? The second answer adds COM automation of Explorer to the shipped exe and changes the reveal contract."
+  ],
+  "prior_art": [
+   {
+    "pattern": "Reveal by parsing the path to a PIDL and calling SHOpenFolderAndSelectItems, rather than launching explorer.exe /select",
+    "where": "Microsoft Win32 Shell API reference for SHOpenFolderAndSelectItems and SHParseDisplayName (shlobj_core.h)",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Explorer's /select parser splits on commas and has no \\\" escape. Corrupted quoting makes it fall back silently to the containing folder instead of selecting the item",
+    "where": "https://github.com/Technarion-Oy/thaw/pull/841",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-07-22"
+   },
+   {
+    "pattern": "Zed replaced its Windows RevealInFileManager with an implementation modelled on Electron's",
+    "where": "https://git.emunest.net/rei-forks/fred/commit/8ef9ecc91f6c6b2eaf65fd0d8a93e2f49af876de.patch",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2025-08-21"
+   },
+   {
+    "pattern": "Electron's ShowItemInFolder on Windows uses SHParseDisplayName and SHOpenFolderAndSelectItems (the fetched patch only links platform_util_win.cc; the code itself was not in the fetched text)",
+    "where": "electron shell/common/platform_util_win.cc, linked from the Zed patch",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "The common approach this design rejects: Qt Creator's showInGraphicalShell launches explorer.exe /select",
+    "where": "https://stackoverflow.com/questions/3490336/how-to-reveal-in-finder-or-show-in-explorer-with-qt",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2010-08-16"
+   },
+   {
+    "pattern": "GetLongPathNameW expands 8.3 short names. It needs \\\\?\\ input and a large buffer for paths past MAX_PATH",
+    "where": "Microsoft Win32 reference for GetLongPathNameW (fileapi.h)",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "stack_chosen": [],
+  "whats_new": [
+   "ShellReveal.Walk tries the target once and never climbs. RevealKind.Ancestor is removed, and a Failed kind is added if none exists",
+   "If ShellReveal.Plan builds an ancestor chain, it is cut down to the single target",
+   "Failed-reveal status text: \"no longer exists … Explorer was not opened\" and \"Couldn't show … Nothing was opened\"",
+   "Fake-seam unit tests: not-found refuses, another HRESULT refuses with its code, and an open that fails is not retried elsewhere",
+   "Walk_OnRealTree_RefusesGoneTargetsAndLandsThePresentOne: real parse on an STA thread, with a deleted parent, a deleted leaf and a present-sibling control",
+   "The '(?mi)/select\\b' rule, dual-written as an xUnit Fact and a fitness.yaml entry, with 5 must-hit and 3 must-not-hit plant rows",
+   "Resolve-LongPath (GetLongPathNameW on \\\\?\\ input) and a Wait-ExplorerSelection that requires exactly one selected item across all ShellWindows entries",
+   "A Deny-All fixture helper that applies the ACE through the .NET ACL API, checks before the scan that enumeration is denied, and removes the ACE at cleanup",
+   "Window case R-002 with steps (a) to (e): deny-all short and 300-character folders from tree rows; 161/300/1000-character files from biggest-files rows; a pre-opened parent with a sibling selected; the deleted parent opens nothing",
+   "Step isolation: before each step the case closes its fixture-root windows and asserts none remain, and every step reveals a distinct target",
+   "R-001 step 10 padded to exactly 300 characters; window cleanup limited to non-baseline windows under the fixture root",
+   "revealStartQpc, the outcome fields and the status text added to the hook's reveal log line where missing; the hook is built explicitly via Update-Hook",
+   "docs/design/SL-088-reveal-lands-or-refuses.md recording the reversal of SL-047"
+  ],
+  "whats_reused": [
+   "ShellReveal.TryReveal's SHParseDisplayName and SHOpenFolderAndSelectItems sequence (ShellReveal.cs:311-328), unchanged",
+   "RevealAsync's STA thread (ShellReveal.cs:334-383), unchanged, and the model the real-tree unit test follows",
+   "The single Open in Explorer CommandBinding for tree and biggest-files rows (MainWindow.xaml:8-16) and OnOpenInExplorer (MainWindow.xaml.cs:762-775)",
+   "RevealReason.NoLongerExists, now worded as a refusal",
+   "The App's Win32Exception message lookup (MainWindow.xaml.cs:714)",
+   "ShellReveal.Plan and Plan_LongPaths_NotTruncated",
+   "The settled SL-047 fitness rule (.taad/fitness.yaml:585-598), untouched",
+   "SL-087's dual-written rule form and parity check (ArchitectureRulesTests, eng/rules-parity.ps1, tests/rules/RuleCases.ps1)",
+   "R-001's row-targeting and reveal-trigger helpers",
+   "The FsaWindowHook startup hook and FSA_HOOK_LOG",
+   "eng/dotnet.ps1 publish to artifacts/publish, and Update-Hook",
+   "The spikes' measuring method: Shell.Application.Windows(), GetLongPathName on both sides, and a watch for #32770 windows and consent.exe"
+  ]
+ }
+}

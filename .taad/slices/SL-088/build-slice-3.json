@@ -1,0 +1,86 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-088",
+ "stage": "build-slice",
+ "attempt": 3,
+ "at": "2026-09-29T14:47:12.323Z",
+ "head": "c26d3fef4710a72b3ca7d0a35afc52357709b5a1",
+ "run_id": 2270,
+ "summary": "Attempt 3 does only what the send-back asked. O-016: Check-Landing no longer returns a value, and R-002's four landing steps call it plainly instead of `[void](...)`. Each step's ok/FAIL lines and its 'landed N ms after the click' line now reach the runner's output. O-017: Close-CaseWindows now takes a raw count of Shell.Application entries per HWND from a new Get-ExplorerHwndCounts, which reads only `.HWND`, each in its own try. It quits a case entry only when that raw count equals the case's own entries under that HWND. Nothing is quit on a look where any entry's HWND is unreadable, and the count is taken again just before each Quit. The stale Walk comment in ShellReveal.cs now says Exact needs the resolve-back to match and the open to return S_OK. The reveal code path is otherwise unchanged. Results: 503/503 tests pass, rules-parity AGREEs in both shells, and R-002 step (e) passes through the republished exe.",
+ "payload": {
+  "status": "complete",
+  "summary": "Attempt 3 does only what the send-back asked. O-016: Check-Landing no longer returns a value, and R-002's four landing steps call it plainly instead of `[void](...)`. Each step's ok/FAIL lines and its 'landed N ms after the click' line now reach the runner's output. O-017: Close-CaseWindows now takes a raw count of Shell.Application entries per HWND from a new Get-ExplorerHwndCounts, which reads only `.HWND`, each in its own try. It quits a case entry only when that raw count equals the case's own entries under that HWND. Nothing is quit on a look where any entry's HWND is unreadable, and the count is taken again just before each Quit. The stale Walk comment in ShellReveal.cs now says Exact needs the resolve-back to match and the open to return S_OK. The reveal code path is otherwise unchanged. Results: 503/503 tests pass, rules-parity AGREEs in both shells, and R-002 step (e) passes through the republished exe.",
+  "files": [
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "change": "modified",
+    "why": "O-016: Check-Landing returns nothing, and its four R-002 call sites call it plainly so its check and timing lines are printed. O-017: new Get-ExplorerHwndCounts (a raw per-HWND count, with unreadable HWNDs counted under 0). Close-CaseWindows quits a case entry only when the raw count for its HWND equals the case's own entries there, and it checks that count again just before the Quit."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Native/ShellReveal.cs",
+    "change": "modified",
+    "why": "Corrected only the Walk doc comment: Exact needs the ID list to resolve back to the target and the open to return S_OK. No code change."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-016",
+    "done": true,
+    "how": "Check-Landing's `return -1` became `return` and the trailing `$ms` was removed, so it outputs only its Check/CheckEqual lines and the 'landed N ms after the click' line. The four R-002 call sites (steps b ×2, a, c, d) now call `Check-Landing $r ... $true/$false` plainly. A synthetic run from the function's AST with fake reveals printed 9 lines (0 of them non-string) for a 400 ms landing, 9 lines plus FAIL 'within 1000 ms (1500 ms)' for a slow one, 6 lines plus FAIL for 'never landed', and 2 lines plus FAIL for 'not logged'. HEAD's version emitted a stray number, which [void] had thrown away along with every line."
+   },
+   {
+    "key": "O-017",
+    "done": true,
+    "how": "New Get-ExplorerHwndCounts enumerates (New-Object -ComObject Shell.Application).Windows() and reads only .HWND, each in its own try. An entry whose HWND cannot be read is counted under 0. Close-CaseWindows quits a case entry only when there is no 0 key and the raw count for its HWND equals the case's own entries with that HWND, checked on the pass snapshot and again just before the Quit. Otherwise the entry stays and is returned by folder. Synthetic fake-shell run in pwsh 7 and PS 5.1. This tree: a case window alone was quit. A case tab was never quit, only reported, when it sat beside a readable tab of the person's, beside a tab whose Document throws, beside one whose Document is null, when another entry's HWND was unreadable, or when the person's tab appeared between the count and the Quit. Two case tabs alone were both quit. HEAD 41f82cc quit the case tab in the throwing, null-Document, unreadable-HWND and appears-before-Quit shapes, which confirms the defect."
+   }
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx",
+    "outcome": "passed",
+    "note": "Passed 503, Failed 0, Skipped 0 (23 s)."
+   },
+   {
+    "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File eng/rules-parity.ps1 (and the same under pwsh)",
+    "outcome": "passed",
+    "note": "AGREE 15 facts <- 19 twinned entries, 39 patterns in both shells. A separate Select-String for '(?i)/select\\b' over src/**/*.cs found 0 hits, so the new comment does not trip the select-switch rule."
+   },
+   {
+    "command": "[Parser]::ParseFile on tests/window/WindowCases.ps1 under pwsh 7 and under Windows PowerShell 5.1",
+    "outcome": "passed",
+    "note": "0 parse errors in both."
+   },
+   {
+    "command": "pwsh -File <temp harness>: Check-Landing and Close-CaseWindows loaded from WindowCases.ps1's AST, with a fake Shell.Application (via a New-Object stub) and fake reveals; run on this tree (pwsh 7 and PS 5.1) and on HEAD's copy",
+    "outcome": "passed",
+    "note": "Results are under O-016 and O-017. This tree never quit a case tab that shared an HWND with anything it could not prove was the case's. HEAD quit it in 4 of those shapes. The first harness run had a bug in the fake's Quit removal (List.Remove on pscustomobjects); it was fixed with an Id-based RemoveAt and rerun, and the figures above are from the rerun. Scratch folder deleted afterwards."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-002 -Step e",
+    "outcome": "passed",
+    "note": "Real entry point: rebuilt the hook, republished the app to artifacts/publish, and launched the published exe. The deny-all ACEs took. The new Close-CaseWindows ran against the real Shell.Application in the isolation step (0 left). The hook logged kind Failed, reason NoLongerExists and hresult 0x80070002, with the status line \"'victim.bin' no longer exists where the scan found it, so Explorer was not opened. Rescan to refresh.\" No Explorer window was opened, moved or re-selected. PASSED: R-002, exit 0. Fixture removed."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-002 -Step a,b,c,d and -Case R-001",
+    "outcome": "not-run",
+    "note": "Not run, as in attempts 1 and 2. These steps open real Explorer windows on the person's desktop and then close them through Shell.Application, which is operating another program's windows unattended. A person must run them to settle criteria 1-7. With O-016, a failure now names the step, the check and the landing time in ms."
+   }
+  ],
+  "architecture": [
+   {
+    "block": "C-004",
+    "find": "and 'open in Explorer' (explorer /select or SHOpenFolderAndSelectItems) on any item.",
+    "replace": "and 'open in Explorer' on any item, through SHParseDisplayName and SHOpenFolderAndSelectItems only (never Explorer's select switch), which asks the shell to open the item's parent with the item selected (for a hidden item, noting that Explorer highlights it only when set to show hidden files) or, when the item no longer exists, has a name the shell cannot address, parses as another item, or the shell call fails, says so on the status line and opens nothing.",
+    "why": "Unchanged from AA-002 and repeated so it is not withdrawn. src/FsAnalyser.Core/Native/ShellReveal.cs Walk refuses on a parse failure (NoLongerExists for 0x80070002/3), on NameUnaddressable, on ParsedAsAnotherItem and on an open failure, with no ancestor climb. The '(?mi)/select\\b' rule finds 0 hits in src. R-002 (e) through the published exe showed Failed/NoLongerExists with that status text and no window opened."
+   }
+  ],
+  "deviations": [
+   "O-017: an entry whose HWND cannot be read might belong to any window, so it cannot be counted against one HWND. The fix's 'counts as the person's' is therefore implemented as 'quit nothing on that look'. The 5 s retry loop picks the case entry up on a later look once every HWND reads. The raw count is also taken again immediately before each Quit, which narrows the window in which the person could add a tab between the count and the Quit. The fix text did not ask for that second count; it only makes the rule stricter."
+  ],
+  "follow_ups": [
+   "Close-CaseWindows returns only case entries that Get-ExplorerWindows could read. A case tab whose Document is unreadable during every look for the whole 5 s is neither quit nor reported, so the isolation check could pass with it still open. This is not a false landing: Find-Landing needs a readable window. It is a cleanup gap that raw per-HWND counts could report.",
+   "Whether Quit() on one tab's Shell.Application entry closes the tab or the whole window is still unmeasured. Measuring it would let a case tab inside a mixed window be closed instead of only reported."
+  ],
+  "not_built": []
+ }
+}

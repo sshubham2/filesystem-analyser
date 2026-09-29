@@ -86,18 +86,30 @@
 # minimum width; S-008 the lists at the minimum size and maximized; S-009 a second scan that refills a list whose tab is
 # not selected. The expand mode of B-003, B-007 and B-008 selects the unreadable folders' tab where it opened their
 # expander before SL-065, and the report's UnreadableExpander, kept, is read from that tab.
+#
+# R-001 (SL-047) and R-002 (SL-088) are 'Open in Explorer', through the hook's reveal mode, checked in Explorer's own
+# windows through Shell.Application: a landing is the item's parent with the item as the only selection, both sides
+# resolved to long names (U-114). They open real Explorer windows, and close only the ones they opened on their own
+# trees. R-002 is the reveal at 161, 300 and 1000 characters, into folders this user cannot open, timed from the click,
+# and refused with nothing opened when the item's folder was deleted after the scan; -Step a,b,... runs some of its
+# steps only (see Test-R002).
 
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
         'L-001', 'L-002', 'L-003', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'N-001', 'N-002', 'N-003', 'N-004',
-        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'K-001', 'K-002', 'K-003', 'R-001',
+        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002',
         'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009')]
     [string] $Case,
-    [switch] $IncludeNetwork
+    [switch] $IncludeNetwork,
+    # R-002's steps to run, of a to e, comma-separated (all of them when left out).
+    [ValidatePattern('^[a-e](,[a-e])*$')]
+    [string] $Step
 )
 
 $ErrorActionPreference = 'Stop'
+if ($Step -and $Case -ne 'R-002') { throw '-Step names steps of R-002 and is for -Case R-002 only' }
+$R002Steps = if ($Step) { $Step -split ',' } else { @() }
 
 $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $Exe = Join-Path $Repo 'artifacts\publish\FsAnalyser.App.exe'
@@ -109,9 +121,9 @@ $RigExe = Join-Path $Repo 'artifacts\stall-rig\StallRig.exe'
 $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS',
     'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND', 'FSA_HOOK_MINSIZE', 'FSA_HOOK_DRIVES',
     'FSA_HOOK_WALK', 'FSA_HOOK_RECYCLE', 'FSA_HOOK_MULTIPLY', 'FSA_HOOK_SELECT', 'FSA_HOOK_RELEASE', 'FSA_HOOK_GAP', 'FSA_HOOK_HEIGHT', 'FSA_HOOK_REVEAL', 'FSA_HOOK_STATUS',
-    'FSA_HOOK_MAXIMIZE', 'FSA_HOOK_BACK', 'FSA_HOOK_READABLE', 'FSA_HOOK_BEFORE', 'FSA_HOOK_AFTER', 'FSA_HOOK_RENAMED', 'FSA_HOOK_RENDER', 'FSA_HOOK_FAIL_LISTING'
+    'FSA_HOOK_MAXIMIZE', 'FSA_HOOK_BACK', 'FSA_HOOK_READABLE', 'FSA_HOOK_BEFORE', 'FSA_HOOK_AFTER', 'FSA_HOOK_RENAMED', 'FSA_HOOK_RENDER', 'FSA_HOOK_FAIL_LISTING', 'FSA_HOOK_REVEAL_GATE'
 $HookedCases = 'C-002', 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
-    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'K-001', 'K-002', 'K-003', 'R-001',
+    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002',
     'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004'
 $RigOnlyCases = 'N-003', 'N-004'
@@ -3298,46 +3310,275 @@ function Invoke-RevealRun([string] $root, [string] $revealTargets, [int] $timeou
     }
 }
 
-function Wait-ExplorerSelection($expectedFolder, $expectedItem, [int] $timeoutSec = 5) {
-    $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $shell = New-Object -ComObject Shell.Application
-    $normalizedExpectedFolder = ($expectedFolder -replace '[/\\]+$', '').ToLowerInvariant()
-    while ($sw.Elapsed.TotalSeconds -lt $timeoutSec) {
-        foreach ($w in $shell.Windows()) {
-            try {
-                $doc = $w.Document
-                if ($null -eq $doc) { continue }
-                $f = $doc.Folder.Self.Path
-                $normalizedActual = ($f -replace '[/\\]+$', '').ToLowerInvariant()
-                if ($normalizedActual -ne $normalizedExpectedFolder) {
-                    try {
-                        $expanded = ([System.IO.DirectoryInfo]::new($f)).FullName
-                        $normalizedActual = ($expanded -replace '[/\\]+$', '').ToLowerInvariant()
-                    } catch { }
-                }
-                if ($normalizedActual -eq $normalizedExpectedFolder) {
-                    $selected = @($doc.SelectedItems() | ForEach-Object {
-                        $_.Name
-                        try { Split-Path -Leaf $_.Path } catch { }
-                    })
-                    if ($expectedItem -in $selected) {
-                        return [pscustomobject]@{ Matched = $true; Window = $w; Folder = $f; Selected = $selected }
-                    }
-                }
-            } catch { }
+# What the reveal cases read of Explorer and of the paths it reports (SL-088). Nothing here acts on a window: it lists
+# top-level windows with their class, process and visibility, and expands 8.3 names. Reveal is the one exception, R-002
+# step (d)'s setup: Explorer showing a folder with one item selected, made as a reveal of that item makes it. Loaded by
+# the reveal cases only, so no other case pays for the compile.
+function Initialize-RevealWin32 {
+    if ('FsaWindowCases.Win32' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace FsaWindowCases
+{
+    public sealed class TopWindow
+    {
+        public long Hwnd;
+        public string Class;
+        public uint Pid;
+        public bool Visible;
+    }
+
+    public static class Win32
+    {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern uint GetLongPathNameW(string shortPath, StringBuilder longPath, uint size);
+
+        private delegate bool EnumProc(IntPtr hwnd, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern bool EnumWindows(EnumProc callback, IntPtr lParam);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetClassNameW(IntPtr hwnd, StringBuilder name, int size);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hwnd);
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        private static extern int SHParseDisplayName(string name, IntPtr bindContext, out IntPtr pidl, uint sfgaoIn, out uint sfgaoOut);
+
+        [DllImport("shell32.dll")]
+        private static extern int SHOpenFolderAndSelectItems(IntPtr pidl, uint count, IntPtr items, uint flags);
+
+        [DllImport("shell32.dll")]
+        private static extern void ILFree(IntPtr pidl);
+
+        // The path with every 8.3 alias expanded, asked in \\?\ form with a buffer of 32767 so a path past MAX_PATH is
+        // neither refused nor cut. The path as given when it cannot be resolved (a shell namespace path, a gone item).
+        public static string LongPath(string path)
+        {
+            if (string.IsNullOrEmpty(path) || path.StartsWith("::", StringComparison.Ordinal))
+                return path ?? string.Empty;
+            string p = path.Length > 3 ? path.TrimEnd('\\') : path;
+            string extended = p.StartsWith(@"\\?\", StringComparison.Ordinal) ? p
+                : p.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + p.Substring(2)
+                : @"\\?\" + p;
+            var buffer = new StringBuilder(32767);
+            uint n = GetLongPathNameW(extended, buffer, (uint)buffer.Capacity);
+            if (n == 0 || n >= buffer.Capacity)
+                return p;
+            string r = buffer.ToString();
+            if (r.StartsWith(@"\\?\UNC\", StringComparison.Ordinal))
+                return @"\\" + r.Substring(8);
+            return r.StartsWith(@"\\?\", StringComparison.Ordinal) ? r.Substring(4) : r;
         }
-        Start-Sleep -Milliseconds 100
+
+        public static List<TopWindow> TopWindows()
+        {
+            var found = new List<TopWindow>();
+            EnumProc each = (hwnd, _) =>
+            {
+                var name = new StringBuilder(256);
+                GetClassNameW(hwnd, name, name.Capacity);
+                uint pid;
+                GetWindowThreadProcessId(hwnd, out pid);
+                found.Add(new TopWindow { Hwnd = hwnd.ToInt64(), Class = name.ToString(), Pid = pid, Visible = IsWindowVisible(hwnd) });
+                return true;
+            };
+            EnumWindows(each, IntPtr.Zero);
+            GC.KeepAlive(each);
+            return found;
+        }
+
+        public static int Reveal(string path)
+        {
+            IntPtr pidl;
+            uint attributes;
+            int hr = SHParseDisplayName(path, IntPtr.Zero, out pidl, 0, out attributes);
+            if (hr != 0)
+                return hr;
+            try
+            {
+                return SHOpenFolderAndSelectItems(pidl, 0, IntPtr.Zero, 0);
+            }
+            finally
+            {
+                ILFree(pidl);
+            }
+        }
+    }
+}
+'@
+}
+
+function Resolve-LongPath([string] $path) { [FsaWindowCases.Win32]::LongPath($path) }
+
+# Every window Shell.Application lists, read once: its HWND, its folder resolved to long names, and each selected item
+# as its resolved path and its name. A window that goes away or stops answering mid-read is left out of that read.
+function Get-ExplorerWindows($shell = (New-Object -ComObject Shell.Application)) {
+    foreach ($w in @($shell.Windows())) {
+        try {
+            $doc = $w.Document
+            if ($null -eq $doc) { continue }
+            $folder = Resolve-LongPath ([string]$doc.Folder.Self.Path)
+            $selected = @(foreach ($item in @($doc.SelectedItems())) {
+                    [pscustomobject]@{ Path = (Resolve-LongPath ([string]$item.Path)); Name = [string]$item.Name }
+                })
+            [pscustomobject]@{ Hwnd = [long]$w.HWND; Folder = $folder; Selected = $selected; Window = $w }
+        }
+        catch { }
+    }
+}
+
+# U-114 (SL-088): $target has landed when some window's folder is its parent and its selection is $target alone. Both
+# sides are resolved to long names first, because past MAX_PATH Explorer reports 8.3 aliases, and every window is
+# looked at, because Explorer reuses one already on the parent. An item whose path would not resolve (a folder this user
+# cannot open, say) matches by its resolved parent and its name instead. Returns the window, or null.
+function Find-Landing($windows, [string] $target) {
+    $parent = (Resolve-LongPath ([System.IO.Path]::GetDirectoryName($target))).TrimEnd('\')
+    $leaf = Resolve-LongPath $target
+    $name = [System.IO.Path]::GetFileName($target)
+    foreach ($w in @($windows)) {
+        if (-not [string]::Equals($w.Folder.TrimEnd('\'), $parent, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        if (@($w.Selected).Count -ne 1) { continue }
+        $item = @($w.Selected)[0]
+        $itemParent = (Resolve-LongPath ([System.IO.Path]::GetDirectoryName($item.Path))).TrimEnd('\')
+        if ([string]::Equals($item.Path, $leaf, [System.StringComparison]::OrdinalIgnoreCase) -or
+            ([string]::Equals($itemParent, $parent, [System.StringComparison]::OrdinalIgnoreCase) -and $item.Name -ceq $name)) {
+            return $w
+        }
+    }
+    $null
+}
+
+# $expectedItem in $expectedFolder has landed within $timeoutSec (Find-Landing), polled every 25 ms.
+function Wait-ExplorerSelection($expectedFolder, $expectedItem, [int] $timeoutSec = 5) {
+    $target = Join-Path $expectedFolder $expectedItem
+    $shell = New-Object -ComObject Shell.Application
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.Elapsed.TotalSeconds -lt $timeoutSec) {
+        $landed = Find-Landing @(Get-ExplorerWindows $shell) $target
+        if ($landed) {
+            return [pscustomobject]@{ Matched = $true; Window = $landed.Window; Folder = $landed.Folder; Selected = @($landed.Selected | ForEach-Object Name) }
+        }
+        Start-Sleep -Milliseconds 25
     }
     return [pscustomobject]@{ Matched = $false }
 }
 
-# R-001 (SL-047): reveals items from all results surfaces in Windows Explorer, asserting selection,
-# ancestor fallback for unaddressable names, hidden file note, and proper command binding.
-function Test-R001 {
+function Test-Under([string] $folder, [string[]] $roots) {
+    foreach ($root in $roots) {
+        $r = (Resolve-LongPath $root).TrimEnd('\')
+        if ($folder.Equals($r, [System.StringComparison]::OrdinalIgnoreCase) -or $folder.StartsWith($r + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    $false
+}
+
+# How many entries Shell.Application lists under each HWND, reading each entry's HWND alone, so an entry
+# Get-ExplorerWindows leaves out because its Document cannot be read at this moment (a tab mid-navigation, or one
+# refusing calls while busy) is still counted (review m4). An entry whose HWND cannot be read either is counted under 0:
+# it might share any window.
+function Get-ExplorerHwndCounts($shell) {
+    $counts = @{}
+    foreach ($w in @($shell.Windows())) {
+        $hwnd = 0L
+        try { $hwnd = [long]$w.HWND } catch { $hwnd = 0L }
+        $counts[$hwnd] = 1 + [int]$counts[$hwnd]
+    }
+    $counts
+}
+
+# Closes the Explorer windows a reveal case opened on its own tree (SL-088). The roots are fresh GUID folders under
+# %TEMP% that nothing else has open, so an entry whose folder is one of them or under one is the case's, wherever
+# Explorer put it, a new tab in a window open before the case included (review m1). Windows 11 lists each tab of a
+# tabbed window as its own entry with the window's HWND, and whether Quit() on a tab's entry closes the tab or the whole
+# window was not measured, so an entry is quit only when Shell.Application's raw count of entries under its HWND equals
+# the number of the case's own entries there: a window of the case's own tabs alone. The raw count is read apart from
+# Get-ExplorerWindows, which leaves out entries it cannot read, so a tab of the person's that is busy at that moment still
+# counts (review m4); while any entry's HWND cannot be read, nothing is quit on that look, and the count is taken again
+# just before each Quit, so a tab the person opens meanwhile is seen. A case tab beside anything else is never quit; it
+# is reported, by folder. Waits up to 5 s and returns the folders of the case's entries still there on the last look.
+function Close-CaseWindows([string[]] $roots) {
     $shell = New-Object -ComObject Shell.Application
-    $baselineHwnds = @(try { $shell.Windows() | ForEach-Object { $_.HWND } } catch { @() })
+    $alone = {
+        param($counts, [long] $hwnd, [int] $mine)
+        -not $counts.ContainsKey(0L) -and [int]$counts[$hwnd] -eq $mine
+    }
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    do {
+        $left = @(Get-ExplorerWindows $shell | Where-Object { Test-Under $_.Folder $roots })
+        $counts = Get-ExplorerHwndCounts $shell
+        foreach ($w in $left) {
+            $mine = @($left | Where-Object { $_.Hwnd -eq $w.Hwnd }).Count
+            if (-not (& $alone $counts $w.Hwnd $mine)) { continue }
+            if (-not (& $alone (Get-ExplorerHwndCounts $shell) $w.Hwnd $mine)) { continue }
+            try { $w.Window.Quit() } catch { }
+        }
+        if ($left.Count -gt 0) { Start-Sleep -Milliseconds 100 }
+    } while ($left.Count -gt 0 -and $sw.Elapsed.TotalSeconds -lt 5)
+    $left | ForEach-Object Folder
+}
+
+# What Explorer shows: each window's HWND, folder and selection, and the visible top-level CabinetWClass windows, which
+# include one that is on screen before Shell.Application lists it.
+function Get-ExplorerState {
+    [pscustomobject]@{
+        Windows  = @(Get-ExplorerWindows | ForEach-Object {
+                [pscustomobject]@{ Hwnd = $_.Hwnd; Folder = $_.Folder; Selected = (@($_.Selected | ForEach-Object Path) -join '|') }
+            })
+        Cabinets = @([FsaWindowCases.Win32]::TopWindows() | Where-Object { $_.Class -eq 'CabinetWClass' -and $_.Visible } | ForEach-Object Hwnd)
+    }
+}
+
+# Every way $after differs from $before that a reveal would cause, each naming the folder, so a failure says where
+# Explorer went. Each entry is its HWND, folder and selection together, and every entry of $after that $before does not
+# hold as often is reported: a new window or tab, one moved to another folder, one whose selection changed. An HWND alone
+# is no key, since Windows 11 lists every tab of a tabbed window under the window's one HWND (review m1). A newly visible
+# CabinetWClass is reported too.
+function Compare-ExplorerState($before, $after) {
+    $held = [System.Collections.Generic.List[string]]::new()
+    foreach ($w in $before.Windows) { $held.Add("$($w.Hwnd)|$($w.Folder)|$($w.Selected)") }
+    foreach ($w in $after.Windows) {
+        if (-not $held.Remove("$($w.Hwnd)|$($w.Folder)|$($w.Selected)")) {
+            'an Explorer window or tab on {0} selecting {1} that was not there before (HWND 0x{2:X})' -f (Show $w.Folder), (Show $w.Selected), $w.Hwnd
+        }
+    }
+    foreach ($h in $after.Cabinets) {
+        if ($h -notin $before.Cabinets) { 'a newly visible Explorer window (CabinetWClass 0x{0:X})' -f $h }
+    }
+}
+
+# Explorer watched for $ms from now against $before: every change seen, each once.
+function Watch-ExplorerUnchanged($before, [int] $ms) {
+    $seen = [System.Collections.Generic.List[string]]::new()
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.ElapsedMilliseconds -lt $ms) {
+        foreach ($change in @(Compare-ExplorerState $before (Get-ExplorerState))) {
+            if (-not $seen.Contains($change)) { $seen.Add($change) }
+        }
+        Start-Sleep -Milliseconds 25
+    }
+    $seen.ToArray()
+}
+
+# R-001 (SL-047): reveals items from all results surfaces in Windows Explorer, asserting selection, the refusal of
+# an unaddressable name (SL-088: it opened its folder instead until then), hidden file note, and proper command binding.
+# Every landing is Find-Landing's: resolved long paths, and the target as the only selected item (SL-088).
+function Test-R001 {
+    Initialize-RevealWin32
 
     $case = New-CaseFolder
+    $caseRoots = [System.Collections.Generic.List[string]]::new()
+    $caseRoots.Add($case)
     $denied = $null
     $dupDot = $null
     $links = @()
@@ -3391,30 +3632,21 @@ function Test-R001 {
         New-Item -ItemType SymbolicLink -Path $symDir -Value $outside | Out-Null
         $links += $symDir
 
-        $longDir = Join-Path $root ('p' * 70 + '\' + 'q' * 70 + '\' + 'r' * 70)
+        # Padded so the file's path is exactly 300 characters whatever %TEMP% is (SL-088, criterion 5).
+        $pad = 300 - ($root.Length + ('\' + 'p' * 70 + '\' + 'q' * 70 + '\').Length + '\long_file.bin'.Length)
+        if ($pad -lt 1) { throw "case setup: $root is too long for a 300-character path under it" }
+        $longDir = Join-Path $root ('p' * 70 + '\' + 'q' * 70 + '\' + 'r' * $pad)
         [void][System.IO.Directory]::CreateDirectory($longDir)
         $longFile = Join-Path $longDir 'long_file.bin'
         New-File $longFile $KiB64
-        Check ($longFile.Length -gt 260) "long file path length is > 260 ($($longFile.Length))"
+        CheckEqual 300 $longFile.Length 'long file path length'
 
-        # Before every step (B3-2): close the Explorer windows this case opened, never one that was open at its baseline,
-        # and wait until they are gone, so a step's selection can only be matched by the window that step opened.
+        # Before every step (B3-2): close the Explorer windows this case opened, only ever on the case's own folders
+        # (SL-088, Close-CaseWindows), and wait until they are gone, so a step's selection can only be matched by the
+        # window that step opened.
         $closeNewWindows = {
-            $sh = New-Object -ComObject Shell.Application
-            $sw = [System.Diagnostics.Stopwatch]::StartNew()
-            do {
-                $left = 0
-                foreach ($w in @($sh.Windows())) {
-                    try {
-                        if ($w.HWND -notin $baselineHwnds) {
-                            $left++
-                            $w.Quit()
-                        }
-                    } catch { }
-                }
-                if ($left -gt 0) { Start-Sleep -Milliseconds 100 }
-            } while ($left -gt 0 -and $sw.Elapsed.TotalSeconds -lt 5)
-            Check ($left -eq 0) "the Explorer windows the case opened are closed before the next step ($left left)"
+            $left = @(Close-CaseWindows $caseRoots.ToArray())
+            Check ($left.Count -eq 0) "the Explorer windows the case opened are closed before the next step ($($left.Count) left: $($left -join '; '))"
         }
 
         # 1. largest: largest_file.bin (C-001)
@@ -3441,40 +3673,20 @@ function Test-R001 {
         $tSel = Wait-ExplorerSelection $root 'subfolder'
         Check $tSel.Matched 'subfolder selected in Explorer'
 
-        # 3. tree: dup. (C-005 / B3-2: mis-parsed name, run before root so no leftover window matches)
+        # 3. tree: dup. (C-005 / B3-2: mis-parsed name). SL-088: refused, and nothing is opened in its place; SL-047
+        # opened its folder instead. No window opening or changing in the 2 s after also means the decoy 'dup' is never
+        # selected.
         & $closeNewWindows
+        $beforeDup = Get-ExplorerState
         $runDup = Invoke-RevealRun $root 'tree:dup.'
         CheckEqual '0' $runDup.Exit 'dup. run exit code'
         $dupRow = $runDup.Lines | Where-Object name -eq 'dup.'
         Check ($null -ne $dupRow) 'dup. was logged'
-        CheckEqual 'Ancestor' $dupRow.kind 'dup. kind is Ancestor'
+        CheckEqual 'Failed' $dupRow.kind 'dup. kind is Failed'
         CheckEqual 'NameUnaddressable' $dupRow.reason 'dup. reason is NameUnaddressable'
-        $dupAncestorSel = Wait-ExplorerSelection $case (Split-Path -Leaf $root)
-        Check $dupAncestorSel.Matched 'ancestor reveal-root selected in Explorer for dup.'
-        # Poll for 2 s asserting decoy 'dup' is never selected anywhere in root
-        $pollSw = [System.Diagnostics.Stopwatch]::StartNew()
-        $decoyFound = $false
-        while ($pollSw.ElapsedMilliseconds -lt 2000) {
-            $sh = New-Object -ComObject Shell.Application
-            foreach ($w in $sh.Windows()) {
-                try {
-                    $doc = $w.Document
-                    if ($null -ne $doc -and ($doc.Folder.Self.Path -replace '[/\\]+$', '').ToLowerInvariant() -eq ($root -replace '[/\\]+$', '').ToLowerInvariant()) {
-                        $sel = @($doc.SelectedItems() | ForEach-Object {
-                            $_.Name
-                            try { Split-Path -Leaf $_.Path } catch { }
-                        })
-                        if ('dup' -in $sel) {
-                            $decoyFound = $true
-                            break
-                        }
-                    }
-                } catch { }
-            }
-            if ($decoyFound) { break }
-            Start-Sleep -Milliseconds 100
-        }
-        Check (-not $decoyFound) "decoy 'dup' is never selected"
+        CheckEqual "Couldn't show 'dup.' in Explorer (Explorer can't select 'dup.' by name: it ends in a dot or space, or is a reserved device name). Nothing was opened." $dupRow.status 'dup. status says nothing was opened'
+        $dupChanges = @(Watch-ExplorerUnchanged $beforeDup 2000)
+        Check ($dupChanges.Count -eq 0) "no Explorer window opened or changed for dup., decoy 'dup' included ($($dupChanges -join '; '))"
 
         # 4. tree: root (C-003 / O-017)
         & $closeNewWindows
@@ -3572,7 +3784,7 @@ function Test-R001 {
         $eSel = Wait-ExplorerSelection $root $emojiName
         Check $eSel.Matched 'emoji selected in Explorer'
 
-        # 10. long path >260 chars through App (C-004 / O-017)
+        # 10. long path of exactly 300 chars through App (C-004 / O-017, SL-088)
         & $closeNewWindows
         $runLong = Invoke-RevealRun $root 'tree:long_file.bin'
         CheckEqual '0' $runLong.Exit 'long file run exit code'
@@ -3629,6 +3841,7 @@ function Test-R001 {
         # 15. top surface mid-scan live refresh (O-024) and stopped scan (C-012 / O-022 / O-028)
         # Sized to outlast the hook's stop via New-TopsTree
         $topCase = New-CaseFolder
+        $caseRoots.Add($topCase)
         $topDenied = @()
         try {
             $topRoot = Join-Path $topCase 'top-root'
@@ -3669,19 +3882,337 @@ function Test-R001 {
         }
     }
     finally {
-        # Close only hwnds that were not in baseline
-        $sh = New-Object -ComObject Shell.Application
-        foreach ($w in $sh.Windows()) {
-            try {
-                if ($w.HWND -notin $baselineHwnds) {
-                    $w.Quit()
-                }
-            } catch { }
-        }
+        # Close only the windows this case opened on its own folders (SL-088)
+        [void](Close-CaseWindows $caseRoots.ToArray())
         if ($denied) { Undo-DenyListing $denied }
         if ($dupDot -and [System.IO.File]::Exists($dupDot)) { [System.IO.File]::Delete($dupDot) }
         Remove-Links $links
         Remove-CaseFolder $case
+    }
+}
+
+# ---- A reveal lands or is refused (SL-088) ----
+
+# A deny ACE for FullControl for this user on $folder, not only list-folder as Deny-Listing's, through the .NET ACL API
+# on the \\?\ form, which takes a path past MAX_PATH. The owner keeps READ_CONTROL and WRITE_DAC whatever the DACL says,
+# so Undo-DenyAll can take it away again.
+function Deny-All([string] $folder) {
+    $info = [System.IO.DirectoryInfo]::new('\\?\' + $folder)
+    $acl = [System.IO.FileSystemAclExtensions]::GetAccessControl($info)
+    $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'None', 'None', 'Deny'))
+    [System.IO.FileSystemAclExtensions]::SetAccessControl($info, $acl)
+}
+
+function Undo-DenyAll([string] $folder) {
+    if (-not $folder -or -not [System.IO.Directory]::Exists('\\?\' + $folder)) { return }
+    $info = [System.IO.DirectoryInfo]::new('\\?\' + $folder)
+    $acl = [System.IO.FileSystemAclExtensions]::GetAccessControl($info)
+    $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    $acl.RemoveAccessRuleAll([System.Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'None', 'None', 'Deny'))
+    [System.IO.FileSystemAclExtensions]::SetAccessControl($info, $acl)
+}
+
+# Whether this user can list $folder: the check that Deny-All took, made before the scan, so a step cannot pass on an
+# ordinary folder.
+function Test-Listable([string] $folder) {
+    try {
+        [void][System.IO.Directory]::GetFileSystemEntries('\\?\' + $folder)
+        $true
+    }
+    catch [System.UnauthorizedAccessException] {
+        $false
+    }
+}
+
+# R-002's fixtures carry this file, one line per folder denied in them, written before the deny, so a run that ended
+# before its cleanup leaves what the next run needs to take the denies away before it deletes the tree.
+$R002Marker = 'R-002.fixture'
+
+function Remove-R002Fixture([string] $case) {
+    $marker = Join-Path $case $R002Marker
+    if ([System.IO.File]::Exists($marker)) {
+        foreach ($folder in [System.IO.File]::ReadAllLines($marker)) {
+            if ($folder) { Undo-DenyAll $folder }
+        }
+    }
+    if ([System.IO.Directory]::Exists('\\?\' + $case)) { [System.IO.Directory]::Delete('\\?\' + $case, $true) }
+}
+
+function Clear-StaleR002 {
+    $cases = Join-Path ([System.IO.Path]::GetTempPath()) 'fsa-window-cases'
+    if (-not [System.IO.Directory]::Exists($cases)) { return }
+    foreach ($case in [System.IO.Directory]::GetDirectories($cases)) {
+        if ([System.IO.File]::Exists((Join-Path $case $R002Marker))) {
+            Write-Output "  removing a stale R-002 fixture: $case"
+            Remove-R002Fixture $case
+        }
+    }
+}
+
+# A path under $base exactly $total characters long: folders of 60 characters while more than two parts are left, then
+# one or two parts sharing the rest, the last a leaf that starts with $leaf and is padded to fit. Created by nobody.
+function Get-ExactPath([string] $base, [int] $total, [string] $leaf) {
+    $path = $base.TrimEnd('\')
+    $n = 0
+    while ($total - $path.Length -gt 1 + 69 + 1 + 50) {
+        $path += '\' + ('d{0:D2}' -f $n) + ('_' * 57)
+        $n++
+    }
+    $rest = $total - $path.Length - 1
+    if ($rest -gt 69) {
+        $dir = [int][Math]::Floor(($rest - 1) / 2)
+        $path += '\' + ('d{0:D2}' -f $n) + ('_' * ($dir - 3))
+        $rest = $total - $path.Length - 1
+    }
+    if ($rest -lt $leaf.Length + 1) { throw "case setup: $base is too long for a $total-character path under it" }
+    $path += '\' + $leaf + ('x' * ($rest - $leaf.Length))
+    if ($path.Length -ne $total) { throw "case setup: built a $($path.Length)-character path for $total" }
+    $path
+}
+
+# Top-level #32770 dialogs on screen, owned by explorer.exe or by the process $appId.
+function Get-Dialogs([int] $appId) {
+    $owners = @(@(Get-Process -Name explorer -ErrorAction SilentlyContinue | ForEach-Object Id) + $appId)
+    @([FsaWindowCases.Win32]::TopWindows() | Where-Object { $_.Class -eq '#32770' -and $_.Visible -and [int]$_.Pid -in $owners } | ForEach-Object Hwnd)
+}
+
+# One reveal of $revealTarget (a hook target, surface:name) with Explorer watched while the app runs. Shell.Application's
+# windows are read every 25 ms from the launch, and the first read in which $target has landed (Find-Landing) is kept
+# with the QPC timestamp taken right after it, so the landing is timed from the hook's revealStartQpc on the one
+# system-wide clock. Reads go on for up to 3 s after the app exits if nothing has landed by then. With -WatchDialogs,
+# new #32770 dialogs owned by explorer.exe or the app, and any consent.exe, are looked for from the launch until 500 ms
+# after the landing. $between runs once the scan has ended and before the click (FSA_HOOK_REVEAL_GATE).
+function Invoke-WatchedReveal([string] $root, [string] $revealTarget, [string] $target, [switch] $WatchDialogs, [int] $timeoutSec = 120) {
+    $variables = @{ FSA_HOOK_REVEAL = $revealTarget }
+    $consentBefore = @(Get-Process -Name consent -ErrorAction SilentlyContinue | ForEach-Object Id)
+    $run = Invoke-WithHook 'reveal' $HookDll {
+        $process = Start-App "`"$root`""
+        $dialogsBefore = @(Get-Dialogs $process.Id)
+        $shell = New-Object -ComObject Shell.Application
+        $landed = $null
+        $landedQpc = 0
+        $dialogs = [System.Collections.Generic.List[long]]::new()
+        $consent = [System.Collections.Generic.List[int]]::new()
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        $exitedAt = $null
+        while ($clock.Elapsed.TotalSeconds -lt $timeoutSec) {
+            if ($null -eq $exitedAt -and $process.HasExited) { $exitedAt = $clock.Elapsed.TotalSeconds }
+            if ($null -eq $landed) {
+                $windows = @(Get-ExplorerWindows $shell)
+                $qpc = [System.Diagnostics.Stopwatch]::GetTimestamp()
+                $landed = Find-Landing $windows $target
+                if ($landed) { $landedQpc = $qpc }
+            }
+            if ($WatchDialogs) {
+                foreach ($h in @(Get-Dialogs $process.Id)) { if ($h -notin $dialogsBefore -and -not $dialogs.Contains($h)) { $dialogs.Add($h) } }
+                foreach ($id in @(Get-Process -Name consent -ErrorAction SilentlyContinue | ForEach-Object Id)) { if ($id -notin $consentBefore -and -not $consent.Contains($id)) { $consent.Add($id) } }
+            }
+            $watchDone = -not $WatchDialogs -or ($landed -and ([System.Diagnostics.Stopwatch]::GetTimestamp() - $landedQpc) * 1000 / [System.Diagnostics.Stopwatch]::Frequency -ge 500)
+            if ($null -ne $exitedAt -and (($landed -and $watchDone) -or $clock.Elapsed.TotalSeconds - $exitedAt -ge 3)) { break }
+            Start-Sleep -Milliseconds 25
+        }
+        [pscustomobject]@{
+            Exit      = Wait-App $process 60
+            Landed    = $landed
+            LandedQpc = $landedQpc
+            Dialogs   = $dialogs.ToArray()
+            Consent   = $consent.ToArray()
+        }
+    } $variables
+    $lines = @(Read-HookJson $run.Log)
+    [pscustomobject]@{ Watch = $run.Result; Lines = $lines; Row = @($lines | Where-Object { $_.surface -and $_.name })[0] }
+}
+
+# The checks every landing step makes: the run ended well, the hook logged Exact for this very path and saw the command
+# start, the window's folder and single selection are the target's (Find-Landing), after the click and, when $timed,
+# within 1000 ms of it. Its output is those checks' lines and the milliseconds from the click to the landing, so call it
+# plainly: the runner prints nothing else about a step (review m3).
+function Check-Landing($reveal, [string] $target, [string] $what, [bool] $timed) {
+    CheckEqual '0' $reveal.Watch.Exit "$what run exit code"
+    $row = $reveal.Row
+    Check ($null -ne $row) "$what was logged ($(Show ($reveal.Lines | ConvertTo-Json -Compress)))"
+    if ($null -eq $row) { return }
+    CheckEqual $target $row.path "$what resolved path"
+    CheckEqual 'Exact' $row.kind "$what kind"
+    Check ([long]$row.revealStartQpc -gt 0) "the hook saw the Open in Explorer command start for $what"
+    $landed = $reveal.Watch.Landed
+    Check ($null -ne $landed) "$what landed: its parent's window with it as the only selected item"
+    if ($null -eq $landed -or [long]$row.revealStartQpc -le 0) { return }
+    $ms = [Math]::Round(([long]$reveal.Watch.LandedQpc - [long]$row.revealStartQpc) * 1000.0 / [long]$row.qpcFrequency)
+    Write-Output "        $what landed $ms ms after the click, in the window on $(Show $landed.Folder) selecting $(Show (@($landed.Selected | ForEach-Object Name) -join ', '))"
+    Check ($ms -gt 0) "$what landed after the click, not in a window left from before it ($ms ms)"
+    if ($timed) { Check ($ms -le 1000) "$what landed within 1000 ms of the click ($ms ms)" }
+}
+
+# One refused reveal: $between runs once the scan has ended and before the click, through FSA_HOOK_REVEAL_GATE, and
+# Explorer is compared with how it was before the launch (Compare-ExplorerState) from the launch until 2 s after the
+# app has exited, which it does only after the hook has logged the outcome.
+function Invoke-RefusedReveal([string] $root, [string] $revealTarget, [scriptblock] $between, [int] $timeoutSec = 120) {
+    $gate = Join-Path ([System.IO.Path]::GetTempPath()) ("fsa-window-hook\gate-{0}" -f [guid]::NewGuid().ToString('N'))
+    [void][System.IO.Directory]::CreateDirectory((Split-Path -Parent $gate))
+    $variables = @{ FSA_HOOK_REVEAL = $revealTarget; FSA_HOOK_REVEAL_GATE = $gate }
+    $before = Get-ExplorerState
+    try {
+        $run = Invoke-WithHook 'reveal' $HookDll {
+            $process = Start-App "`"$root`""
+            $changes = [System.Collections.Generic.List[string]]::new()
+            $opened = $false
+            $clock = [System.Diagnostics.Stopwatch]::StartNew()
+            $exitedAt = $null
+            while ($clock.Elapsed.TotalSeconds -lt $timeoutSec) {
+                if (-not $opened -and [System.IO.File]::Exists("$gate.ready")) {
+                    & $between
+                    [System.IO.File]::WriteAllText($gate, '')
+                    $opened = $true
+                }
+                if ($null -eq $exitedAt -and $process.HasExited) { $exitedAt = $clock.Elapsed.TotalSeconds }
+                foreach ($change in @(Compare-ExplorerState $before (Get-ExplorerState))) {
+                    if (-not $changes.Contains($change)) { $changes.Add($change) }
+                }
+                if ($null -ne $exitedAt -and $clock.Elapsed.TotalSeconds - $exitedAt -ge 2) { break }
+                Start-Sleep -Milliseconds 25
+            }
+            [pscustomobject]@{ Exit = Wait-App $process 60; Gated = $opened; Changes = $changes.ToArray() }
+        } $variables
+    }
+    finally {
+        foreach ($file in $gate, "$gate.ready") { if ([System.IO.File]::Exists($file)) { [System.IO.File]::Delete($file) } }
+    }
+    $lines = @(Read-HookJson $run.Log)
+    [pscustomobject]@{ Watch = $run.Result; Lines = $lines; Row = @($lines | Where-Object { $_.surface -and $_.name })[0] }
+}
+
+# R-002 (SL-088): a reveal lands on its item at any path length, folders this user cannot open included, or is refused
+# and opens nothing. Its own tree: a short folder with a deny-all ACE beside a file; files of exactly 161, 300 and 1000
+# characters, 3, 4 and 5 MiB, each beside a sibling; a deny-all folder of exactly 300 characters beside a sibling; and
+# gone\victim.bin. Every deny is checked to have taken before the scan. Before each step the case closes the windows it
+# opened on its own tree and asserts none is left, and every step reveals a target no other step reveals, so no step can
+# match a window an earlier one left. The steps run (b), (a), (c), (d), (e): the 161-character reveal is the run's first,
+# with no warm-up before it, so its 1000 ms bound is met by Explorer's cold reveal window or not at all.
+#   (b) the 161- and then the 300-character file from their biggest-files rows, each within 1000 ms of the click;
+#   (a) the short deny-all folder from its tree row: selected by name, and no #32770 dialog of explorer.exe or the app
+#       and no consent.exe from the launch until 500 ms after the landing;
+#   (c) the 300-character deny-all folder from its tree row, within 1000 ms, with (a)'s watch;
+#   (d) the 1000-character file from its biggest-files row, within 1000 ms, into an Explorer already on its parent with
+#       the sibling selected: the landing must have the file as the only selected item;
+#   (e) gone\ deleted after the scan, then victim.bin revealed from its tree row: Failed, NoLongerExists, the refusal on
+#       the status line, and no Explorer window new, moved, re-selected or newly visible from the launch until 2 s after.
+# -Step runs some of them only, in that order. Cleanup closes only this case's own windows, takes the denies away and
+# deletes the tree; a fixture an earlier run left behind is cleared the same way first.
+function Test-R002 {
+    Initialize-RevealWin32
+    Clear-StaleR002
+    $steps = @('b', 'a', 'c', 'd', 'e' | Where-Object { $R002Steps.Count -eq 0 -or $_ -in $R002Steps })
+    $case = New-CaseFolder
+    try {
+        $marker = Join-Path $case $R002Marker
+        [System.IO.File]::WriteAllText($marker, '')
+        $root = Join-Path $case 'r2'
+
+        $shortDeny = Join-Path $root 'short\denyall_short'
+        [void][System.IO.Directory]::CreateDirectory($shortDeny)
+        New-File (Join-Path $root 'short\sibling.bin') $KiB64
+
+        $files = [ordered]@{}
+        foreach ($spec in @(@(161, 3), @(300, 4), @(1000, 5))) {
+            $file = Get-ExactPath (Join-Path $root "c$($spec[0])") $spec[0] "f$($spec[0])_"
+            New-File $file ($spec[1] * 1MB)
+            New-File (Join-Path ([System.IO.Path]::GetDirectoryName($file)) 'sibling.bin') $KiB64
+            CheckEqual $spec[0] $file.Length "the $($spec[0])-character file's path length"
+            $files[[string]$spec[0]] = $file
+        }
+
+        $deny300 = Get-ExactPath (Join-Path $root 'cden300') 300 'denyall300_'
+        [void][System.IO.Directory]::CreateDirectory($deny300)
+        New-File (Join-Path ([System.IO.Path]::GetDirectoryName($deny300)) 'sibling.bin') $KiB64
+        CheckEqual 300 $deny300.Length "the 300-character deny-all folder's path length"
+
+        $victim = Join-Path $root 'gone\victim.bin'
+        New-File $victim (2 * 1MB)
+
+        foreach ($folder in $shortDeny, $deny300) {
+            [System.IO.File]::AppendAllLines($marker, [string[]]@($folder))
+            Deny-All $folder
+            Check (-not (Test-Listable $folder)) "the deny-all ACE took before the scan: listing $(Show $folder) is refused"
+        }
+
+        $isolate = {
+            $left = @(Close-CaseWindows @($case))
+            Check ($left.Count -eq 0) "no window on the case's own tree is open before the step ($($left.Count) left: $($left -join '; '))"
+        }
+
+        foreach ($s in $steps) {
+            switch ($s) {
+                'b' {
+                    foreach ($length in '161', '300') {
+                        & $isolate
+                        $file = $files[$length]
+                        $leaf = [System.IO.Path]::GetFileName($file)
+                        Write-Output "  (b) the $length-character file from its biggest-files row$(if ($length -eq '161') { ', the run''s first reveal' })"
+                        $r = Invoke-WatchedReveal $root "largest:$leaf" $file
+                        Check-Landing $r $file "the $length-character file" $true
+                    }
+                }
+                'a' {
+                    & $isolate
+                    Write-Output '  (a) the short deny-all folder from its tree row'
+                    $r = Invoke-WatchedReveal $root 'tree:denyall_short' $shortDeny -WatchDialogs
+                    Check-Landing $r $shortDeny 'the short deny-all folder' $false
+                    if ($r.Watch.Landed) { CheckEqual 'denyall_short' @($r.Watch.Landed.Selected)[0].Name 'the selected item is the deny-all folder, by name' }
+                    Check ($r.Watch.Dialogs.Count -eq 0) "no dialog of explorer.exe or the app for the short deny-all folder ($($r.Watch.Dialogs.Count))"
+                    Check ($r.Watch.Consent.Count -eq 0) "no elevation prompt (consent.exe) for the short deny-all folder ($($r.Watch.Consent.Count))"
+                }
+                'c' {
+                    & $isolate
+                    $leaf = [System.IO.Path]::GetFileName($deny300)
+                    Write-Output '  (c) the 300-character deny-all folder from its tree row'
+                    $r = Invoke-WatchedReveal $root "tree:$leaf" $deny300 -WatchDialogs
+                    Check-Landing $r $deny300 'the 300-character deny-all folder' $true
+                    if ($r.Watch.Landed) { CheckEqual $leaf @($r.Watch.Landed.Selected)[0].Name 'the selected item is the 300-character deny-all folder, by name' }
+                    Check ($r.Watch.Dialogs.Count -eq 0) "no dialog of explorer.exe or the app for the 300-character deny-all folder ($($r.Watch.Dialogs.Count))"
+                    Check ($r.Watch.Consent.Count -eq 0) "no elevation prompt (consent.exe) for the 300-character deny-all folder ($($r.Watch.Consent.Count))"
+                }
+                'd' {
+                    & $isolate
+                    $file = $files['1000']
+                    $sibling = Join-Path ([System.IO.Path]::GetDirectoryName($file)) 'sibling.bin'
+                    Write-Output '  (d) the 1000-character file, with Explorer already on its parent and the sibling selected'
+                    $hr = [FsaWindowCases.Win32]::Reveal($sibling)
+                    CheckEqual 0 $hr 'the setup reveal of the sibling'
+                    $pre = Wait-ExplorerSelection ([System.IO.Path]::GetDirectoryName($sibling)) 'sibling.bin'
+                    Check $pre.Matched "Explorer is on the 1000-character file's parent with only the sibling selected before the click"
+                    $preHwnd = if ($pre.Matched) { [long]$pre.Window.HWND } else { 0 }
+                    $r = Invoke-WatchedReveal $root "largest:$([System.IO.Path]::GetFileName($file))" $file
+                    Check-Landing $r $file 'the 1000-character file' $true
+                    if ($r.Watch.Landed) {
+                        Write-Output "        landed in $(if ($r.Watch.Landed.Hwnd -eq $preHwnd) { 'the window already on the parent' } else { 'a new window' })"
+                    }
+                }
+                'e' {
+                    & $isolate
+                    Write-Output '  (e) victim.bin, its parent deleted after the scan'
+                    $gone = Join-Path $root 'gone'
+                    $r = Invoke-RefusedReveal $root 'tree:victim.bin' { [System.IO.Directory]::Delete($gone, $true) }
+                    CheckEqual '0' $r.Watch.Exit 'the deleted-parent run exit code'
+                    Check $r.Watch.Gated 'gone\ was deleted after the scan and before the click'
+                    Check (-not [System.IO.Directory]::Exists($gone)) 'gone\ is not there when the reveal runs'
+                    $row = $r.Row
+                    Check ($null -ne $row) "victim.bin was logged ($(Show ($r.Lines | ConvertTo-Json -Compress)))"
+                    if ($null -ne $row) {
+                        CheckEqual $victim $row.path 'victim.bin resolved path'
+                        CheckEqual 'Failed' $row.kind 'victim.bin kind'
+                        CheckEqual 'NoLongerExists' $row.reason 'victim.bin reason'
+                        CheckEqual "'victim.bin' no longer exists where the scan found it, so Explorer was not opened. Rescan to refresh." $row.status 'the refusal on the status line'
+                    }
+                    Check ($r.Watch.Changes.Count -eq 0) "no Explorer window opened, moved, changed its selection or showed for victim.bin ($($r.Watch.Changes -join '; '))"
+                }
+            }
+        }
+    }
+    finally {
+        [void](Close-CaseWindows @($case))
+        Remove-R002Fixture $case
     }
 }
 
@@ -4103,7 +4634,7 @@ function Test-S009 {
 
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'K-001', 'K-002', 'K-003', 'R-001', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009') + $NetworkCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009') + $NetworkCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })
