@@ -203,8 +203,9 @@ public static partial class ShellReveal
     /// Reveals the plan's target once: parse it, check the ID list stands for the target itself, open its parent with it
     /// selected, free the ID list. The parse's HRESULT is the existence check. A target that does not parse, whose ID list
     /// resolves to another path (as 'dup.' parses to 'dup'), or whose open fails is refused, and no other folder is
-    /// tried; 0x80070002 and 0x80070003 say it no longer exists. Exact comes from the shell's S_OK alone: whether
-    /// Explorer's window then shows the item selected is for the window cases to see (SL-088, criterion 4).
+    /// tried; 0x80070002 and 0x80070003 say it no longer exists. Exact needs the ID list to resolve back to the target and
+    /// the open to return S_OK: whether Explorer's window then shows the item selected is for the window cases to see
+    /// (SL-088, criterion 4).
     /// Unit-testable without calling Explorer, through the shell calls it is given.
     /// </summary>
     internal static RevealOutcome Walk(RevealPlan plan, string? requested, ParseName parse, Func<IntPtr, string?> pathOf, Func<IntPtr, int> open, Action<IntPtr> free)

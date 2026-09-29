@@ -3483,21 +3483,44 @@ function Test-Under([string] $folder, [string[]] $roots) {
     $false
 }
 
+# How many entries Shell.Application lists under each HWND, reading each entry's HWND alone, so an entry
+# Get-ExplorerWindows leaves out because its Document cannot be read at this moment (a tab mid-navigation, or one
+# refusing calls while busy) is still counted (review m4). An entry whose HWND cannot be read either is counted under 0:
+# it might share any window.
+function Get-ExplorerHwndCounts($shell) {
+    $counts = @{}
+    foreach ($w in @($shell.Windows())) {
+        $hwnd = 0L
+        try { $hwnd = [long]$w.HWND } catch { $hwnd = 0L }
+        $counts[$hwnd] = 1 + [int]$counts[$hwnd]
+    }
+    $counts
+}
+
 # Closes the Explorer windows a reveal case opened on its own tree (SL-088). The roots are fresh GUID folders under
 # %TEMP% that nothing else has open, so an entry whose folder is one of them or under one is the case's, wherever
 # Explorer put it, a new tab in a window open before the case included (review m1). Windows 11 lists each tab of a
 # tabbed window as its own entry with the window's HWND, and whether Quit() on a tab's entry closes the tab or the whole
-# window was not measured, so an entry is quit only when every entry with its HWND is under the roots: a window of the
-# case's own tabs alone. A case tab beside anything else is never quit; it is reported, by folder. Waits up to 5 s and
-# returns the folders of the case's entries still there on the last look.
+# window was not measured, so an entry is quit only when Shell.Application's raw count of entries under its HWND equals
+# the number of the case's own entries there: a window of the case's own tabs alone. The raw count is read apart from
+# Get-ExplorerWindows, which leaves out entries it cannot read, so a tab of the person's that is busy at that moment still
+# counts (review m4); while any entry's HWND cannot be read, nothing is quit on that look, and the count is taken again
+# just before each Quit, so a tab the person opens meanwhile is seen. A case tab beside anything else is never quit; it
+# is reported, by folder. Waits up to 5 s and returns the folders of the case's entries still there on the last look.
 function Close-CaseWindows([string[]] $roots) {
+    $shell = New-Object -ComObject Shell.Application
+    $alone = {
+        param($counts, [long] $hwnd, [int] $mine)
+        -not $counts.ContainsKey(0L) -and [int]$counts[$hwnd] -eq $mine
+    }
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     do {
-        $windows = @(Get-ExplorerWindows)
-        $left = @($windows | Where-Object { Test-Under $_.Folder $roots })
+        $left = @(Get-ExplorerWindows $shell | Where-Object { Test-Under $_.Folder $roots })
+        $counts = Get-ExplorerHwndCounts $shell
         foreach ($w in $left) {
-            $others = @($windows | Where-Object { $_.Hwnd -eq $w.Hwnd -and -not (Test-Under $_.Folder $roots) })
-            if ($others.Count -gt 0) { continue }
+            $mine = @($left | Where-Object { $_.Hwnd -eq $w.Hwnd }).Count
+            if (-not (& $alone $counts $w.Hwnd $mine)) { continue }
+            if (-not (& $alone (Get-ExplorerHwndCounts $shell) $w.Hwnd $mine)) { continue }
             try { $w.Window.Quit() } catch { }
         }
         if ($left.Count -gt 0) { Start-Sleep -Milliseconds 100 }
@@ -4003,23 +4026,23 @@ function Invoke-WatchedReveal([string] $root, [string] $revealTarget, [string] $
 
 # The checks every landing step makes: the run ended well, the hook logged Exact for this very path and saw the command
 # start, the window's folder and single selection are the target's (Find-Landing), after the click and, when $timed,
-# within 1000 ms of it. Returns the milliseconds from the click to the landing, or -1.
+# within 1000 ms of it. Its output is those checks' lines and the milliseconds from the click to the landing, so call it
+# plainly: the runner prints nothing else about a step (review m3).
 function Check-Landing($reveal, [string] $target, [string] $what, [bool] $timed) {
     CheckEqual '0' $reveal.Watch.Exit "$what run exit code"
     $row = $reveal.Row
     Check ($null -ne $row) "$what was logged ($(Show ($reveal.Lines | ConvertTo-Json -Compress)))"
-    if ($null -eq $row) { return -1 }
+    if ($null -eq $row) { return }
     CheckEqual $target $row.path "$what resolved path"
     CheckEqual 'Exact' $row.kind "$what kind"
     Check ([long]$row.revealStartQpc -gt 0) "the hook saw the Open in Explorer command start for $what"
     $landed = $reveal.Watch.Landed
     Check ($null -ne $landed) "$what landed: its parent's window with it as the only selected item"
-    if ($null -eq $landed -or [long]$row.revealStartQpc -le 0) { return -1 }
+    if ($null -eq $landed -or [long]$row.revealStartQpc -le 0) { return }
     $ms = [Math]::Round(([long]$reveal.Watch.LandedQpc - [long]$row.revealStartQpc) * 1000.0 / [long]$row.qpcFrequency)
     Write-Output "        $what landed $ms ms after the click, in the window on $(Show $landed.Folder) selecting $(Show (@($landed.Selected | ForEach-Object Name) -join ', '))"
     Check ($ms -gt 0) "$what landed after the click, not in a window left from before it ($ms ms)"
     if ($timed) { Check ($ms -le 1000) "$what landed within 1000 ms of the click ($ms ms)" }
-    $ms
 }
 
 # One refused reveal: $between runs once the scan has ended and before the click, through FSA_HOOK_REVEAL_GATE, and
@@ -4128,14 +4151,14 @@ function Test-R002 {
                         $leaf = [System.IO.Path]::GetFileName($file)
                         Write-Output "  (b) the $length-character file from its biggest-files row$(if ($length -eq '161') { ', the run''s first reveal' })"
                         $r = Invoke-WatchedReveal $root "largest:$leaf" $file
-                        [void](Check-Landing $r $file "the $length-character file" $true)
+                        Check-Landing $r $file "the $length-character file" $true
                     }
                 }
                 'a' {
                     & $isolate
                     Write-Output '  (a) the short deny-all folder from its tree row'
                     $r = Invoke-WatchedReveal $root 'tree:denyall_short' $shortDeny -WatchDialogs
-                    [void](Check-Landing $r $shortDeny 'the short deny-all folder' $false)
+                    Check-Landing $r $shortDeny 'the short deny-all folder' $false
                     if ($r.Watch.Landed) { CheckEqual 'denyall_short' @($r.Watch.Landed.Selected)[0].Name 'the selected item is the deny-all folder, by name' }
                     Check ($r.Watch.Dialogs.Count -eq 0) "no dialog of explorer.exe or the app for the short deny-all folder ($($r.Watch.Dialogs.Count))"
                     Check ($r.Watch.Consent.Count -eq 0) "no elevation prompt (consent.exe) for the short deny-all folder ($($r.Watch.Consent.Count))"
@@ -4145,7 +4168,7 @@ function Test-R002 {
                     $leaf = [System.IO.Path]::GetFileName($deny300)
                     Write-Output '  (c) the 300-character deny-all folder from its tree row'
                     $r = Invoke-WatchedReveal $root "tree:$leaf" $deny300 -WatchDialogs
-                    [void](Check-Landing $r $deny300 'the 300-character deny-all folder' $true)
+                    Check-Landing $r $deny300 'the 300-character deny-all folder' $true
                     if ($r.Watch.Landed) { CheckEqual $leaf @($r.Watch.Landed.Selected)[0].Name 'the selected item is the 300-character deny-all folder, by name' }
                     Check ($r.Watch.Dialogs.Count -eq 0) "no dialog of explorer.exe or the app for the 300-character deny-all folder ($($r.Watch.Dialogs.Count))"
                     Check ($r.Watch.Consent.Count -eq 0) "no elevation prompt (consent.exe) for the 300-character deny-all folder ($($r.Watch.Consent.Count))"
@@ -4161,7 +4184,7 @@ function Test-R002 {
                     Check $pre.Matched "Explorer is on the 1000-character file's parent with only the sibling selected before the click"
                     $preHwnd = if ($pre.Matched) { [long]$pre.Window.HWND } else { 0 }
                     $r = Invoke-WatchedReveal $root "largest:$([System.IO.Path]::GetFileName($file))" $file
-                    [void](Check-Landing $r $file 'the 1000-character file' $true)
+                    Check-Landing $r $file 'the 1000-character file' $true
                     if ($r.Watch.Landed) {
                         Write-Output "        landed in $(if ($r.Watch.Landed.Hwnd -eq $preHwnd) { 'the window already on the parent' } else { 'a new window' })"
                     }
