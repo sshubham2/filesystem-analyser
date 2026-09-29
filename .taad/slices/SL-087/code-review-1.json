@@ -1,0 +1,227 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-087",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-09-29T12:02:02.257Z",
+ "head": "0863450014cfbc6dbc67be79ea5183b94e20cfe5",
+ "run_id": 2221,
+ "summary": "The code does what the design, with its accepted review fixes, said it would. I found nothing that should stop the slice.\n\nEngine side: FolderDone calls SetChildren before its error branch (Scanner.cs:275-286), so `ChildCount(folder) > 0` is simply \"the listing returned at least one entry\". The stamp is therefore correct by construction on both finished and stopped scans. UnreadableFolder is a sealed record class with an internal constructor and get-only properties, so the App can neither make a record nor copy one with `with { Kind = ... }`.\n\nView side: UnreadableRows.Build keeps one row per Entry (the first occurrence wins), caches the reason per code, and sorts with ComparePaths. ComparePaths is a total order: case is ignored, separators rank -1, a prefix comes first, and an ordinal tie-break separates paths that differ only in case. Reason uses the winerror.h-named phrase table (I checked all 22 numbers against their names), otherwise the message on one line plus '(Windows error N)', otherwise the empty-message fallback. MainWindow sets ItemsSource to Build's result and counts rows in the header. The ListBox shows ToString() == Text, and PathOf/reveal resolve to the new type. Nothing outside src or Core.Tests (window hook, StallRig, eng scripts) referenced the old nested UnreadableRow or the positional record.\n\nI read every test the matrix names, and each one feeds its shape in:\n- a record holding both kinds, in reverse path order\n- Entry 4 three times, with 5/NothingListed, then 59/ListedPartway, then 363/ListedPartway\n- 10,050 unique paths in seeded-shuffle order, including 'd1\\sub N' against 'd10'\n- the separator-straddle pins, plus the d2/d10 pair\n- readme/README/ReadMe in four record orders\n- a real deny-ACL folder (code 5, ChildCount 0)\n- a real 2000-file folder failing at its third buffer (995, ChildCount 1..1999)\n- the 22 phrase codes\n- 2/362/363/1920/1921/4390-4394\n- 9999/15999/65535\n- null, empty, whitespace and CR/LF-only injected messages\n\nWhat I ran myself:\n- the solution build: 0 warnings, 0 errors\n- the full default suite: 478 passed, 0 failed, 0 skipped\n- rules-parity: AGREE on 14 facts, 18 entries, 38 patterns\n- the rules harness for plants F27, F28 and F29 against the real taad3.fitness: all three AS-RECORDED, clean baseline with 0 hits, exit 0\n- Fitness op=check: 67 rules, all hold\n\nI did not re-run the GUI window cases (S-001/S-007/S-009) or the publish; I read those runs in the builder's record. The deferred items (M2's opened bit, m1, the tree's wording, cases C-008 and C-009) are decisions a person recorded, and the reasons for them still hold against this code. Each stage has one attempt, so there is no loop.\n\nSecond round: Second round, reading the code to break it. I found two new minor defects, both confirmed by running code. Neither stops the slice working for the usual shapes, and both have small fixes.\n\n(1) Rule 2's xUnit twin misses the ternary layout this repo actually uses. AssertNoMatch (ArchitectureRulesTests.cs:226-245) matches one line at a time, while Fitness matches the whole file. So a kind chosen by a ternary written the repo's usual way, with `?` and `:` leading their own lines (24 lines in src/FsAnalyser.App do this, including FolderTreeNode.cs), passes `dotnet test` and fails only in Fitness.\n- I planted that three-line form in MainWindow.xaml.cs.\n- `TheAppNeverDecidesAFailedFolderKind` passed (1/1).\n- Fitness op=check reported the violation at MainWindow.xaml.cs:502.\n- Plant F29 uses only the one-line form, so the harness never shows this.\n- I restored the file with git checkout. The tree is back to its committed state, and git status shows only the engine's own .taad files.\n\n(2) ComparePaths claims 'a folder comes straight before everything under it', and that is false when case-variant siblings have descendants. A copy of the method, compiled with Add-Type, sorts [C:\\cs\\readme\\x, C:\\cs\\README\\y, C:\\cs\\readme, C:\\cs\\README] as `C:\\cs\\README | C:\\cs\\readme | C:\\cs\\readme\\x | C:\\cs\\README\\y`. README's child ends up two rows away from it. The ordinal tie-break applies to the whole path, not to each component. The C-005 test feeds only leaf names under their parent, so it cannot see this.\n\nOther attack surfaces I checked, all quiet:\n- **Message sweep:** across 1..16000, no Win32 message contains U+2028, U+2029, NEL, VT or FF. Only 5325 has a tab, which does not break a line and is not a folder-open code. OneLine's `[\\r\\n]+` also handles a lone CR (tested).\n- **Error codes:** errors come from GetLastPInvokeError and are always Win32 codes. No NTSTATUS or negative value reaches Reason.\n- **Store paths:** GetPath joins names with '\\\\' with no `\\\\?\\` prefix, so all rows share one form.\n- **Kind stamp:** FolderDone calls SetChildren before stamping, so the stamp cannot see a half-committed listing, and a cancelled listing returns before any record is made.\n- **Rule 1:** none of its patterns can realistically be split across lines.\n\nIn round 1, the build, the 478 tests, rules-parity and the F27–F29 harness rows all passed.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The code does what the design, with its accepted review fixes, said it would. I found nothing that should stop the slice.\n\nEngine side: FolderDone calls SetChildren before its error branch (Scanner.cs:275-286), so `ChildCount(folder) > 0` is simply \"the listing returned at least one entry\". The stamp is therefore correct by construction on both finished and stopped scans. UnreadableFolder is a sealed record class with an internal constructor and get-only properties, so the App can neither make a record nor copy one with `with { Kind = ... }`.\n\nView side: UnreadableRows.Build keeps one row per Entry (the first occurrence wins), caches the reason per code, and sorts with ComparePaths. ComparePaths is a total order: case is ignored, separators rank -1, a prefix comes first, and an ordinal tie-break separates paths that differ only in case. Reason uses the winerror.h-named phrase table (I checked all 22 numbers against their names), otherwise the message on one line plus '(Windows error N)', otherwise the empty-message fallback. MainWindow sets ItemsSource to Build's result and counts rows in the header. The ListBox shows ToString() == Text, and PathOf/reveal resolve to the new type. Nothing outside src or Core.Tests (window hook, StallRig, eng scripts) referenced the old nested UnreadableRow or the positional record.\n\nI read every test the matrix names, and each one feeds its shape in:\n- a record holding both kinds, in reverse path order\n- Entry 4 three times, with 5/NothingListed, then 59/ListedPartway, then 363/ListedPartway\n- 10,050 unique paths in seeded-shuffle order, including 'd1\\sub N' against 'd10'\n- the separator-straddle pins, plus the d2/d10 pair\n- readme/README/ReadMe in four record orders\n- a real deny-ACL folder (code 5, ChildCount 0)\n- a real 2000-file folder failing at its third buffer (995, ChildCount 1..1999)\n- the 22 phrase codes\n- 2/362/363/1920/1921/4390-4394\n- 9999/15999/65535\n- null, empty, whitespace and CR/LF-only injected messages\n\nWhat I ran myself:\n- the solution build: 0 warnings, 0 errors\n- the full default suite: 478 passed, 0 failed, 0 skipped\n- rules-parity: AGREE on 14 facts, 18 entries, 38 patterns\n- the rules harness for plants F27, F28 and F29 against the real taad3.fitness: all three AS-RECORDED, clean baseline with 0 hits, exit 0\n- Fitness op=check: 67 rules, all hold\n\nI did not re-run the GUI window cases (S-001/S-007/S-009) or the publish; I read those runs in the builder's record. The deferred items (M2's opened bit, m1, the tree's wording, cases C-008 and C-009) are decisions a person recorded, and the reasons for them still hold against this code. Each stage has one attempt, so there is no loop.\n\nSecond round: Second round, reading the code to break it. I found two new minor defects, both confirmed by running code. Neither stops the slice working for the usual shapes, and both have small fixes.\n\n(1) Rule 2's xUnit twin misses the ternary layout this repo actually uses. AssertNoMatch (ArchitectureRulesTests.cs:226-245) matches one line at a time, while Fitness matches the whole file. So a kind chosen by a ternary written the repo's usual way, with `?` and `:` leading their own lines (24 lines in src/FsAnalyser.App do this, including FolderTreeNode.cs), passes `dotnet test` and fails only in Fitness.\n- I planted that three-line form in MainWindow.xaml.cs.\n- `TheAppNeverDecidesAFailedFolderKind` passed (1/1).\n- Fitness op=check reported the violation at MainWindow.xaml.cs:502.\n- Plant F29 uses only the one-line form, so the harness never shows this.\n- I restored the file with git checkout. The tree is back to its committed state, and git status shows only the engine's own .taad files.\n\n(2) ComparePaths claims 'a folder comes straight before everything under it', and that is false when case-variant siblings have descendants. A copy of the method, compiled with Add-Type, sorts [C:\\cs\\readme\\x, C:\\cs\\README\\y, C:\\cs\\readme, C:\\cs\\README] as `C:\\cs\\README | C:\\cs\\readme | C:\\cs\\readme\\x | C:\\cs\\README\\y`. README's child ends up two rows away from it. The ordinal tie-break applies to the whole path, not to each component. The C-005 test feeds only leaf names under their parent, so it cannot see this.\n\nOther attack surfaces I checked, all quiet:\n- **Message sweep:** across 1..16000, no Win32 message contains U+2028, U+2029, NEL, VT or FF. Only 5325 has a tab, which does not break a line and is not a folder-open code. OneLine's `[\\r\\n]+` also handles a lone CR (tested).\n- **Error codes:** errors come from GetLastPInvokeError and are always Win32 codes. No NTSTATUS or negative value reaches Reason.\n- **Store paths:** GetPath joins names with '\\\\' with no `\\\\?\\` prefix, so all rows share one form.\n- **Kind stamp:** FolderDone calls SetChildren before stamping, so the stamp cannot see a half-committed listing, and a cancelled listing returns before any record is made.\n- **Rule 1:** none of its patterns can realistically be split across lines.\n\nIn round 1, the build, the 478 tests, rules-parity and the F27–F29 harness rows all passed.",
+  "findings": [
+   {
+    "id": "R2-m1",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "Rule 2's twin cannot see the ternary layout this repo writes. The twin's AssertNoMatch runs the pattern one line at a time (File.ReadAllLines, ArchitectureRulesTests.cs:234-239). Fitness runs it over the whole file (plants.json S09 note: 'Fitness matches a must_not_match pattern over the whole file'). The pattern `\\?\\s*UnreadableKind\\.(NothingListed|ListedPartway)\\s*:` needs the ':' after the branch. In the repo's usual layout (`cond` / `    ? UnreadableKind.ListedPartway` / `    : UnreadableKind.NothingListed;`, the form used on 24 App lines, FolderTreeNode's kind note among them) the ':' is on the next line. So `dotnet test` stays green on exactly the re-derivation the rule's own 'because' names, and only Fitness fires. The twin exists so a local test run fails when the rule breaks (spike constraint), and for this shape it does not. Plant F29 is one-line, so rules-harness records AS-RECORDED and hides the gap. Measured: with the three-line plant in MainWindow.xaml.cs, the Fact passed 1/1 and Fitness reported a violation at MainWindow.xaml.cs:502.",
+    "evidence": "tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs:212-217 (the Fact) and :226-245 (line-by-line matching); .taad/fitness.yaml:245-251; eng/rules-harness/plants.json F29 (one-line text only).",
+    "fix": "Drop the trailing `\\s*:` so the pattern holds on the `?` line alone, and exclude `??`: `(?<!\\?)\\?\\s*UnreadableKind\\.(NothingListed|ListedPartway)\\b`. Put it in both the yaml entry and the twin, and add a plant row with the three-line form (expect fire/fire)."
+   },
+   {
+    "id": "R2-m2",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "ComparePaths separates a folder from its descendants when a sibling differs from it only in case. The case-insensitive rank runs across the whole path, and the ordinal tie-break is applied only to full paths of equal length. `C:\\cs\\README\\y` therefore compares against `C:\\cs\\readme` as a longer path, not as a child of a different folder. Measured by compiling a copy of the method: [readme\\x, README\\y, readme, README] under C:\\cs sorts to `README | readme | readme\\x | README\\y`. That breaks the doc comment's claim ('a folder comes straight before everything under it', UnreadableRows.cs:121-122) and the design's key decision ('descendants stay directly under their folder') in the case-sensitive-directory shape that C-005 names. The C-005 test (UnreadableRowsTests.cs:107-118) feeds only leaves under C:\\cs, so it passes. The order is still total and deterministic, so Done-when #2 holds; it is the grouping that breaks.",
+    "evidence": "src/FsAnalyser.App/UnreadableRows.cs:126-138; tests/FsAnalyser.Core.Tests/UnreadableRowsTests.cs:107-118",
+    "fix": "Break case ties per path component, not per whole path. In the loop, remember the first ordinal char difference in the current component. Return it when both strings reach a separator at the same index, or when the shorter string ends where the longer one has a separator. Otherwise keep the current length and ordinal fallbacks. Add `C:\\cs\\README\\y` and `C:\\cs\\readme\\x` to the C-005 test, expecting `README, README\\y, ReadMe, readme, readme\\x`."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "tests/FsAnalyser.Core.Tests/UnreadableRowsTests.cs:15-31 builds [7/995/ListedPartway, 3/5/NothingListed] and asserts full row equality: path from pathOf, kind, code, reason, exact Text and ToString. Passed in my 478-test run."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "UnreadableRowsTests.cs:34-54: Entry 4 is recorded as 5/NothingListed, then 59/ListedPartway, then 363/ListedPartway. The test gets one row with 5/NothingListed and asserts pathOf was asked once per folder. The code is UnreadableRows.cs:66-72 (HashSet on Entry)."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "UnreadableRowsTests.cs:62-79: 10,050 unique paths in a seeded shuffle. It asserts the count, the same path set, strict ComparePaths order on every consecutive pair, and that every Text is a real row. Build has no cap (UnreadableRows.cs:62-79)."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "UnreadableRowsTests.cs:86-100 Theory pins [a, a\\b, a b, a.b, d1\\x, d10, d2], the design's C:\\A..C:\\B case and a mixed '/' and '\\' case. Rank puts both separators at -1 (UnreadableRows.cs:138)."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "UnreadableRowsTests.cs:107-118 feeds readme, README and ReadMe in four orders and gets the same expected order each time. The ordinal tie-break is at UnreadableRows.cs:135."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "tests/FsAnalyser.Core.Tests/UnreadableFolderTests.cs:29 asserts new UnreadableFolder(entry, 5, UnreadableKind.NothingListed) on a real temp folder denied FileListDirectory, with ChildCount 0."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "UnreadableFolderTests.cs:46-72: a real 2000-file tree through TopLevelRowTextTests.ScanFailingPartway (made internal). It asserts ListedPartway/995 with ChildCount 1..1999 beside a NothingListed/5 sibling, and Build's two texts. The stamp is Scanner.cs:285-286."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "UnreadableRowsTests.cs:125-154 has 22 InlineData rows with exact phrase equality, no number, and a check that the code is not 'Unknown error'. I checked the phrase table in UnreadableRows.cs:29-50,108-118 against the winerror.h names and numbers."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "UnreadableRowsTests.cs:161-179 over 2, 362, 363, 1920, 1921 and 4390-4394: Reason == Win32Exception message + ' (Windows error N)', and PlainPhrase is null."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "UnreadableRowsTests.cs:182-193 (9999, 15999, 65535) plus the 1..16000 sweep at :216-231. Reason appends the decimal number (UnreadableRows.cs:102-104)."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "UnreadableRowsTests.cs:199-210 injects null, '', whitespace and CR/LF-only messages through the internal Reason(int, Func<int,string?>) overload and gets 'no description from Windows (Windows error 4390)'. The code is UnreadableRows.cs:97-105."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": ".taad/fitness.yaml:232-243 'TheUnreadableViewTouchesNoFileSystem (*.cs)' and its twin ArchitectureRulesTests.cs:191-203 have identical patterns. Plants F27 and F28 are in eng/rules-harness/plants.json:70-75. I re-ran harness.py --only F27,F28,F29: all three AS-RECORDED, the clean baseline had 0 hits, so the Win32Exception line stays quiet."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "Scanner.cs:275-286: AddEntry and SetChildren run before the error branch, so ChildCount equals what was listed when the record is written. The real-tree partway test (UnreadableFolderTests.cs:46-72) confirms it on a Completed scan."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "UnreadableRowsTests.cs:216-231: the sweep requires every reason to be non-empty with no line break, and requires the number only where PlainPhrase is null. The phrase theory keeps exact equality."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "src/FsAnalyser.Core/Scanning/ScanResult.cs:25-37 defines the enum { NothingListed, ListedPartway }. Its doc comment states that a refused open and an opened-then-failed-before-the-first-entry folder are both NothingListed. The reader change is deferred by decision."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "ScanResult.cs:39-59 makes UnreadableFolder a sealed record class with an internal constructor and get-only properties. Core.csproj grants InternalsVisibleTo only to Core.Tests. Rule 2 (fitness.yaml:245-251, twin ArchitectureRulesTests.cs:212-217) has (?m), including_comments: true, placement above the first '# settled by' marker at line 253, and plant F29, which I saw fire in both engines."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "The build record carries Get-Culture en-IN, Get-UICulture en-US and the LCID/langId measurements. UnreadableRowsTests.cs:156-160 says the #5 theory does not check the language (review m2). This is a record-only fix, as decided."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "UnreadableRows.cs:29-50 declares the codes as winerror.h-named constants. UnreadableRowsTests.cs:152-153 asserts no 'Unknown error' for each family code."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "fitness.yaml:239-241 and ArchitectureRulesTests.cs:200-202 carry the same Path.Exists, StreamReader/StreamWriter and DriveInfo/RandomAccess/File(System)Info patterns. Plant F28 (Path.Exists with no System.IO token) fires in both engines, as seen in my harness run."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "UnreadableRows.cs:144-148 OneLine turns each '\\s*[\\r\\n]+\\s*' run into one space and trims. The sweep at UnreadableRowsTests.cs:225-226 asserts no CR/LF for 1..16000, and the injected multi-line cases are at :204-205."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "The ComparePaths doc comment (UnreadableRows.cs:120-125) says the order is literal and 'd10' comes before 'd2'. The d2/d10 pair is in the pinned Theory at UnreadableRowsTests.cs:87-88."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "UnreadableRowsTests.ANothingListedAndAPartwayEntryGiveOneRowEachWithTheirOwnKind: the record holds one ListedPartway and one NothingListed entry, in reverse path order, and the rows are compared one to one."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "UnreadableRowsTests.AnEntryRecordedThreeTimesIsOneRowWithItsFirstKindAndCode: Entry 4 appears three times with codes 5, 59 and 363 and kinds NothingListed, ListedPartway and ListedPartway, with another entry between them."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "UnreadableRowsTests.TenThousandAndFiftyShuffledEntriesAreAllListedInPathOrder: 10,050 distinct paths, shuffled with new Random(87). It asserts the count, the set and strict pairwise order."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "UnreadableRowsTests.SiblingsThatStraddleTheSeparatorSortAfterTheFolderAndEverythingInIt: its first InlineData holds exactly 'a', 'a\\b', 'a b', 'a.b', 'd1\\x', 'd10' (plus 'd2') in scrambled input order."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "UnreadableRowsTests.PathsThatDifferOnlyInCaseSortTheSameWhateverTheRecordOrder: readme, README and ReadMe in four record orders, all giving the same order."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "UnreadableFolderTests.AFolderThatCannotBeListedIsRecordedAndItsSiblingsAreCounted: a real temp folder denied FileListDirectory is recorded as code 5 with NothingListed and ChildCount 0."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "UnreadableFolderTests.AFolderListedPartwayIsRecordedAsListedPartwayAndTheListSaysSo: a real 2000-file folder fails at its third buffer through the ScanFailingPartway failpoint. The result is ListedPartway/995 with ChildCount 1..1999."
+   },
+   {
+    "key": "C-008",
+    "exercised": "no",
+    "evidence": "No test, and the design marked this case not material. The stamp has no branch for it (Scanner.cs:286 is ChildCount-only), and ScanResult.cs:25-29 documents it as NothingListed. The deferral (the M2 decision) still holds against this code."
+   },
+   {
+    "key": "C-009",
+    "exercised": "no",
+    "evidence": "No test sends a stopped scan's record through Build. The design marked this case not material. Build takes no scan status (UnreadableRows.cs:62-79), and FolderDone returns before recording when the listing was cancelled (Scanner.cs:272-273), so the deferral reason still holds."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "UnreadableRowsTests.ACodeOfAPlainFamilyGetsItsPhrase: 22 InlineData rows, one for each code in the design's list."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "UnreadableRowsTests.AnotherCodeGetsWindowsOwnMessageAndItsNumber: InlineData for 2, 362, 363, 1920, 1921 and 4390-4394."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "UnreadableRowsTests.ACodeWithNoMessageStillNamesItsNumber over 9999, 15999 and 65535, plus the sweep over 1..16000."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "UnreadableRowsTests.AnEmptyOrBrokenSystemMessageStillGivesAOneLineReason: null, empty, whitespace and CR/LF-only messages injected through Reason(int, Func<int,string?>)."
+   },
+   {
+    "key": "C-014",
+    "exercised": "yes",
+    "evidence": "Plant F27 inserts System.IO.File.Exists into UnreadableRows.cs's Build loop and leaves the Win32Exception line in place. I re-ran harness.py --only F27,F28,F29: it fires in both xUnit and Fitness, and the clean baseline has 0 hits."
+   }
+  ],
+  "drift": [
+   "No new undeclared departures of substance. Every structural departure (M2/M3 record shape, rule names and placement, the interop pattern spelling, the third construction site, the test link name, the Func<int,string?> overload) is declared.",
+   "Name only, not declared: the design's comparer 'PathOrder' is `UnreadableRows.ComparePaths` (an internal static method used through a lambda in Build). It behaves as the design specified.",
+   "Known and declared, recorded here for the next reader: the root-failure banner (MainWindow.xaml.cs:471) still formats reasons through its own Win32Message, so a root refused with code 5 reads 'Access is denied. (Windows error 5)' while a subfolder reads 'access denied'. The design chose to leave the banner unchanged.",
+   "No new undeclared departures beyond round 1. The design's 'PathOrder' is ComparePaths, a name only, and the root banner keeps its own Win32Message formatting, as the design chose.",
+   "The design's key decision says ComparePaths keeps 'descendants directly under their folder'. The code does not do that for case-variant sibling folders. This is filed as m2 rather than drift, because the code matches the design's stated mechanism and the claim is what is wrong."
+  ],
+  "matches_design": true,
+  "unreviewed": [
+   ".taad/slices/SL-087/*.json (the stage accounts; not code, read only through the brief)"
+  ],
+  "second_round": {
+   "run_id": 2222,
+   "filed": 2
+  }
+ }
+}

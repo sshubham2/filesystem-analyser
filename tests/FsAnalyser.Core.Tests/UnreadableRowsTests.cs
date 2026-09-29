@@ -100,21 +100,28 @@ public class UnreadableRowsTests
     }
 
     /// <summary>
-    /// Two folders whose names differ only in case, as a case-sensitive directory can hold. Ignoring case they tie; the
-    /// ordinal tie-break puts them in one order whatever order the record holds them in, so the list is the same each run.
+    /// Folders whose names differ only in case, as a case-sensitive directory can hold, with folders under two of them.
+    /// Ignoring case they tie; the ordinal tie-break, taken where each name ends, puts them in one order whatever order
+    /// the record holds them in, and keeps what is under each directly below it (review R2-m2).
     /// </summary>
     [Fact]
     public void PathsThatDifferOnlyInCaseSortTheSameWhateverTheRecordOrder()
     {
-        string[] paths = [@"C:\cs\readme", @"C:\cs\README", @"C:\cs\ReadMe", @"C:\cs"];
-        string[] expected = [@"C:\cs", @"C:\cs\README", @"C:\cs\ReadMe", @"C:\cs\readme"];
+        string[] paths = [@"C:\cs\readme", @"C:\cs\README", @"C:\cs\ReadMe", @"C:\cs", @"C:\cs\README\y", @"C:\cs\readme\x"];
+        string[] expected = [@"C:\cs", @"C:\cs\README", @"C:\cs\README\y", @"C:\cs\ReadMe", @"C:\cs\readme", @"C:\cs\readme\x"];
 
-        foreach (int[] order in new[] { new[] { 0, 1, 2, 3 }, [3, 2, 1, 0], [1, 3, 0, 2], [2, 0, 3, 1] })
+        foreach (int[] order in new[] { new[] { 0, 1, 2, 3, 4, 5 }, [5, 4, 3, 2, 1, 0], [5, 1, 4, 0, 3, 2], [4, 2, 5, 3, 0, 1], [0, 5, 1, 4, 2, 3] })
         {
             UnreadableFolder[] record = order.Select(e => new UnreadableFolder(e, 5, UnreadableKind.NothingListed)).ToArray();
             Assert.Equal(expected, UnreadableRows.Build(record, e => paths[e]).Select(r => r.Path));
         }
         Assert.NotEqual(0, UnreadableRows.ComparePaths(@"C:\cs\readme", @"C:\cs\README"));
+        // Each pair both ways, so the order is antisymmetric on the shapes above.
+        foreach (string p in paths)
+        {
+            foreach (string q in paths)
+                Assert.Equal(-Math.Sign(UnreadableRows.ComparePaths(q, p)), Math.Sign(UnreadableRows.ComparePaths(p, q)));
+        }
     }
 
     /// <summary>

@@ -120,22 +120,40 @@ public static partial class UnreadableRows
     /// <summary>
     /// The list's order: character by character, ignoring case, with the path separator below every other character,
     /// so a folder comes straight before everything under it and a sibling named 'a b' or 'a.b' cannot come between.
-    /// A path comes before the longer paths it begins, and paths equal but for case are then ordered ordinally, so no
-    /// two different paths compare equal. Literal, not Explorer's numeric order: 'd10' comes before 'd2'.
+    /// A path comes before the longer paths it begins. Two names equal but for case, as a case-sensitive folder can
+    /// hold, are ordered ordinally where the name ends, one path component at a time, so each keeps what is under it
+    /// directly below it (review R2-m2); no two different paths compare equal. Literal, not Explorer's numeric order:
+    /// 'd10' comes before 'd2'.
     /// </summary>
     internal static int ComparePaths(string a, string b)
     {
         int shorter = Math.Min(a.Length, b.Length);
+        int caseTie = 0; // the first ordinal difference in the current component, where case alone differs so far
         for (int i = 0; i < shorter; i++)
         {
             int x = Rank(a[i]), y = Rank(b[i]);
             if (x != y)
                 return x < y ? -1 : 1;
+            if (x == SeparatorRank)
+            {
+                if (caseTie != 0)
+                    return caseTie; // both names end here, equal but for case
+            }
+            else if (caseTie == 0 && a[i] != b[i])
+            {
+                caseTie = a[i] < b[i] ? -1 : 1;
+            }
         }
-        return a.Length != b.Length ? a.Length.CompareTo(b.Length) : string.CompareOrdinal(a, b);
+        if (a.Length == b.Length)
+            return caseTie != 0 ? caseTie : string.CompareOrdinal(a, b);
+        // One begins the other. Where the shorter one's last name also ends in the longer, the names are compared as above.
+        string longer = a.Length > b.Length ? a : b;
+        return caseTie != 0 && Rank(longer[shorter]) == SeparatorRank ? caseTie : a.Length.CompareTo(b.Length);
     }
 
-    private static int Rank(char c) => c is '\\' or '/' ? -1 : char.ToUpperInvariant(c);
+    private const int SeparatorRank = -1;
+
+    private static int Rank(char c) => c is '\\' or '/' ? SeparatorRank : char.ToUpperInvariant(c);
 
     // The runtime's lookup of a Win32 code's message, the one it gives an exception, in the user's language.
     private static string SystemMessage(int win32Error) => new Win32Exception(win32Error).Message;

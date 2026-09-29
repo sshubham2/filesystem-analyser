@@ -207,13 +207,15 @@ public class ArchitectureRulesTests
     /// read off its record, so the list cannot disagree with the engine about a folder. The compiler holds the rest of
     /// it: the record's constructor is internal to Core and nothing on it can be set, so the App cannot make a record
     /// or copy one with another kind (review M3). This catches the kind chosen by a ternary, the shape a kind worked
-    /// out again from a child count takes; a switch or an if/else passes it. Comments are matched too.
+    /// out again from a child count takes; a switch or an if/else passes it. The pattern holds on the '?' line alone,
+    /// so a ternary laid out over three lines, as this repo writes them, fails here as well as in Fitness, which
+    /// matches the whole file (review R2-m1); '??' is not a ternary and is left out. Comments are matched too.
     /// </summary>
     [Fact]
     public void TheAppNeverDecidesAFailedFolderKind()
     {
         AssertNoMatch(Files(@"src\FsAnalyser.App", "*.cs"),
-            @"\?\s*UnreadableKind\.(NothingListed|ListedPartway)\s*:");
+            @"(?<!\?)\?\s*UnreadableKind\.(NothingListed|ListedPartway)\b");
     }
 
     private static IEnumerable<string> Files(string folder, params string[] patterns) =>
