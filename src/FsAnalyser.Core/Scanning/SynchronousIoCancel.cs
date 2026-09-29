@@ -119,6 +119,52 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
     /// </summary>
     internal Func<int, int, int>? OverrideQueryError { get; set; }
 
+    // The listing failpoint (SL-082): null, as in every run of the app, until FailListingOf arms it. Written once,
+    // read by every thread that lists.
+    private static volatile ListingFailure? s_failListing;
+
+    private sealed record ListingFailure(string FolderName, int Page, int Error, Action<string, int>? Fired);
+
+    /// <summary>
+    /// Tests only (SL-082): arms the listing failpoint for the rest of the process. From then on every listing of a
+    /// folder whose own name is <paramref name="folderName"/>, compared without case, reports
+    /// <paramref name="win32Error"/> in place of its <paramref name="page"/>-th page, as if Windows had failed that
+    /// call (<see cref="ListingError"/>). The pages before it are kept, so the folder is listed partway and marked
+    /// unreadable, the way a listing Windows fails partway is. A listing that ends before that page is left alone,
+    /// and so is the scan root, which is listed through a handle and no name. <paramref name="fired"/> is told the
+    /// name of the folder it failed, as listed, and the page each time it fires. The product reads no flag or
+    /// environment variable that arms it, and never calls this: arming it takes code injected into the process, as
+    /// the window cases' startup hook calls it by reflection before the app's Main, the one way to the tree's "could
+    /// not be read in full" row, since an ordinary user cannot make a real listing fail partway. It ships dormant, not
+    /// compiled out, like the other test seams here, so it is no boundary against code already running in the process.
+    /// </summary>
+    /// <exception cref="ArgumentException">The name is empty or holds a path separator: it is one folder's name.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The page is under 2: a first page that fails is a folder never
+    /// opened, not one read partway. Or the error is 0 or ERROR_NO_MORE_FILES, which end a listing as complete.</exception>
+    internal static void FailListingOf(string folderName, int page, int win32Error, Action<string, int>? fired = null)
+    {
+        if (string.IsNullOrWhiteSpace(folderName) || folderName.IndexOfAny(['\\', '/']) >= 0)
+            throw new ArgumentException($"'{folderName}' is not one folder's name", nameof(folderName));
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 2);
+        if (win32Error is <= 0 or Kernel32.ERROR_NO_MORE_FILES)
+            throw new ArgumentOutOfRangeException(nameof(win32Error), win32Error, "an error that fails a listing, not 0 or ERROR_NO_MORE_FILES");
+        s_failListing = new ListingFailure(folderName, page, win32Error, fired);
+    }
+
+    /// <summary>
+    /// What the <paramref name="page"/>-th call listing <paramref name="win32Path"/> returned, <paramref name="error"/>,
+    /// or the failpoint's error in its place when <see cref="FailListingOf"/> armed it for that folder and page and
+    /// the call returned a page (0). Always <paramref name="error"/> in the app.
+    /// </summary>
+    internal static int ListingError(string win32Path, int page, int error)
+    {
+        if (s_failListing is not { } fail || error != 0 || page != fail.Page
+            || !win32Path.AsSpan(win32Path.LastIndexOf('\\') + 1).Equals(fail.FolderName, StringComparison.OrdinalIgnoreCase))
+            return error;
+        fail.Fired?.Invoke(win32Path[(win32Path.LastIndexOf('\\') + 1)..], page);
+        return fail.Error;
+    }
+
     /// <summary>
     /// Whether the last call was aborted by this guard: refused after Cancel, or a cancel was issued
     /// during it. False for an error Windows returned by itself, 995 included.
