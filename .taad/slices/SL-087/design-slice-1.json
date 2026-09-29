@@ -1,0 +1,377 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-087",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-29T11:24:06.241Z",
+ "head": "9a7a2c4f4d42cb4a23f25e42b56581f3b5d0a06c",
+ "run_id": 2216,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "reason": "One proposal (practice), selected as core and checked against the survey, the three slice spikes, SL-085/SL-086 and the epic's U-verdicts. The spike's no-go on an explicit kind is handled inside the design, not worked around. No stage needs to be reopened.",
+  "selection_rationale": "Practice is the only proposal. Each of its pieces was kept because it matches something measured, not because it reads well.\n(1) The kind member on UnreadableFolder is exactly what the no-go spike 'unreadable-kind-is-public-explicit-member' says must come first. Done-when #3 says the kind is 'taken from the engine's own record', and at HEAD that record is (Entry, Win32Error) only (ScanResult.cs:26). The kind is stamped from ChildCount(folder) > 0 at Scanner.cs:281-285. That is the rule FolderTreeNode.cs:86-90 and TopLevelTracker.cs:96 already use, so the three surfaces cannot disagree about the same folder. SL-086 measured that the record is written with the folder's 419 listed children already in the store, which supports stamping at that point. A real-tree test re-checks it.\n(2) The view logic sits in one WPF-free App file linked into Core.Tests. That is the repo's own way of testing App text (FsAnalyser.Core.Tests.csproj:46-57). The survey found MainWindow.xaml.cs is not linked, so the current inline Select at :499-510 cannot be tested where it is.\n(3) Reasons come from Win32Exception(code).Message plus a decimal number this code appends itself, with no FormatMessage P/Invoke. The system-message spike measured the langId-0 text as identical to the display-language text for every real C: code. The survey measured the runtime's hex-only 'Unknown error (0x...)' text for codes with no entry. Appending the number here makes #5 and #6 hold without depending on how the runtime words that text.\n(4) The no-filesystem rule is a file-scoped must_not_match with an xUnit twin and a plant row. The conditional spike measured that this rule kind catches File.Exists and stays quiet on Win32Exception. Its constraints (identical patterns in yaml and the twin, (?m) prefix, including_comments: true, placed above the first '# settled by' marker) are carried into the components.\n(5) Scope stays inside the epic's verdicts: no cap and no 'N more' line (U-104 impossible), no grouping (U-112 impossible), no extra plain phrases such as 'gone during the scan' or 'cloud provider not running' (U-111 impossible), and no filtering of reparse rows out of the view (U-110 impossible: they are in the record and show Windows' reparse message under #5).\nThe practice designer did not raise an over-engineering flag. Its cross-domain transfer is carried below.",
+  "components": [
+   {
+    "name": "UnreadableFolder record + UnreadableKind enum",
+    "responsibility": "Change the public engine record from (Entry, Win32Error) to (Entry, Win32Error, Kind) and add public enum UnreadableKind { NotOpened, ListedPartway }. The doc comment says NotOpened means 'no entry of this folder was listed', which also covers a folder that opened and then failed before its first entry. That is the meaning the folder tree and top-level rows already use. Serves #3.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/ScanResult.cs",
+    "key_interactions": "The only producer is Scanner.cs:284. Consumers are UnreadableRows and MainWindow. Adding a positional member breaks `new UnreadableFolder(e, c)` and two-part deconstruction. Known sites are Scanner.cs:284 and UnreadableFolderTests.cs:27. Build greps src/ and tests/ for any others."
+   },
+   {
+    "name": "Kind stamping in Scanner.FolderDone",
+    "responsibility": "In the existing `if (error != 0)` branch (Scanner.cs:281-285), append `new UnreadableFolder(folder, error, _store.ChildCount(folder) > 0 ? UnreadableKind.ListedPartway : UnreadableKind.NotOpened)`. Nothing else in the scanner changes: no counting rule, no ReadOutcome, no DirectoryReader. Serves #3.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "key_interactions": "Uses the same rule as TopLevelTracker.cs:96. It depends on the folder's listed children being in the store before FolderDone runs its error branch. SL-086 measured that this already holds; the engine kind test re-checks it on a real tree."
+   },
+   {
+    "name": "UnreadableRows (the view's only logic)",
+    "responsibility": "`public static IReadOnlyList<UnreadableRow> Build(IReadOnlyList<UnreadableFolder> record, Func<int,string> pathOf)`.\n- One row per distinct Entry; the first occurrence in record order keeps its kind and code (#1).\n- Sorted with PathOrder, with no cap, no overflow row and no grouping (#2).\n- `sealed record UnreadableRow(string Path, UnreadableKind Kind, int Win32Error, string Reason)` with `Text => $\"{Path}  —  {KindText(Kind)}: {Reason}\"`. KindText gives 'could not be opened' or 'only partly read', read from Kind and never inferred (#3).\n- `Reason(int)` returns the plain phrase for the three families (#4). Any other code gives `{Win32Exception(code).Message.Trim()} (Windows error {code})` (#5). Empty or whitespace text gives `no description from Windows (Windows error {code})` (#6). An internal overload `Reason(int, Func<int,string> systemMessage)` exists to test that branch. Reasons are cached per code within one Build call.\n- PathOrder compares char by char on char.ToUpperInvariant. '\\\\' and '/' rank lowest, a prefix sorts before its extensions, and full ties break ordinally. That makes it a total order, so descendants stay directly under their folder.\n- No WPF, no System.IO. Doc comments must not name Scanner, File or Directory APIs, because the rule runs with including_comments: true.",
+    "lives_at": "src/FsAnalyser.App/UnreadableRows.cs",
+    "key_interactions": "Replaces the existing UnreadableRow type wherever it is defined now, keeping the Path and Text member names so the XAML binding and Explorer reveal still work. Core.Tests compiles it through a link, so the internal overload is visible to the tests."
+   },
+   {
+    "name": "Results-window wiring",
+    "responsibility": "Replace the inline Select at MainWindow.xaml.cs:499-510 with `var rows = UnreadableRows.Build(result.Unreadable, store.GetPath);`, set ItemsSource = rows, and take the tab header's N from rows.Count. Leave Win32Message (:714) and the root-failure banner (:471) unchanged.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "key_interactions": "Reads only the ScanResult and store.GetPath, as it already does. No XAML change. Build checks whether the --report schema-1 output or WindowCases.ps1 reads the unreadable count. If one does, it must report the same N as the header."
+   },
+   {
+    "name": "Test link",
+    "responsibility": "Add `<Compile Include=\"..\\..\\src\\FsAnalyser.App\\UnreadableRows.cs\" Link=\"App\\UnreadableRows.cs\" />` next to the existing App text-file links.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+    "key_interactions": "Follows the existing link block at csproj:46-57."
+   },
+   {
+    "name": "UnreadableRowsTests",
+    "responsibility": "Unit tests for cases 1-5 and 10-13 (#1, #2, #3 view side, #4, #5, #6). The paths are synthetic via pathOf, so no filesystem is involved.\n- A fixed order case pins PathOrder: ['C:\\\\a b','C:\\\\a\\\\b','C:\\\\A','C:\\\\a.b','C:\\\\B'] sorts to ['C:\\\\A','C:\\\\a\\\\b','C:\\\\a b','C:\\\\a.b','C:\\\\B'].\n- #4 is a [Theory] with one InlineData per code in the families, checked by exact equality.\n- #5 is a [Theory] over 2, 362, 363, 1920, 1921 and 4390-4394.\n- #6 covers 9999, 15999 and 65535, the injected empty message, and a sweep over codes 1..16000 checking every Reason is non-empty and contains its decimal number.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/UnreadableRowsTests.cs"
+   },
+   {
+    "name": "Engine kind tests (U-103 shape)",
+    "responsibility": "Update the deny-ACL assertion at UnreadableFolderTests.cs:27 to expect `new UnreadableFolder(entry, 5, UnreadableKind.NotOpened)`. Add a real temp-tree case that reuses the partway failpoint from TopLevelRowTextTests.ScanFailingPartway (TopLevelRowTextTests.cs:59-84) and asserts Kind == ListedPartway with ChildCount > 0. Running Build over both records must give both labels. These are the real-tree tests the project owes for any slice that touches the scanner. Serves #3.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/UnreadableFolderTests.cs"
+   },
+   {
+    "name": "No-filesystem rule + twin + plant",
+    "responsibility": "Add a fitness.yaml entry, 'the unreadable-folders view reads the scan result and never the filesystem', over src/FsAnalyser.App/UnreadableRows.cs. It goes above the first '# settled by' marker, single-quoted, with the (?m) prefix and including_comments: true. Its patterns are the ones in architecture_rules; they reuse the Analysis rule's filesystem patterns (fitness.yaml:545) where those cover the same names. Add a [Fact] TheUnreadableViewTouchesNoFileSystem over Files(@\"src\\FsAnalyser.App\", \"UnreadableRows.cs\") with identical patterns, and a plants.json row that inserts `_ = System.IO.File.Exists(path);` into a method of UnreadableRows.cs. Serves #7.",
+    "lives_at": ".taad/fitness.yaml; tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs; eng/rules-harness/plants.json",
+    "key_interactions": "eng/rules-parity.ps1 must report no DRIFT. Win32Exception must not trip any pattern."
+   },
+   {
+    "name": "App-never-fabricates-records rule + twin",
+    "responsibility": "A second fitness.yaml entry with an xUnit twin: App code never constructs a failed-folder record and never picks a kind with a ternary. The engine is the only source of both. Serves #1 and #3.",
+    "lives_at": ".taad/fitness.yaml; tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs",
+    "key_interactions": "Before landing it, build runs the rule against the current App tree. TopLevelTracker and FolderTreeNode compute a bool from ChildCount and do not construct records, so they are expected to stay quiet. If they do not, the pattern is narrowed; the code is not bent to fit it."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "UnreadableFolder(int Entry, int Win32Error, UnreadableKind Kind) + enum UnreadableKind { NotOpened, ListedPartway }",
+    "kind": "function",
+    "notes": "Public engine record in ScanResult.Unreadable. Kind is set once, in Scanner.FolderDone. NotOpened means no entry of the folder was listed; ListedPartway means at least one entry was listed before the error. The same rule drives FolderTreeNode.Note and TopLevelRow.ListedPartway.",
+    "error_cases": "None at runtime. Existing positional constructions and deconstructions stop compiling until they pass or read the kind."
+   },
+   {
+    "name": "UnreadableRows.Build(IReadOnlyList<UnreadableFolder> record, Func<int,string> pathOf) -> IReadOnlyList<UnreadableRow>",
+    "kind": "function",
+    "notes": "Pure: it reads the record and the path lookup and nothing else. It returns one row per distinct Entry (first occurrence wins), sorted by PathOrder, with no cap, no grouping and no synthetic rows. UnreadableRow has Path, Kind, Win32Error, Reason and Text.",
+    "error_cases": "An empty record gives an empty list. A repeated Entry gives one row."
+   },
+   {
+    "name": "UnreadableRows.Reason(int win32Error) -> string",
+    "kind": "function",
+    "notes": "Never empty.\n- 5, 65 give 'access denied'.\n- 32, 33 give 'in use by another program'.\n- 51, 53, 54, 55, 58, 59, 64, 67, 70, 71, 72, 1203, 1219, 1222, 1231, 1232, 1236, 2250 give 'network or share error'.\n- Phrases carry no number.\n- Every other code gives '<Win32Exception(code).Message.Trim()> (Windows error N)'. The runtime's lookup is FormatMessage with langId 0, which the spike measured as the display language.",
+    "error_cases": "A code with no table entry gives 'Unknown error (0x..) (Windows error N)': the runtime's hex text followed by this code's decimal number. An empty or whitespace message gives 'no description from Windows (Windows error N)'."
+   },
+   {
+    "name": "Unreadable folders (N) tab rows",
+    "kind": "ui",
+    "notes": "One line per row: '{Path}  —  {could not be opened|only partly read}: {reason}'. N = rows.Count. The existing ListBox, XAML bindings (Path, Text) and Explorer reveal are unchanged."
+   },
+   {
+    "name": "Fitness rules: view reads no filesystem; App fabricates no records",
+    "kind": "cli",
+    "notes": "Each rule is checked by the fitness run, its xUnit twin in dotnet test, eng/rules-parity.ps1 (patterns must match exactly) and, for the no-filesystem rule, a plant in eng/rules-harness. The patterns match names only: a call made through a helper in another file, an alias or a global:: spelling is not caught (spike constraint)."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Record the kind in the engine as a public UnreadableKind member on UnreadableFolder, stamped in Scanner.FolderDone from ChildCount(folder) > 0. The open-versus-list phase is not pushed out of DirectoryReader/ReadOutcome.",
+    "reversibility": "expensive",
+    "rationale": "Done-when #3 requires the kind to come from the engine's record, and the no-go spike names this exact change as the prerequisite. Reusing the ChildCount rule keeps the tree, the top-level rows and this list in agreement. The accepted cost: a folder that opened and failed before its first entry is recorded as NotOpened. The survey showed that at HEAD this is indistinguishable from a refused open, and nothing inside it was counted either way. Separating the two would change scanner-internal code this slice does not need. It is expensive because the record is a public engine contract."
+   },
+   {
+    "decision": "All view logic goes in one WPF-free App file, src/FsAnalyser.App/UnreadableRows.cs, compiled into Core.Tests through a link. It does not go in Core.",
+    "reversibility": "cheap",
+    "rationale": "This is the repo's convention for display text (csproj:46-57). It also gives the no-filesystem rule a single-file scope; single-file rules already exist (VolumeSpace.cs, StoppingWait.cs)."
+   },
+   {
+    "decision": "Path order compares char by char on ToUpperInvariant. The separator ranks lowest, a prefix sorts before its extensions, and full ties break ordinally.",
+    "reversibility": "cheap",
+    "rationale": "OrdinalIgnoreCase puts letters (0x41-0x5A) below '\\\\' (0x5C), and culture compare puts space and punctuation below it too. Either one splits a folder from its descendants when the siblings are named 'a b', 'a.b' or 'd10'. The ordinal tie-break makes it a total order, so List.Sort's instability cannot reorder paths that differ only in case."
+   },
+   {
+    "decision": "Repeated entries are removed by Entry index, and the first occurrence keeps its kind and code.",
+    "reversibility": "cheap",
+    "rationale": "Done-when #1 asks for exactly one row per folder, tested with repeated entries. The store index identifies a folder better than its path string does."
+   },
+   {
+    "decision": "Plain-phrase table: {5, 65} access denied; {32, 33} in use by another program; {51, 53, 54, 55, 58, 59, 64, 67, 70, 71, 72, 1203, 1219, 1222, 1231, 1232, 1236, 2250} network or share error. Everything else, including 2 and the cloud and reparse codes, keeps Windows' own message.",
+    "reversibility": "cheap",
+    "rationale": "Done-when #4 names exactly three families, and U-111 (impossible) rules out a longer plain-word list. The code-to-name mapping of the network list is recalled, not measured; the table test with one row per code is what verifies it."
+   },
+   {
+    "decision": "Other codes use Win32Exception(code).Message.Trim() plus ' (Windows error N)', appended by this code. The explicit fallback fires only for empty or whitespace text. No FormatMessage P/Invoke is added.",
+    "reversibility": "cheap",
+    "rationale": "The spike measured the langId-0 text as equal to the display-language text for all real C: codes (#5). Appending the decimal number here satisfies #6 whatever wording the runtime uses for unknown codes. Win32Exception never returns empty on this machine (the survey measured 9999, 15999 and 65535), so the explicit fallback is defensive and is exercised only through the injected-lookup overload. Leaving Kernel32 out lets the no-filesystem rule ban \\bKernel32\\. outright, with no FormatMessage exception to maintain."
+   },
+   {
+    "decision": "The tab header's N becomes rows.Count. Row text becomes '{Path}  —  {kind}: {reason}'. XAML, the list control and the --report schema stay as they are.",
+    "reversibility": "cheap",
+    "rationale": "Once duplicates are removed, the header and the list have to agree. Every Done-when is checked by a unit or rule test, so none of them calls for a column grid, grouping, export or a report change."
+   },
+   {
+    "decision": "TopLevelTracker and FolderTreeNode keep computing the kind from ChildCount; they are not switched to read the new member.",
+    "reversibility": "cheap",
+    "rationale": "They use the same rule with the same inputs (ChildCount does not change after FolderDone), so their answers match the stamped kind. Moving them over is a refactor no Done-when asks for."
+   },
+   {
+    "decision": "Two architecture rules: the view file reads no filesystem (#7), and App code never constructs a failed-folder record or picks a kind with a ternary (#1, #3). Each is written twice, in yaml and as an xUnit twin, with identical patterns.",
+    "reversibility": "cheap",
+    "rationale": "The spike showed that the parity script flags a yaml entry with no twin, and that a settled-only entry would leave dotnet test green when it broke. The second rule turns 'no row comes from anywhere else' and 'taken from the engine's own record' from prose into something that fails."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal. Taken whole, with these additions: 1921 and 4391 in the #5 theory (the spike's fixed list includes 1921; the survey measured 4390-4394), a second architecture rule, a pinned case for paths that differ only in case, and an explicit note that the #6 fallback cannot be reached through Win32Exception on this machine."
+   }
+  ],
+  "coherence_check": "There was one proposal, so there is no composition to check. Nothing in this design has survived a disagreement yet, and the reviewer should be the first to argue with it.\n\nChecked against reality instead:\n(a) The spike no-go (no kind member) is resolved by the design's own record change, not by inferring the kind in the view. The second architecture rule enforces that.\n(b) The conditional spike measured the no-filesystem rule on a Core folder (src/FsAnalyser.Core/NoFs/). This design scopes it to one App file. That placement was not measured. The fitness scope is a path glob, single-file scopes already exist (VolumeSpace.cs, StoppingWait.cs), and App-scoped rules exist ('the window never touches the scan store', fitness.yaml:411), so it is expected to work. The plant row is what proves it.\n(c) The spike's constraints are carried over: identical patterns in yaml and the twin, (?m) prefix, including_comments: true, and entries above '# settled by'. including_comments: true means doc comments in UnreadableRows.cs must not name Scanner, File or Directory APIs.\n(d) Kind seam: the engine stamps the kind with the rule TopLevelTracker.cs:96 uses. That relies on the folder's listed children being in the store when FolderDone's error branch runs. SL-086 measured 419 children present, but only in stop runs; the real-tree partway test is the check for a finished scan. If it fails, the kind has to come from DirectoryReader, which is a boundary change (see decidable_disagreements).\n(e) Header versus report: N moves from Unreadable.Count to rows.Count. If --report or WindowCases reads the count, the two could differ when duplicates exist, and build must keep them equal.\n(f) Wording seam, not fixed here: the folder tree says 'could not be read in full' where this list says 'only partly read' for the same kind. Done-when #3 fixes the list's wording; aligning the tree would be a new slice.\n(g) Epic verdicts are honoured: no cap (U-104), no grouping (U-112), no extra phrases (U-111), and reparse rows are not filtered (U-110).",
+  "architecture_rules": [
+   {
+    "name": "the unreadable-folders view reads the scan result and never the filesystem",
+    "files": "src/FsAnalyser.App/UnreadableRows.cs",
+    "must_not_match": [
+     "\\b(File|Directory)\\.\\w+\\s*\\(",
+     "\\bnew\\s+(FileInfo|DirectoryInfo|FileStream|DriveInfo|FileSystemWatcher)\\b",
+     "\\bSystem\\.IO\\b",
+     "\\b(Kernel32|Scanner|DirectoryReader|SizeProbe)\\.",
+     "\\[\\s*(DllImport|LibraryImport)\\b"
+    ],
+    "because": "Done-when #7. A view that stats, lists or rescans a folder would describe a live state instead of the scan it belongs to. It could also block on a dropped share or hit the same denials again on the UI thread. The only allowed lookup is Win32Exception's message text, which none of these patterns match."
+   },
+   {
+    "name": "the App never fabricates a failed-folder record or decides its kind",
+    "files": "src/FsAnalyser.App/**/*.cs",
+    "must_not_match": [
+     "\\bnew\\s+UnreadableFolder\\s*\\(",
+     "\\?\\s*UnreadableKind\\.(NotOpened|ListedPartway)\\s*:"
+    ],
+    "because": "Done-when #1 says no row comes from anywhere but the engine's record, and #3 says the kind is taken from that record. An App-side record, or a kind worked out again from ChildCount, would let this list disagree with the engine and with the tree about the same folder. Tests may build records; App code may not."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "list the failed folders",
+    "shape": "the record holds one not-opened entry and one partly-read entry",
+    "why": "#1 and #3: each entry must give exactly one row, whose Path is pathOf(entry) and whose label is read from Kind. A view that builds a path itself or infers the label fails here.",
+    "material": true
+   },
+   {
+    "behaviour": "list the failed folders",
+    "shape": "the same Entry appears three times, with a different code and kind on the repeats",
+    "why": "#1: the inline code at HEAD emits three rows and counts three in the header. Deduplication by Entry must keep exactly one row, carrying the first occurrence's kind and code.",
+    "material": true
+   },
+   {
+    "behaviour": "sort the rows",
+    "shape": "10,050 entries in shuffled order (U-104 shape)",
+    "why": "#2: there must be no cap and no 'N more' row. The count must be exactly 10,050 and every consecutive pair must be in PathOrder. HEAD keeps engine order.",
+    "material": true
+   },
+   {
+    "behaviour": "sort the rows",
+    "shape": "sibling names that straddle the separator: 'a', 'a\\b', 'a b', 'a.b', 'd1\\x' vs 'd10'",
+    "why": "#2: OrdinalIgnoreCase and culture compare both rank ' ', '.' or upper-cased letters against '\\', which splits a folder from its descendants. The fixed expected order pins the comparer.",
+    "material": true
+   },
+   {
+    "behaviour": "sort the rows",
+    "shape": "two paths that differ only in letter case (a case-sensitive directory)",
+    "why": "#2: ToUpperInvariant makes them equal. Without the ordinal tie-break, the unstable List.Sort gives a different order from run to run.",
+    "material": true
+   },
+   {
+    "behaviour": "record which kind of failure happened",
+    "shape": "a real temp folder whose open is refused by a deny ACL",
+    "why": "#3: the existing assertion at UnreadableFolderTests.cs:27 must now expect NotOpened with code 5. A real-tree test is owed because this slice touches the scanner.",
+    "material": true
+   },
+   {
+    "behaviour": "record which kind of failure happened",
+    "shape": "a real temp tree whose listing fails partway via the ScanFailingPartway failpoint (U-103 shape)",
+    "why": "#3: Kind must be ListedPartway. If the listed children are not in the store when FolderDone's error branch runs, the stamp silently reads NotOpened.",
+    "material": true
+   },
+   {
+    "behaviour": "record which kind of failure happened",
+    "shape": "the folder opened but its listing failed before any entry came back",
+    "why": "Recorded as NotOpened by design, as in the tree and the top-level rows. The survey measured that at HEAD it cannot be told apart from a refused open, and the stamping has no branch for it.",
+    "material": false
+   },
+   {
+    "behaviour": "list the failed folders",
+    "shape": "the scan was stopped while a folder was being listed",
+    "why": "SL-086 measured that the in-flight folder gets no Unreadable row, and that a partway folder is kept once with its listed children. Build takes no scan-status input, so a stopped scan's record goes through the same code as a finished one.",
+    "material": false
+   },
+   {
+    "behaviour": "give a readable reason",
+    "shape": "each code in the three plain families: 5, 65 / 32, 33 / 51, 53, 54, 55, 58, 59, 64, 67, 70, 71, 72, 1203, 1219, 1222, 1231, 1232, 1236, 2250",
+    "why": "#4: one InlineData per code, exact phrase equality, no number appended. The network list is recalled, so each code needs its own row to prove the mapping.",
+    "material": true
+   },
+   {
+    "behaviour": "give a readable reason",
+    "shape": "codes outside the families that real scans record or the Done-when names: 2, 362, 363, 1920, 1921, 4390-4394",
+    "why": "#5: the reason must contain Win32Exception(code).Message.Trim() and '(Windows error N)'. HEAD rows omit the number. The spike measured 2, 5, 363 and 1920 on this PC's C:.",
+    "material": true
+   },
+   {
+    "behaviour": "give a readable reason",
+    "shape": "a code with no message-table entry: 9999, 15999, 65535",
+    "why": "#6: the runtime returns 'Unknown error (0x270f)', which names the code in hex only. The decimal number appended by this code must follow. A sweep over 1..16000 checks that no Reason is empty and every one contains its number.",
+    "material": true
+   },
+   {
+    "behaviour": "give a readable reason",
+    "shape": "the system message comes back empty or whitespace (injected lookup)",
+    "why": "#6: the explicit fallback 'no description from Windows (Windows error N)' cannot be reached through Win32Exception on this machine. Only the injected overload exercises that branch.",
+    "material": true
+   },
+   {
+    "behaviour": "keep the view off the filesystem",
+    "shape": "File.Exists planted in UnreadableRows.cs, with the Win32Exception call left in place",
+    "why": "#7: the fitness rule, its xUnit twin and the harness plant must all report the plant and stay quiet on Win32Exception, and rules-parity must report no drift. The spike measured this on a Core folder only, never on an App file.",
+    "material": true
+   }
+  ],
+  "decidable_disagreements": [
+   {
+    "question": "When Scanner.FolderDone reaches its `if (error != 0)` branch on a finished (not stopped) scan, are the folder's already-listed children in the store, so that ChildCount(folder) > 0 exactly when something was listed?",
+    "positions": "The design assumes yes. SL-086 measured 419 children present when the record was written, but in stop runs, and TopLevelTracker.cs:96 relies on the same thing. If the answer is no, the kind must come from DirectoryReader's ReadOutcome (Scanner.cs:54-57). That moves the decision into the reader and changes its internal contract. The partway real-tree case settles it.",
+    "would_force_resynthesis": true
+   }
+  ],
+  "taste_disagreements": [
+   "Placement: the view logic goes in an App file linked into Core.Tests (repo convention, chosen here) rather than a Core folder such as src/FsAnalyser.Core/NoFs/, where the rule spike's scratch copy put it.",
+   "What 'sorted by path' means: tree order with the separator lowest (chosen) or plain OrdinalIgnoreCase / culture order. The Done-when does not say.",
+   "Code 65 (ERROR_NETWORK_ACCESS_DENIED) goes under 'access denied' (chosen) rather than 'network or share error'.",
+   "Row presentation: one text line '{Path}  —  {kind}: {reason}' (chosen) rather than separate columns for path, kind and reason.",
+   "Wording across surfaces: the folder tree says 'could not be read in full' where this list says 'only partly read' (fixed by Done-when #3). Aligning the tree is left to a later slice.",
+   "Header N counts distinct rows (chosen) rather than raw record entries."
+  ],
+  "open_questions": [],
+  "stack_chosen": [],
+  "channeled_experts": [
+   "robocopy / backup-tool error logs (code + localized system message on every failure line)",
+   "Explorer-style tree order for flat path lists (separator sorts lowest, case-insensitive)"
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Per-item error logs from copy and backup tools (robocopy-style)",
+   "pattern": "A short fixed vocabulary for the few codes that dominate. Every other code gets the OS's localized message plus the numeric code, and the tool appends that number itself, so the line can be diagnosed in any language even when the OS has no text for the code.",
+   "transfer_found": true,
+   "rationale": "It maps directly onto Done-when #4-#6 and avoids the known failure modes: localized text nobody can search for, empty text for unknown codes, and a table that tries to paraphrase everything and gets it wrong. Only the vocabulary and the 'the number is always ours' rule are imported.",
+   "invariants": [
+    {
+     "precondition": "The system-message lookup with langId 0 returns the user's display language",
+     "status": "holds",
+     "evidence": "Spike system-message-text-for-real-c-codes: langId-0 text equalled the GetUserDefaultUILanguage (0x0409) text for all 11 codes, and Win32Exception.Message equalled the trimmed FormatMessage text. Measured under an en-US UI only."
+    },
+    {
+     "precondition": "A code with no message-table entry still produces non-empty text",
+     "status": "holds",
+     "evidence": "The survey measured 9999, 15999 and 65535 giving 'Unknown error (0x…)'. The decimal number appended by this code makes #6 hold regardless."
+    },
+    {
+     "precondition": "A few codes dominate the real records, so the fixed vocabulary covers most rows",
+     "status": "holds",
+     "evidence": "The spike's C: scan (unelevated, net10): 685 records, of which code 5 is 652, 363 is 28, 2 is 3 and 1920 is 2. One PC, one drive. No network or share scan was run, so the network family's share of real records is not measured."
+    }
+   ]
+  },
+  "prior_art": [
+   {
+    "pattern": "Map the native Win32 error from a failed directory read to a specific named cause instead of a generic 'failed to access', and unit-test the mapping",
+    "where": "https://github.com/SysAdminDoc/REDplusplus/commit/c5a8a12291f60b177cb06d5d7b8b14dff472d79a",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-06-14"
+   },
+   {
+    "pattern": "A flat grid listing every failure after a scan, one row per item, with type, exact path and message; no cap and no grouping",
+    "where": "https://www.wincatalog.com/help/2026/troubleshooting/scan-errors-and-warnings/",
+    "authority": "official",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Each failed folder read is its own row, errors go through a classifier kept separate from the UI, and the full path stays available",
+    "where": "https://github.com/linagora/twake-drive/commit/e19a1b8fbe6a15b132fbdd6279700459752fb72f",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-04-28"
+   },
+   {
+    "pattern": "An unreadable folder that looks empty is the failure users report; say explicitly that it could not be read, and why",
+    "where": "https://github.com/unslothai/unsloth/pull/9053",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-08-19"
+   },
+   {
+    "pattern": "Each failure line carries the decimal Win32 code with the localized system message",
+    "where": "robocopy log output",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Win32Exception.Message calls FormatMessage(FROM_SYSTEM|IGNORE_INSERTS, langId 0) and falls back to 'Unknown error (0x…)' when there is no entry",
+    "where": ".NET runtime (System.ComponentModel.Win32Exception)",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Sort paths with the separator lowest so descendants stay together under their parent in a flat list",
+    "where": "common practice in file-listing and diff tools",
+    "authority": "community",
+    "basis": "recalled"
+   }
+  ],
+  "whats_new": [
+   "UnreadableKind enum and a Kind member on UnreadableFolder (public engine contract change)",
+   "Kind stamping in Scanner.FolderDone's error branch",
+   "src/FsAnalyser.App/UnreadableRows.cs: dedupe, PathOrder comparer, kind labels, Reason with plain-phrase table, numbered system message and fallback",
+   "UnreadableRow reshaped to Path, Kind, Win32Error, Reason and Text (Text keeps the existing binding)",
+   "Tab header N taken from rows.Count",
+   "Test link for UnreadableRows.cs in FsAnalyser.Core.Tests.csproj",
+   "UnreadableRowsTests (#1, #2, #3 view side, #4, #5, #6, including the 10,050-entry and 1..16000 sweeps)",
+   "Real-tree ListedPartway engine test and the updated NotOpened assertion",
+   "Fitness rule, xUnit twin and plant row: the view reads no filesystem",
+   "Fitness rule and xUnit twin: the App fabricates no failed-folder record and picks no kind"
+  ],
+  "whats_reused": [
+   "The existing 'Unreadable folders (N)' tab, ListBox, XAML bindings and Explorer reveal (SL-039/SL-065)",
+   "store.GetPath for full paths",
+   "The ChildCount > 0 partway rule from FolderTreeNode.cs:86-90 and TopLevelTracker.cs:96",
+   "The ScanFailingPartway failpoint from TopLevelRowTextTests.cs:59-84",
+   "The deny-ACL real-tree test in UnreadableFolderTests.cs",
+   "Win32Exception(code).Message for display-language system text",
+   "The App-file-linked-into-Core.Tests convention (csproj:46-57)",
+   "fitness.yaml / ArchitectureRulesTests / rules-parity.ps1 / rules-harness plants machinery",
+   "The Analysis rule's filesystem patterns (fitness.yaml:545) as the reference for what 'filesystem' means"
+  ]
+ }
+}

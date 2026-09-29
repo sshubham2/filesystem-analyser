@@ -1,0 +1,139 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-087",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-09-29T11:34:52.988Z",
+ "head": "9a7a2c4f4d42cb4a23f25e42b56581f3b5d0a06c",
+ "run_id": 2217,
+ "summary": "The design is sound in outline: the kind goes on the engine record, the view logic sits in one pure, linked App file, and the rule reuses the spike's measured mechanism. It needs three fixes before build. (1) Two of the design's own tests contradict each other. The 1..16000 sweep requires every Reason to contain its decimal number, but the #4 contract says the plain phrases carry no number, so the sweep fails on 23 codes. (2) The public UnreadableKind.NotOpened value is stamped from ChildCount==0, so a folder that opened and then failed on its first query is recorded and shown as 'could not be opened'. The reader knows the difference, and the design marks this contract as expensive to reverse. (3) The 'App never fabricates a record' invariant rests on a regex that target-typed `new(...)`, `with` and non-ternary forms all get past. It can be made unwriteable by giving the record an internal constructor. The minor findings are these. Three surfaces compute the kind from the same copied formula. The display-language precondition was checked only on a machine where every language is en-US, and Microsoft's documentation says langId 0 is resolved by locale. The #4 and #5 tests compute their expected values from the code they test. The no-filesystem patterns miss Path.Exists and StreamReader. System messages may contain line breaks or %1 inserts. The report and window cases may read row text. And the list is not in Explorer's order, although the design names Explorer order as its model.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The design is sound in outline: the kind goes on the engine record, the view logic sits in one pure, linked App file, and the rule reuses the spike's measured mechanism. It needs three fixes before build. (1) Two of the design's own tests contradict each other. The 1..16000 sweep requires every Reason to contain its decimal number, but the #4 contract says the plain phrases carry no number, so the sweep fails on 23 codes. (2) The public UnreadableKind.NotOpened value is stamped from ChildCount==0, so a folder that opened and then failed on its first query is recorded and shown as 'could not be opened'. The reader knows the difference, and the design marks this contract as expensive to reverse. (3) The 'App never fabricates a record' invariant rests on a regex that target-typed `new(...)`, `with` and non-ternary forms all get past. It can be made unwriteable by giving the record an internal constructor. The minor findings are these. Three surfaces compute the kind from the same copied formula. The display-language precondition was checked only on a machine where every language is en-US, and Microsoft's documentation says langId 0 is resolved by locale. The #4 and #5 tests compute their expected values from the code they test. The no-filesystem patterns miss Path.Exists and StreamReader. System messages may contain line breaks or %1 inserts. The report and window cases may read row text. And the list is not in Explorer's order, although the design names Explorer order as its model.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "test-coverage",
+    "claim": "Two parts of the design's test plan cannot both pass. The #6 sweep asserts that every Reason for codes 1..16000 'is non-empty and contains its decimal number'. The Reason contract and the #4 case say that 5, 65, 32, 33 and the 18 network codes return a bare phrase ('access denied', 'in use by another program', 'network or share error') with 'no number appended' and check it by exact equality. For example, 'access denied' does not contain '5', so the sweep fails on 23 codes. A builder can resolve this either by excluding those codes from the sweep or by appending numbers to the phrases, and the second choice breaks #4's exact-equality theory and the contract.",
+    "evidence": "UnreadableRowsTests: 'a sweep over codes 1..16000 checking every Reason is non-empty and contains its decimal number'. The case for 9999/15999/65535 says: 'A sweep over 1..16000 checks that no Reason is empty and every one contains its number.' Contract UnreadableRows.Reason says: 'Phrases carry no number.' The #4 case says: 'exact phrase equality, no number appended.'",
+    "fix": "Change the sweep so that every code checks non-empty text, and only codes outside the plain-phrase table must contain '(Windows error N)'. Alternatively, if the number should follow the robocopy 'number is always ours' rule, append it to the phrases too and update the #4 contract and theory to match. Choose one in the design."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "claim": "The public enum records 'NotOpened' for any folder whose store has zero children at FolderDone, including folders that opened and then failed on their first directory query. The row then says 'could not be opened' about a folder Windows did open. The design justifies this with 'at HEAD this is indistinguishable from a refused open', but that is true of the store, not of the engine. DirectoryReader holds (or failed to get) the handle and knows which phase failed, and the design's own decidable_disagreements already names ReadOutcome (Scanner.cs:54-57) as the place the kind could come from. There is a realistic class of these failures. For a cloud partial-placeholder directory, enumeration is what triggers the provider's fetch, so a stopped provider can fail the first query (362) after a successful open. U-111 expected 'cloud provider not running' failures, and this C: scan recorded 28 code-363 rows whose failing phase nobody measured. An SMB share dropping between open and first query (59/64) is another case. Done-when #3 says the kind is 'taken from the engine's own record of which happened'. Recording a guess under a name that asserts a fact, on a contract the design itself marks 'expensive' to reverse, is the part that costs rework. The cloud-phase behaviour is my recall and was not confirmed by search (the searches found only that enumeration triggers placeholder fetch, https://github.com/microsoft/Windows-classic-samples/issues/399), so it needs measuring.",
+    "evidence": "Key decision 1: 'The accepted cost: a folder that opened and failed before its first entry is recorded as NotOpened. The survey showed that at HEAD this is indistinguishable from a refused open.' Component: 'NotOpened means \"no entry of this folder was listed\", which also covers a folder that opened and then failed before its first entry.' Case 8 is marked material: false. Spike system-message-text: 'C: recorded 2 (x3), 5 (x652), 363 (x28), 1920 (x2)'.",
+    "fix": "Carry an internal 'opened' bit out of DirectoryReader's ReadOutcome to FolderDone. Stamp NotOpened only when the open itself failed; opened with zero entries listed becomes ListedPartway ('only partly read'). Add a case using the repo's opt-in CfProvider rig (Trait Cloud=CF-SYNC-ROOT) with the provider stopped over an unpopulated directory placeholder. What to run to settle it: that rig, plus logging whether the open succeeded for each of the 28 code-363 rows on C:. If the slice declines the reader change, at least rename the member to what it means (for example NothingListed) and record the mislabel as a known limitation, so the public contract does not claim what it does not know."
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "under-engineering",
+    "claim": "The design turns 'App code never constructs a failed-folder record' into a regex over App/**, which keeps the invariant by remembering rather than by construction. `\\bnew\\s+UnreadableFolder\\s*\\(` misses target-typed `UnreadableFolder u = new(e, 5, k);`, collection expressions `[new(e, 5, k)]`, and `default(UnreadableFolder) with { Kind = ... }` (a positional record struct's members are init-settable). `\\?\\s*UnreadableKind\\.(NotOpened|ListedPartway)\\s*:` misses switch expressions, if/else, `using static` spellings and a ternary whose first branch is not an enum literal. Every one of these compiles in net10 code, and the rule stays green. The rule also has no plant row, so nothing proves it fires, and the spike's constraints ((?m), including_comments: true, placement above '# settled by') are carried only for rule 1. The record change the design is already making can put the invariant in the type instead.",
+    "evidence": "architecture_rules[1]: must_not_match ['\\\\bnew\\\\s+UnreadableFolder\\\\s*\\\\(', '\\\\?\\\\s*UnreadableKind\\\\.(NotOpened|ListedPartway)\\\\s*:']. Contract: 'public readonly record struct' extended positionally. Core.csproj:10 has exactly one InternalsVisibleTo, FsAnalyser.Core.Tests (spike evidence).",
+    "fix": "Since the public record is already being changed, make it a `sealed record class UnreadableFolder` with an `internal` constructor and get-only properties (no init). Then the App cannot construct it or use `with` to make one, while Scanner and Core.Tests, including the linked UnreadableRows tests, still can. Allocations are negligible at 10,050. Keep the second rule only for kind re-derivation (see m1), and give it a plant row plus the same (?m), including_comments and above-marker placement as rule 1."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "'The three surfaces cannot disagree' holds only because three places carry the same ChildCount>0 formula: Scanner (new), TopLevelTracker.cs:96 and FolderTreeNode.cs:86-90. The design keeps the two existing copies. Rule 2's 'because' says 'a kind worked out again from ChildCount... would let this list disagree with the engine and with the tree', but its pattern lets through exactly that re-derivation, which FolderTreeNode does today as a string ternary. If the stamping rule changes (the design's own fallback in decidable_disagreements, or M2's fix), the tree and top-level rows keep the old rule silently.",
+    "evidence": "Key decision: 'TopLevelTracker and FolderTreeNode keep computing the kind from ChildCount; they are not switched to read the new member.' Rule 2 'because' versus its must_not_match patterns.",
+    "fix": "Add `\\bChildCount\\s*\\(` to rule 2 over src/FsAnalyser.App/**/*.cs, with `except_files: FolderTreeNode.cs` naming the one legacy site. That makes the existing exception visible and fails any new App site. Record, as an open item for a later slice, that FolderTreeNode/TopLevelTracker should read the stamped Kind."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "The transfer's must-verify precondition 'langId 0 returns the user's display language' is marked 'holds', but the measurement could not have failed. It ran with UI culture en-US, and the system and US-English fallbacks are en-US too, while the regional format was not recorded. Microsoft's FormatMessage documentation says langId 0 searches 'Thread LANGID, based on the thread's locale value; User default LANGID, based on the user's default locale value; System default LANGID...; US English'. That is locale-based, which is the very falsifier the spike named ('follows the regional format or the system language'). The #5 test computes its expected text from Win32Exception(code).Message, which is the code under test, so no test checks the language part of #5. If the precondition fails, rows show messages in the locale's or the install's language and every test stays green.",
+    "evidence": "https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-formatmessage (search order quoted via https://stackoverflow.com/questions/33346071). Transfer invariant 1: 'Measured under an en-US UI only.' Survey: 'Get-UICulture' only; Get-Culture not recorded. Contract: 'FormatMessage with langId 0, which the spike measured as the display language.'",
+    "fix": "Change the precondition's status from 'holds' to 'holds on this single-language machine only' and record Get-Culture next to Get-UICulture. List the #5 language clause as not verified beyond en-US rather than covered by the theory. If it matters, the language check needs a machine whose display language differs from its regional format and install language."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "The design says the network code list is recalled and 'each code needs its own row to prove the mapping'. A theory asserting Reason(code) == 'network or share error' only proves the code is in the table. It cannot catch a mistyped or non-existent code (for example 1263 for 1236), which is the actual risk of a recalled list.",
+    "evidence": "Key decision on the phrase table: 'The code-to-name mapping of the network list is recalled, not measured; the table test with one row per code is what verifies it.'",
+    "fix": "In the #4 theory, also assert that new Win32Exception(code).Message does not start with 'Unknown error'. That proves each code exists in Windows' table. Declare the table with winerror.h names (ERROR_BAD_NETPATH = 53 ...) so code review can check names against numbers."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "The no-filesystem patterns miss common filesystem calls that need no 'System.IO' token when implicit or global usings are on: Path.Exists (.NET 7+, 'Determines whether the specified file or directory exists'), new StreamReader(path) / new StreamWriter(path), DriveInfo.GetDrives(), and RandomAccess/SafeFileHandle. `Path.Exists(row.Path)` is the most likely later addition to this exact file ('is it still unreadable?'), and none of the five patterns match it.",
+    "evidence": "architecture_rules[0] must_not_match. Path.Exists docs: https://learn.microsoft.com/en-us/dotnet/api/system.io.path.exists?view=net-10.0. The spike constraint says 'The patterns are name-based tripwires'.",
+    "fix": "Add `\\bPath\\.Exists\\b`, `\\bnew\\s+(StreamReader|StreamWriter)\\b` and `\\b(DriveInfo|RandomAccess|File(System)?Info)\\.` to both the yaml entry and the twin. Have build record whether the App or Directory.Build.props enables ImplicitUsings, since that decides whether `\\bSystem\\.IO\\b` catches anything the other patterns miss."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "Reason uses Win32Exception(code).Message.Trim() for any code outside the table. .NET trims only trailing whitespace, and with IGNORE_INSERTS unfilled %1..%99 tokens pass through. The spike checked for inserts and line breaks on 11 codes only. A message with embedded CR/LF would break the one-line row, and a '%1' would show literally. The 1..16000 sweep is the natural place to catch both, but it checks only non-empty text and the number.",
+    "evidence": "Contract Reason: '<Win32Exception(code).Message.Trim()> (Windows error N)'. Spike: 'no %n token' measured for the 11 listed codes only.",
+    "fix": "Collapse internal CR/LF runs to a single space in Reason, and extend the sweep to assert no '\\r' or '\\n' in any Reason. Leave '%1' alone unless the sweep finds it on a code a folder open can return."
+   },
+   {
+    "id": "m6",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "claim": "The row Text changes from '{path}  ({message})' to '{Path}  —  {kind}: {reason}'. The design tells build to check only whether --report or WindowCases.ps1 reads the unreadable count. If either serialises or pattern-matches row text (for example on '(Access is denied.)'), the window cases break or keep asserting the old shape, and the design says the --report schema stays as it is.",
+    "evidence": "Results-window wiring: 'Build checks whether the --report schema-1 output or WindowCases.ps1 reads the unreadable count.' Key decision: 'XAML, the list control and the --report schema stay as they are.'",
+    "fix": "Widen build's check to cover any read of unreadable row text in --report, eng/read-window.ps1 and WindowCases.ps1, and state which of these reads it."
+   },
+   {
+    "id": "m7",
+    "severity": "minor",
+    "dimension": "drift-from-design",
+    "claim": "The design channels 'Explorer-style tree order', but Explorer sorts numerically by default (3 < 22 < 111). PathOrder compares char by char, so 'd10' sorts before 'd2' and '111' before '22'. The person will see a different sibling order here than in Explorer. The design's d1\\x / d10 case does not show the difference because both comparers agree on it.",
+    "evidence": "channeled_experts: 'Explorer-style tree order for flat path lists (separator sorts lowest, case-insensitive)'. Microsoft policy text: 'File Explorer will sort file names by increasing number value (for example, 3 < 22 < 111)' (https://gpedit.tplant.com.au/en-us/policy/Microsoft.Policies.WindowsExplorer/NoStrCmpLogical/). StrCmpLogicalW: https://learn.microsoft.com/en-us/windows/win32/api/shlwapi/nf-shlwapi-strcmplogicalw",
+    "fix": "Either say explicitly that the order is literal per character (not Explorer's numeric order) and add a d2/d10 row to the pinned case, or compare each path component numeric-aware with the separator still lowest. Done-when #2 accepts either."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M2: the engine can tell a refused open from a failed first query, even though the store cannot; the design treats them as the same. m2: the display-language precondition was measured where every language is en-US, and Microsoft documents langId 0 as locale-based. The ChildCount-at-FolderDone assumption is already left to build's partway real-tree test; I did not reopen it."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "m5: system messages with embedded line breaks or %1 inserts for codes outside the measured 11. The zero-entries-listed case is under M2. Dedupe, the empty record, case-only path differences and stopped scans are covered by the design's cases."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "M3: record fabrication is guarded by a bypassable regex when an internal constructor on the record would make it unwriteable. Rule 2 has no plant row."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none: the PathOrder comparer, the injected-message overload and the 1..16000 sweep each serve a stated Done-when. The 18-code network table matches #4's 'network and share family'. No cap, grouping or extra phrase families were added (U-104, U-112 and U-111 honoured)."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "m6: the row text changes but build is told to check only the count against --report and WindowCases. M1 is also a contract contradiction between the Reason contract and the #6 sweep."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "none: Build is pure over an in-memory record. Win32Exception(code) does not throw and returns non-empty text for unknown codes (measured), and the empty-text branch has an explicit fallback with an injected test. The stamping adds no new failure path. The ChildCount-timing risk is named, with a resynthesis trigger."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "m7: the channeled 'Explorer-style tree order' is not what PathOrder implements (Explorer sorts numerically by default). The rule's placement moved from the spike's Core NoFs folder to an App file; the design acknowledges this and the plant proves it."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "m1: the kind formula is copied in three places, and rule 2's 'because' claims to forbid what its pattern lets through (FolderTreeNode). m4: the no-filesystem patterns miss Path.Exists, StreamReader/Writer and DriveInfo.GetDrives. Rule-2 constraint carry-over is under M3."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "M1: the sweep contradicts the #4 no-number contract. m3: the #4 table test cannot catch a wrong code in the recalled list. m2: the #5 test takes its expected text from the code under test, so the language clause is untested. The #1, #2, #3 (both kinds, real tree), #6 and #7 cases are otherwise present."
+   },
+   {
+    "dimension": "security",
+    "result": "none: the view reads the scan result and a path lookup only, adds no I/O, P/Invoke or privilege, and shows paths as plain text in the existing ListBox. Explorer reveal is unchanged."
+   }
+  ]
+ }
+}

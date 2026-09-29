@@ -22,8 +22,40 @@ public enum ScanStatus
 /// </summary>
 public readonly record struct ScanTotals(long Files, long Folders, long Links, long Bytes, long BytesOnDisk);
 
-/// <summary>A folder under the root that could not be opened or listed, and the Win32 error.</summary>
-public readonly record struct UnreadableFolder(int Entry, int Win32Error);
+/// <summary>
+/// How much of a folder the scan listed before it failed, as the folder tree and the top-level rows word it (HF-002).
+/// It says what was listed, not where Windows refused: the scan does not tell a refused open from a folder that
+/// opened and then failed before its first entry came back, and both are NothingListed (SL-087, review M2).
+/// </summary>
+public enum UnreadableKind
+{
+    /// <summary>No entry of the folder was listed, so nothing in it is counted: worded "could not be opened".</summary>
+    NothingListed,
+
+    /// <summary>At least one entry was listed before the error, and what was listed is kept and counted.</summary>
+    ListedPartway,
+}
+
+/// <summary>
+/// A folder under the root that could not be opened or listed in full: its entry, the Win32 error and how much of it
+/// was listed. Only Core makes one (SL-087, review M3): the constructor is internal and nothing can be set after it, so
+/// the App cannot add a record of its own or copy one with another kind.
+/// </summary>
+public sealed record UnreadableFolder
+{
+    internal UnreadableFolder(int entry, int win32Error, UnreadableKind kind)
+    {
+        Entry = entry;
+        Win32Error = win32Error;
+        Kind = kind;
+    }
+
+    public int Entry { get; }
+
+    public int Win32Error { get; }
+
+    public UnreadableKind Kind { get; }
+}
 
 public sealed class ScanResult
 {

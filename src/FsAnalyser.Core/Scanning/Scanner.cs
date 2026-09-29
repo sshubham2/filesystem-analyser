@@ -280,8 +280,10 @@ public static class Scanner
 
             if (error != 0)
             {
+                // What it listed is in the store now, so its kind is the rule the tree and the top-level rows use.
                 _store.AddFlags(folder, EntryFlags.Unreadable);
-                _unreadable.Add(new UnreadableFolder(folder, error));
+                _unreadable.Add(new UnreadableFolder(folder, error,
+                    _store.ChildCount(folder) > 0 ? UnreadableKind.ListedPartway : UnreadableKind.NothingListed));
             }
 
             // Pushed last-first so folders are visited in listing order. A root child is its own row.

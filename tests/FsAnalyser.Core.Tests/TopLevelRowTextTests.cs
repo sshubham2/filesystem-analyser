@@ -55,8 +55,9 @@ public class TopLevelRowTextTests
 
     // Scans the tree with a 995 at the third listing buffer of each of the named folders. Which folder a call lists is
     // read off the order an untouched scan exits them in; the scan thread's calls are counted from the last folder that
-    // exited, so a folder cut short does not move where the next one's buffers fall.
-    private static ScanResult ScanFailingPartway(TempTree tree, string[] partway)
+    // exited, so a folder cut short does not move where the next one's buffers fall. UnreadableFolderTests feeds the
+    // engine's record of such a scan to the unreadable-folders list (SL-087).
+    internal static ScanResult ScanFailingPartway(TempTree tree, string[] partway)
     {
         using var live = new CancellationTokenSource(); // never cancelled: the 995 is Windows', not the guard's
         var order = new List<string>();
