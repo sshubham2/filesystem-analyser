@@ -27,6 +27,7 @@ using System.Windows.Threading;
 ///   [FSA_HOOK_MAXIMIZE=1]  (watch, expand and size only)  [FSA_HOOK_BACK=1]  (expand, and watch with FSA_HOOK_EXPAND)
 ///   [FSA_HOOK_DRIVES=&lt;n&gt;]  (watch, expand, kinds and size only)
 ///   [FSA_HOOK_WALK, FSA_HOOK_RECYCLE, FSA_HOOK_MULTIPLY, FSA_HOOK_SELECT, FSA_HOOK_RELEASE, FSA_HOOK_GAP, FSA_HOOK_HEIGHT]  (tree only)
+///   [FSA_HOOK_RENDER=software]  (SL-080: WPF draws the process in software, set before Main; tree mode's facts line says so)
 /// </code>
 /// tree (SL-044) reads and drives the folder tree a completed scan shows, and logs JSON lines; TreeMode.cs has
 /// all of it. It is not armed and takes no FSA_HOOK_SLOW_REFRESH_MS.
@@ -167,6 +168,8 @@ internal class StartupHook
     private static readonly TimeSpan ProbeEvery = TimeSpan.FromMilliseconds(50);
 
     internal static readonly Stopwatch Clock = new();
+    // When Clock started, so that its times can be put on another clock of this process: a trace's (SL-080).
+    internal static DateTime ClockOriginUtc;
     private static readonly object LogGate = new();
     private static string? _logPath;
 
@@ -192,7 +195,17 @@ internal class StartupHook
                 !string.Equals(Path.GetFileName(Environment.ProcessPath), TargetExe, StringComparison.OrdinalIgnoreCase))
                 return;
             _logPath = Environment.GetEnvironmentVariable("FSA_HOOK_LOG");
+            ClockOriginUtc = DateTime.UtcNow;
             Clock.Start();
+            // FSA_HOOK_RENDER=software (SL-080): WPF draws this process in software, set here, before the app's Main, as
+            // RenderOptions needs, so a stall waiting on the GPU can be told from one waiting on the render thread. Tree
+            // mode's facts line says which mode the process ran in.
+            if (Environment.GetEnvironmentVariable("FSA_HOOK_RENDER") == "software")
+                RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
+            // Tree mode's FSA_HOOK_HEIGHT sizes the window before it has a window handle, from a watch on this thread's
+            // dispatcher that has to be in place before the app's Main makes the window (SL-080 code review M3).
+            if (mode == "tree")
+                TreeMode.BeforeMain();
             new Thread(() => Run(mode)) { IsBackground = true, Name = "FsaWindowHook" }.Start();
         }
         catch (Exception)

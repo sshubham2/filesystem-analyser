@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Windows;
@@ -28,7 +29,9 @@ using System.Windows.Threading;
 /// waits up to 120 s for the ending, then runs the steps below in this order, and closes the window: the app
 /// exits as a closed window does. Every line it logs is one JSON object with a "kind"; a step that cannot go
 /// on logs {"kind":"error","reason":...} and the window is closed. FSA_HOOK_HEIGHT makes the window that tall (at
-/// most the work area) as it loads, before the scan: a "sized" line.
+/// most the work area) as the window is made, before it has a window handle, and so before its scan: a "sized" line,
+/// with the height the window was laid out at ("actual"). A height within the work area that the window does not take (under its MinHeight) is refused,
+/// "height not applied (asked/actual)", so a run meant for one height never runs at another (SL-080).
 /// <list type="bullet">
 /// <item>ending: how the scan ended and whether the tree is what is shown, the tree's viewport, and where the
 /// window is against the work area.</item>
@@ -57,9 +60,12 @@ using System.Windows.Threading;
 /// 50 ms while a scan runs; after the ending, 1 s of hand-off, that folder opened once, then a second scan of
 /// the same root over the open tree, to its ending and 1 s beyond. One "gap" line a phase (scan, handoff, open,
 /// rescan, rescan-handoff) with how many probes it had, their p95 and max wait and when the longest was posted
-/// (review m7); a "rescan-started" line with how long the window's StartScan held the UI thread; and on each
-/// ending line, when the first move came and the longest a move took. Every 10 ms, so that a phase of a second
-/// has enough probes for its p95 to be something other than its longest wait (the code review's M1).</item>
+/// (review m7) and got through ("maxEndAt"); a "rescan-started" line with how long the window's StartScan held the
+/// UI thread; and on each ending line, when the first move came and the longest a move took. Every 10 ms, so that
+/// a phase of a second has enough probes for its p95 to be something other than its longest wait (the code
+/// review's M1). First, a "facts" line (SL-080): the UI thread's OS id, the process's priority class, the runtime,
+/// and when the hook's clock started, in UTC and in ms since the process started, so that a trace of the run can
+/// be read on the hook's clock.</item>
 /// </list>
 /// </remarks>
 internal static class TreeMode
@@ -103,11 +109,15 @@ internal static class TreeMode
             if (release is not null && select is null)
                 throw new Refusal("FSA_HOOK_RELEASE needs FSA_HOOK_SELECT: the row a person had selected before picking a new folder");
 
+            int? height = Number("FSA_HOOK_HEIGHT"); // applied by BeforeMain's watch, before the window had a handle
             window = WaitForWindow();
-            if (Number("FSA_HOOK_HEIGHT") is int height)
-                Size(window, height);
+            if (height is int wanted)
+                Sized(window, wanted);
             if (gap is not null)
+            {
+                Facts();
                 probe = Probe.Start(app);
+            }
             WaitForEnding(window, "ending", probe, first: true);
             if (probe is not null)
                 probe.Phase("handoff", TimeSpan.FromSeconds(1));
@@ -155,12 +165,88 @@ internal static class TreeMode
     }
 
     // FSA_HOOK_HEIGHT: the window made that tall, or as tall as the work area allows, at the top of the screen, so
-    // the tree has the room a person who enlarges the window gives it.
-    private static void Size(Window window, int height) => Emit("sized", Ui(() =>
+    // the tree has the room a person who enlarges the window gives it. It is set as the window is made, once its XAML
+    // has set its own Height and before it has a window handle: the handle is then created at that height, as it is at
+    // the XAML default, and neither arm of a Height batch is ever resized before the hook's first move. Both ways of
+    // setting it later were measured to make the arms differ in more than their height (SL-080 code review M3): in a
+    // Loaded class handler the window was already on screen, and the set did nothing at the 860 px default while it
+    // resized the window at any other height; in SourceInitialized, before the window is shown, a window resized from
+    // 860 to 850 px still took about 140 ms less at the scan's first move than one left at 860, because its first
+    // resize had already been paid. The set is made in the window's Initialized, raised at the end of its XAML, or at
+    // once when that has passed and the window has no handle yet; it is reached from the first dispatcher operation the
+    // UI thread posts once the window exists, which needs a watch on the main thread's dispatcher from before the app's
+    // Main (BeforeMain, called by StartupHook.Initialize). Written on the UI thread, read by the hook's thread after a
+    // dispatcher call.
+    private static Dictionary<string, object?>? _sized;
+    private static string? _unsized; // why the window could not be sized in time, if so
+
+    internal static void BeforeMain()
+    {
+        if (Text("FSA_HOOK_HEIGHT") is not { } text || !int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int height))
+            return; // Drive refuses a height that is not a whole number
+        Dispatcher dispatcher = Dispatcher.CurrentDispatcher; // the main thread's, which the app's Application takes as its own
+        DispatcherHookEventHandler? watch = null;
+        watch = (_, _) =>
+        {
+            if (!dispatcher.CheckAccess() || Application.Current?.MainWindow is not { } window)
+                return;
+            dispatcher.Hooks.OperationPosted -= watch;
+            if (!window.IsInitialized)
+                window.Initialized += (_, _) => Size(window, height, "Initialized");
+            else if (PresentationSource.FromVisual(window) is null)
+                Size(window, height, "constructed");
+            else
+                _unsized = "the window had its handle before the hook could size it";
+        };
+        dispatcher.Hooks.OperationPosted += watch;
+    }
+
+    private static void Size(Window window, int height, string when)
     {
         window.Top = SystemParameters.WorkArea.Top;
         window.Height = Math.Min(height, SystemParameters.WorkArea.Height);
-        return new Dictionary<string, object?> { ["asked"] = height, ["height"] = window.Height, ["workArea"] = SystemParameters.WorkArea.Height };
+        _sized = new Dictionary<string, object?>
+        {
+            ["asked"] = height,
+            ["height"] = window.Height,
+            ["workArea"] = SystemParameters.WorkArea.Height,
+            ["when"] = when, // Initialized or constructed: before the window had a handle, either way
+            ["ms"] = StartupHook.Clock.ElapsedMilliseconds,
+        };
+    }
+
+    // The height the window was laid out at. One the window did not take within the work area (under its MinHeight) is
+    // refused (SL-080); asked past the work area, it is T-003's "as tall as it goes", and the work area's is what was
+    // meant. So is a window that had its handle before the hook could size it: its handle was made at another height.
+    private static void Sized(Window window, int height)
+    {
+        Settle(DispatcherPriority.Loaded);
+        (Dictionary<string, object?>? sized, double actual) = Ui(() => (_sized, window.ActualHeight));
+        if (sized is null)
+            throw new Refusal(_unsized ?? "the window had its handle before the hook could size it");
+        sized["actual"] = actual;
+        Emit("sized", sized);
+        if (height <= (double)sized["workArea"]! && Math.Abs(actual - height) > 1)
+            throw new Refusal(string.Create(CultureInfo.InvariantCulture, $"height not applied ({height}/{actual})"));
+    }
+
+    // SL-080: what a trace of this run needs to be read on the hook's clock and against the right thread.
+    private static void Facts() => Emit("facts", Ui(() =>
+    {
+        using Process self = Process.GetCurrentProcess();
+        return new Dictionary<string, object?>
+        {
+            // The OS thread id, which a trace names threads by. Neither ManagedThreadId nor AppDomain.GetCurrentThreadId
+            // (the managed id on .NET: it gave 2 at SL-080's build) is it; Thread.CurrentOSThreadId is, and is internal.
+            ["uiThread"] = typeof(Thread).GetProperty("CurrentOSThreadId", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null),
+            ["priorityClass"] = self.PriorityClass.ToString(),
+            ["runtime"] = RuntimeInformation.FrameworkDescription,
+            ["renderMode"] = RenderOptions.ProcessRenderMode.ToString(), // SoftwareOnly under FSA_HOOK_RENDER=software
+            ["renderTier"] = RenderCapability.Tier >> 16,
+            ["pid"] = Environment.ProcessId,
+            ["clockOriginUtc"] = StartupHook.ClockOriginUtc.ToString("o", CultureInfo.InvariantCulture),
+            ["clockOriginSinceProcessStartMs"] = (StartupHook.ClockOriginUtc - self.StartTime.ToUniversalTime()).TotalMilliseconds,
+        };
     }));
 
     // Until the scan has returned and its ending is on screen. With a probe, the window is moved and resized every
@@ -628,6 +714,7 @@ internal static class TreeMode
                     ["p95"] = mine.Length == 0 ? null : mine[(int)Math.Ceiling(0.95 * mine.Length) - 1].Waited,
                     ["max"] = mine.Length == 0 ? null : mine[^1].Waited,
                     ["maxAt"] = mine.Length == 0 ? null : mine[^1].At, // the hook's clock when the longest was posted
+                    ["maxEndAt"] = mine.Length == 0 ? null : mine[^1].At + mine[^1].Waited, // and when it got through
                 };
             }
         }

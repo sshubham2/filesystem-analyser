@@ -1,0 +1,245 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-080",
+ "stage": "code-review",
+ "attempt": 3,
+ "at": "2026-09-29T01:50:02.370Z",
+ "head": "6b91dea8b89f7c0480a0373ebd7d94d03a575de0",
+ "run_id": 2072,
+ "summary": "Attempt 3 fixes what was sent back, and I found nothing new worth a finding.\n\n**The height fix (O-030).** The hook now sets the window's height as the window is made, before it has a handle. It does this from a dispatcher watch installed before the app's Main (TreeMode.BeforeMain, called from StartupHook.Initialize in tree mode only).\n- The watch returns unless it is on the UI thread, so its Application.MainWindow read is safe.\n- It stops watching once the main window exists. A window that already had its handle is refused with its own reason.\n- FSA_HOOK_HEIGHT is parsed the same way (NumberStyles.None) in both places that read it.\n- All 34 sized lines in the builder's height-4 and height-850-2 logs read `\"when\":\"Initialized\"`.\n- I ran one live T-005 at 644 px myself. It sized at Initialized (247 ms, actual 644) and its scan's first move waited 339.8 ms at firstMoveAt+15. That matches the 860 arm (334–347 ms) and height-850-2's 850 arm. So the arms are now equal at load, which removes the confound behind M3.\n\n**The driver fixes (O-031, O-032).**\n- The strip pattern now covers the COMPlus_ aliases, and the arm-variables self-test confirms which names are removed and which are kept.\n- Get-SampleRate takes the sampling interval from the traced runs' own samplingNs, and stops the reading when runs disagree.\n\n**Checks run.**\n- Hook build: 0 errors.\n- StallStacks self-test: 13/13.\n- T005Batch self-test: 33/33, including the three new O-032 fixtures and the arm-variables check.\n- Fitness: all 62 rules hold.\n\n**The doc.** I checked its figures against artifacts/sl080 runs.jsonl for height-3, height-850, height-4 and height-850-2, and they hold:\n- the height-4 pair table;\n- verdicts and detectable ratios 1.35 and 2.05;\n- scan-phase counts 3 of 8, median 0.952;\n- the ≥1,250 ms counts (12, 7, 7, 5).\n\n**One thing to know, not a defect.** Between batches whose only planned difference was how the hook set the height, the ~1.3 s stall went from 0 of 16 runs (height-2) to 12 of 16 (height-3), and 7 of 16 plus a 0.9–1.0 s group in height-4. No plain T-005 control batch has been run. This is in the drift list.\n\nO-001 and O-002 are not listed below because of the 30-item limit; I re-checked both this pass and they still hold (StallStacks CANNOT-READ fixtures, and the tracing-masks route in Get-TraceVerdict).\n\nSecond round: This round found nothing my first pass missed. I tried to break every part of the attempt-3 change; each held.\n\n**TreeMode.BeforeMain and its watch**\n- The handler that fires on each posted operation returns unless it is on the main dispatcher's thread. That makes its read of Application.MainWindow (which checks the calling thread) safe. The one read during the Application constructor finds MainWindow still null and returns.\n- WPF raises that event outside its own lock, so the handler can stop watching from inside itself without deadlocking.\n- Size runs inside the window's constructor during XAML loading, where a throw would crash the app. It has no throwing input: FSA_HOOK_HEIGHT is parsed with NumberStyles.None, so no sign or whitespace gets through; the height is therefore never negative; and 0 is coerced up to MinHeight and then refused as 'height not applied'.\n- A window that already has its handle, or a watch that never saw the window, both end in a named refusal. `_unsized` is read only after a dispatcher round trip.\n- If BeforeMain itself throws, the hook thread never starts. The run then fails loudly and is not mismeasured.\n\n**T005Batch**\n- **The environment strip pattern:** its alternation groups correctly and `-match` ignores case. Suffixed names such as DOTNET_EnableEventPipeX are kept; COMPlus_STARTUP_HOOKS is not honoured by the host, so leaving it in is harmless.\n- **Get-SampleRate:** it ignores stacks without samplingNs and falls back to -SampleMs only when no stack has one. For non-Trace plans `$rate` is never read.\n- **Invoke-Plan:** the reordered code and the stopped verdict with a null `stoppedAt` are consistent.\n\n**Checks run in the first pass of this attempt**\n- The hook built with 0 errors.\n- Self-tests: StallStacks 13/13, T005Batch 33/33, and `-Only arm-variables` 1/1.\n- Fitness: all 62 rules hold.\n- A live T-005 at 644 px sized at Initialized and passed.\n\n**Obligations:** O-001 and O-002 are left off the list below only because of the 30-item limit. Both were re-checked in the first pass of this attempt and still hold.",
+ "payload": {
+  "status": "complete",
+  "verdict": "clean",
+  "summary": "Attempt 3 fixes what was sent back, and I found nothing new worth a finding.\n\n**The height fix (O-030).** The hook now sets the window's height as the window is made, before it has a handle. It does this from a dispatcher watch installed before the app's Main (TreeMode.BeforeMain, called from StartupHook.Initialize in tree mode only).\n- The watch returns unless it is on the UI thread, so its Application.MainWindow read is safe.\n- It stops watching once the main window exists. A window that already had its handle is refused with its own reason.\n- FSA_HOOK_HEIGHT is parsed the same way (NumberStyles.None) in both places that read it.\n- All 34 sized lines in the builder's height-4 and height-850-2 logs read `\"when\":\"Initialized\"`.\n- I ran one live T-005 at 644 px myself. It sized at Initialized (247 ms, actual 644) and its scan's first move waited 339.8 ms at firstMoveAt+15. That matches the 860 arm (334–347 ms) and height-850-2's 850 arm. So the arms are now equal at load, which removes the confound behind M3.\n\n**The driver fixes (O-031, O-032).**\n- The strip pattern now covers the COMPlus_ aliases, and the arm-variables self-test confirms which names are removed and which are kept.\n- Get-SampleRate takes the sampling interval from the traced runs' own samplingNs, and stops the reading when runs disagree.\n\n**Checks run.**\n- Hook build: 0 errors.\n- StallStacks self-test: 13/13.\n- T005Batch self-test: 33/33, including the three new O-032 fixtures and the arm-variables check.\n- Fitness: all 62 rules hold.\n\n**The doc.** I checked its figures against artifacts/sl080 runs.jsonl for height-3, height-850, height-4 and height-850-2, and they hold:\n- the height-4 pair table;\n- verdicts and detectable ratios 1.35 and 2.05;\n- scan-phase counts 3 of 8, median 0.952;\n- the ≥1,250 ms counts (12, 7, 7, 5).\n\n**One thing to know, not a defect.** Between batches whose only planned difference was how the hook set the height, the ~1.3 s stall went from 0 of 16 runs (height-2) to 12 of 16 (height-3), and 7 of 16 plus a 0.9–1.0 s group in height-4. No plain T-005 control batch has been run. This is in the drift list.\n\nO-001 and O-002 are not listed below because of the 30-item limit; I re-checked both this pass and they still hold (StallStacks CANNOT-READ fixtures, and the tracing-masks route in Get-TraceVerdict).\n\nSecond round: This round found nothing my first pass missed. I tried to break every part of the attempt-3 change; each held.\n\n**TreeMode.BeforeMain and its watch**\n- The handler that fires on each posted operation returns unless it is on the main dispatcher's thread. That makes its read of Application.MainWindow (which checks the calling thread) safe. The one read during the Application constructor finds MainWindow still null and returns.\n- WPF raises that event outside its own lock, so the handler can stop watching from inside itself without deadlocking.\n- Size runs inside the window's constructor during XAML loading, where a throw would crash the app. It has no throwing input: FSA_HOOK_HEIGHT is parsed with NumberStyles.None, so no sign or whitespace gets through; the height is therefore never negative; and 0 is coerced up to MinHeight and then refused as 'height not applied'.\n- A window that already has its handle, or a watch that never saw the window, both end in a named refusal. `_unsized` is read only after a dispatcher round trip.\n- If BeforeMain itself throws, the hook thread never starts. The run then fails loudly and is not mismeasured.\n\n**T005Batch**\n- **The environment strip pattern:** its alternation groups correctly and `-match` ignores case. Suffixed names such as DOTNET_EnableEventPipeX are kept; COMPlus_STARTUP_HOOKS is not honoured by the host, so leaving it in is harmless.\n- **Get-SampleRate:** it ignores stacks without samplingNs and falls back to -SampleMs only when no stack has one. For non-Trace plans `$rate` is never read.\n- **Invoke-Plan:** the reordered code and the stopped verdict with a null `stoppedAt` are consistent.\n\n**Checks run in the first pass of this attempt**\n- The hook built with 0 errors.\n- Self-tests: StallStacks 13/13, T005Batch 33/33, and `-Only arm-variables` 1/1.\n- Fitness: all 62 rules hold.\n- A live T-005 at 644 px sized at Initialized and passed.\n\n**Obligations:** O-001 and O-002 are left off the list below only because of the 30-item limit. Both were re-checked in the first pass of this attempt and still hold.",
+  "matches_design": true,
+  "findings": [],
+  "obligations": [
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "Get-TraceVerdict gives NAMED when ≥3 runs share a frame, otherwise SPLIT. Fixture trace-split."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "The ABBA schedule and orderEffect in T005Batch.ps1. Fixture height-drift."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "no-stall-this-batch. Fixture height-quiet."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "TreeMode.Sized refuses 'height not applied (asked/actual)'; under Initialized sizing 620 still lays out at MinHeight 644 and is refused. Test-RunLine checks actualHeight. Fixtures stop-height-refused and stop-height-silent."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "ConvertTo-T005Summary sets reached=false and nulls. Fixture summary-phase-never-reached."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "Invoke-Batch, Test-RunLine and Resolve-Lines. Fixtures stop-no-line, stop-crashed and reread-hole."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "StallStacks gives RENDER-PATH before SPLIT or NAMED. Fixtures render-chain, render-mixed and render-mixed-10ms."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "primaryMs is the only figure decided on, and a null phase stops the batch."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "The $Boundary list and Split-Sample in StallStacks.ps1. Fixture pump-only."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "docs/design/SL-080-move-stall.md:232-244."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "The Render rules in the T005Batch header, with the S,H,H,S schedule. Fixtures render-gpu, render-equal and render-slower."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "The runtime is recorded in the facts line and summary. FSA_T005_SAMPLE_MS sets DOTNET_EventPipeThreadSamplingRate. Idle vs busy is read from frames only."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "WindowCases.ps1 Start-App uses -Environment, and the output path carries {pid}."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "Test-RunLine checks exitReason and null phases."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "clockOriginUtc and maxEndAt are recorded, and matching is on time first."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": ".taad/fitness.yaml SL-033 rule extended. Fitness check: every rule holds."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "FSA_HOOK_HEIGHT is reused; doc lines 23-34."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "Get-Spread computes detectableRatio. The doc quotes 1.35 (height-4) and 2.05 (height-850-2), which match verdict.json."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "-SelfTest: 13/13 and 33/33, run here."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "Doc lines 210-218."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "The height is now set before the window has a handle, earlier than the Loaded handler: TreeMode.BeforeMain, then Size in Initialized. Every sized line reads 'when':'Initialized'."
+   },
+   {
+    "key": "O-024",
+    "discharged": "yes",
+    "evidence": "GetFullPath is applied in T005Batch.ps1, New-T005Trace and the Test-T005 summary append (unchanged since attempt 2)."
+   },
+   {
+    "key": "O-025",
+    "discharged": "yes",
+    "evidence": "Resolve-Lines and the live refusal of an existing runs.jsonl. Fixtures reread-hole, reread-duplicate, reread-stray and live-existing-runs pass."
+   },
+   {
+    "key": "O-026",
+    "discharged": "yes",
+    "evidence": "The StallStacks header gives 25% and the 80%-overlap wording; doc line 243 matches."
+   },
+   {
+    "key": "O-027",
+    "discharged": "yes",
+    "evidence": "The header documents the 10 ms interval, observedSampleMs is reported, and fixtures named-10ms and render-mixed-10ms pass."
+   },
+   {
+    "key": "O-028",
+    "discharged": "yes",
+    "evidence": "$ArmVariables is stripped in Invoke-T005Run, and Test-RunLine checks traceFile against arm.trace. Fixtures stop-trace-mismatch and stop-trace-missing."
+   },
+   {
+    "key": "O-029",
+    "discharged": "yes",
+    "evidence": "Invoke-StackReader deletes stale stacks and turns a failed read into CANNOT-READ. Fixture trace-reader-crash."
+   },
+   {
+    "key": "O-030",
+    "discharged": "yes",
+    "evidence": "- **The code:** TreeMode.cs BeforeMain (called from StartupHook.cs:207-208 in tree mode) watches Dispatcher.Hooks.OperationPosted until MainWindow exists, then sizes the window in Initialized, or at once if it has no PresentationSource yet. A window that already had its handle is refused (_unsized).\n- **The builder's logs:** Initialized in 17/17 runs of height-4 and 17/17 of height-850-2.\n- **Measured here:** a live T-005 at 644 px sized at Initialized (actual 644); its first-move scan wait was 339.8 ms, equal to the 860 arm's 334-347 ms.\n- **The doc and comment:** the doc withdraws 'says yes' and the scan-phase follow-on (lines 101-107, 222-224), and quotes the review's 850-vs-860 runs (lines 83-85). The TreeMode comment at :167-180 is rewritten."
+   },
+   {
+    "key": "O-031",
+    "discharged": "yes",
+    "evidence": "T005Batch.ps1 has `$ArmVariables = '^(FSA_T005_|FSA_HOOK_|(DOTNET|COMPlus)_(EventPipe|EnableEventPipe$)|DOTNET_STARTUP_HOOKS$)'`. The self-test's arm-variables check (run here: 12 taken out, 8 left) covers COMPlus_EnableEventPipe, COMPlus_EventPipe* and a lower-case form."
+   },
+   {
+    "key": "O-032",
+    "discharged": "yes",
+    "evidence": "Get-SampleRate in T005Batch.ps1 takes the rate from the stacks' samplingNs, falls back to -SampleMs only when no stack has one, and stops when runs disagree. Fixtures pass when run here:\n- reread-trace-rate-from-traces goes to the fallback;\n- reread-trace-flag-ignored goes to the 10 ms re-run;\n- trace-rates-disagree exits 1."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "StallStacks fixtures unresolved (70% '?!?' below the queue) and external-frames (80% UNMANAGED_CODE_TIME only) give CANNOT-READ."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "T005Batch fixtures trace-masks, trace-masks-10ms and reread-trace-rate-from-traces feed untraced ≥3/4 and traced ≤1/4 stalling."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "Fixture trace-split (X, Y, Z, X) gives SPLIT."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "Fixture height-drift (+40 ms per run) gives no-measurable-difference with orderEffect true."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "Fixture height-quiet gives no-stall-this-batch."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "Fixtures stop-height-refused and stop-height-silent. The live runs height-850-2 and height-4, plus this review's 644 run, show the arms equal at load under Initialized sizing."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "Fixture summary-phase-never-reached feeds a 0-probe rescan hook log through the real ConvertTo-T005Summary."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "Fixtures stop-no-line and stop-crashed, plus reread-hole, reread-duplicate and reread-stray."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "Fixtures render-chain, render-mixed and render-mixed-10ms give RENDER-PATH, and trace-render routes to -Plan Render."
+   },
+   {
+    "key": "C-010",
+    "exercised": "no",
+    "evidence": "A rejected alternative, settled by a no-go spike (doc lines 9-12). No test is needed."
+   },
+   {
+    "key": "C-011",
+    "exercised": "no",
+    "evidence": "A rejected alternative, settled by a no-go spike (doc lines 9-12). No test is needed."
+   },
+   {
+    "key": "C-012",
+    "exercised": "no",
+    "evidence": "Settled by spikes and cited, not re-tested (doc lines 199-208)."
+   }
+  ],
+  "drift": [
+   "The orderEffect flag in Get-HeightVerdict (T005Batch.ps1) is still symmetric: it fires at ≤1 or ≥7 of 8. The design said '≥7/8', and this is still not among the declared departures. The builder records it as not taken up.",
+   "The Render rule still issues a directional reading on the median ratio alone, with no floor on the batch's power. render-2's 'render-thread-or-dwm-not-gpu' came with a detectable ratio of 5.41, and only the doc says it rules nothing out.",
+   "The ~1.3 s later-move stall changes frequency sharply between batches whose planned difference was only the hook's sizing path:\n- height-2 (Loaded handler): 0 of 16 runs ≥1,250 ms.\n- height-3 (SourceInitialized): 12 of 16, in the rescan.\n- height-4 (Initialized): 7 of 16 in the scan, plus a 0.9-1.0 s group.\n\nIn height-4 the primary figure is a later-move stall in 12 of 16 runs, so the delivered Height verdict mostly compares that stall kind. No plain T-005 control batch (no FSA_HOOK_HEIGHT, so no pre-Main dispatcher watch) has been run. The doc's follow-on 'a traced batch of the 1.3 s kind, now the most frequent large stall in these batches' should first check that the hook's own sizing path is not what makes it frequent.",
+   "trace-2 and render-2, the delivered Trace and Render verdicts, were run under the superseded Loaded-class-handler sizing, not the tool as it now stands. The builder declares this and argues from height-850-2's 860 px first-move waits that nothing changes at 860 px (doc lines 109-114)."
+  ],
+  "unreviewed": [
+   ".taad/slices/SL-080/*.json (index, build-slice-2/3, code-review-2): engine records, not code.",
+   "tests/window/fixtures/T005Batch/{reread-trace-flag-ignored,reread-trace-rate-from-traces,trace-rates-disagree}.json: checked through the passing self-test output (their verdicts, next steps and exit codes), not opened."
+  ],
+  "second_round": {
+   "run_id": 2073,
+   "filed": 0
+  }
+ }
+}

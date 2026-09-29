@@ -1,0 +1,171 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-080",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-09-28T22:47:48.744Z",
+ "head": "97dc5762cc86e55da0dc52c3ea8e5530fd710daa",
+ "run_id": 2061,
+ "summary": "The design gets the big decision right. Two no-go spikes rule out the de51999-vs-HEAD comparison, so it swaps in a same-build ABBA height test on HEAD, and it leaves the GC and CPU-load results alone. Both cited sources say what the design claims: SDL #1059 and SO 4079490.\n\nNobody has disagreed with this design before, and its verdict machinery has gaps that would let a noisy batch be read to taste or produce a confident wrong answer.\n- **Height rules:** the ABBA rules never say which number is compared. It could be the scan phase, the rescan phase or the larger of the two. They also never say what happens to a pair with a missing phase.\n- **Stack rule:** \"deepest frame in ≥90% of samples\" can come out as NAMED on a generic pump or dispatch frame.\n- **Fallbacks:** the two fallbacks the rationale leans on are not designed. The first contradicts a key decision and would not fix the likely failure.\n- **Software-render arm:** this is the likely path, given SL-044's \"stalled with moves, 10 ms with none\". It has no decision rule.\n- **Tracing masks the stall:** that outcome is a dead end in the design. The web shows a lower-overhead knob now exists: DOTNET_EventPipeThreadSamplingRate, backported to release/10.0 in dotnet/runtime PR 128843 because of \"dramatic overhead\" at the 1 ms default.\n\nThe EventPipe environment-variable scoping relies on the caller remembering to clear it. The architecture rule lists .ps1 files as C# imports, which can never fire.\n\nNothing has been run. Settling these needs one traced T-005 run with StallStacks on HEAD, plus a check of the self-contained exe's runtime version.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The design gets the big decision right. Two no-go spikes rule out the de51999-vs-HEAD comparison, so it swaps in a same-build ABBA height test on HEAD, and it leaves the GC and CPU-load results alone. Both cited sources say what the design claims: SDL #1059 and SO 4079490.\n\nNobody has disagreed with this design before, and its verdict machinery has gaps that would let a noisy batch be read to taste or produce a confident wrong answer.\n- **Height rules:** the ABBA rules never say which number is compared. It could be the scan phase, the rescan phase or the larger of the two. They also never say what happens to a pair with a missing phase.\n- **Stack rule:** \"deepest frame in ≥90% of samples\" can come out as NAMED on a generic pump or dispatch frame.\n- **Fallbacks:** the two fallbacks the rationale leans on are not designed. The first contradicts a key decision and would not fix the likely failure.\n- **Software-render arm:** this is the likely path, given SL-044's \"stalled with moves, 10 ms with none\". It has no decision rule.\n- **Tracing masks the stall:** that outcome is a dead end in the design. The web shows a lower-overhead knob now exists: DOTNET_EventPipeThreadSamplingRate, backported to release/10.0 in dotnet/runtime PR 128843 because of \"dramatic overhead\" at the 1 ms default.\n\nThe EventPipe environment-variable scoping relies on the caller remembering to clear it. The architecture rule lists .ps1 files as C# imports, which can never fire.\n\nNothing has been run. Settling these needs one traced T-005 run with StallStacks on HEAD, plus a check of the self-contained exe's runtime version.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "contract-gaps",
+    "claim": "The height rules are fixed before any run, but the number they are applied to is not. Each summary line holds two phases (scan and rescan), each with a longest wait. The contract never says whether a pair is compared on the scan phase, the rescan phase, the larger of the two, or both tested separately. Testing both separately would double the chance of a false '860-worsens'. The design's stated goal of stopping 'a noisy batch being read to taste' fails, because the builder or the reader picks the metric after the fact. The null-phase rule also breaks the arithmetic. 'The driver excludes null phases rather than averaging them away', so a pair with one null phase drops out, and '>=7/8 pairs' and '3-5/8' become undefined. That is the same pairing hole the batch-stop rule exists to prevent.",
+    "evidence": "contracts T005Batch.ps1 notes: '860-worsens needs 860 higher in >=7/8 pairs and median ratio >=1.2'; FSA_T005_SUMMARY error_cases: 'A phase the hook never reached is written null, not 0; the driver excludes null phases'; the brief itself names both a '1,318.5 ms rescan wait' and, in the build check, 'the first-move stall'",
+    "fix": "Name one primary metric in the contract, for example max(scan.longestWaitMs, rescan.longestWaitMs) per run, with the other phases reported but never decided on. Make any null phase in either run of a pair a batch-stop (exit 1), the same as a missing summary line, instead of an exclusion."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "missing-edge-cases",
+    "claim": "blockedUnder is 'the deepest frame in ≥90% of samples' of a busy stretch. When a stretch covers more than one dispatcher operation or window message (layout, then render, then the timer tick), the deepest frame common to 90% is a pump or dispatch frame. Examples are HwndSubclass.SubclassWndProc, Dispatcher.ProcessQueue, ExceptionWrapper.InternalRealCall and Dispatcher.PushFrameImpl, or the hook's own move call. That frame is the same on every traced run, so '>=3/4 traced runs share one blockedUnder' comes out NAMED. The slice would then commit a confident root cause that names only the message loop.",
+    "evidence": "components 'UI-thread stall stack reader': 'reports blockedUnder (deepest frame in ≥90% of samples)'; contracts T005Batch.ps1: 'NAMED if >=3/4 traced runs' matched stretches share one blockedUnder'",
+    "fix": "Give StallStacks.ps1 a fixed list of pump, dispatch and hook frames that are never a valid blockedUnder. Choose blockedUnder only among frames below the deepest listed frame. If no frame below that boundary covers ≥90%, return SPLIT or CANNOT-READ('only the pump is common'). Report the chain below the boundary."
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "drift-from-design",
+    "claim": "The selection rationale and coherence check call the first traced run 'a live gate with two named fallbacks (dotnet-trace collect mode, then in-process Dispatcher/WM_* timestamping)'. Neither fallback appears in components, contracts or whats_new. The first one contradicts key decision 4 ('no dotnet-trace attach/launch mode'). It also would not fix any likely CANNOT-READ: collect mode reads the same EventPipe SampleProfiler stream, so unresolved frames, native-only leaves or no UI-thread samples come back identical. Only the second fallback would survive the likely failure, and it has no contract, no FSA_HOOK_* variable and no output schema. The build stage would have to design it on the spot, after the gate has already failed.",
+    "evidence": "selection_rationale / coherence_check: 'two named fallbacks (dotnet-trace collect mode, then in-process Dispatcher/WM_* timestamping)'; key_decisions: 'no dotnet-trace attach/launch mode, no ETW/WPR'; whats_new lists no fallback",
+    "fix": "Drop the collect-mode fallback. Add a contract for the in-process fallback: an FSA_HOOK_MSGLOG variable that timestamps UI-thread dispatcher operations and WM_* messages (message, start, duration) around the longest wait, written as JSON lines. Also state the CANNOT-READ reasons that trigger it."
+   },
+   {
+    "id": "M4",
+    "severity": "major",
+    "dimension": "contract-gaps",
+    "claim": "The software-render arm is labelled conditional, but it is the likely path. SL-044 found the stall appears with moves (419-511 ms) and not without them (10 ms), and a programmatic move or resize makes WPF render synchronously. The design says a render-path landing 'is not a final answer' and must trigger this arm, yet the arm has no decision rule. '4 software vs 4 hardware' has no threshold, and there is no reading of what each outcome means. Software mode still renders on the same native render thread and still makes the UI thread wait in SyncFlush, so 'software stalls equally' is ambiguous without a pre-stated reading. This breaks the design's own 'rules fixed before any run' principle on the path the slice most likely ends on.",
+    "evidence": "components 'Conditional software-render arm': 'runs 4 software vs 4 hardware at 860 to separate GPU/present waiting from render-thread work'; cases: 'must trigger the conditional software-vs-hardware render arm rather than being reported as a settled NAMED conclusion'; SL-044 narrowing quoted in the survey: 'de51999 ... stalled 419-511 ms with moves and 10 ms with none'",
+    "fix": "Add the arm's verdict rule to the T005Batch contract before any run, in the same form as the height rule. For example: software lower in ≥4/4 interleaved pairs with median ratio ≤0.6 → 'GPU/present-side'; ratio in [0.83,1.2] → 'render-thread or DWM work not tied to GPU'; anything else → inconclusive. Interleave the arms (S,H,H,S) as the height plan does."
+   },
+   {
+    "id": "M5",
+    "severity": "major",
+    "dimension": "error-paths",
+    "claim": "If tracing masks the stall, the design calls the outcome 'tracing-masks' and then has nowhere to go. The perturbation is real. dotnet/runtime #11301 says the sampler 'every millisecond ... stops each thread and takes a stack trace'. dotnet/runtime PR 128843 (release/10.0, merged 2026-06-04) backported DOTNET_EventPipeThreadSamplingRate because users 'reported dramatic overhead when trying to enable the sample profiler due to our default sampling rate being too high'. A 500-1300 ms stall needs nowhere near 1 kHz sampling: at 10 ms it still gets 50-130 samples. There is a second runtime-version dependency. PR 124084 fixed a .NET 9/10 regression where ThreadSample's SampleType was 'always reporting ... EXTERNAL even when threads were executing managed code'. Neither PR says which 10.0.x patch release carries the fix, and the design never records the self-contained exe's runtime version.",
+    "evidence": "cases: 'the act of tracing changes the timing enough that traced runs stop stalling'; contracts: 'tracing-masks if untraced runs stall >=3/4 while traced stall <=1/4' with no next step; https://github.com/dotnet/runtime/pull/128843; https://github.com/dotnet/runtime/pull/124084; https://github.com/dotnet/runtime/issues/11301",
+    "fix": "Add RuntimeInformation.FrameworkDescription to the hook's run facts and the summary line. Add an FSA_T005_SAMPLE_NS option that sets DOTNET_EventPipeThreadSamplingRate for the launch. On tracing-masks, re-run the Trace plan once at a 10 ms interval before falling back. The StallStacks reader must never classify idle or busy from SampleType. To settle it, check the published exe's runtime version, then run one traced T-005 with the knob set and confirm the sample spacing in the nettrace."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "The EventPipe variables stay out of other processes only because the caller remembers to clear them: 'set ... only around the exe's Start-Process and clears them immediately after'. The error case the design offers in place of a rule (traceFile=null → CANNOT-READ('no trace written')) catches the wrong failure. A leak produces extra traces from other .NET processes, such as dotnet or MSBuild nodes and a long-lived node-reuse or VBCSCompiler server, not a missing trace from the app. The same leak-prone pattern already carries TEMP/TMP and DOTNET_STARTUP_HOOKS. The leak can be made impossible, so no rule is needed.",
+    "evidence": "components 'Launch-scoped EventPipe wiring'; coherence_check: 'carried as a contract error_case (traceFile=null / CANNOT-READ('no trace written')) rather than a static check'",
+    "fix": "Launch the traced exe from a System.Diagnostics.ProcessStartInfo whose Environment holds the DOTNET_EventPipe* entries (or pwsh 7.4+ Start-Process -Environment), so the variables never touch the script's own $env:. At minimum, use try/finally. Give DOTNET_EventPipeOutputPath a per-run file name that includes {pid}, so a stray process cannot overwrite the app's trace."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "claim": "The case 'a run crashes or writes no summary line → stop the batch' is only half built. The summary line is 'written before Test-T005's own assertions', so a run whose app crashed still writes a line, with null phases and a non-close exit reason. The only stop condition the driver has is 'no summary line', so the crashed run goes through as a null-phase exclusion, which is the pairing hole the case forbids.",
+    "evidence": "cases 'run the batch driver / a run crashes or writes no summary line'; components 'T-005 run summary line': 'Written before Test-T005's own assertions'; T005Batch error_cases: 'Exit 1 if a run writes no summary line'",
+    "fix": "Add 'exit reason is not the hook's normal close, or any phase is null' to the T005Batch exit-1 conditions."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "The rationale for matching stretches by duration, 'avoids cross-process clock alignment', is wrong. The hook is a DOTNET_STARTUP_HOOKS library inside the app process, and nettrace timestamps are QPC. Matching by duration within ±20% is also ambiguous inside one run: the scan and rescan stalls can each fall within ±20% of the other. The spike's 1,018.7 ms and 809.7 ms are 20.5% apart. The StartScan anchor is thin too: StartScan lasts 2.8-7.4 ms, so it may get only 3-7 samples.",
+    "evidence": "key_decisions: 'matching by stretch duration anchored to StartScan samples avoids cross-process clock alignment'; spike rescan-stall-is-gc-suspension: 506.9 / 1,018.7 / 809.7 ms; SL-044: StartScan 2.8-7.4 ms",
+    "fix": "Have the hook record each longest wait's start and end as milliseconds since process start (Environment.TickCount64 minus the process start time). EventPipe starts at runtime startup, so these line up with the Speedscope timeline to within a few ms. Match on time window first and use duration only as a check."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "The design's own architecture rule contains entries that can never fire. 'StallStacks.ps1' and 'T005Batch.ps1' are PowerShell scripts, and C# under src/**/*.cs cannot import them. 'tests/window/*' is a path, not a namespace. Only 'FsaWindowHook' can match. The coherence check itself says 'a rule that can never fire is worse than no rule'. The likelier way the app would come to depend on the tooling is a ProjectReference in App.csproj or src reading FSA_HOOK_* or FSA_T005_* variables, and the rule catches neither.",
+    "evidence": "architecture_rules[0].must_not_import: ['FsaWindowHook','tests/window/*','StallStacks.ps1','T005Batch.ps1']; files: 'src/**/*.cs'",
+    "fix": "Keep 'FsaWindowHook' as the import rule. Replace the .ps1 and path entries with a must_not_match on src/** for 'FSA_HOOK_|FSA_T005_' and one on src/**/*.csproj for 'FsaWindowHook|tests[\\\\/]window'. Check first whether SL-044 already declared an equivalent rule, and extend it rather than duplicating it."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "claim": "The design adds an FSA_HOOK_HEIGHT knob without checking whether a height mechanism already exists. The spike evidence says 860 is 'T-005's own fixed default window height ($DefaultHeight in WindowCases.ps1)'. SL-044's validate 'ran n=6 at 860 and n=3 at 620', so something already ran T-005 at 620. A second knob could fight the existing one, for example if WindowCases applies $DefaultHeight after the hook sets its height.",
+    "evidence": "spike stall-rides-competing-cpu-load: '860 px is T-005's own fixed default window height ($DefaultHeight in WindowCases.ps1)'; survey: SL-044/reflect-1.json:114 'Validation ran n=6 at 860 and n=3 at 620'",
+    "fix": "Have build first establish what $DefaultHeight feeds and how SL-044 ran at 620. Reuse that path if it exists, and keep only the actualHeight/uiThread/priorityClass reporting as new. Record the finding in the design doc."
+   },
+   {
+    "id": "m6",
+    "severity": "minor",
+    "dimension": "under-engineering",
+    "claim": "The 'no-measurable-difference' outcome from 8 pairs carries no statement of what effect it could have detected. Consecutive runs in the same setup already spread about 2x (506.9, 1,018.7 and 809.7 ms). With that noise, a median ratio inside [0.83,1.2] over 8 pairs cannot rule out a 20-30% height effect, and the findings doc risks turning 'no-measurable-difference' into '860 does not worsen it'.",
+    "evidence": "contracts T005Batch.ps1: 'no-measurable-difference needs 860 higher in 3-5/8 with ratio in [0.83,1.2]'; spike GC run figures",
+    "fix": "Have verdict.json report the spread of the paired log-ratios and the smallest ratio the batch could have detected. Require the findings record to quote that number alongside any no-difference verdict."
+   },
+   {
+    "id": "m7",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "A 'busy stretch' is defined as time out of the pump, classified by an idle leaf. If the UI thread sits in a nested message loop during the stall, its leaf is GetMessageW or MsgWaitForMultipleObjects again. Examples are the DefWindowProc modal move/size loop the design itself cites, or a nested Dispatcher frame. Classifying by leaf alone counts that as idle, the stall splits into fragments, and the result is CANNOT-READ('no stretch within ±20%') for a stall that was actually captured.",
+    "evidence": "components 'UI-thread stall stack reader': 'finds busy stretches out of the pump'; contracts StallStacks.ps1 idleLeaf/idleShare; prior_art SDL #1059 (verified: DispatchMessage 'doesn't return until user releases mouse')",
+    "fix": "Count a sample as idle only when the idle leaf sits under the outermost pump frame (Application.Run → Dispatcher.PushFrameImpl at the base depth). Report nested-pump samples as their own category inside the stretch."
+   },
+   {
+    "id": "m8",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "The slice's deliverable is a verdict, and no test covers the code that computes it: the sign counts, ratio bands, order-effect check, no-stall-this-batch, tracing-masks, and NAMED/SPLIT/CANNOT-READ. That logic first runs on real data, where an off-by-one in pair construction across ABBA block boundaries, or a mislabelled first-in-pair, reads as a finding.",
+    "evidence": "whats_new lists T005Batch.ps1 and StallStacks.ps1 with no fixture or self-test",
+    "fix": "Give both scripts a -SelfTest mode fed by small canned files: a runs.jsonl covering each height verdict, and a tiny Speedscope JSON covering NAMED, SPLIT, the pump-only case from M2, and unresolved frames above 20%. Run it once at build."
+   },
+   {
+    "id": "m9",
+    "severity": "minor",
+    "dimension": "drift-from-design",
+    "claim": "The SDL prior-art entry says it is 'used here to distinguish a user-drag stall from a stall under the hook's programmatic window move'. No component, case or findings section does that. T-005's moves are programmatic, while the user-visible stall in the slice title is a move/resize. A stack named under the hook's SetWindowPos might not be what a real title-bar drag hits inside the modal loop, and the findings record has no line saying so.",
+    "evidence": "prior_art[0].pattern; components 'Findings record' responsibilities",
+    "fix": "Add one line to the Findings record's responsibilities: state that the stacks come from programmatic moves and whether that transfers to a user drag. Otherwise drop the claim from the prior-art entry."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "m3: the 'cross-process clock' rationale is wrong because the hook runs in-process. m5: the design assumes no height knob exists, though $DefaultHeight and SL-044's 620 runs suggest one. Checked and found supported: SampleProfiler's 1 ms stop-the-threads sampling (dotnet/runtime #11301), and the env-var EventPipe startup tracing described in the EventPipe docs (learn.microsoft.com/dotnet/core/diagnostics/eventpipe). Whether EventPipe resolves R2R WPF frames in a single-file exe is the unrun spike; the design gates it with CANNOT-READ, so no separate finding."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "M2: NAMED can fire on a pump or dispatch frame. m7: a nested message loop gets classified as idle. The quiet-batch, height-clamp and missing-phase cases are already in the design."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "m6: the no-difference verdict states no detectable effect size. The fallbacks (M3) are also under-built; recorded under drift."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none significant. ABBA with 8 pairs, a PowerShell Speedscope reader and a single conditional arm are proportionate to a one-off diagnostic. The possibly duplicate height knob is recorded as m5."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "M1: the primary metric and the handling of a pair with a missing phase are undefined. M4: the software-render arm has no verdict rule. Smaller gap: the tracing-masks band leaves traced 2/4 undefined, and there is no aggregation of per-run CANNOT-READ into a batch verdict; partly covered by M5."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "M5: tracing-masks is a dead end, although a documented sampling-rate knob exists (PR 128843). m2: a crashed run still writes a summary line and gets past the batch-stop."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "M3: the fallbacks claimed in the rationale are not designed, and collect mode contradicts key decision 4. m9: the SDL prior-art use is claimed but nothing implements it. Dropping the de51999 A/B is justified by two no-go spikes and is not drift."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "m1: EventPipe env scoping relies on the caller remembering to clear it, and the stated error case catches the wrong failure. It can be made impossible with ProcessStartInfo.Environment. m4: the architecture rule has .ps1 and path entries that cannot fire, and misses the csproj and env-var ways the app could come to depend on the tooling."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "m8: no fixture or self-test covers the verdict computations in T005Batch.ps1 or StallStacks.ps1."
+   },
+   {
+    "dimension": "security",
+    "result": "none: unelevated only, artifacts gitignored, the committed doc holds tables and stacks only, the synthetic tree has no personal names, dotnet-trace is pinned and installed repo-local under the Q-003 pattern, and nothing leaves the machine except the NuGet tool download already allowed by Q-003."
+   }
+  ]
+ }
+}
