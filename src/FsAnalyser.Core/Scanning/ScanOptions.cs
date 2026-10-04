@@ -71,6 +71,10 @@ internal sealed class ScanOptions
     /// </summary>
     public string? ContainerLayerStorePath { get; init; }
 
-    /// <summary>Which precautions against outside defects are on (<see cref="Core.Workarounds"/>): every one unless the person turned it off.</summary>
-    public WorkaroundSwitches Precautions { get; init; } = WorkaroundSwitches.Defaults;
+    /// <summary>
+    /// The ids of the precautions against outside defects that are on for this scan (<see cref="Workarounds.KnownWorkarounds"/>):
+    /// every one that is on by default unless the person turned it off in Settings. Only the code that acts on an entry
+    /// reads it.
+    /// </summary>
+    public IReadOnlySet<string> EnabledWorkarounds { get; init; } = Workarounds.KnownWorkarounds.DefaultEnabled;
 }

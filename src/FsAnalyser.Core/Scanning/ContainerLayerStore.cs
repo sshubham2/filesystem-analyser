@@ -1,4 +1,5 @@
 using FsAnalyser.Core.Native;
+using FsAnalyser.Core.Workarounds;
 using Microsoft.Win32.SafeHandles;
 
 namespace FsAnalyser.Core.Scanning;
@@ -32,10 +33,11 @@ internal readonly record struct StoreVerdict(StoreVerdictKind Kind, string? Excl
 /// container isolation minifilter, resolves on the first open of each entry since a restart, and on Windows 11 25H2
 /// (wcifs.sys 10.0.26100.x) it never frees what it allocates there: a stream context (WCsc), a file context (WCfc), a
 /// reparse buffer (WCri), a work item (FMwi), a file-list control (FMfc), and a handle in the System process
-/// (microsoft/Windows-Containers#646, measured on this PC). Only a full restart gives them back. So a scan that reaches
-/// the store records it as one folder whose size is not counted and never opens it, and a root at or inside the store
-/// is refused (Q-179 to Q-182). The precaution is <see cref="Workarounds.ContainerLayerStore"/>, on unless a person turns
-/// it off.
+/// (microsoft/Windows-Containers#646, measured on this PC). Only a full restart gives them back. So a root at or inside
+/// the store is refused (Q-179, Q-182), always; and while the precaution 'wcifs-layer-store' is on, as it is unless a
+/// person turns it off in Settings, a scan that reaches the store below its root records it as one folder whose size is
+/// not counted and never opens it (Q-180, Q-181). This file is the one place that reads that switch, and it decides
+/// only the exclusion: Q-182 refuses a root inside the store with no user override (review F1).
 /// </summary>
 /// <remarks>
 /// The store is matched by its path, never by an entry's attributes or reparse tag: the live layer's folders carry no
@@ -60,20 +62,14 @@ internal static class ContainerLayerStore
 {
     private const string LayerStoreWords = @"%ProgramData%\Microsoft\Windows\Containers\Layers";
 
-    /// <summary>The precaution, as <see cref="Workarounds.All"/> lists it and the window words it.</summary>
-    public static Workaround Precaution { get; } = new(
-        Id: "wcifs-container-layers",
-        Title: "Skip Windows container layers",
-        Defect: "Windows' container isolation filter, wcifs.sys (part of Windows, made by Microsoft), keeps a little kernel memory "
-            + "and a handle in the System process for every entry of a live Windows container layer that is read for the first "
-            + "time since the PC was restarted. Only a full restart (Start > Restart) gives them back. This is a defect in "
-            + "Windows 11 25H2, not in this app (microsoft/Windows-Containers#646). One layer can hold about 210,000 entries.",
-        Precaution: "Scans do not go into the Windows container layer store, " + LayerStoreWords + ": it is shown as one folder "
-            + "whose size is not counted, and a folder picked at or inside it is not scanned at all.",
-        WhenOff: "Scans will walk the Windows container layers like any other folder, and a folder inside them can be scanned. "
-            + "Each scan that reads layer entries not read since the last restart leaves Windows holding kernel memory (about "
-            + "1.5 KB) and a System handle for every one of them, until the PC is fully restarted.",
-        OnByDefault: true);
+    /// <summary>
+    /// The store as every notice names it: this PC's own path, or its %ProgramData% form when the known folder resolves
+    /// to nothing usable. Notices take it from here and never spell the path themselves (architecture rule).
+    /// </summary>
+    public static string StoreDisplayPath => Locate(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData)) ?? LayerStoreWords;
+
+    /// <summary>The precaution that governs the exclusion, as a scan's result names it for the window.</summary>
+    internal static string WorkaroundId => KnownWorkarounds.WcifsLayerStore.Id;
 
     /// <summary>The store under <paramref name="programData"/>, or null when the known folder resolved to nothing usable.</summary>
     /// <remarks>GetFolderPath answers "" when it fails, and an empty prefix would put every path inside the store.</remarks>
@@ -90,7 +86,18 @@ internal static class ContainerLayerStore
     /// <param name="rootWin32">The root as the scan spells it (<see cref="LongPath.NormalizeRoot"/>'s Win32 form).</param>
     /// <param name="storeOverride">Tests only: the store's path. Null for this PC's own; empty for a PC with none.</param>
     /// <param name="ct">The scan's token: Cancel interrupts the resolution's opens as it does the walk's.</param>
-    internal static StoreVerdict Resolve(string rootWin32, string? storeOverride, CancellationToken ct)
+    /// <param name="enabledWorkarounds">The precautions on for this scan; null for the defaults. Without
+    /// 'wcifs-layer-store' an Exclude becomes None, so the store is walked like any folder and the reader has no
+    /// rule; a Refuse stays a Refuse (Q-182, review F1).</param>
+    internal static StoreVerdict Resolve(string rootWin32, string? storeOverride, CancellationToken ct, IReadOnlySet<string>? enabledWorkarounds = null)
+    {
+        StoreVerdict verdict = Decide(rootWin32, storeOverride, ct);
+        if (verdict.Kind == StoreVerdictKind.Exclude && !(enabledWorkarounds ?? KnownWorkarounds.DefaultEnabled).Contains(WorkaroundId))
+            return StoreVerdict.None;
+        return verdict;
+    }
+
+    private static StoreVerdict Decide(string rootWin32, string? storeOverride, CancellationToken ct)
     {
         string? programData = storeOverride is null ? Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData) : null;
         string? store = storeOverride is null ? Locate(programData)

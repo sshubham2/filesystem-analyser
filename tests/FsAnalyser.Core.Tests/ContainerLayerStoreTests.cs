@@ -2,6 +2,7 @@ using System.Diagnostics;
 using FsAnalyser.Core.Native;
 using FsAnalyser.Core.Scanning;
 using FsAnalyser.Core.Store;
+using FsAnalyser.Core.Workarounds;
 
 namespace FsAnalyser.Core.Tests;
 
@@ -13,10 +14,11 @@ namespace FsAnalyser.Core.Tests;
 /// </summary>
 public class ContainerLayerStoreTests
 {
-    // Under the tree: x\Containers\Layers is the planted store, with a layer's Files tree in it; ContainerStorages and a
-    // file sit beside it, and z comes after x in listing order.
+    // Under the tree: x\Containers\Layers is the planted store, shaped like this PC's live one: a layer whose Files tree
+    // nests folders with files in them, and Hives, Bindings and a dotnet.bcf file beside Files. ContainerStorages and a
+    // file sit beside the store, and z comes after x in listing order.
     private const string Store = @"x\Containers\Layers";
-    private const long StoreBytes = 1000 + 300;
+    private const long StoreBytes = 1000 + 50 + 300 + 20 + 30;
     private const long OutsideBytes = 10 + 5 + 7;
 
     private static TempTree PlantedTree()
@@ -24,7 +26,12 @@ public class ContainerLayerStoreTests
         var tree = new TempTree();
         tree.Folder(@"x\Containers\Layers\L1\Files\Windows\System32\Speech");
         tree.File(@"x\Containers\Layers\L1\Files\Windows\System32\Speech\voice.dat", 1000);
-        tree.File(@"x\Containers\Layers\L1\Hives.dat", 300);
+        tree.File(@"x\Containers\Layers\L1\Files\Windows\win.ini", 50);
+        tree.Folder(@"x\Containers\Layers\L1\Hives");
+        tree.File(@"x\Containers\Layers\L1\Hives\SYSTEM_Delta", 300);
+        tree.Folder(@"x\Containers\Layers\L1\Bindings");
+        tree.File(@"x\Containers\Layers\L1\Bindings\binding.dat", 20);
+        tree.File(@"x\Containers\Layers\L1\dotnet.bcf", 30);
         tree.Folder(@"x\Containers\ContainerStorages");
         tree.File(@"x\Containers\ContainerStorages\sandbox.bin", 10);
         tree.File(@"x\other.txt", 5);
@@ -46,9 +53,11 @@ public class ContainerLayerStoreTests
     // ---- A root above the store ----
 
     /// <summary>
-    /// C-029 / C-015 / C-001: the walk pushes the store like any folder and stops at it when it pops it. The store is
-    /// an entry, never opened, with nothing listed and its size not counted; it is the one SkippedStores entry, not
-    /// in Unreadable; nothing under it is listed or probed, and the backstop refused nothing.
+    /// C-043 / C-029 / C-015 / C-001: the walk pushes the store like any folder and stops at it when it pops it. The
+    /// store, holding a nested Files tree with files and Hives, Bindings and dotnet.bcf beside it, is an entry, never
+    /// opened, with nothing listed and its size not counted; it is the one SkippedStores entry, named by its
+    /// precaution, not in Unreadable; nothing at or under it is listed (AfterFolder) or probed, and the backstop refused
+    /// nothing.
     /// </summary>
     [Fact]
     public void AScanAboveTheStoreStopsAtItAndCountsEverythingElse()
@@ -75,6 +84,7 @@ public class ContainerLayerStoreTests
         NotScannedFolder skipped = Assert.Single(result.SkippedStores);
         Assert.Equal(store, skipped.Entry);
         Assert.Equal(NotScannedReason.ContainerLayerStore, skipped.Reason);
+        Assert.Equal(KnownWorkarounds.WcifsLayerStore.Id, skipped.WorkaroundId);
         Assert.Equal(EntryKind.Folder, result.Store.Kind(store));
         Assert.True((result.Store.Flags(store) & EntryFlags.NotScanned) != 0);
         Assert.True((result.Store.Flags(store) & EntryFlags.Unreadable) == 0);
@@ -173,8 +183,9 @@ public class ContainerLayerStoreTests
     }
 
     /// <summary>
-    /// C-031 / C-017 / C-005: a folder named Layers elsewhere, and siblings of the store named Layers2 and LayersBackup,
-    /// are walked and counted. Only the one path is left out.
+    /// C-047 / C-031 / C-017 / C-005: a folder named Layers elsewhere, and siblings of the store named Layers2,
+    /// LayersBackup, 'Layers.' and 'Layers ' (the last two only a \\?\ path can make, and GetFullPath would trim onto
+    /// the store), are walked and counted. Only the one path is left out.
     /// </summary>
     [Fact]
     public void FoldersNamedLikeTheStoreElsewhereOrBesideItAreCounted()
@@ -186,12 +197,18 @@ public class ContainerLayerStoreTests
         tree.File(@"x\Containers\Layers2\beside.bin", 200);
         tree.Folder(@"x\Containers\LayersBackup");
         tree.File(@"x\Containers\LayersBackup\backup.bin", 400);
+        string containers = tree.ExtendedRoot + @"\x\Containers\";
+        Directory.CreateDirectory(containers + "Layers.");
+        TempTree.WriteFile(containers + @"Layers.\dot.bin", 1000);
+        Directory.CreateDirectory(containers + "Layers ");
+        TempTree.WriteFile(containers + @"Layers \space.bin", 2000);
 
         ScanResult result = Scans.Run(tree.Root, Planted(tree));
 
         Assert.Equal(ScanStatus.Completed, result.Status);
-        Assert.Equal(OutsideBytes + 700, result.Totals.Bytes);
+        Assert.Equal(OutsideBytes + 700 + 3000, result.Totals.Bytes);
         Assert.Equal(tree.PathOf(Store), result.Store.GetPath(Assert.Single(result.SkippedStores).Entry));
+        Assert.Equal(0, result.OpensUnderExcludedStore);
     }
 
     /// <summary>
@@ -325,7 +342,7 @@ public class ContainerLayerStoreTests
         tree.Deny(denied, 0x1); // FILE_LIST_DIRECTORY
 
         ScanResult result = Scans.Run(tree.Root, Planted(tree));
-        ScanResult plain = Scans.Run(tree.Root, new ScanOptions { ContainerLayerStorePath = tree.PathOf(Store), Precautions = Off() });
+        ScanResult plain = Scans.Run(tree.Root, new ScanOptions { ContainerLayerStorePath = tree.PathOf(Store), EnabledWorkarounds = Off() });
 
         Assert.Equal(ScanStatus.Completed, result.Status);
         UnreadableFolder unreadable = Assert.Single(result.Unreadable);
@@ -433,12 +450,16 @@ public class ContainerLayerStoreTests
     // ---- A root at or inside the store ----
 
     /// <summary>
-    /// C-034 / C-016 / C-002 / C-003: a root that is the store, or a folder deep inside it, is Refused: nothing listed or
-    /// probed, no unreadable record, no exception. Q-179 and Q-182 decided refusal; the earlier design scanned it.
+    /// C-044 / C-034 / C-016 / C-002 / C-003: a root that is the store, a layer, a folder of its Files tree
+    /// (Layers\&lt;id&gt;\Files\Windows) or one deep inside it is Refused, named by its precaution: nothing listed or
+    /// probed (the scan's guard made no call, so no DirectoryReader listing), no unreadable record, no exception. Q-179
+    /// and Q-182 decided refusal; the earlier design scanned it. Report mode's exit 0 and outcome refused on this PC's
+    /// own store are WindowCases X-001's.
     /// </summary>
     [Theory]
     [InlineData("")]
     [InlineData(@"\L1")]
+    [InlineData(@"\L1\Files\Windows")]
     [InlineData(@"\L1\Files\Windows\System32\Speech")]
     public void ARootAtOrInsideTheStoreIsRefused(string below)
     {
@@ -452,6 +473,7 @@ public class ContainerLayerStoreTests
 
         Assert.Equal(ScanStatus.Refused, result.Status);
         Assert.Equal(ScanRefusal.ContainerLayerStore, result.Refusal);
+        Assert.Equal(KnownWorkarounds.WcifsLayerStore.Id, result.RefusalWorkaroundId);
         Assert.Equal(0, calls); // the scan's guard made no call at all: nothing opened, listed or probed
         Assert.Equal(0, result.Store.Count);
         Assert.Null(result.TopLevel);
@@ -492,39 +514,47 @@ public class ContainerLayerStoreTests
     }
 
     /// <summary>
-    /// C-036: a root that is a junction, or a subst drive, whose target is inside the store. The string step sees no
-    /// relation; only the final path by handle does, and the scan is refused.
+    /// C-046 / C-036: a root that reaches inside the store through a junction, a subst drive letter (DefineDosDevice, as
+    /// subst.exe makes it for this user), or 8.3 short names. The string step sees no relation for the first two; only the
+    /// final path by the root's handle does. The 8.3 spelling is asserted when the volume gives the folder a short form
+    /// distinct from its long one (whichever step relates it). Each is refused, with nothing in the store listed.
     /// </summary>
     [Fact]
     public void ARootThroughAJunctionIntoTheStoreIsRefused()
     {
         using TempTree tree = PlantedTree();
         string junction = tree.Junction("into", tree.PathOf($@"{Store}\L1"));
+        ScanResult throughJunction = Scanner.Scan(junction, new ScanProgress(), CancellationToken.None, Planted(tree));
 
-        ScanResult result = Scanner.Scan(junction, new ScanProgress(), CancellationToken.None, Planted(tree));
+        Assert.Equal(ScanStatus.Refused, throughJunction.Status);
+        Assert.Equal(ScanRefusal.ContainerLayerStore, throughJunction.Refusal);
+        Assert.Equal(0, throughJunction.Store.Count);
 
-        Assert.Equal(ScanStatus.Refused, result.Status);
-        Assert.Equal(0, result.Store.Count);
-    }
+        using (var drive = new SubstDrive(tree.PathOf($@"{Store}\L1\Files")))
+        {
+            ScanResult throughSubst = Scanner.Scan(drive.Root, new ScanProgress(), CancellationToken.None, Planted(tree));
+            Assert.Equal(ScanStatus.Refused, throughSubst.Status);
+            Assert.Equal(ScanRefusal.ContainerLayerStore, throughSubst.Refusal);
+            Assert.Equal(0, throughSubst.Store.Count);
+        }
 
-    [Fact]
-    public void ARootThroughASubstDriveIntoTheStoreIsRefused()
-    {
-        using TempTree tree = PlantedTree();
-        using var drive = new SubstDrive(tree.PathOf($@"{Store}\L1\Files"));
-
-        ScanResult result = Scanner.Scan(drive.Root, new ScanProgress(), CancellationToken.None, Planted(tree));
-
-        Assert.Equal(ScanStatus.Refused, result.Status);
-        Assert.Equal(ScanRefusal.ContainerLayerStore, result.Refusal);
+        string longInside = tree.PathOf($@"{Store}\L1\Files\Windows\System32");
+        string shortInside = ShortPathOf(longInside);
+        if (!string.Equals(shortInside, longInside, StringComparison.OrdinalIgnoreCase))
+        {
+            ScanResult throughShort = Scanner.Scan(shortInside, new ScanProgress(), CancellationToken.None, Planted(tree));
+            Assert.Equal(ScanStatus.Refused, throughShort.Status);
+            Assert.Equal(0, throughShort.Store.Count);
+        }
     }
 
     // ---- No store, and a root the resolution cannot open ----
 
     /// <summary>
-    /// C-037 / C-024 / C-006: the store does not exist (the override names a missing path, as on a PC without the
-    /// containers feature). The scan is the one it would be with the precaution off: same totals, nothing skipped,
-    /// nothing unreadable.
+    /// C-048 / C-037 / C-024 / C-006: the store does not exist (the override names a missing path, as on Windows 10 or a
+    /// PC without the containers feature). Resolve returns None without throwing, even when the string step decides
+    /// nothing and the final-path step cannot open the store's parent; and the scan is the one it would be with the
+    /// precaution off: same totals, nothing skipped, nothing unreadable, no not-scanned row.
     /// </summary>
     [Fact]
     public void WithNoStoreTheScanIsWhatItWasBefore()
@@ -533,9 +563,17 @@ public class ContainerLayerStoreTests
         tree.Folder(@"x\Containers\ContainerStorages");
         tree.File(@"x\Containers\ContainerStorages\a.bin", 10);
         tree.File(@"x\b.txt", 5);
+        tree.Folder("z");
+        string absent = tree.PathOf(@"gone\Containers\Layers"); // its parent, the final-path step's anchor, is missing too
 
+        StoreVerdict unrelated = ContainerLayerStore.Resolve(LongPath.ToExtended(tree.PathOf("z")), absent, CancellationToken.None);
         ScanResult guarded = Scans.Run(tree.Root, new ScanOptions { ContainerLayerStorePath = tree.PathOf(Store) });
-        ScanResult plain = Scans.Run(tree.Root, new ScanOptions { Precautions = Off() });
+        ScanResult gone = Scans.Run(tree.PathOf("z"), new ScanOptions { ContainerLayerStorePath = absent });
+        ScanResult plain = Scans.Run(tree.Root, new ScanOptions { EnabledWorkarounds = Off() });
+
+        Assert.Equal(StoreVerdictKind.None, unrelated.Kind);
+        Assert.Equal(ScanStatus.Completed, gone.Status);
+        Assert.Empty(gone.SkippedStores);
 
         Assert.Equal(ScanStatus.Completed, guarded.Status);
         Assert.Equal(plain.Totals, guarded.Totals);
@@ -594,18 +632,24 @@ public class ContainerLayerStoreTests
     // ---- The backstop ----
 
     /// <summary>
-    /// C-023: DirectoryReader.Read called straight with a folder under the store, past the walk's check. No open is made,
-    /// it is not an unreadable error but the skip outcome, and the backstop's counter says so.
+    /// C-023 (review F4): DirectoryReader.Read called straight with a folder under the store, past the walk's check, the
+    /// one call site of SynchronousIoCancel.OpenDirectory. The folder denies this user its listing, so an open that was
+    /// actually issued would come back access denied: what comes back is the skip outcome, with no call made, and the
+    /// backstop's counter is 1. A count that only ever read 0 could not tell a working backstop from a broken one. A
+    /// folder beside the store is listed as usual and not counted.
     /// </summary>
     [Fact]
     public void TheReaderRefusesAndCountsAFolderUnderTheStoreWithNoOpen()
     {
         using TempTree tree = PlantedTree();
+        string inside = tree.PathOf($@"{Store}\L1\Files");
+        tree.Deny(inside, 0x1); // FILE_LIST_DIRECTORY: an open of it that went out would fail with error 5
         using var guard = new SynchronousIoCancel(CancellationToken.None);
         using var reader = new DirectoryReader(guard) { ExcludedStore = LongPath.ToExtended(tree.PathOf(Store)) };
 
-        int error = reader.Read(LongPath.ToExtended(tree.PathOf($@"{Store}\L1\Files")), fullClass: false, keepLastAccess: false);
+        int error = reader.Read(LongPath.ToExtended(inside), fullClass: false, keepLastAccess: false);
 
+        Assert.NotEqual(Kernel32.ERROR_ACCESS_DENIED, error);
         Assert.Equal(DirectoryReader.InsideExcludedStore, error);
         Assert.NotEqual(Scanner.ReadOutcome.Read, Scanner.ClassifyReadError(error, cancelRequested: false));
         Assert.Equal(0, guard.Calls);
@@ -620,29 +664,41 @@ public class ContainerLayerStoreTests
     // ---- The precaution off ----
 
     /// <summary>
-    /// Both positions of the switch (Workarounds.ContainerLayerStore). Off restores the plain behaviour exactly: the
-    /// store is walked and counted like any folder, and a root inside it is scanned, not refused.
+    /// C-049 (review F1): both positions of the 'wcifs-layer-store' checkbox, on a planted store only (off against the
+    /// real store would leak until a Restart, so nothing ever runs it there). On is the default for every scan. Off
+    /// restores the plain walk exactly: the store is listed and counted like any folder, there is no not-scanned record
+    /// and the reader has no rule to refuse with. A root picked inside the store is still Refused with it off: Q-182
+    /// decided refusal with no user override, and the switch governs only the exclusion.
     /// </summary>
     [Fact]
-    public void WithThePrecautionOffTheStoreIsWalkedAndARootInsideItIsScanned()
+    public void WithThePrecautionOffTheStoreIsCountedAndARootInsideItIsStillRefused()
     {
         using TempTree tree = PlantedTree();
 
         ScanResult on = Scans.Run(tree.Root, Planted(tree));
-        ScanResult off = Scans.Run(tree.Root, new ScanOptions { ContainerLayerStorePath = tree.PathOf(Store), Precautions = Off() });
-        ScanResult insideOff = Scans.Run(tree.PathOf(Store), new ScanOptions { ContainerLayerStorePath = tree.PathOf(Store), Precautions = Off() });
+        ScanResult off = Scans.Run(tree.Root, new ScanOptions { ContainerLayerStorePath = tree.PathOf(Store), EnabledWorkarounds = Off() });
+        ScanResult insideOff = Scanner.Scan(tree.PathOf($@"{Store}\L1"), new ScanProgress(), CancellationToken.None,
+            new ScanOptions { ContainerLayerStorePath = tree.PathOf(Store), EnabledWorkarounds = Off() });
 
         Assert.Equal(OutsideBytes, on.Totals.Bytes);
+        Assert.Single(on.SkippedStores);
+        Assert.Equal(ScanStatus.Completed, off.Status);
         Assert.Equal(OutsideBytes + StoreBytes, off.Totals.Bytes);
         Assert.Empty(off.SkippedStores);
-        Assert.Equal(ScanStatus.Completed, insideOff.Status);
-        Assert.Equal(StoreBytes, insideOff.Totals.Bytes);
-        Assert.True(WorkaroundSwitches.Defaults.IsOn(Workarounds.ContainerLayerStore.Id));
-        Assert.True(Workarounds.ContainerLayerStore.OnByDefault);
-        Assert.Contains(Workarounds.ContainerLayerStore, Workarounds.All);
+        Assert.Equal(0, off.OpensUnderExcludedStore);
+        Assert.True((off.Store.Flags(Scans.Find(off, tree.PathOf(Store))) & EntryFlags.NotScanned) == 0);
+        Assert.Contains(Scans.ByPath(off.Store).Keys, path => path == tree.PathOf($@"{Store}\L1\Files\Windows\win.ini"));
+        Assert.Equal(ScanStatus.Refused, insideOff.Status);
+        Assert.Equal(0, insideOff.Store.Count);
+
+        Assert.Contains(KnownWorkarounds.WcifsLayerStore, KnownWorkarounds.All);
+        Assert.True(KnownWorkarounds.WcifsLayerStore.DefaultOn);
+        Assert.Contains(KnownWorkarounds.WcifsLayerStore.Id, ScanOptions.Default.EnabledWorkarounds);
+        Assert.Contains(KnownWorkarounds.WcifsLayerStore.Id, new ScanOptions().EnabledWorkarounds);
     }
 
-    private static WorkaroundSwitches Off() => WorkaroundSwitches.Defaults.With(Workarounds.ContainerLayerStore.Id, on: false);
+    private static IReadOnlySet<string> Off() =>
+        KnownWorkarounds.DefaultEnabled.Where(id => id != KnownWorkarounds.WcifsLayerStore.Id).ToHashSet(StringComparer.Ordinal);
 
     // The volume's \\?\Volume{GUID}\ name, from mountvol, which needs no administrator to list.
     private static string VolumeGuidOf(string driveRoot)

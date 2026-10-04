@@ -88,7 +88,7 @@ internal sealed class FolderTreeNode : INotifyPropertyChanged
     /// </summary>
     public string Note => _session.Store is not { } store ? ""
         : store.Kind(_entry) == EntryKind.Link ? "link, not followed"
-        : (store.Flags(_entry) & EntryFlags.NotScanned) != 0 ? "size not counted: Windows container layers, skipped on purpose"
+        : (store.Flags(_entry) & EntryFlags.NotScanned) != 0 ? "size not counted: Windows container layers, skipped to avoid a leak in Windows' wcifs.sys driver; see Settings"
         : (store.Flags(_entry) & EntryFlags.Unreadable) == 0 ? ""
         : store.ChildCount(_entry) > 0 ? "could not be read in full"
         : "could not be opened";

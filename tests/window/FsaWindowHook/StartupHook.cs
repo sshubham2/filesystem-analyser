@@ -18,7 +18,8 @@ using System.Windows.Threading;
 /// </summary>
 /// <remarks>
 /// <code>
-///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|watch|measure|rescan|expand|hide|kinds|size|tree
+///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|watch|measure|rescan|expand|hide|kinds|size|tree|settings
+///   [FSA_HOOK_ANSWER=yes|no]  (settings only, SL-095: SettingsMode.cs turns the first precaution off and answers its question)
 ///   FSA_HOOK_LOG=&lt;file&gt;  [FSA_HOOK_ARMED=&lt;marker file&gt;  FSA_HOOK_CANCEL_DELAY_MS=&lt;n&gt;  FSA_HOOK_CLOSE_DELAY_MS=&lt;n&gt;]
 ///   [FSA_HOOK_SLOW_REFRESH_MS=&lt;n&gt;]  [FSA_HOOK_RENAMED=LastRefresh|SkippedRefreshes|SkipsNextRefresh]  (watch and measure only)
 ///   [FSA_HOOK_MISSING=&lt;the root folder, under %TEMP%&gt;]  (rescan only)
@@ -284,7 +285,7 @@ internal class StartupHook
         try
         {
             Log($"loaded mode={mode} pid={Environment.ProcessId}");
-            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "hide" or "kinds" or "size" or "tree" or "reveal"))
+            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "hide" or "kinds" or "size" or "tree" or "reveal" or "settings"))
             {
                 Log($"refused mode={mode} reason=unknown mode");
                 return;
@@ -385,6 +386,15 @@ internal class StartupHook
                     Log("refused mode=size reason=size mode is not armed");
                 else
                     PrepareWindow(mode, !maximized, maximized, extraDrives ?? 0);
+                return;
+            }
+            if (mode == "settings")
+            {
+                string? answer = Environment.GetEnvironmentVariable("FSA_HOOK_ANSWER");
+                if (answer is not ("yes" or "no") || !string.IsNullOrEmpty(marker) || prepare)
+                    Log("refused mode=settings reason=FSA_HOOK_ANSWER is yes or no, and settings mode is not armed and does not size the window");
+                else
+                    SettingsMode.Drive(answer);
                 return;
             }
             if (mode is "rescan" or "expand" or "hide" or "kinds")

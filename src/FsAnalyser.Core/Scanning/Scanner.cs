@@ -32,11 +32,12 @@ namespace FsAnalyser.Core.Scanning;
 /// <para>For a scan of a whole drive, the volume's used space is read as the scan starts, on a thread of
 /// its own (<see cref="VolumeSpace"/>), and lands in <see cref="ScanStore.VolumeUsed"/>. The scan never waits
 /// for it: it ends, completed or cancelled, whether or not the volume has answered.</para>
-/// <para>While the precaution <see cref="Workarounds.ContainerLayerStore"/> is on, as it is unless a person turns it
-/// off, the Windows container layer store is never opened (SL-095, <see cref="ContainerLayerStore"/>): a root at or
-/// inside it is Refused, with nothing listed or probed, and a scan that reaches it below the root records it in
-/// <see cref="ScanResult.SkippedStores"/>, a folder with nothing listed whose size is not counted, never in
-/// <see cref="ScanResult.Unreadable"/>. With the precaution off the scan is exactly as it was before SL-095.</para>
+/// <para>The Windows container layer store is never opened by a scan that starts at or inside it (SL-095,
+/// <see cref="ContainerLayerStore"/>): such a root is Refused, with nothing listed or probed (Q-179, Q-182). While the
+/// precaution against wcifs.sys's leak is on in <see cref="ScanOptions.EnabledWorkarounds"/>, as it is unless a person
+/// turns it off, a scan that reaches the store below its root records it in <see cref="ScanResult.SkippedStores"/>, a
+/// folder with nothing listed whose size is not counted, never in <see cref="ScanResult.Unreadable"/>. With it off the
+/// walk is exactly as it was before SL-095; only <see cref="ContainerLayerStore"/> reads the switch.</para>
 /// </remarks>
 public static class Scanner
 {
@@ -45,12 +46,12 @@ public static class Scanner
     public static ScanResult Scan(string root, ScanProgress progress, CancellationToken ct) =>
         Scan(root, progress, ct, ScanOptions.Default);
 
-    /// <summary>Scans <paramref name="root"/> with the precautions <paramref name="precautions"/> leaves on.</summary>
+    /// <summary>Scans <paramref name="root"/> with the precautions whose ids <paramref name="enabledWorkarounds"/> holds on.</summary>
     /// <exception cref="ArgumentException">The root is empty or not an absolute path.</exception>
-    public static ScanResult Scan(string root, ScanProgress progress, CancellationToken ct, WorkaroundSwitches precautions)
+    public static ScanResult Scan(string root, ScanProgress progress, CancellationToken ct, IReadOnlySet<string> enabledWorkarounds)
     {
-        ArgumentNullException.ThrowIfNull(precautions);
-        return Scan(root, progress, ct, new ScanOptions { Precautions = precautions });
+        ArgumentNullException.ThrowIfNull(enabledWorkarounds);
+        return Scan(root, progress, ct, new ScanOptions { EnabledWorkarounds = enabledWorkarounds });
     }
 
     internal static ScanResult Scan(string root, ScanProgress progress, CancellationToken ct, ScanOptions options)
@@ -59,9 +60,7 @@ public static class Scanner
         ArgumentNullException.ThrowIfNull(options);
         (string display, string win32) = LongPath.NormalizeRoot(root);
         // Before the scan's own guard exists: the resolution's opens, when it needs any, are on a guard of its own.
-        StoreVerdict store = options.Precautions.IsOn(Workarounds.ContainerLayerStore.Id)
-            ? ContainerLayerStore.Resolve(win32, options.ContainerLayerStorePath, ct)
-            : StoreVerdict.None;
+        StoreVerdict store = ContainerLayerStore.Resolve(win32, options.ContainerLayerStorePath, ct, options.EnabledWorkarounds);
         using var io = new SynchronousIoCancel(ct);
         using var run = new Run(display, win32, progress, ct, options, io, store);
         return run.Execute();
@@ -303,7 +302,7 @@ public static class Scanner
         {
             _store.SetChildren(folder, _store.Count, 0);
             _store.AddFlags(folder, EntryFlags.NotScanned);
-            _skipped.Add(new NotScannedFolder(folder, NotScannedReason.ContainerLayerStore));
+            _skipped.Add(new NotScannedFolder(folder, NotScannedReason.ContainerLayerStore, ContainerLayerStore.WorkaroundId));
             _topLevel.FolderExited(folder, row, unreadable: false, subfoldersPushed: 0, Totals, notScanned: true);
             return ct.IsCancellationRequested;
         }
@@ -521,6 +520,7 @@ public static class Scanner
             Totals = Totals,
             Unreadable = _unreadable,
             Refusal = status == ScanStatus.Refused ? ScanRefusal.ContainerLayerStore : ScanRefusal.None,
+            RefusalWorkaroundId = status == ScanStatus.Refused ? ContainerLayerStore.WorkaroundId : null,
             SkippedStores = _skipped,
             OpensUnderExcludedStore = _reader.OpensUnderExcludedStore,
             ProbeFailures = _probeFailures,

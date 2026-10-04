@@ -99,7 +99,7 @@ param(
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
         'L-001', 'L-002', 'L-003', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'N-001', 'N-002', 'N-003', 'N-004',
         'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002',
-        'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-001', 'X-002', 'X-003', 'X-004')]
+        'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-001', 'X-002', 'X-003', 'X-004', 'X-005', 'X-006')]
     [string] $Case,
     [switch] $IncludeNetwork,
     # R-002's steps to run, of a to e, comma-separated (all of them when left out).
@@ -122,10 +122,10 @@ $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_H
     'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND', 'FSA_HOOK_MINSIZE', 'FSA_HOOK_DRIVES',
     'FSA_HOOK_WALK', 'FSA_HOOK_RECYCLE', 'FSA_HOOK_MULTIPLY', 'FSA_HOOK_SELECT', 'FSA_HOOK_RELEASE', 'FSA_HOOK_GAP', 'FSA_HOOK_HEIGHT', 'FSA_HOOK_REVEAL', 'FSA_HOOK_STATUS',
     'FSA_HOOK_MAXIMIZE', 'FSA_HOOK_BACK', 'FSA_HOOK_READABLE', 'FSA_HOOK_BEFORE', 'FSA_HOOK_AFTER', 'FSA_HOOK_RENAMED', 'FSA_HOOK_RENDER', 'FSA_HOOK_FAIL_LISTING', 'FSA_HOOK_REVEAL_GATE',
-    'FSA_HOOK_AT_FOLDERS', 'FSA_HOOK_PAST', 'FSA_HOOK_PAST_FOLDERS', 'FSA_HOOK_AT_SIZED', 'FSA_HOOK_TRIGGER_DEADLINE_S'
+    'FSA_HOOK_AT_FOLDERS', 'FSA_HOOK_PAST', 'FSA_HOOK_PAST_FOLDERS', 'FSA_HOOK_AT_SIZED', 'FSA_HOOK_TRIGGER_DEADLINE_S', 'FSA_HOOK_ANSWER'
 $HookedCases = 'C-002', 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
     'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002',
-    'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003'
+    'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004'
 $RigOnlyCases = 'N-003', 'N-004'
 $KiB64 = 64KB
@@ -4648,8 +4648,9 @@ function Test-StorePresent {
     $false
 }
 
-# X-001 (C-039): a root at the store, in three spellings, is refused: the report says outcome refused and refusal
-# container-layer-store, exits 0, nothing was counted, and the window says why and how to turn the precaution off.
+# X-001 (C-039, C-050): a root at the store, in three spellings, is refused: the report says outcome refused and refusal
+# container-layer-store, exits 0, nothing was counted, and the window says why beside the result: the defect, where it
+# lives (wcifs.sys), and that the Settings checkbox does not lift a refusal (review F1). The precaution was on.
 function Test-X001 {
     if (-not (Test-StorePresent)) { return }
     foreach ($root in @($StoreRoot, ($StoreRoot + '\'), $StoreRoot.ToLowerInvariant())) {
@@ -4664,14 +4665,17 @@ function Test-X001 {
         CheckEqual 0 $report.core.files "core.files for ${root}: nothing was read"
         CheckEqual 0 $report.core.folders "core.folders for $root"
         Check ($report.window.OutcomeTitle -like 'Not scanned: *') "OutcomeTitle says not scanned ($(Show $report.window.OutcomeTitle))"
-        Check (($report.window.OutcomeDetail -join ' ') -like "*can't be scanned safely*Precautions*") 'OutcomeDetail says why and where the precaution is turned off'
-        CheckEqual $true @($report.precautions | Where-Object { $_.id -eq 'wcifs-container-layers' })[0].on 'the precaution was on'
+        $detail = $report.window.OutcomeDetail -join ' '
+        Check ($detail -like "*can't be scanned safely*Where it lives: wcifs.sys*never scanned*Settings checkbox*") "OutcomeDetail names the defect, wcifs.sys and the Settings checkbox, which does not lift the refusal ($(Show $detail))"
+        CheckEqual $true @($report.workarounds | Where-Object { $_.id -eq 'wcifs-layer-store' })[0].on 'workarounds: the precaution was on'
+        CheckEqual 'Settings...' $report.window.SettingsButton 'SettingsButton: none off'
     }
 }
 
-# X-002 (C-010, C-025, review M5, X1): the store's parent, ...\Containers, scanned to the end. The store is one folder
-# left out on purpose: skippedStores 1, never in the unreadable count; the backstop refused nothing; the window says
-# so beside the totals and in its own row, under a tab whose header counts it apart from unreadable folders.
+# X-002 (C-010, C-025, C-050, review M5, X1): the store's parent, ...\Containers, scanned to the end. The store is one
+# folder left out on purpose: skippedStores and notScanned 1, never in the unreadable count; the backstop refused
+# nothing; the window says so beside the totals, naming the defect in wcifs.sys and the Settings checkbox that left it
+# out, and in its own row, under a tab whose header counts it apart from unreadable folders. The precaution was on.
 function Test-X002 {
     if (-not (Test-StorePresent)) { return }
     $root = Split-Path -Parent $StoreRoot
@@ -4688,8 +4692,12 @@ function Test-X002 {
     $unreadable = [int]$report.core.unreadable
     $expectedHeader = if ($unreadable -eq 0) { 'Not scanned (1)' } else { "Unreadable folders ($unreadable), not scanned (1)" }
     CheckEqual $expectedHeader $report.window.UnreadableTab.header 'UnreadableTab.header counts the store apart from the unreadable folders'
-    Check (@($report.window.OutcomeNotes.lines | Where-Object { $_ -like "Not scanned, size not counted: $StoreRoot (Windows container layers)*" }).Count -eq 1) "OutcomeNotes names the store and why ($(Show ($report.window.OutcomeNotes.lines -join ' | ')))"
+    $note = @($report.window.OutcomeNotes.lines | Where-Object { $_ -like "Not scanned, size not counted: $StoreRoot (Windows container layers)*" })
+    Check ($note.Count -eq 1) "OutcomeNotes names the store ($(Show ($report.window.OutcomeNotes.lines -join ' | ')))"
+    Check ($note.Count -eq 1 -and $note[0] -like '*Skipped to avoid a leak in wcifs.sys*Settings checkbox*turned off in Settings*') "the note says why beside the totals: the defect in wcifs.sys and the Settings checkbox ($(Show ($note -join ' | ')))"
     Check ($report.window.OutcomeNotes.visible) 'OutcomeNotes is on screen'
+    CheckEqual 1 $report.core.notScanned 'core.notScanned'
+    CheckEqual $true @($report.workarounds | Where-Object { $_.id -eq 'wcifs-layer-store' })[0].on 'workarounds: the precaution was on'
 }
 
 # X-004 (C-025, C-010, reviews M5, X1): a report that holds the store left out and unreadable folders as well, from
@@ -4713,6 +4721,59 @@ function Test-X004 {
     Check ($unreadable -gt 0) "the scan met unreadable folders as well, the shape this case is about ($unreadable)"
     CheckEqual "Unreadable folders ($unreadable), not scanned (1)" $report.window.UnreadableTab.header 'UnreadableTab.header counts the two apart'
     Check (@($report.window.OutcomeNotes.lines | Where-Object { $_ -like "Not scanned, size not counted: $StoreRoot (Windows container layers)*" }).Count -eq 1) 'OutcomeNotes names the store beside the totals'
+}
+
+# X-005 (C-051, SL-095): the Settings checkbox of the precaution against wcifs.sys's leak, turned off as a person would
+# through the hook's settings mode, before the scan of a small %TEMP% tree that is nowhere near a store. Answering No to
+# the question the app asks leaves it on; answering Yes turns it off, and the report the scan's ending writes says so;
+# the next launch, with no hook, starts with it on again: nothing is kept on disk. The question states the consequence.
+function Test-X005 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'tree'
+        $null = New-SmallTree $root
+        $report = Join-Path $case 'report.json'
+        foreach ($answer in 'no', 'yes') {
+            Write-Output "    answer $answer"
+            $run = Invoke-HookedRun 'settings' $root $report @{ FSA_HOOK_ANSWER = $answer }
+            $before = $script:Failures.Count
+            CheckActed $run 'settings'
+            if ($script:Failures.Count -gt $before) { continue }
+            $on = $answer -eq 'no'
+            $box = @($run.Log | Where-Object { $_.StartsWith('settings box=') })
+            Check ($box.Count -eq 1 -and (Field $box[0] 'id') -eq 'wcifs-layer-store' -and (Field $box[0] 'checked') -eq 'True') "the checkbox was the precaution's, ticked as the app started ($(Show ($box -join ' | ')))"
+            $question = @($run.Log | Where-Object { $_.StartsWith('settings question=') })
+            Check ($question.Count -eq 1 -and $question[0] -like '*kernel memory*System handle*until you restart Windows*') "the question states the consequence ($(Show ($question -join ' | ')))"
+            $answered = @($run.Log | Where-Object { $_.StartsWith('settings answered=') })
+            Check ($answered.Count -eq 1 -and (Field $answered[0] 'checked') -eq "$on") "after answering $answer the box is ticked: $on ($(Show ($answered -join ' | ')))"
+            CheckEqual '0' $run.Exit 'exit code'
+            Check ($null -ne $run.Report) 'a report was written'
+            if ($null -eq $run.Report) { continue }
+            CheckEqual 'Completed' $run.Report.core.status 'the scan ran after Settings closed'
+            CheckEqual $on @($run.Report.workarounds | Where-Object { $_.id -eq 'wcifs-layer-store' })[0].on 'workarounds: the precaution as the answer left it'
+            CheckEqual $(if ($on) { 'Settings...' } else { 'Settings (1 off)...' }) $run.Report.window.SettingsButton 'SettingsButton says how many are off'
+            Remove-Item -LiteralPath $report -ErrorAction SilentlyContinue
+        }
+        Write-Output '    the next launch'
+        $exit = Wait-App (Start-App "`"$root`" --report `"$report`"") 60
+        CheckEqual '0' $exit 'exit code'
+        $next = if (Test-Path -LiteralPath $report) { Get-Content -LiteralPath $report -Raw | ConvertFrom-Json } else { $null }
+        Check ($null -ne $next) 'a report was written'
+        if ($null -ne $next) {
+            CheckEqual $true @($next.workarounds | Where-Object { $_.id -eq 'wcifs-layer-store' })[0].on 'workarounds: on again at the next launch'
+            CheckEqual 'Settings...' $next.window.SettingsButton 'SettingsButton: none off'
+        }
+    }
+    finally { Remove-CaseFolder $case }
+}
+
+# X-006 (C-050, SL-095): why a result is different, beside the result: a pick that was refused (X-001's checks) and a
+# scan whose store was skipped (X-002's), each naming the defect in wcifs.sys and the Settings checkbox, with the report
+# recording workarounds [{id, on}] and notScanned 1, and the store counted apart from the folders that could not be
+# opened. Not in All: it needs this PC's store.
+function Test-X006 {
+    Test-X001
+    Test-X002
 }
 
 # X-003 (C-026, reviews m6, N5): the hook's progress triggers, which PoolWatch -Protocol's cancelled and closed runs
@@ -4762,7 +4823,7 @@ function Test-X003 {
 }
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003') + $NetworkCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005') + $NetworkCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })

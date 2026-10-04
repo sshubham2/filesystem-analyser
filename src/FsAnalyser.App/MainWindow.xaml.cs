@@ -13,6 +13,7 @@ using FsAnalyser.Core;
 using FsAnalyser.Core.Analysis;
 using FsAnalyser.Core.Native;
 using FsAnalyser.Core.Scanning;
+using FsAnalyser.Core.Workarounds;
 using Microsoft.Win32;
 using static FsAnalyser.App.FigureText;
 
@@ -65,9 +66,9 @@ public partial class MainWindow : Window
     private bool _skipNextRefresh;
     private ScrollViewer? _topLevelScroll;
     private FolderTreeSession? _treeSession; // the completed scan the folder tree shows; closed as the next one starts
-    // The precautions against outside defects (Core's Workarounds): all on as the app starts, for this session. The
-    // app keeps nothing on disk, so a precaution a person turned off is on again at the next start.
-    private WorkaroundSwitches _precautions = WorkaroundSwitches.Defaults;
+    // The precautions against outside defects that are on (Core's KnownWorkarounds), by id: every default one as the app
+    // starts, for this session. The app keeps nothing on disk, so one a person turned off is on again at the next start.
+    private IReadOnlySet<string> _enabledWorkarounds = KnownWorkarounds.DefaultEnabled;
 
     public MainWindow(string? launchPath)
     {
@@ -92,8 +93,8 @@ public partial class MainWindow : Window
     /// <summary>The result behind the ending on screen; null when the ending came before any result.</summary>
     internal ScanResult? LastResult { get; private set; }
 
-    /// <summary>Which precautions against outside defects are on, as the next scan will take them.</summary>
-    internal WorkaroundSwitches Precautions => _precautions;
+    /// <summary>The ids of the precautions against outside defects that are on, as the next scan will take them.</summary>
+    internal IReadOnlySet<string> EnabledWorkarounds => _enabledWorkarounds;
 
     /// <summary>How long ranking the largest files took for the list on screen; null when no list was made.</summary>
     internal double? LargestFilesMs { get; private set; }
@@ -209,21 +210,21 @@ public partial class MainWindow : Window
             StartScan(dialog.FolderName);
     }
 
-    // The precautions, each with its outside defect, what the app does and what turning it off brings back; turning one
-    // off asks first, with that consequence in the question (PrecautionsWindow). The next scan takes what is set here.
-    private void OnPrecautions(object sender, RoutedEventArgs e)
+    // The settings: each precaution with its outside defect, what the app does and what turning it off brings back;
+    // turning one off asks first, with that consequence in the question (SettingsWindow). The next scan takes what is set.
+    private void OnSettings(object sender, RoutedEventArgs e)
     {
-        var dialog = new PrecautionsWindow(_precautions) { Owner = this };
+        var dialog = new SettingsWindow(_enabledWorkarounds) { Owner = this };
         dialog.ShowDialog();
-        _precautions = dialog.Switches;
-        int off = Workarounds.All.Count(w => !_precautions.IsOn(w.Id));
-        PrecautionsButton.Content = off == 0 ? "Precautions..." : $"Precautions ({off} off)...";
+        _enabledWorkarounds = dialog.Enabled.ToHashSet(StringComparer.Ordinal);
+        int off = KnownWorkarounds.All.Count(w => !_enabledWorkarounds.Contains(w.Id));
+        SettingsButton.Content = off == 0 ? "Settings..." : $"Settings ({off} off)...";
     }
 
     private void SetPickersEnabled(bool enabled)
     {
         ChooseFolderButton.IsEnabled = enabled;
-        PrecautionsButton.IsEnabled = enabled;
+        SettingsButton.IsEnabled = enabled;
         foreach (UIElement button in DrivePanel.Children)
             button.IsEnabled = enabled;
     }
@@ -254,7 +255,7 @@ public partial class MainWindow : Window
         _cancel = new CancellationTokenSource();
         ScanProgress progress = _progress;
         CancellationToken token = _cancel.Token;
-        WorkaroundSwitches precautions = _precautions;
+        IReadOnlySet<string> enabledWorkarounds = _enabledWorkarounds;
         ScanningTitle.Text = $"Reading {path}";
         CancelButton.IsEnabled = true;
         ScanningPanel.Visibility = Visibility.Visible;
@@ -266,7 +267,7 @@ public partial class MainWindow : Window
         Exception? failure = null;
         try
         {
-            result = await Task.Factory.StartNew(() => Scanner.Scan(path, progress, token, precautions),
+            result = await Task.Factory.StartNew(() => Scanner.Scan(path, progress, token, enabledWorkarounds),
                 CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
         catch (ArgumentException e) when (e.ParamName == "root")
@@ -492,12 +493,15 @@ public partial class MainWindow : Window
         }
         if (result.Status == ScanStatus.Refused)
         {
-            // Decided in Core, before anything was opened (Q-179, Q-182): the line says why, and how to turn it off.
-            Workaround precaution = Workarounds.ContainerLayerStore;
+            // Decided in Core, before anything was opened (Q-179, Q-182), whatever the Settings say (review F1): the line
+            // says why, in the words of the precaution the result names, and what its checkbox does and does not change.
+            KnownWorkaround? why = KnownWorkarounds.Find(result.RefusalWorkaroundId);
             ShowProblem($"Not scanned: {result.Root}",
                 "Windows container layers can't be scanned safely: the wcifs filter leaks kernel memory and a System handle " +
                 "for each entry read, until a full restart. This folder is in the Windows container layer store, so nothing " +
-                $"in it was read.\n{precaution.Defect}\nThe precaution '{precaution.Title}' is on; it can be turned off under Precautions.");
+                "in it was read." + (why is null ? "" :
+                $"\n{why.Defect}\nWhere it lives: {why.WhereItLives}\nA folder at or inside the store is never scanned; the " +
+                $"Settings checkbox '{why.Title}' only decides whether scans of the folders above it leave it out."));
             return;
         }
 
@@ -526,8 +530,10 @@ public partial class MainWindow : Window
         IReadOnlyList<NotScannedRow> notScanned = UnreadableRows.NotScanned(result.SkippedStores, result.Store.GetPath);
         foreach (NotScannedRow row in notScanned)
         {
-            notes.Add($"Not scanned, size not counted: {row.Path} (Windows container layers). {Workarounds.ContainerLayerStore.Defect} " +
-                $"The precaution '{Workarounds.ContainerLayerStore.Title}' left it out; it can be turned off under Precautions.");
+            KnownWorkaround? why = KnownWorkarounds.Find(row.WorkaroundId);
+            notes.Add($"Not scanned, size not counted: {row.Path} (Windows container layers)." + (why is null ? "" :
+                $" Skipped to avoid a leak in {why.WhereItLives} {why.Defect} The Settings checkbox '{why.Title}' left it out; " +
+                "it can be turned off in Settings."));
         }
         OutcomeNotes.Text = string.Join("\n", notes);
         OutcomeNotes.Visibility = notes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;

@@ -1025,3 +1025,46 @@ rules:
     - ContainerLayerStorePath
     because: An App-set or user-configurable store path bypasses the refusal decided in Q-179/Q-182
       and the exclusion decided in Q-180/Q-181. No correct App code mentions the override.
+
+  # settled by SL-095
+  - name: the container layer store's location is spelled in one file
+    files: src/**
+    must_not_match:
+    - (?m)(?i:Containers[\\/]{1,2}Layers)
+    - (?m)(?i:"Layers")
+    because: 'Q-182 requires every spelling of the store (\\?\, subst, junction, 8.3, trailing
+      separator) to be matched the same root-aware way. A second hard-coded copy, in notice
+      text, the App or the scanner, matches by its own rules and drifts: a sibling named ''Layers.''
+      gets skipped, or a subst spelling gets scanned and wcifs.sys leaks pool and System handles
+      until a Restart.'
+    except_files:
+    - src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs
+  - name: the wcifs workaround is switched in exactly one place
+    files: src/**
+    must_not_match:
+    - (?m)"wcifs-layer-store"
+    - (?m)KnownWorkarounds\.WcifsLayerStore\b
+    because: 'Turning the setting off must restore the plain scan exactly, and turning it on
+      must guard every path. A second branch on this workaround in Scanner, DirectoryReader
+      or the App is a condition the switch reaches separately: off could leave the store skipped
+      on one path, or on could leave one open unguarded. The App renders the list generically
+      and has no reason to name an entry.'
+    except_files:
+    - src/FsAnalyser.Core/Workarounds/KnownWorkarounds.cs
+    - src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs
+  - name: the pool harness never elevates
+    files: tests/window/PoolWatch*.ps1
+    must_not_match:
+    - (?m)-Verb\s+['"]?RunAs\b
+    because: 'The stack decides that kernel-pool measurement runs unelevated, with fltmc pasted
+      by the person. An elevated FsAnalyser.exe opens folders an ordinary user cannot, so its
+      logs would measure a different scan from the one the app ships (constraint: never asks
+      for admin).'
+  - name: PoolWatch reports completeness, never a verdict
+    files: tests/window/PoolWatch.ps1
+    must_not_match:
+    - (?m)["'][^"'\r\n]*\b(?:PASS|FAIL|VOID|OUTCOME)\b
+    because: 'The narrowing moves every pool verdict to SC-128. Three review laps found a silent
+      PASS on missing data in -Report''s verdict code (M1: logs with a crashed full scan read
+      ''OUTCOME A / VERDICT PASS''). A verdict word printed by a harness that checks only completeness
+      reads as DONE (c) met.'

@@ -19,7 +19,7 @@ public sealed record UnreadableRow(string Path, UnreadableKind Kind, int Win32Er
 /// One row for a folder the scan left out on purpose (SL-095): the Windows container layer store. Not a failed folder,
 /// so not an <see cref="UnreadableRow"/>, and the window gives it no 'Show in Explorer'.
 /// </summary>
-public sealed record NotScannedRow(string Path, NotScannedReason Reason)
+public sealed record NotScannedRow(string Path, NotScannedReason Reason, string WorkaroundId)
 {
     public string Text => $"{Path}  —  {UnreadableRows.NotScannedText(Reason)}";
 
@@ -97,7 +97,7 @@ public static partial class UnreadableRows
     {
         ArgumentNullException.ThrowIfNull(record);
         ArgumentNullException.ThrowIfNull(pathOf);
-        var rows = record.DistinctBy(folder => folder.Entry).Select(folder => new NotScannedRow(pathOf(folder.Entry), folder.Reason)).ToList();
+        var rows = record.DistinctBy(folder => folder.Entry).Select(folder => new NotScannedRow(pathOf(folder.Entry), folder.Reason, folder.WorkaroundId)).ToList();
         rows.Sort((a, b) => ComparePaths(a.Path, b.Path));
         return rows;
     }
@@ -105,7 +105,7 @@ public static partial class UnreadableRows
     /// <summary>Why a folder was left out, in the list's words: its size is not counted, and on purpose.</summary>
     internal static string NotScannedText(NotScannedReason reason) => reason switch
     {
-        _ => "size not counted: Windows container layers, skipped on purpose (see Precautions)",
+        _ => "size not counted: Windows container layers, skipped to avoid a leak in Windows' wcifs.sys driver; see Settings",
     };
 
     /// <summary>What the engine recorded of the folder, in the list's words. Read from the kind, never worked out again.</summary>

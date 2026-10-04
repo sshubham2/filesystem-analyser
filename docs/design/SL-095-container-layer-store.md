@@ -3,9 +3,14 @@
 A scan of C: walked into the live Windows container layer under
 `%ProgramData%\Microsoft\Windows\Containers\Layers\<id>\Files`, and wcifs.sys, Microsoft's container isolation
 minifilter, keeps kernel pool and a System-process handle for every layer entry opened for the first time since a
-restart (microsoft/Windows-Containers#646). The app now never opens that store, and a root at or inside it is refused.
-Whether that is the whole answer to the reported ~30 GB is what the person-run protocol below decides; the tolerance
-row is written here, before any run. Where this file and the design disagree, this file is right.
+restart (microsoft/Windows-Containers#646). The app now never opens that store: a root at or inside it is refused, and
+a scan above it leaves it out while the precaution against that defect is on, as it is unless a person turns it off.
+
+The slice was narrowed (design 10, 5 Oct 2026): it judges no pool tolerance. **The tens-of-GB report is not claimed
+fixed.** Spike #87 (4 Oct 2026, after a true Restart, store excluded) stopped arm L at its guard with +375 MiB paged and
++138 MiB nonpaged in NtfF, FMfn and File and no WC* rise: outcome C by fork O-028's own rule (i). So DONE (c), the
+five-plus-five verdict, the settle gate and the idle-drift judgement go to SC-128 (below, *Not judged here*). Where this
+file and the design disagree, this file is right.
 
 ## What changed in the product
 
@@ -18,176 +23,195 @@ row is written here, before any run. Where this file and the design disagree, th
   root's own spelling. A root that cannot be opened, or a final path Windows will not give (a share), leaves the string
   verdict standing (None) and the scan goes on to its usual RootUnreadable. An empty or relative known folder is no
   store, never every path.
-- **A scan above the store stops at it.** The walk compares each folder it pops with the one excluded path, for
-  equality, without case, as listed (never through GetFullPath, which would fold `Layers.` or `Layers ` onto it). The
-  store completes as a folder with nothing listed, flagged `EntryFlags.NotScanned`, recorded in
-  `ScanResult.SkippedStores` and never in `ScanResult.Unreadable`, so nothing that reads or retries unreadable folders
-  can reach it (review M5, X1). Its size is in no total; it falls into the coverage gap. Nothing below it is pushed,
-  listed or probed, and `AfterFolder` does not fire for it. A Cancelled result keeps the record when the walk got there.
-- **A backstop at the one listing call.** `DirectoryReader.Read` refuses, unopened, any folder at or under the excluded
-  store and counts it: `ScanResult.OpensUnderExcludedStore`, 0 whenever the walk's own check held (review m4, M6).
-- **A root at or inside the store is refused** (Q-179, Q-182): `ScanStatus.Refused`, `ScanRefusal.ContainerLayerStore`,
-  a result and never an exception, with nothing listed or probed. The window shows `Not scanned: <root>` and says why,
-  with no dialog and no scanning state. The report writes `outcome: "refused"`, `refusal: "container-layer-store"`, and
-  exits 0.
-- **One precaution, on by default, that a person can turn off** (`Workarounds.ContainerLayerStore`, id
-  `wcifs-container-layers`, in Core's one list `Workarounds.All`). The window's **Precautions...** button lists every
-  entry with the outside defect and where it lives, what the app does, and what turning it off brings back; unticking
-  asks first with that consequence in the question. The app saves nothing to disk (stack decision), so a precaution
-  turned off is on again at the next start. Off restores the plain behaviour exactly: the store is walked like any
-  folder and a root inside it is scanned (`ContainerLayerStoreTests.WithThePrecautionOffTheStoreIsWalkedAndARootInsideItIsScanned`).
+- **A root at or inside the store is refused, always** (Q-179, Q-182): `ScanStatus.Refused`,
+  `ScanRefusal.ContainerLayerStore` and the precaution's id, a result and never an exception, with nothing listed or
+  probed. The window shows `Not scanned: <root>`, says why in the precaution's own words (the defect, and where it lives:
+  wcifs.sys), and says that a folder at or inside the store is never scanned and the Settings checkbox only decides
+  whether scans above it leave it out. No dialog, no scanning state. The report writes `outcome: "refused"`,
+  `refusal: "container-layer-store"`, and exits 0. Q-182 decided refusal with no user override, so the checkbox does not
+  lift it (review F1); whether its off position should is the design's open question, left with the person.
+- **A scan above the store stops at it, while the precaution is on.** The walk compares each folder it pops with the
+  one excluded path, for equality, without case, as listed (never through GetFullPath, which would fold `Layers.` or
+  `Layers ` onto it). The store completes as a folder with nothing listed, flagged `EntryFlags.NotScanned`, recorded in
+  `ScanResult.SkippedStores` (with the precaution's id) and never in `ScanResult.Unreadable`, so nothing that reads or
+  retries unreadable folders can reach it (review M5, X1). Its size is in no total; it falls into the coverage gap.
+  Nothing below it is pushed, listed or probed, and `AfterFolder` does not fire for it. A Cancelled result keeps the
+  record when the walk got there.
+- **A backstop at the one listing call.** `DirectoryReader.Read`, the only caller of `SynchronousIoCancel.OpenDirectory`,
+  refuses, unopened, any folder at or under the excluded store and counts it: `ScanResult.OpensUnderExcludedStore`, 0
+  whenever the walk's own check held (review m4, M6). `TheReaderRefusesAndCountsAFolderUnderTheStoreWithNoOpen` drives it
+  on a folder that denies its listing, so an issued open would come back access denied: it returns the skip with no
+  call and counts 1 (review F4).
+- **One list of precautions against outside defects** (`src/FsAnalyser.Core/Workarounds/KnownWorkarounds.cs`), its first
+  entry `wcifs-layer-store`: the defect, where it lives (wcifs.sys, shipped by Microsoft, no fixed version on 25H2), what
+  the app does, what turning it off does, on by default. A scan takes the ids that are on
+  (`ScanOptions.EnabledWorkarounds`); only `ContainerLayerStore` reads this one, and it decides only the exclusion (and
+  with it the backstop's rule): off restores the plain walk exactly, the store listed and counted like any folder, no
+  not-scanned record, no refusals at the backstop; a root inside the store is still refused
+  (`WithThePrecautionOffTheStoreIsCountedAndARootInsideItIsStillRefused`, on a planted store only: off against the real
+  store leaks until a Restart, so nothing runs it there).
+- **Settings.** The window's **Settings...** button opens a window that lists every entry of that list as it is, one
+  checkbox each with its plain-words text, naming no entry itself. Unticking one asks first in a confirmation window whose
+  question states the consequence (kernel memory and a System handle per layer entry read, until you restart Windows; a
+  folder at or inside the store still not scanned); No leaves it ticked. The app saves nothing to disk (stack decision),
+  so it is on again at the next start. WindowCases X-005 drives both answers through the hook's settings mode and reads
+  the state from the report, and the next launch's.
 - **The app says so beside the result.** A scan that left the store out adds an outcome note, `Not scanned, size not
-  counted: <store> (Windows container layers)`, with the defect and the precaution's name; the results list row reads
-  `Layers  (size not counted: Windows container layers)`; the tree note and the unreadable tab's own row say the same.
-  The tab header counts it apart: `Not scanned (1)`, or `Unreadable folders (n), not scanned (1)`. No row of the store
-  offers 'Show in Explorer' (review Y6): browsing the layer is what the precaution avoids.
-- **The schema-1 report, additively:** `core.unreadable`, `core.skippedStores`, `core.opensUnderExcludedStore`,
-  `outcome`, `refusal`, `precautions` (id and on/off), `topLevel.notScanned`, `window.OutcomeNotes`,
-  `window.PrecautionsButton`. Counts and ids only, never a path (Q-016). `eng/read-window.ps1 -Outcome` prints one line
-  of them.
+  counted: <store> (Windows container layers). Skipped to avoid a leak in wcifs.sys, ...`, with the defect and the
+  Settings checkbox that left it out; the store's own row in the unreadable tab reads `size not counted: Windows
+  container layers, skipped to avoid a leak in Windows' wcifs.sys driver; see Settings`, and the tree note the same. The
+  tab header counts it apart: `Not scanned (1)`, or `Unreadable folders (n), not scanned (1)`. No row of the store offers
+  'Show in Explorer' (review Y6): browsing the layer is what the precaution avoids.
+- **The schema-1 report, additively:** `core.unreadable`, `core.skippedStores`, `core.notScanned` (the same count under
+  the name the pool protocol reads), `core.opensUnderExcludedStore`, `outcome`, `refusal`, `workarounds` (each entry's id
+  and on/off), `topLevel.notScanned`, `window.OutcomeNotes`, `window.SettingsButton`. Counts and ids only, never a path
+  (Q-016). `eng/read-window.ps1 -Outcome` prints one line of them.
 
 Unchanged on purpose: FILE_FLAG_OPEN_REPARSE_POINT is not added (0 valid measurements, spike 85), and SizeProbe
 (SC-011), the last-access suppression (SC-070, SC-074), the reparse re-open (SC-067) and the CancelSynchronousIo path
-(SC-017) are as they were (Q-183 keeps Q-004's probe-every-file rule). The protocol's arms S and P separate the per-file
-probe from a plain open, and its cancelled runs exercise the cancel path; SC-070/074 and SC-067 are not narrowed one by
-one here (follow-up if the protocol routes to B or C).
+(SC-017) are as they were (Q-183 keeps Q-004's probe-every-file rule).
 
-Not covered, and not looked for: the same store over a loopback share (`\\localhost\C$`), and other WCI stores such as
-`ProgramData\Docker\windowsfilter`.
+### Where the one-checkbox-per-defect rule comes from (review F1)
+
+It is not written in this repository and has no Q-number. It is a standing rule of the TAAD engine's build stage, given
+in the build instructions of every slice: a workaround for a defect outside the project is a setting, one checkbox per
+known bug, on by default, with an in-app notice beside every result it changes, and one list of entries. Design 10 took
+it from there. It does not override Q-182: the checkbox governs the exclusion only, and the refusal stays unconditional.
 
 ## DONE (a): the growing tags and who owns them
 
-Owners by `PoolWatch.ps1 -Attribute` on 5 Oct 2026 (findstr over `System32\drivers\*.sys` and `System32\*.exe`, no
-pooltag.txt on this machine; `docs/design/SL-095-runs/build-2026-10-05/attribute.txt`). Counts from the repro stage's
-mark `e1` on the boot of 29 Sep 2026, 27 h old, FsAnalyser not running (`first-touch-2026-10-01/e1.mark`).
+Owners by findstr over `System32\drivers\*.sys` and `System32\*.exe` on 5 Oct 2026 (no pooltag.txt on this machine;
+`docs/design/SL-095-runs/build-2026-10-05/attribute.txt`). Counts from the repro stage's mark `e1` on the boot of 29 Sep
+2026, 27 h old, FsAnalyser not running (`first-touch-2026-10-01/e1.mark`; the e1..e5 and tok_a/tok_b files there are
+probe-walk marks, not counter runs).
 
-| Tag | Owner (measured) | Allocs / frees on that boot | Bytes | Attributed to |
-|-----|------------------|-----------------------------|-------|---------------|
+| Tag | Owner | Allocs / frees on that boot | Bytes | Attributed to |
+|-----|-------|-----------------------------|-------|---------------|
 | WCsc | wcifs.sys 10.0.26100.9278, Microsoft | 210,816 / 0 (nonpaged) | 81 MB | the layer walk (#646) |
 | WCfc | wcifs.sys | 210,734 / 0 (nonpaged) | 44 MB | the layer walk |
 | WCri | wcifs.sys | 211,250 / 516 (paged) | 114 MB | the layer walk |
 | FMwi | fltMgr.sys 10.0.26100.1, Microsoft, for wcifs | 214,803 / 3,969 | 27 MB | the layer walk |
 | FMfc | fltMgr.sys, for wcifs | 539,780 / 328,131 | 41 MB | the layer walk, in part |
-| FMfn | fltMgr.sys | 261.1M / 258.9M paged | 1.22 GB | not attributed |
-| File | ambiguous by findstr (872 files); the I/O manager in ntoskrnl by pooltag.txt, recalled | 520.0M / 517.4M | 1.04 GB | not attributed |
-| NtfF | ntfs.sys 10.0.26100.1, Microsoft | 3.30M / 3.02M | 453 MB | not attributed |
-| Toke | ambiguous by findstr (488 files); tokens, ntoskrnl, recalled | 53.6M / 53.3M | 828 MB | not attributed |
+| FMfn | fltMgr.sys (owner tag known) | 261.1M / 258.9M paged | 1.22 GB | holder unattributed |
+| File | the I/O manager in ntoskrnl (pooltag.txt, recalled; findstr ambiguous, 872 files) | 520.0M / 517.4M | 1.04 GB | holder unattributed |
+| NtfF | ntfs.sys 10.0.26100.1, Microsoft | 3.30M / 3.02M | 453 MB | holder unattributed |
+| Toke | tokens, ntoskrnl (recalled; findstr ambiguous, 488 files) | 53.6M / 53.3M | 828 MB | holder unattributed |
 
 The wcifs group is about 0.33 GB of the 8.3 GB pool on that boot, plus one System handle per WCsc (211,070 at access
 0x120089). It is capped by first touch: repeat walks of the same entries add 0 WC* (`deltas.txt`: e2_1 to e2_5, e4_21 to
 e4_26, e5_31a to e5_37b all WCsc 0/0; e3_11 to e3_15, an untouched subtree, WCsc +5/0). So wcifs alone does not explain
-pool that "built up scan after scan" to 30 GB. FMfn, File, NtfF and Toke are the largest tags and are not attributed to
-the app by anything measured yet: the protocol's arms are what attribute them.
+pool that "built up scan after scan" to 30 GB.
 
-The same tags after a full boot, 5 Oct 2026 00:41 (`build-2026-10-05/marks.jsonl`): WCsc 3,585 live, System 3,636
-handles at 0x120089, pool 2.24 GB paged and 1.61 GB nonpaged, against WCsc 211,022, 211,087 handles, 6.01 GB and 4.09 GB
-read before it (spike attempt 3's R0). A full boot (LastBootUpTime moved) gave all of it back. On that boot the build's
-scans of `...\Containers` and `...\Microsoft\Windows` (the repro test, window cases X-001, X-002 and X-004, 461
-unreadable folders and the store left out) left WCsc at 3,585 and the 0x120089 handles at 3,636 from the first mark to
-the last (`build-2026-10-05/build-marks.jsonl`, uptime 3,816 s to 5,071 s): listing the store's siblings allocated no
-WC*. That boot's layer was not proved armable by a control (that would
-spend it), so this is evidence, not the protocol's verdict.
+**A Restart reclaims the wcifs leak, measured.** Spike #87's V1 after the 4 Oct 2026 Restart: WCsc 1,630 live and 1,661
+System handles at 0x120089, against 211,022 and 211,087 before it. The build's full boot of 5 Oct 2026 read the same
+(`build-2026-10-05/marks.jsonl`: WCsc 3,585, 3,636 handles). **Shut down** with Fast Startup on (HiberbootEnabled 1
+here) is sourced from KB3211190 and a #646 comment as not reclaiming it, not measured (review N4).
+
+**What spike #87's arm L kept** with the store excluded, L_start to the guard stop at 3,313,298 entries (92 s): paged
++375 MiB, nonpaged +138 MiB; NtfF +81,867 allocs with 0 frees (274 to 411 MB), FMfn 518 to 676 MB, File 107 to 154 MB;
+WCsc, WCse, WCss, WCfc, WCri, WCfn and FMwi identical at L_start and L_exit. Those tags' owners are known; who holds
+them, and whether memory pressure gives them back, is SC-128's.
+
+## DONE (b)
+
+The app change above, plus the documented workaround: **Start > Restart, not Shut down**, gives the leaked pool back;
+**do not browse the layer store** in Explorer or the folder picker, which list it before the app can refuse anything.
+There is no fixed wcifs.sys for 25H2 (#646; microsoft/WSL#41296's fix has not shipped).
+
+## The store as the only live WCI store a C: walk reaches (review F3, fork O-085)
+
+Cross-domain invariant 3 is narrowed to what was measured: **on spike #87's boot, the walk up to the guard cutoff
+(3,313,298 entries) reached no live WCI entry with only `Layers` excluded.** Arm L's own record
+(`SL-095-runs/spike-87-2026-10-04/L.json`): `skippedByRule` 1, `skippedPaths` `\\?\C:\ProgramData\Microsoft\Windows\Containers\Layers`,
+0 opens under the store by its tripwire or its rule check; `skips.log` names the store. Its folder list (`dirs.log`,
+counted in `dirs-count.txt`, not copied: it is every folder path on C:) lists `...\Windows\Containers` at line 23,422 of
+669,824, and all 642,894 of its `C:\Users\` and `C:\Windows\` folders after it: L reached the store, skipped it and
+walked past it, through `Containers\BaseImages` and `Containers\ContainerStorages`, and `C:\Users\All Users` was not
+followed (links never are). Spike #87's `marks.jsonl` and `events.log` are no longer in its run folder
+(`C:\WINDOWS\TEMP\sl095-o003-20261005-004311` holds only `L\`): a gap in the risk-spike stage's record; the WC* figures
+above are quoted from its account.
+
+Not measured: the tail of C: after the cutoff, and any other WCI store. Nobody looked for a running Windows Sandbox's
+live storage, `ProgramData\Docker\windowsfilter` or another container runtime's layers, and a loopback share
+(`\\localhost\C$`) is not matched (O-049, O-084). **What reopens it:** a raw WC* rise in a person-run exe-full arm that
+reports notScanned at least 1 and opensUnderExcludedStore 0; `-Report` prints each arm's raw WC* nets, so nothing new is
+needed to see it. That evidence goes to a follow-up slice widening `Resolve` to several stores, not back into SL-095.
 
 ## The environment (criterion 3)
 
 `build-2026-10-05/environment.json`, unelevated: Windows 11 Pro 26200; wcifs.sys 10.0.26100.9278; wcifs, CldFlt,
-WdFilter, bindflt, FileInfo, luafv and storqosflt running; minifilter instances in the registry: bindflt 409800, WdFilter
-328010, CldFlt 180451, FileInfo 40500 (wcifs attaches at run time and lists none); antivirus Kaspersky (three entries),
-Windows Defender and McAfee; OneDrive running; HiberbootEnabled 1 (Fast Startup on); one layer, 1f35079a. `fltmc filters`
-needs an administrator and is not here: a person who chooses to runs it in an elevated window of their own and pastes it
-into `fltmc.txt` in the run folder, which `-Environment` appends. `-Report` prints a `FILTERS` line apart from the pool
-verdict: `recorded` when `fltmc.txt` (in the run folder or its `prepare` folder) or an environment record holds the
-filter list itself, its `Filter Name  Num Instances` header and no refusal; `UNDECIDED` otherwise, never recorded. A
-paste of what unelevated fltmc prints here ('Filter listing failed with error: 0x80070005', 'Access is denied.') reads
-`FILTERS UNDECIDED: fltmc.txt holds no filter list (...)`, and the environment record keeps it as `not a filter list`.
+WdFilter, bindflt running; antivirus Kaspersky (three entries), Windows Defender and McAfee; OneDrive running. `-Prepare`
+records the same into `prepare.json` (OS build, boot time, wcifs.sys version, those four drivers' state, antivirus,
+OneDrive). `fltmc filters` needs an administrator and is not here: a person who chooses to runs it in an elevated
+window of their own and pastes it into `fltmc.txt` in the prepare folder. It counts only when it is the list itself
+(`Filter Name  Num Instances` and no refusal); otherwise `-Report` says `FILTERS UNDECIDED` (review R2-N3).
 
-## The tolerance row (written 5 Oct 2026, before any protocol run)
+## The pool protocol (person-run): complete logs, no verdict
 
-Per pool, Paged and Nonpaged: **T = max(64 MiB, 3 x |idle drift| over a window of the same length)**. Idle drift comes
-from I0 and I1, 20 minutes each, per gap between marks, with any gap whose rate is over 3x the median gap's left out as
-a burst. I0 begins only once the boot has settled: after R0, a `settle/NN` mark every minute until two gaps in a row
-each move both pools slower than 3 x spike 3's idle drift of 10,936 B/s, 32,808 B/s or about 1.9 MiB a minute, for at
-most 30 minutes (spike 3 measured about 1 GiB of boot settle on this PC). The gate is as strict as the VOID it protects:
-I0 drifting more than 3x I1 VOIDs the run, so the 16 MiB-a-gap gate first built (spike 3's V2 rule) let a boot still
-growing 2-16 MiB a minute start a session that VOIDs at its end (review R3-1). R0 stays the boot-age and guard
-reference; the pre-scan baseline is `L/before`, which the post-pressure figure is judged from. Every arm's reading is
-taken 10 minutes after its process exits, net of drift. An arm the guard stopped (L, S, P or an exe run) counts as over
-T. A ScanArm the guard killed prints no summary, so a stopped S or P is over T with no projection (review R3-2): S
-stopped while P is not is B; P stopped, with S stopped or only projecting over T, is C, the probe by nothing beyond it.
-
-**PASS (outcome A)** needs all of: all ten exe runs there (five full, each exiting 0 with a Completed report, and five
-cancelled or closed that each stopped before the end: the hook pressed Cancel or closed the window, and each Cancel's
-report says Cancelled), each within T; the 10 together within T; the cold projection
-L_net + s x N_full within T for the per-file probe; every arm's WCsc rise inside the idle envelope of the neighbouring
-gaps and its 0x120089 handle rise no more than its WCsc rise; every exe report's `opensUnderExcludedStore` 0 and every
-full run's `skippedStores` 1; and the closing control armable: its WCsc rise at least half the entries it listed, with
-the handle rise matching.
-
-Otherwise, in this order (`PoolWatch.ps1 -Report`, pinned by `PoolWatchReportTests`):
-
-| Outcome | When | Records |
-|---------|------|---------|
-| VOID | R0 more than 30 min after the boot; the boot not settled within 30 min of R0 (-Protocol stops there); I0 and I1 drift more than 3x apart; the closing control not armable; an arm's process did not exit | nothing; the run decides nothing |
-| UNDECIDED | a mark or a reading a criterion needs is missing or null (no settle marks; tags, or the class 64 0x120089 handle count of an arm or the closing control); the ten exe runs not all there with their before and settled marks; a full run that did not exit 0 with a Completed report, unless the guard stopped it; a cancelled or closed run whose hook never acted (the scan ended before the trigger, the app shut down before it, or its deadline passed), or a cancelled run with no report or one that does not say Cancelled, unless the guard stopped it; L over T with no pressure step, or with one that took nothing back (INEFFECTIVE) | nothing; never PASS |
-| WCIFS-UNATTRIBUTED | an arm's WCsc or handle rise outside the idle envelope, or an exe run that opened under the store or (full run) did not record it | blocks A until a person looks |
-| C | L over T, and what L kept survives the pressure step; or the probe and a plain open both project over T, alike; or the plain open stopped by the guard, with the probe stopped too or over T | DONE (c) OS-recorded only if Q-178's three conditions hold (Q-184), with the session-2 non-app walk (Q-185); otherwise FAIL |
-| A (reclaimed) | L over T before the pressure step, within it after: the retention was cache | continues to the remaining clauses |
-| B | the probe projects over T (or the guard stopped it) where a plain open does not, or by more than half T beyond it, or the guard stopped it where a plain open over T was not stopped | FAIL; Q-183's new design opens with this run's data |
-| FAIL / FAIL-cancel | a full exe run, or the 10 together, over T / a cancelled or closed run over T while the full runs are within | FAIL; FAIL-cancel implicates the cancel path (follow-up) |
-
-**Result: pending.** No protocol run exists. DONE (c) stays open until `docs/design/SL-095-runs/session-1/result.txt`
-(and, if L is over T, `session-2`) does.
-
-## The protocol (person-run)
-
-1. On the boot as it is: `pwsh -NoProfile -ExecutionPolicy Bypass -File tests\window\PoolWatch.ps1 -Prepare`. It builds
-   every binary the protocol runs (ScanArm, the window hook, the fixed app, and the unfixed app from afd021d through
-   `git archive`), takes Rpre, the environment, the store's size bound, the closing control's subtrees (none holding a
-   directory link; Windows\Globalization first, which the repro found untouched late in a boot), checks every hook
-   trigger fires against both builds, checks the no-link walker, and checks the pressure step reclaims a cold %TEMP%
-   tree's retention. The no-link check uses the walker's own flags and can fail: a planted 'All Users' junction (and a
-   directory symlink where this user may make one) must count none of its target's bytes and list none of its folders
-   at three levels; the same listing without `/XJ` must go through it, or the check could not see a followed link; and
-   a three-level walk of the real `C:\Users`, every other child left out with `/XD`, must not list
-   `All Users\Microsoft`. `-NoLinkCheck` runs it alone. Nothing is built after the Restart.
+1. On the boot as it is: `pwsh -NoProfile -ExecutionPolicy Bypass -File tests\window\PoolWatch.ps1 -Prepare`. It
+   publishes the app and builds the window hook (nothing is built after the Restart) and writes `prepare\prepare.json`
+   with an Rpre reading and the environment record.
 2. Start > Restart (not Shut down), sign in, open nothing but one PowerShell window, and within 30 minutes run
-   `powershell -NoProfile -ExecutionPolicy Bypass -File tests\window\PoolWatch.ps1 -Protocol`. It refuses to start on an
-   older boot, or when prepare.json does not record the no-link walker as safe (`noLinkWalkerSkipsAllUsers`). About 4
-   hours, left alone: R0; the settle marks until the boot has settled (it stops after 30 min if it has not); I0; arm L, the app's listing walk of all of C: with the store left out,
-   with a progress log and a mark every minute; arm S, the app's SizeProbe on half A of L's file list; arm P, a plain
-   open of half B (both from L's list, so neither can reach the store); 5 full exe scans; 5 cancelled or closed (Cancel
-   500 and 1,000 folders past the store and `C:\Users`, Cancel 200,000 files into the size pass, close 5,000 folders past
-   the store, close 400,000 files into the size pass); the pressure step (memory committed down to 4,608 MB available,
-   above the 4,096 MB guard); I1; the closing control (`dir /a /s /b` on the layer subtrees picked in -Prepare); then,
-   only after it, the unfixed app: two full scans and one cancelled past the store, which walk the live layer (review
-   Y1). -Report runs at the end. Commit the run folder.
-3. Only if L was over T: a second Restart and `-Protocol -Session 2`, the non-app walk of C: per top-level folder with
-   robocopy `/L /E /XJ /XD <store>`, which never follows a directory link (Q-178 condition 2, Q-185). cmd's `dir /s`
-   follows them, and `C:\Users\All Users` links to `C:\ProgramData`, so `dir /s C:\Users` would walk the live layer.
+   `powershell -NoProfile -ExecutionPolicy Bypass -File tests\window\PoolWatch.ps1 -Protocol`. It refuses to start when
+   prepare.json, the published app or the hook is missing, or when the boot is over 30 minutes old (review X4). It
+   writes a plan line naming every arm, then R0; I0, 20 minutes idle; 5 full exe scans of C:; 4 cancelled (500 folders
+   past the store, 1,000 past `C:\Users`, 200,000 and 400,000 files into the size pass) and 1 closed (5,000 folders past
+   the store), through the hook's existing triggers; I1, 20 minutes idle. Each arm has /before, /exit and /settled
+   (10 minutes after exit) marks, and one a minute while it runs: pool bytes, Available, the WC*, FMwi, FMfc, FMfn,
+   File, NtfF and Toke tags as an array, the System handle count and its 0x120089 count. Each arm's line carries the exit
+   code, the report's status, notScanned and opensUnderExcludedStore, the hook's acted or refused line and the folder
+   count at the cancel. About 3 hours; commit the run folder.
+3. `-Report` (it also runs at the end of `-Protocol`) prints `RUN COMPLETE`, or `RUN INCOMPLETE` and one line per
+   missing item: an arm in the plan but not in arms.jsonl; a /before, /exit or /settled mark missing, or a field in one
+   null (review m7); a guard stop, with the arm's net at the stop; an arm not started because the guard was already
+   exceeded, named as the cascade of the arm that stopped (review R4-2); not exactly 5 full and 5 cancelled or closed
+   runs; a full run without exit 0, a report, status Completed, notScanned at least 1 and opensUnderExcludedStore 0; a
+   cancel or close whose hook never acted (its refused line quoted: the scan ended first, the app shut down first, or
+   the trigger's deadline passed; review R2-R3-3); a cancel whose report does not say Cancelled. Then the raw nets of
+   every arm and idle window, the environment, and the FILTERS line. It exits 0 complete, 2 incomplete, and prints no
+   judgement word (fitness rule; `tests/window/PoolWatchCases.ps1` asserts it on every fixture).
+4. `-Protocol -Rehearse` runs the same code over a generated %TEMP% tree of 30,150 folders, which the app takes many
+   250 ms window ticks to list, so the folder-count triggers (10% to 25% of the folders, a 120 s trigger deadline) act
+   mid-scan (review F5); windows of 30 s, marks every 5 s, /settled 15 s after exit; no boot-age check; every line says
+   rehearsal; the scratch is deleted unless `-Keep`. PoolWatchCases C-052 runs it and requires RUN COMPLETE. The design
+   said 60 s / 30 s windows; they are 30 s / 15 s so the unattended run stays near five minutes.
 
-Guard: an arm is killed and recorded as over T if Available falls below 4,096 MB or Paged + Nonpaged rise 4 GiB above
-R0. The script never elevates and never runs poolmon, wpr, xperf or fltmc (architecture rule).
+**The machine guard is per arm** (review R4-2, F2): FsAnalyser.exe is killed and the arm records `guardStop` when the
+combined pool grows more than **6 GiB over that arm's own /before mark**, or Available falls under **3 GiB**. The pool
+ceiling sits above a cold full C: scan's predicted cost rather than at the 2 GiB design 10 named: spike #87's arm L kept
+537 MB at 669,824 directory listings, about 800 B each, so C:'s ~920,000 folders cost about 0.7 GiB to list; SizeProbe
+then opens each of 2.35M to 3.7M files for the first time, at about 1 KB each (the cited 25H2 report), 2.3 to 3.6 GiB:
+3 to 4.4 GiB in all, which 2 GiB would cut off at the first cold full scan, the measurement SC-128 most needs. Nobody has
+measured that cost cold, so no figure is claimed to hold: if the guard stops an arm anyway, -Report lists it as
+incomplete with its net at the stop. Available under 3 GiB is what protects the machine. An arm that would start with
+Available already under it is not started (`guardAtStart`).
+
+## Not judged here: handed to SC-128
+
+SC-128 redoes the design for outcome C. It receives, by finding id: R3-1 and R4-1 (the settle gate, and its per-pool
+limits; there is no gate in this slice), M6, N2 and X5 (drift per gap, the idle envelope, WCIFS-UNATTRIBUTED), the N1
+envelope check between arms, M3, N3 and X2 (cache against retention under memory pressure, and the pressure step's
+positive control), Y3 (the closing layer control), M2 (the listing arm first), M4 and Y1's M4 part (unfixed afd021d
+arms), Q-185's second Restart session, the slice's steps 3 to 5 (switching behaviours off one at a time, the other
+tools), the store-relative cancel trigger's calibration on a real session, and whether a ScanArm-like rig returns.
+ScanArm, the L/S/P arms, the settle gate, the drift judgement, the tolerance, the pressure step, the dir arm, the
+store-size walk and -Attribute are not in this slice; ScanArm and its InternalsVisibleTo line are deleted (stack line:
+deleted once O-003 is decided; spike #87 decided it).
 
 ## The excluded store's size
 
 Unmeasured. Q-180 and Q-181 decided that leaving the whole store out, shown as a 'size not counted' row, is an honest
 shortfall under the counting rule. That covers `Layers\<id>\Files` as well as Hives, Bindings, Specialization and
 dotnet.bcf: the Files tree is not only placeholders of host files (the earlier precondition, O-002), since Microsoft
-describes the dynamic base image as holding real pristine copies of the mutable OS files, so real bytes go uncounted.
-`-Prepare` records an upper bound once, on the pre-Restart boot that has walked it already, with robocopy's
-`/L /E /XJ /BYTES` total (`storeBytesUpperBound` in `prepare.json`). It is a reference only and is never added to any
-total.
+describes the dynamic base image as holding real pristine copies of the mutable OS files, about 500 MB (recalled, not
+measured), so real bytes go uncounted. No walk measures it: on a boot whose layer is untouched, walking the store leaks
+about 210,000 entries, and Q-181 already decided the trade.
 
-## The workaround, and when the precautions change
+## When the precautions change
 
-- **Start > Restart gives the leaked pool back.** Measured once: the full boot of 5 Oct 2026 above. **Shut down does
-  not**, with Fast Startup on (HiberbootEnabled 1 here): that half is sourced from KB3211190 and a #646 comment, not
-  measured here (review N4).
-- **Do not browse the layer store** in Explorer or the folder picker: they list it before the app can refuse anything.
-- There is no fixed wcifs.sys for 25H2 (#646; microsoft/WSL#41296's fix has not shipped).
-- **When the refusal can be lifted** (Q-179): a valid PoolWatch run showing that enumeration with
-  FILE_FLAG_OPEN_REPARSE_POINT causes no wcifs growth on an untouched layer subtree. **When the exclusion can narrow**
-  to `Layers\<id>\Files` (Q-180, Q-181): a post-Restart run showing that listing Hives, Bindings, Specialization and
-  dotnet.bcf adds no WC* and no System handles. Each is a one-predicate change in `ContainerLayerStore`.
-- The cancelled-run and protocol rigs (`tests/window/ScanArm`, its InternalsVisibleTo line in FsAnalyser.Core.csproj)
-  are deleted once O-003's outcome is recorded (stack decision).
+- **When the refusal can be lifted** (Q-179): a valid pool run showing that enumeration with FILE_FLAG_OPEN_REPARSE_POINT
+  causes no wcifs growth on an untouched layer subtree; or the person answers design 10's open question that the
+  checkbox's off position should lift it.
+- **When the exclusion can narrow** to `Layers\<id>\Files` (Q-180, Q-181): a post-Restart run showing that listing
+  Hives, Bindings, Specialization and dotnet.bcf adds no WC* and no System handles. Each is a one-predicate change in
+  `ContainerLayerStore`.

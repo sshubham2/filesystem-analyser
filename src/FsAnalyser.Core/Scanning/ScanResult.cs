@@ -28,7 +28,7 @@ public enum ScanRefusal
 
     /// <summary>
     /// The root is the Windows container layer store or a folder inside it, which wcifs.sys leaks kernel memory and a
-    /// System handle for, entry by entry, until a restart (SL-095, Q-179, Q-182; <see cref="Workarounds.ContainerLayerStore"/>).
+    /// System handle for, entry by entry, until a restart (SL-095, Q-179, Q-182). Refused whatever the Settings say.
     /// </summary>
     ContainerLayerStore,
 }
@@ -36,7 +36,7 @@ public enum ScanRefusal
 /// <summary>Why a folder under the root was left out on purpose.</summary>
 public enum NotScannedReason
 {
-    /// <summary>The Windows container layer store (SL-095; <see cref="Workarounds.ContainerLayerStore"/>).</summary>
+    /// <summary>The Windows container layer store (SL-095), left out while its precaution is on.</summary>
     ContainerLayerStore,
 }
 
@@ -48,15 +48,19 @@ public enum NotScannedReason
 /// </summary>
 public sealed record NotScannedFolder
 {
-    internal NotScannedFolder(int entry, NotScannedReason reason)
+    internal NotScannedFolder(int entry, NotScannedReason reason, string workaroundId)
     {
         Entry = entry;
         Reason = reason;
+        WorkaroundId = workaroundId;
     }
 
     public int Entry { get; }
 
     public NotScannedReason Reason { get; }
+
+    /// <summary>The precaution that left it out (<see cref="Workarounds.KnownWorkarounds"/>), which the window words it from.</summary>
+    public string WorkaroundId { get; }
 }
 
 /// <summary>
@@ -120,6 +124,12 @@ public sealed class ScanResult
 
     /// <summary>Why the scan was refused; None unless <see cref="Status"/> is Refused.</summary>
     public ScanRefusal Refusal { get; init; }
+
+    /// <summary>
+    /// The precaution whose outside defect a refusal avoids (<see cref="Workarounds.KnownWorkarounds"/>), which the window
+    /// words the refusal from; null unless <see cref="Status"/> is Refused.
+    /// </summary>
+    public string? RefusalWorkaroundId { get; init; }
 
     /// <summary>
     /// The folders the scan reached and left out on purpose: the Windows container layer store, at most once (SL-095).
