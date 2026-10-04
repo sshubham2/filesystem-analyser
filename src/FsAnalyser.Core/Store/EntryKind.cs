@@ -3,7 +3,12 @@ namespace FsAnalyser.Core.Store;
 /// <summary>What an entry in a scan is.</summary>
 public enum EntryKind : byte
 {
-    /// <summary>A folder, entered and listed. Includes cloud, WCI, ProjFS and DFS folders that carry a reparse point.</summary>
+    /// <summary>
+    /// A folder, entered and listed. Includes cloud, WCI, ProjFS and DFS folders that carry a reparse point. The one
+    /// folder never entered is the Windows container layer store, which is left out by its path, not its attributes:
+    /// a live layer's folders carry no ReparsePoint or Offline attribute (measured, SL-095). It stays a Folder with
+    /// nothing listed and is flagged <see cref="EntryFlags.NotScanned"/>.
+    /// </summary>
     Folder = 0,
 
     /// <summary>A file. Includes WOF-compressed, AppExecLink, AF_UNIX and dedup files.</summary>
@@ -45,4 +50,11 @@ public enum EntryFlags : byte
     /// listing, supplied the figure the file is charged (SL-056, review m2).
     /// </summary>
     ProbeCorrected = 32,
+
+    /// <summary>
+    /// A folder the scan reached and left out on purpose, never opened, with nothing listed under it and its size not
+    /// counted: the Windows container layer store (SL-095). Decided in Core; see <c>ScanResult.SkippedStores</c>.
+    /// Never set with <see cref="Unreadable"/>.
+    /// </summary>
+    NotScanned = 64,
 }

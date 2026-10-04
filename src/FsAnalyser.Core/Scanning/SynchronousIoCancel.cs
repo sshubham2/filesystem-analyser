@@ -81,6 +81,16 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
     private bool _aborted;
 
     public SynchronousIoCancel(CancellationToken ct)
+        : this(ct, announce: true)
+    {
+    }
+
+    /// <summary>
+    /// A guard that <see cref="Created"/> is not told of when <paramref name="announce"/> is false: the container layer
+    /// store's resolution, which runs on a guard of its own before the scan's (SL-095), so that the scan's guard numbers
+    /// its calls as it always has and a test that arms a call by its number arms the walk's.
+    /// </summary>
+    internal SynchronousIoCancel(CancellationToken ct, bool announce)
     {
         _ct = ct;
         if (ct.CanBeCanceled && !ct.IsCancellationRequested)
@@ -97,7 +107,8 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
                 _registration = ct.UnsafeRegister(static guard => ((SynchronousIoCancel)guard!).StartCanceller(), this);
             }
         }
-        Created?.Invoke(this);
+        if (announce)
+            Created?.Invoke(this);
     }
 
     /// <summary>Tests only: called in Enter with the call's number (from 1), before the token is checked.</summary>
@@ -241,6 +252,54 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
     /// <returns>As <see cref="OpenDirectory"/>.</returns>
     public int OpenForAttributes(string win32Path, out SafeFileHandle? handle) =>
         Open(win32Path, Kernel32.FILE_READ_ATTRIBUTES, 0, keepLastAccess: false, out handle);
+
+    /// <summary>
+    /// Opens a folder, or a file, with FILE_READ_ATTRIBUTES only and backup semantics, without OPEN_REPARSE_POINT, so a
+    /// junction or symbolic link is opened through to its target: nothing is listed and no data is read. Only for the
+    /// container layer store's resolution by handle (SL-095, <see cref="ContainerLayerStore"/>), which asks the handle
+    /// for its final path.
+    /// </summary>
+    /// <returns>As <see cref="OpenDirectory"/>.</returns>
+    public int OpenForFinalPath(string win32Path, out SafeFileHandle? handle) =>
+        Open(win32Path, Kernel32.FILE_READ_ATTRIBUTES, Kernel32.FILE_FLAG_BACKUP_SEMANTICS, keepLastAccess: false, out handle);
+
+    /// <summary>
+    /// GetFinalPathNameByHandleW, normalized, with its drive letter: the path <paramref name="handle"/>'s file is
+    /// reached by, in \\?\ form (\\?\UNC\ for a share), once subst drives, junctions, 8.3 names and volume GUIDs are
+    /// resolved.
+    /// </summary>
+    /// <returns>0 with the path, or the Win32 error with none.</returns>
+    public int QueryFinalPath(SafeFileHandle handle, out string? path)
+    {
+        path = null;
+        const int Length = 32 * 1024 + 8; // past the longest path NTFS holds, with its \\?\ prefix
+        char[] buffer = new char[Length];
+        if (!Enter())
+            return Aborted;
+        int error = 0;
+        bool issued;
+        try
+        {
+            fixed (char* chars = buffer)
+            {
+                uint written = Kernel32.GetFinalPathNameByHandle(handle, chars, Length, Kernel32.FinalPathNormalizedDos);
+                if (written == 0)
+                    error = LastError();
+                else if (written >= Length)
+                    error = Kernel32.ERROR_INSUFFICIENT_BUFFER;
+                else
+                    path = new string(chars, 0, (int)written);
+            }
+            AfterCall?.Invoke(_calls);
+        }
+        finally
+        {
+            issued = Exit();
+        }
+        if (issued)
+            path = null;
+        return Settle(error, issued);
+    }
 
     /// <summary>
     /// The same open as <see cref="OpenForAttributes"/>, with OPEN_REPARSE_POINT: the reparse point itself is opened,

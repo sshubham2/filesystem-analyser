@@ -1,0 +1,428 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-095",
+ "stage": "design-slice",
+ "attempt": 2,
+ "at": "2026-10-04T15:17:05.824Z",
+ "head": "afd021d2e231a732a596033c22af811201e6659d",
+ "run_id": 2431,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "reason": "Single practice proposal, taken as the core. Six seams were redesigned against the measured tree and the spikes. O-003 stays open: only a person-run test after a fresh boot can settle it, and the engine's own guard stopped the cold full-C: arm.",
+  "selection_rationale": "There was one proposal. It is taken as the core because it fits how the code is already built and what the spikes measured:\n\n(1) The fix sits where the investigation found the cause. Scanner.Run.Execute pops every pending folder, and FolderDone pushes every Folder-kind child with no exclusion. DirectoryReader.Read opens each folder through SynchronousIoCancel.OpenDirectory, which is the open that makes wcifs.sys resolve a WCI reparse point. A skip when a folder is popped, plus a refusal at that single open call, changes two files and adds one new file.\n\n(2) It uses seams that already exist instead of adding product switches. The internal ScanOptions.ProbeRule seam is the one both spikes drove for listing-only. ScanOptions.AfterFolder is what the bug test uses. The schema-1 --report goes through eng/read-window.ps1, and FsaWindowHook through DOTNET_STARTUP_HOOKS. ScanArm copies the StallRig build pattern.\n\n(3) It follows the fork decider's four settled points literally:\n- build the exclusion;\n- leave SizeProbe and the counting contract alone;\n- keep the listing-only switch test-only;\n- write no PASS/FAIL or Restart workaround until data from a fresh boot exists.\n\n(4) It respects every spike verdict:\n- FILE_FLAG_OPEN_REPARSE_POINT is not adopted. Spike 85 got 0 valid pairs, so it is untested.\n- The fresh-tree substitute is not reused. V1 failed: creating the files alone keeps 5.5 FMfn per file.\n- Warm repeat scans are not treated as the problem. That spike was a go: PROBE 0.26/0.38/-0.13 objects per file per scan, under 3× idle.\n- The cold full-C: arm is not handed back to the engine. The machine guard stopped run 2428 at +0.50 GB.\n\n(5) It is cheap to reverse. When a fixed wcifs.sys ships, deleting the rule means one file and one options member. ScanArm and its InternalsVisibleTo line can be deleted whatever the outcome.\n\n(6) It is the simplest design that still makes its own evidence trustworthy. The backstop counter, opensUnderExcludedStore, judges the wcifs part of the fix by the app's own count, because pool deltas on this machine drown in idle drift: FMfn +4,380 and File +4,072 per 10 min.\n\nChanges made against reality are listed in coherence_check.",
+  "components": [
+   {
+    "name": "ContainerLayerStore / ExcludedStoreRule",
+    "responsibility": "Owns the default excluded-store list as ContainerLayerStore.Defaults: the CommonApplicationData known folder plus Microsoft\\Windows\\Containers\\Layers, run through GetFullPath once. Create(rootAsGiven, rootFinalPath, stores) builds the scan's active rule. If the final root is at or under a store, the rule is INACTIVE and the user's explicit pick is walked. If a store is under the final root, the rule is active, and the store is rebased onto the root string exactly as the scanner spells it, so subst X:, \\\\?\\Volume{GUID}\\ and 8.3 roots match. IsInside(poppedPath) strips \\\\?\\ and compares OrdinalIgnoreCase with a separator boundary. It never calls GetFullPath on popped paths, which would fold the siblings 'Layers.' and 'Layers ' into the store. If the known folder cannot be resolved, the rule is inactive. It never throws into the scan.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs (new). ScanOptions.cs gains an ExcludedStores member that REFERENCES ContainerLayerStore.Defaults and holds no path literal.",
+    "key_interactions": "The only file in src allowed to compose the store path (architecture rule 1). Scanner builds the rule from the root's final path. DirectoryReader receives it for the backstop. Tests inject their own store list through ScanOptions.ExcludedStores. There is no UI setting."
+   },
+   {
+    "name": "Scanner: root resolution, pop-time skip, SkippedStores",
+    "responsibility": "When the root is listed, Scanner takes the final path DirectoryReader returns and builds the active rule before any child is pushed. If GetFinalPathNameByHandle fails, it falls back to GetFullPath of the root string. In Run.Execute, right after a pending folder is popped, a folder that is inside the active store is skipped. This is the fast path. The skipped folder completes like an empty folder (0 children, parent roll-up, progress tick) and is written only to a new SkippedStores collection as {path, reason, skippedAtFolderCount}. It never goes into the unreadable list.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "key_interactions": "FolderDone still pushes every Folder-kind child. EntryClassifier.cs:10 and EntryKind.cs:6 are untouched: WCI reparse folders outside the store are still entered by design. SizeProbe is untouched. Files under a skipped store are never listed, so they are never probed."
+   },
+   {
+    "name": "DirectoryReader refuse-and-count backstop",
+    "responsibility": "DirectoryReader.Read(path, rule) checks the rule at its single SynchronousIoCancel.OpenDirectory call site. A path inside an active store returns a Skipped outcome before CreateFile is issued, and increments OpensUnderExcludedStore. Because of the fast path, the expected count is 0. A non-zero count proves the pop-time check was bypassed, though still without an open. When the folder read is the scan root, Read also returns GetFinalPathNameByHandle(FILE_NAME_NORMALIZED | VOLUME_NAME_DOS) from the handle it already holds.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/DirectoryReader.cs",
+    "key_interactions": "Open flags are unchanged: FILE_WRITE_ATTRIBUTES is still tried first on local NTFS, backup semantics stay, and no FILE_FLAG_OPEN_REPARSE_POINT is added. Architecture rule 2 keeps this the only call site in src, so the counter is complete evidence."
+   },
+   {
+    "name": "Scan result, schema-1 --report and not-read panel",
+    "responsibility": "The scan result gains SkippedStores and OpensUnderExcludedStore. The schema-1 --report gains two additive members, a 'skippedStores' array and 'opensUnderExcludedStore'. The 'unreadable' array is unchanged, so eng/read-window.ps1 counts and the engine's read-denied-folders never see the store. The App's not-read panel shows skipped stores as their own group, in this row: 'Not scanned (size not counted): Windows container layer store (<path>). Walking it makes wcifs.sys leak kernel memory until restart.'",
+    "lives_at": "src/FsAnalyser.Core/Scanning/Scanner.cs (result). The App project's --report writer and not-read panel (App path not verified by any stage).",
+    "key_interactions": "Schema version stays 1 because the change is additive. eng/read-window.ps1, WindowCases.ps1 and PoolWatch.ps1 -Protocol read the new members. skippedAtFolderCount sets the cancel targets in the protocol."
+   },
+   {
+    "name": "Core tests on real temp trees",
+    "responsibility": "Covers every material case in the matrix that touches Scanner, DirectoryReader or the report, each on a real NTFS tree under %TEMP% with an injected fake store:\n- root above the store;\n- root at the store;\n- siblings Layers2, 'Layers.' and 'Layers ' (created via \\\\?\\);\n- subst root and \\\\?\\Volume{GUID}\\ root;\n- root spelled in a different case;\n- a store beyond MAX_PATH;\n- the backstop called directly;\n- no store present;\n- report members.\nThe existing counting-rule tests (links, hardlinks, on-disk size, long paths, unreadable folders) run unchanged and must still pass, since this slice touches the scanner.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ContainerLayerStoreTests.cs (new)",
+    "key_interactions": "subst is per-user and created and removed by the test. The Volume GUID comes from GetVolumeNameForVolumeMountPoint on %TEMP%'s volume. Neither needs admin."
+   },
+   {
+    "name": "SL-095 bug test (acceptance)",
+    "responsibility": "Committed unchanged. `pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-095-ContainerLayerWalk/SL-095-ContainerLayerWalk.Tests.csproj` must exit 0. It runs against the REAL default store (C:\\ProgramData\\Microsoft\\Windows\\Containers\\Layers), so it is the one test that exercises ContainerLayerStore.Defaults rather than an injected list. If no store exists, it skips with a message (ContainerLayerWalkTests.cs:38-40).",
+    "lives_at": "tests/bugs/SL-095-ContainerLayerWalk/ContainerLayerWalkTests.cs",
+    "key_interactions": "Its AssemblyName FsAnalyser.Core.Tests is kept, because FsAnalyser.Core.csproj:10 grants InternalsVisibleTo to it. With the fix, its AfterFolder seam sees no folder under Layers, and the scan touches no layer entry, so it is safe on any boot."
+   },
+   {
+    "name": "WindowCases case: container store skip",
+    "responsibility": "Runs the published exe on C:\\ProgramData\\Microsoft\\Windows\\Containers with --report. Asserts:\n- exactly one skippedStores entry, for Layers;\n- opensUnderExcludedStore = 0;\n- an unreadable count that does not include the store.\nIf no store exists, it reports SKIPPED with the reason, never a pass.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "Reads the result through eng/read-window.ps1. With the fix this touches no layer entry, so it stays far under the engine's 0.5 GB per-run kernel guard."
+   },
+   {
+    "name": "Fitness rules",
+    "responsibility": "Three rules, as listed in architecture_rules:\n1. The store path is composed only in ContainerLayerStore.cs.\n2. SynchronousIoCancel.OpenDirectory is called only from DirectoryReader.cs.\n3. Product code never assigns ScanOptions.ProbeRule.\nEach is twinned and planted.",
+    "lives_at": ".taad/fitness.yaml; twins in ArchitectureRulesTests; plants in eng/rules-harness/plants.json",
+    "key_interactions": "Patterns start with (?m) because eng/rules-parity.ps1:34-35 requires it for twinned patterns. Each rule gets a plant line that must fire and a correct line that must not: for rule 1 a comment and an unrelated string; for rule 2 the method's own definition; for rule 3 a '==' comparison and a '=>' expression body."
+   },
+   {
+    "name": "ScanArm rig (listing-only arm)",
+    "responsibility": "Runs the real FsAnalyser.Core Scanner.Scan with default options, which include the exclusion, except ProbeRule = never. This is the existing internal seam, so no product switch is added (settled point 3). Arguments: --root <path> --out <json>. Writes files, folders, opensUnderExcludedStore, skippedStores and elapsed time.",
+    "lives_at": "tests/window/ScanArm (new), built into gitignored artifacts/scan-arm, outside FsAnalyser.slnx",
+    "key_interactions": "Needs one InternalsVisibleTo line next to FsAnalyser.Core.csproj:10. The rig and that line are deleted together once O-003 is decided."
+   },
+   {
+    "name": "PoolWatch.ps1",
+    "responsibility": "The unelevated measurement script the stack already decided (PS 5.1 and pwsh 7). Its modes:\n- -Mark appends JSONL: class-22 pool tags as an array, GetPerformanceInfo paged/nonpaged, PID 4 handles in total and at GrantedAccess 0x00120089 (class 64), Available MBytes, uptime, boot time, and which of FsAnalyser, ScanArm and cmd are running.\n- -Diff prints per-gap drift-corrected deltas per pool and the A/B/C routing verdict. Gaps whose watched-tag rate is over 3× the median gap rate are flagged as bursts and left out of drift. Any null input gives UNDECIDED.\n- -Prepare runs before the restart. It builds the fixed publish, an unfixed publish from `git archive afd021d` into artifacts/sl095-unfixed, and ScanArm. It checks the hook's triggers and the report-on-close behaviour on a %TEMP% root. It stores the person's pasted elevated `fltmc filters` and `fltmc instances -v C:` output, and takes the pre-restart mark.\n- -Protocol runs the post-restart sequence.\n- -Pressure runs a child process that commits and touches 90% of Available (keeping at least 1.5 GB free), holds 60 s, then exits.\n- -PlainOpen is the non-app control: .NET enumeration plus CreateFileW(0x80, share 7, OPEN_EXISTING) and close, over half H2.\n- -Attribute <tag> runs `findstr /m /l` over %SystemRoot%\\System32\\drivers\\*.sys.",
+    "lives_at": "tests/window/PoolWatch.ps1 (new). Logs in docs/design/SL-095-runs/*.jsonl",
+    "key_interactions": "Seeded from the spikes' scratch Snap.ps1 and control.ps1 and the repro's tagdelta.ps1. Snap.ps1 was checked against poolwatch.py: 3,641 tags each, FMfn within 51. -Protocol refuses to start if uptime is over 15 min, if FsAnalyser is running, or if a prepared binary is missing. Building after the restart is forbidden. Outside the pressure step, it aborts with an 'abort' mark when combined pool exceeds baseline + 8 GB or Available drops below 3 GB. It prints the cost of the U arms and waits for a keypress before U1."
+   },
+   {
+    "name": "FsaWindowHook triggers",
+    "responsibility": "Adds whatever the protocol needs that the hook does not already do:\n- start a scan of a given root;\n- Cancel or close at a folder count (FSA_HOOK_AT_FOLDERS);\n- close after the scan finishes;\n- on scan end or cancel, write a line to FSA_HOOK_LOG and wait FSA_HOOK_HOLD_S before closing, so the 'done, process alive' mark can be taken.\nExisting FSA_HOOK_MODE names (stop|throw|close) are kept.",
+    "lives_at": "tests/window/FsaWindowHook",
+    "key_interactions": "Loaded through DOTNET_STARTUP_HOOKS into both the fixed publish and the afd021d publish, which have the same window structure. Test-only, never part of the exe."
+   },
+   {
+    "name": "Findings record",
+    "responsibility": "Records:\n- The wcifs group (WCsc, WCfc, WCri, FMwi, FMfc, plus PID 4 0x00120089 handles) with its driver wcifs.sys 10.0.26100.9278 and vendor Microsoft Corporation, cross-referenced to microsoft/Windows-Containers#646.\n- The guard-stop tags (FSfc, FMfz, HsFc, Clfc, HsSc, ClSc, Ntfs, Ntfn, about 59K kept each in run 2428). The Hs*/Cl* prefixes are SUSPECTED to be cldflt.sys, which is unverified until -Attribute runs.\n- FMfn, File, NtfF and Toke, each with its -Attribute result.\n- The pasted fltmc output; antivirus (Kaspersky, Defender, McAfee); OneDrive running; the CmService zygote.\n- The tolerance and the run table.\n- The A/B/C routing.\n- The `dir /a /s <Layers>` byte upper bound for the excluded store, and the open questions for the person.\nIt also says that criterion 4's SC-070/074 and SC-067 toggles are not separated on this boot and run only if routing says B. The DONE (c) row and DONE (b)'s workaround wording stay 'pending fresh boot' until the JSONL exists.",
+    "lives_at": "docs/design/SL-095-kernel-pool.md (new)",
+    "key_interactions": "Validate fills it from the committed JSONL. No engine run produces it."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "ExcludedStoreRule.Create(rootAsGiven, rootFinalPath, stores) / IsInside(poppedPath)",
+    "kind": "function",
+    "notes": "Only the root and the stores are normalised. Popped paths are compared with \\\\?\\ stripped, ordinal, case-insensitive and separator-bounded. The rule is inactive when the final root is at or under a store. Default stores come from ContainerLayerStore.Defaults, through ScanOptions.ExcludedStores.",
+    "error_cases": "If the known folder cannot be resolved, the rule is inactive. If the final-path call fails, the root falls back to GetFullPath of the root string. It never throws into the scan."
+   },
+   {
+    "name": "DirectoryReader.Read(path, rule): Skipped outcome",
+    "kind": "function",
+    "notes": "A path inside an active store returns Skipped without CreateFile being issued, and increments OpensUnderExcludedStore. For the scan root, Read also returns the final path from the handle it opened.",
+    "error_cases": "A Skipped outcome is never recorded as unreadable."
+   },
+   {
+    "name": "Scan result: SkippedStores [{path, reason, skippedAtFolderCount}] and OpensUnderExcludedStore",
+    "kind": "function",
+    "notes": "Kept apart from the unreadable list by construction. A skipped store counts 0 bytes, and the UI row says so."
+   },
+   {
+    "name": "schema-1 --report additive members: 'skippedStores' array and 'opensUnderExcludedStore'",
+    "kind": "function",
+    "notes": "The unreadable array is unchanged and the schema version stays 1. Read by eng/read-window.ps1, WindowCases.ps1 and PoolWatch.ps1 -Protocol.",
+    "error_cases": "Readers that predate this slice ignore unknown members."
+   },
+   {
+    "name": "Not-read panel row for a skipped store",
+    "kind": "ui",
+    "notes": "'Not scanned (size not counted): Windows container layer store (<path>). Walking it makes wcifs.sys leak kernel memory until restart.' It is its own group in the same panel as unreadable folders."
+   },
+   {
+    "name": "ScanArm.exe --root <path> --out <json>",
+    "kind": "cli",
+    "auth_model": "Ordinary user",
+    "notes": "Listing-only: exclusion on, ProbeRule never. Test rig only, never shipped, and deleted with its InternalsVisibleTo line once O-003 is decided."
+   },
+   {
+    "name": "PoolWatch.ps1 -Mark | -Diff | -Prepare | -Protocol | -Pressure | -PlainOpen | -Attribute",
+    "kind": "cli",
+    "auth_model": "Unelevated. The person pastes fltmc output from their own elevated prompt. The person runs -Protocol outside the engine.",
+    "notes": "Run order is fixed by key decision 8. Marks are taken before each run, at the hook's 'done' while the process is alive, at exit + 60 s and at exit + 5 min.",
+    "error_cases": "A null input gives UNDECIDED for that criterion, and the overall verdict cannot be PASS. Outside the pressure step, Available under 3 GB or combined pool over baseline + 8 GB aborts with a mark. If U1+U2's WCsc rise is under 50% of the layer's entry count, the wcifs claims are VOID, while the per-file fork may still be decided. If U1's WCsc rise is 0 or equals U1+U2, the completed-versus-cancelled split is UNDECIDED."
+   },
+   {
+    "name": "FsaWindowHook env: FSA_HOOK_MODE, FSA_HOOK_AT_FOLDERS, FSA_HOOK_HOLD_S, FSA_HOOK_LOG",
+    "kind": "cli",
+    "notes": "AT_FOLDERS is the folder count at which stop or close fires. HOLD_S is the delay after scan end or cancel before the window closes. Existing names are kept, and only the missing behaviours are added."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "The fix excludes the whole %ProgramData%\\Microsoft\\Windows\\Containers\\Layers store. A skip when a folder is popped in Scanner.Run.Execute is the fast path. A refuse-and-count check at DirectoryReader's single SynchronousIoCancel.OpenDirectory call site is the backstop, and its count is published as opensUnderExcludedStore.",
+    "reversibility": "cheap",
+    "rationale": "The wcifs first-touch leak is measured and real. This boot shows WCsc 211,022 allocations / 0 frees and 211,070 System handles at 0x00120089. The app's own Scanner.Scan on the untouched Globalization subtree gave WCsc +5, WCri +5 and System handles +5, all kept. Outcomes A, B and C all need the fix (settled point 1). A counter inside the pop-time check cannot see a bypass of that check; the backstop can. Removing the rule when a fixed wcifs.sys ships means deleting one file and one options member."
+   },
+   {
+    "decision": "ContainerLayerStore owns the default store list as ContainerLayerStore.Defaults. ScanOptions.ExcludedStores references that list, and tests inject their own.",
+    "reversibility": "cheap",
+    "rationale": "This repairs a seam inside the proposal. It put the literal default list in ScanOptions.cs while also making ContainerLayerStore.cs the only file allowed to compose the store path, so its own fitness rule would have fired on its own design."
+   },
+   {
+    "decision": "The root is resolved once, with GetFinalPathNameByHandle on the handle that lists it, and the store is rebased onto the root's spelling. Only the root and the store are normalised. Popped paths are compared with \\\\?\\ stripped, OrdinalIgnoreCase and separator-bounded, and never go through GetFullPath.",
+    "reversibility": "cheap",
+    "rationale": "Without the rebase, subst, Volume{GUID} and 8.3 roots spell popped paths differently, and the scan walks the live layer. GetFullPath trims trailing dots and spaces, so it would turn the siblings 'Layers.' and 'Layers ' into the store. Popped paths come from listing names and are already canonical."
+   },
+   {
+    "decision": "The rule is inactive when the final root is at or under the store, so a folder the user explicitly picks inside the store is walked.",
+    "reversibility": "cheap",
+    "rationale": "PS-001 lets the user pick any folder. Spike 85 (exclusion-plus-reparse-flag-together) measured a rule that stayed active skipping 3 of 3 subfolders of a root inside the store, so this branch has to be explicit and tested. Whether to warn or refuse instead is left to the person (open question 2)."
+   },
+   {
+    "decision": "The skip goes into a separate SkippedStores collection and a separate schema-1 report array, never into the unreadable list. It shares only the completion mechanics.",
+    "reversibility": "expensive",
+    "rationale": "The unreadable list already has consumers. eng/read-window.ps1's counts would move, and the engine's read-denied-folders would open the store with backup privilege and walk it, which is the leak. Keeping the lists separate by construction removes an invariant that everyone would otherwise have to remember to filter. It is expensive because schema-1 has several readers, even though the change is additive."
+   },
+   {
+    "decision": "Excluded bytes are disclosed, not estimated. The row says 'size not counted'. The findings record carries the `dir /a /s <Layers>` total as an upper bound and puts the under-count to the person.",
+    "reversibility": "cheap",
+    "rationale": "The precondition 'the store holds only projections' is unverified: the investigation saw no Offline or ReparsePoint attributes on live-layer directories, and Hives, Bindings, Specialization and dotnet.bcf sit beside Files. Counting the bytes would mean walking the layer, which is the leak. Disclosure keeps 'each byte once' honest and leaves the trade to the person."
+   },
+   {
+    "decision": "SizeProbe and the counting contract are untouched, and no FILE_FLAG_OPEN_REPARSE_POINT is added. The listing-only arm uses the existing internal ScanOptions.ProbeRule seam inside the deletable ScanArm rig. A fitness rule keeps ProbeRule assignments out of src.",
+    "reversibility": "cheap",
+    "rationale": "Settled points 2 and 3. Both spikes already drove ProbeRule = never, so no new switch is needed. Outcome B would reverse Q-004, which is the person's decision and not something to pre-empt. The reparse-point flag is unproven: spike 85 got 0 valid pairs because the control layer subtrees were already touched."
+   },
+   {
+    "decision": "One true Restart, then a person-run protocol in a fixed order, with no build after the restart.\nBefore the restart:\n- build the fixed publish, the afd021d publish and ScanArm;\n- check the hook on %TEMP%;\n- paste the fltmc output;\n- take the pre-restart mark.\nAfter the restart, in order:\n- the post-restart mark and a 10-minute idle baseline (B0);\n- L: ScanArm listing-only over all of C:;\n- P: PlainOpen over half H2's files;\n- F1-F5: fixed app, completed;\n- X1-X5: fixed app, cancelled (3 Cancel, 2 close, target = skippedAtFolderCount + 1,000);\n- the pressure step;\n- U1: afd021d cancelled at skippedAtFolderCount + 1,000, which lands mid-layer;\n- U2: afd021d completed;\n- U3: afd021d completed again;\n- `dir /a /s <Layers>`, then `dir /a /s /b C:\\` twice.",
+    "reversibility": "cheap",
+    "rationale": "Why the person runs it, and why one Restart:\n- The engine cannot run this: the machine guard stopped the cold full-C: arm at +0.50 GB in run 2428, and a Restart is a person's action.\n- First-touch state on the current boot is spent, and the fresh-tree substitute failed V1. One Restart is therefore the minimum that meets 'reboot only if absolutely required'.\n- The pre-restart and post-restart marks also settle the Restart half of spike 4.\n\nWhy this order:\n- L before F leaves directories warm and files cold, so F1 isolates the per-file open cost.\n- P on a cold matched half separates B (only the app) from C (any opener).\n- Pressure after the fixed arms and before anything that touches the layer tells cache from leak, including for the guard-stop tags.\n- U1 was reordered to run cancelled first, so the unfixed cancelled run lands on an untouched layer and the brief's completed-versus-cancelled split is visible. In the proposal's order it hit an already-touched layer and could only show 0.\n\nCost: the U arms knowingly leave about 0.33 GB of wcifs pool and about 210K System handles until the next restart, which is the state this machine was already in. -Protocol states this and waits for a keypress."
+   },
+   {
+    "decision": "Tolerance and routing are judged per pool, with drift estimated per gap.\n- DONE (c): the drift-corrected change from B0 to the post-pressure mark is at most 256 MiB paged and at most 256 MiB nonpaged, with the pre-pressure figure reported alongside.\n- Each of F2-F5 and X2-X5 is at most 32 MiB per pool.\n- wcifs is judged by opensUnderExcludedStore = 0 in every fixed run. A WCsc rise with 0 opens counts as ambient (the zygote).\n- The PID 4 0x00120089 rise must be at most the WCsc rise in the same window.\n- A null input gives UNDECIDED.",
+    "reversibility": "cheap",
+    "rationale": "Ambient wcifs comes in bursts: 132K WCsc in 2 of 37 intervals. Idle drift is about FMfn +4,380 and File +4,072 per 10 min, so a whole-pool check without drift correction and without the app's own open count cannot tell the fix from the background. 256 MiB per pool is under 1% of 31 GB, two orders of magnitude below the reported 30 GB."
+   },
+   {
+    "decision": "DONE (b)'s wording and the DONE (c) row stay 'pending fresh boot'. The routing is fixed in advance:\n- A: the exclusion is the whole fix, and DONE (b) reads 'app changed'.\n- B: stop. Q-004 goes back to the person, and the slice is re-synthesised.\n- C: DONE (b) adds a documented workaround, 'Restart, not Shut down', with the wording confirmed by the pre-restart and post-restart marks. The tolerance row records FAIL with its attribution.",
+    "reversibility": "cheap",
+    "rationale": "Settled point 4. Nothing measured so far tells A, B and C apart. Writing either wording now would be a guess recorded as a finding."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal. Taken as the core, with six changes:\n- default store list moved from ScanOptions.cs into ContainerLayerStore;\n- fitness patterns rewritten to the (?m) prefix that rules-parity requires;\n- the PoolWatch 'no fltmc' rule dropped, because its literal pattern fires on the correct paste prompt;\n- a rule added that keeps OpenDirectory at one call site, which the backstop depends on;\n- a rule added that keeps ProbeRule assignments out of src;\n- the U arms reordered (cancelled first) so the unfixed cancelled run can show anything."
+   }
+  ],
+  "coherence_check": "ONE PROPOSAL, NO COMPOSITION TO CHECK. Nothing in this design has survived a disagreement with another designer, so the reviewer is the first to argue with it. What was checked instead is the proposal against itself and against what the survey, the investigation and the spikes measured. Six seams were changed:\n\n(1) Store-list placement contradicted its own fitness rule. The proposal put the default list in ScanOptions.cs and made ContainerLayerStore.cs the only file allowed the 'Layers' literal. The list now lives in ContainerLayerStore.Defaults, and ScanOptions only references it.\n\n(2) Pattern prefix. The proposal wrote (?im) while noting that eng/rules-parity.ps1:34-35 requires twinned patterns to start with (?m). Every pattern here starts with (?m) and is case-sensitive, which is how the C# literals are written.\n\n(3) The proposal's PoolWatch rule was a grep for the tool name. It would fire on correct code: -Prepare's own prompt asking the person to paste `fltmc filters` output. Dropped. A null field already gives UNDECIDED, so crossing it is not a product defect. Replaced by a rule this design actually depends on: SynchronousIoCancel.OpenDirectory is called only from DirectoryReader.cs. Without it, the backstop counter can read 0 while a second call site walks the layer.\n\n(4) Settled point 3 says to add one internal test-only switch. The proposal reuses the existing internal ProbeRule seam instead. That matches the intent (nothing reaches the UI or the defaults) and needs no new code. A fitness rule makes 'never set in product code' fail rather than stay prose.\n\n(5) Protocol order. With U1 completed first, U3 (unfixed, cancelled) ran on an already-touched layer and could only show 0 wcifs growth, so the brief's completed-versus-cancelled split was unmeasurable. Reordered: U1 cancelled mid-layer, U2 completed, U3 repeat.\n\n(6) Measurement shapes cannot be engine obligations. The machine guard stops any run past +0.5 GB kernel growth (run 2428), so the 5+5 full-C: shapes are on the case matrix as material:false with that reason. They are discharged by the person-run JSONL, not a test.\n\nInvariants checked and found consistent:\n- The skip is never unreadable, in the Scanner result, the DirectoryReader outcome, the report and the panel.\n- The rule is inactive when the root is at or under the store. This is consistent with the bug test, whose root (Containers) is above the store, and with spike 85, which measured an always-active rule skipping inside-store roots.\n- SizeProbe is untouched, consistent with settled point 2 and Q-004.\n- No reparse-point flag, consistent with spike 85's 0 valid pairs.\n- One Restart, consistent with the person's 'reboot only if absolutely required': the fork decider and the V1 no-go both show no substitute exists.\n\nNot covered by anyone, said plainly:\n- A cold `dir /s` over directories is not measured separately, because L warms every directory. Criterion 5 rests on P (a cold non-app file open) plus #646's own `dir /s` trigger.\n- The SC-070/074 and SC-067 toggles are not separated on this boot.\n- The guard-stop tags (HsFc/HsSc/Clfc/ClSc/FSfc/FMfz/Ntfs/Ntfn, about 59K kept each) have no attribution until -Attribute runs.\n- The 3 pre-existing failing last-access tests (LastAccessTests, HeldOpenTreeTests; DisableLastAccess = 2) fail identically on uat afd021d. This slice does not touch or fix them.\n- Architecture rules 2 and 3 assume no existing src line already matches. The build confirms that. A match is a line to route through the guard, not an entry for except_files.",
+  "architecture_rules": [
+   {
+    "name": "the container layer store path is composed in one place",
+    "files": "src/**/*.cs",
+    "must_not_match": [
+     "(?m)Containers[\\\\/]{1,2}Layers",
+     "(?m)\"Layers\""
+    ],
+    "except_files": [
+     "src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs"
+    ],
+    "because": "The store must be rebased onto the scan root's final spelling (subst, \\\\?\\Volume{GUID}, 8.3) and compared separator-bounded without GetFullPath. A second composition anywhere else is a comparison that misses those roots or folds 'Layers.' into the store. The scan then walks the live layer, and wcifs.sys keeps the pool and a System handle per entry until restart."
+   },
+   {
+    "name": "every directory open goes through the guarded call in DirectoryReader",
+    "files": "src/**/*.cs",
+    "must_not_match": [
+     "(?m)\\bSynchronousIoCancel\\.OpenDirectory\\s*\\("
+    ],
+    "except_files": [
+     "src/FsAnalyser.Core/Scanning/DirectoryReader.cs"
+    ],
+    "because": "The refuse-and-count backstop and the published opensUnderExcludedStore counter are evidence only if every directory open passes the rule check in DirectoryReader.Read. A second call site opens a layer folder with no check and no count. The wcifs leak comes back while the counter, and the tolerance verdict judged by it, still reads 0."
+   },
+   {
+    "name": "product code never switches the per-file metadata probe off",
+    "files": "src/**/*.cs",
+    "must_not_match": [
+     "(?m)\\bProbeRule\\s*=(?![=>])"
+    ],
+    "except_files": [
+     "src/FsAnalyser.Core/Scanning/ScanOptions.cs"
+    ],
+    "because": "SL-056 and Q-004 decided that every first-seen, non-link, non-cloud-only file is sized from its own handle, because listings go stale (a 257 MiB file listed at 0 B for 15 s or more). The listing-only arm is a measurement rig that lives in tests/window/ScanArm and is deleted whatever the O-003 outcome. A ProbeRule assignment in product code brings stale sizes back into the totals."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "scan a folder above the container layer store",
+    "shape": "the scan root is the store's parent: C:\\ProgramData\\Microsoft\\Windows\\Containers in the bug test, and an injected fake store's parent under %TEMP% in Core tests",
+    "why": "FolderDone pushes Layers like any folder, and only the pop-time check stops it. The bug test fails at line 114 today. Expected: the store appears as an entry, is never opened, gives exactly one SkippedStores entry, is not in unreadable, and opensUnderExcludedStore = 0."
+   },
+   {
+    "behaviour": "scan a folder the user picked at or inside the store",
+    "shape": "the scan root equals the store path, or is a folder beneath it",
+    "why": "This is ExcludedStoreRule.Create's at-or-under branch. A rule that stays active here skips every subfolder, which spike 85 measured: 3 of 3 skipped. Expected: walked fully, SkippedStores empty."
+   },
+   {
+    "behaviour": "walk a folder that is next to the store",
+    "shape": "a sibling folder named Layers2",
+    "why": "A prefix compare without a separator boundary treats it as inside the store and silently drops its bytes from the totals."
+   },
+   {
+    "behaviour": "walk a folder that is next to the store",
+    "shape": "siblings named 'Layers.' and 'Layers ' created through \\\\?\\",
+    "why": "GetFullPath trims trailing dots and spaces and would map both onto the store. Popped paths must be compared as listed, never normalised."
+   },
+   {
+    "behaviour": "scan a folder above the store",
+    "shape": "the root is reached through a per-user subst drive letter mapped above the store",
+    "why": "Popped paths are spelled X:\\... Without the GetFinalPathNameByHandle rebase, the comparison misses and the live layer is walked."
+   },
+   {
+    "behaviour": "scan a folder above the store",
+    "shape": "the root is given as a \\\\?\\Volume{GUID}\\ path",
+    "why": "Same branch as subst, with the volume spelling. The rebase has to handle VOLUME_NAME_DOS output against a GUID-spelled root."
+   },
+   {
+    "behaviour": "scan a folder above the store",
+    "shape": "the root is spelled in a different case from the on-disk names (lower-case path)",
+    "why": "Popped names come from the listing in on-disk case. An ordinal case-sensitive compare would miss the store."
+   },
+   {
+    "behaviour": "scan a folder above the store",
+    "shape": "the fake store sits beyond MAX_PATH, so popped paths carry the \\\\?\\ prefix",
+    "why": "IsInside strips \\\\?\\ before comparing. Long paths are a counting-rule shape the scanner already handles, and an unstripped prefix never matches."
+   },
+   {
+    "behaviour": "read a folder that is inside an active store",
+    "shape": "DirectoryReader.Read is called directly with a path under the store, bypassing the pop-time check",
+    "why": "The backstop is the only independent evidence the fast path held. Expected: no CreateFile, a Skipped outcome (not unreadable), and the counter at 1. If it records unreadable, read-window counts move and the engine's read-denied-folders would walk the store."
+   },
+   {
+    "behaviour": "scan a folder above where the store would be",
+    "shape": "no store exists: the injected store path is absent, or the machine has no containers",
+    "why": "The rule must be a no-op: totals unchanged, SkippedStores empty. The bug test and the WindowCases case must report SKIPPED with a reason, never a pass, or a green suite hides that the guard was never exercised."
+   },
+   {
+    "behaviour": "write the --report for a scan that skipped a store",
+    "shape": "the report contains one skipped store and a scan with unreadable folders as well",
+    "why": "skippedStores and opensUnderExcludedStore are separate additive members and the unreadable array is unchanged, with schema still 1. Three readers (read-window, WindowCases, PoolWatch) depend on that."
+   },
+   {
+    "behaviour": "stop the published exe mid-scan through the hook",
+    "shape": "Cancel, and window close, fired at FSA_HOOK_AT_FOLDERS on a %TEMP% tree, with FSA_HOOK_HOLD_S set",
+    "why": "The X arms and U1 depend on these triggers firing and on --report being written on close. A dead trigger, found on the fresh boot, wastes the only cold state there is."
+   },
+   {
+    "behaviour": "decide the verdict from pool marks",
+    "shape": "one mark is missing, or has a null field such as the fltmc paste or class 64 handles, and one gap is a burst over 3× the median rate",
+    "why": "-Diff must print UNDECIDED, never PASS, on missing data, and must leave the burst gap out of drift. Testable on fixture JSONL with no scan."
+   },
+   {
+    "behaviour": "leave pool within tolerance after repeated C: scans",
+    "shape": "5 completed plus 5 cancelled full C: scans with the fix, from a true-restart boot, with drift-corrected marks after each exit",
+    "why": "This is DONE (c), with the routing in key decision 10.",
+    "material": false
+   }
+  ],
+  "decidable_disagreements": [
+   {
+    "question": "O-003: with the Layers exclusion in place, does a cold full C: scan still break the tolerance through the per-file metadata open (SL-056 SizeProbe), while a listing-only walk of the same paths does not?",
+    "positions": "A: within tolerance, so the exclusion is the whole fix. B: the listing-only arm passes and the probe arm fails, so SizeProbe is implicated. The counting contract and the Q-004 decision change, which needs the person and a re-synthesis. C: both arms fail alike, including the plain non-app open, so the cause is the OS. DONE (b) becomes a documented Restart workaround and the tolerance row records FAIL. The engine cannot settle this. Its cold full-C: arm was stopped by the machine guard at +0.50 GB (run 2428), the fresh-tree substitute failed V1, and a true Restart is a person's action. Route: the person runs PoolWatch.ps1 -Protocol after this build. Everything built here is needed in all three outcomes.",
+    "would_force_resynthesis": true
+   },
+   {
+    "question": "Is the per-file retention seen in the guard-stopped run cache that memory pressure gives back, or a leak? The tags are FSfc, FMfz, HsFc, Clfc, HsSc, ClSc, Ntfs and Ntfn, about 59K kept each. The Hs*/Cl* tags are suspected to be cldflt contexts attached to NTFS FCBs/SCBs.",
+    "positions": "Cache: the post-pressure mark returns them, and they do not count against the tolerance. Leak: they survive pressure and exit. The -Attribute result and the L/P/F arms then route them into O-003's B or C. The pressure step and -Attribute decide this on the same boot. It changes only which O-003 outcome is recorded, not a boundary of this design.",
+    "would_force_resynthesis": false
+   },
+   {
+    "question": "Does adding FILE_FLAG_OPEN_REPARSE_POINT to directory opens stop wcifs from resolving WCI reparse points in a live layer, which would let the store be counted without leaking?",
+    "positions": "#646's negative controls say opens that use the reparse-point flag leak 0. Spike 85 got 0 valid pairs because every control subtree was already touched, so it is untested here. Not adopted. The exclusion works either way, and a yes would only reopen the under-count question as a later improvement.",
+    "would_force_resynthesis": false
+   },
+   {
+    "question": "Does a true Restart reclaim the WCsc/WCfc and 0x00120089 System handles, while a Fast Startup Shut down does not?",
+    "positions": "#646 says a Fast Startup shutdown does not free them. Spike 4 is blocked pending the person. The protocol's pre-restart and post-restart marks settle the Restart half. This affects only the wording of a C-outcome workaround.",
+    "would_force_resynthesis": false
+   }
+  ],
+  "taste_disagreements": [
+   "Uncontested taste call: excluding the whole Layers store rather than only Layers\\<id>\\Files. Simpler and one rule, at the cost of not counting Hives, Bindings, Specialization and dotnet.bcf.",
+   "Uncontested taste call: two enforcement points (pop-time skip plus a DirectoryReader refusal that counts) rather than one predicate. Chosen so the counter can see a bypass.",
+   "Uncontested taste call: a separate skippedStores report array rather than reusing 'unreadable' with a reason field.",
+   "Uncontested taste call: the panel wording names wcifs.sys and 'kernel memory until restart'. A plainer 'skipped for system stability' row is the obvious alternative.",
+   "Uncontested taste call: ScanArm as a separate rig modelled on StallRig, rather than a hidden switch in the exe. The switch was ruled out by settled point 3; whether the rig should live in tests/window or alongside the bug test is layout."
+  ],
+  "open_questions": [
+   "Is it acceptable that a C: scan does not count the Windows container layer store at all (Layers\\<id>\\Files plus Hives, Bindings, Specialization and dotnet.bcf)? The row says 'size not counted', and the protocol's `dir /a /s <Layers>` gives the upper bound in bytes. The alternative is counting it, which on Windows 11 25H2 means triggering the wcifs.sys leak.",
+   "When the user explicitly picks a folder at or inside the layer store, should the app walk it (current design: the user's choice wins and wcifs leaks on first touch), warn first, or refuse?",
+   "Only if the fresh-boot protocol routes to outcome B (the per-file metadata open is implicated): what replaces the SL-056 'size every first-seen file from its own handle' rule decided under Q-004? Nothing is built toward this until the data exists."
+  ],
+  "channeled_experts": [
+   "Windows minifilter / Filter Manager engineer (wcifs, FltMgr name cache and context lifetimes)",
+   "Sysinternals-style pool-tag triage (findstr over driver binaries, tag-to-driver attribution)",
+   "Single-shot experiment design: ordered arms, per-gap drift, positive control as the validity gate"
+  ],
+  "prior_art": [
+   {
+    "pattern": "wcifs.sys leaks WCsc/WCfc/WCri/FMwi/FMfc and one System handle on the first open of each WCI reparse point in a live layer. Negative controls: opens with the reparse-point flag and repeat opens leak 0. Only a true restart reclaims it, and a Fast Startup shutdown does not.",
+    "where": "https://github.com/microsoft/Windows-Containers/issues/646 (fetched by the SL-095 investigation)",
+    "authority": "community",
+    "basis": "cited"
+   },
+   {
+    "pattern": "On 25H2, FMfn and File pool is kept at about 1 KB per first-time open of a path. Reboot clears it, and the curve restarts.",
+    "where": "https://learn.microsoft.com/en-nz/answers/questions/5966064/windows-11-25h2-kernel-pool-leak-fmfn-and-file-all",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2026-08-04"
+   },
+   {
+    "pattern": "Find a kernel leak by pool tag: allocs, frees, diff and bytes per tag over time. PoolWatch reproduces this unelevated through NtQuerySystemInformation class 22 instead of poolmon, which the stack rules out.",
+    "where": "https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/using-poolmon-to-find-a-kernel-mode-memory-leak",
+    "authority": "official",
+    "basis": "cited"
+   },
+   {
+    "pattern": "A fix for the same wcifs context graph exists in pre-release but has not shipped (label 'fixinbound').",
+    "where": "microsoft/WSL#41296, as read by the SL-095 investigation (no URL on record)",
+    "authority": "community",
+    "basis": "cited"
+   },
+   {
+    "pattern": "The CmService zygote (vmmemCmZygote) leaks through the same wcifs path on its own, which is ambient drift the tolerance must subtract.",
+    "where": "Windows-Sandbox#126, as read by the SL-095 investigation (no URL on record)",
+    "authority": "community",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Attribute a pool tag to its driver by searching driver binaries for the tag string (findstr /m /l over System32\\drivers\\*.sys).",
+    "where": "Microsoft driver debugging guidance on finding the pool tag's owner",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "GetFinalPathNameByHandle(FILE_NAME_NORMALIZED | VOLUME_NAME_DOS) gives one canonical spelling for a handle opened through subst, a volume GUID path or 8.3 names.",
+    "where": "Win32 API documentation for GetFinalPathNameByHandleW",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "stack_chosen": [
+   {
+    "area": "build",
+    "choice": "tests/window/ScanArm is a self-contained win-x64 net10.0-windows console rig. PoolWatch.ps1 -Prepare builds it through eng/dotnet.ps1 into gitignored artifacts/scan-arm, outside FsAnalyser.slnx. FsAnalyser.Core.csproj grants it InternalsVisibleTo. It is deleted, with that line, once O-003 is decided.",
+    "why": "The listing-only arm must run the real Scanner with ProbeRule = never over all of C:, outside the engine, without a product switch (settled point 3). It mirrors the StallRig pattern so the next slice finds one way of building test rigs, not two."
+   }
+  ],
+  "whats_new": [
+   "src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs: ExcludedStoreRule and ContainerLayerStore.Defaults",
+   "ScanOptions.ExcludedStores (references the defaults; tests inject their own)",
+   "A pop-time skip in Scanner.Run.Execute, plus the SkippedStores result collection",
+   "The refuse-and-count backstop and root final-path return in DirectoryReader.Read, plus OpensUnderExcludedStore",
+   "schema-1 --report additive members 'skippedStores' and 'opensUnderExcludedStore'",
+   "A skipped-store group and row in the App's not-read panel",
+   "tests/FsAnalyser.Core.Tests/ContainerLayerStoreTests.cs",
+   "A WindowCases.ps1 case for the container store skip",
+   "Three fitness rules with twins and plants",
+   "tests/window/ScanArm listing-only rig, plus one InternalsVisibleTo line",
+   "tests/window/PoolWatch.ps1 (-Mark, -Diff, -Prepare, -Protocol, -Pressure, -PlainOpen, -Attribute)",
+   "FsaWindowHook triggers: FSA_HOOK_AT_FOLDERS and FSA_HOOK_HOLD_S, plus whatever start/close-after-done the hook lacks",
+   "docs/design/SL-095-kernel-pool.md findings record",
+   "docs/design/SL-095-runs/*.jsonl run logs (person-run protocol)"
+  ],
+  "whats_reused": [
+   "Scanner.Run.Execute depth-first loop and FolderDone push logic (unchanged)",
+   "SynchronousIoCancel.OpenDirectory and its open flags (unchanged: FILE_WRITE_ATTRIBUTES first, backup semantics, no reparse-point flag)",
+   "EntryClassifier.cs and EntryKind.cs: WCI folders outside the store are still entered by design",
+   "SizeProbe from SL-056 and the counting contract under Q-004 (unchanged)",
+   "The internal ScanOptions.ProbeRule seam, for the listing-only arm",
+   "The internal ScanOptions.AfterFolder seam, used by the bug test",
+   "tests/bugs/SL-095-ContainerLayerWalk, committed unchanged as the acceptance test",
+   "schema-1 --report and eng/read-window.ps1",
+   "FsaWindowHook through DOTNET_STARTUP_HOOKS, and WindowCases.ps1",
+   "The StallRig build pattern (eng/dotnet.ps1 into gitignored artifacts, outside slnx)",
+   "eng/dotnet.ps1 with the repo-local SDK 10.0.401",
+   "Spike scratch Snap.ps1 and control.ps1, and the repro's tagdelta.ps1, as seeds for PoolWatch.ps1",
+   "The .taad/fitness.yaml, ArchitectureRulesTests twins and eng/rules-harness plants machinery"
+  ]
+ }
+}

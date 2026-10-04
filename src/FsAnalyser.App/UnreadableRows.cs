@@ -16,6 +16,17 @@ public sealed record UnreadableRow(string Path, UnreadableKind Kind, int Win32Er
 }
 
 /// <summary>
+/// One row for a folder the scan left out on purpose (SL-095): the Windows container layer store. Not a failed folder,
+/// so not an <see cref="UnreadableRow"/>, and the window gives it no 'Show in Explorer'.
+/// </summary>
+public sealed record NotScannedRow(string Path, NotScannedReason Reason)
+{
+    public string Text => $"{Path}  —  {UnreadableRows.NotScannedText(Reason)}";
+
+    public override string ToString() => Text;
+}
+
+/// <summary>
 /// The unreadable-folders list (SL-087), from the scan's record of failed folders and nothing else: one row per folder
 /// in the record, flat and in path order, none left out and none added. Each says what the engine recorded of it,
 /// could not be opened or only partly read, and why in words a person can read. It never asks the disk about a
@@ -77,6 +88,25 @@ public static partial class UnreadableRows
         rows.Sort((a, b) => ComparePaths(a.Path, b.Path));
         return rows;
     }
+
+    /// <summary>
+    /// The rows for a scan's folders left out on purpose (SL-095), from its own record, never from the failed-folder one:
+    /// one per entry, in path order. They are never counted among the folders that could not be opened.
+    /// </summary>
+    public static IReadOnlyList<NotScannedRow> NotScanned(IReadOnlyList<NotScannedFolder> record, Func<int, string> pathOf)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        ArgumentNullException.ThrowIfNull(pathOf);
+        var rows = record.DistinctBy(folder => folder.Entry).Select(folder => new NotScannedRow(pathOf(folder.Entry), folder.Reason)).ToList();
+        rows.Sort((a, b) => ComparePaths(a.Path, b.Path));
+        return rows;
+    }
+
+    /// <summary>Why a folder was left out, in the list's words: its size is not counted, and on purpose.</summary>
+    internal static string NotScannedText(NotScannedReason reason) => reason switch
+    {
+        _ => "size not counted: Windows container layers, skipped on purpose (see Precautions)",
+    };
 
     /// <summary>What the engine recorded of the folder, in the list's words. Read from the kind, never worked out again.</summary>
     internal static string KindText(UnreadableKind kind) => kind switch

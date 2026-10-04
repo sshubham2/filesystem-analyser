@@ -1,0 +1,163 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-095",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-09-30T23:16:06.901Z",
+ "head": "afd021d2e231a732a596033c22af811201e6659d",
+ "run_id": 2422,
+ "summary": "The fix itself is sound for the cause that has been measured. A root-aware exclusion of Containers\\Layers, applied when a folder is popped, will make the acceptance test exit 0. It follows the spike's no-go, and declining FILE_FLAG_OPEN_REPARSE_POINT is justified. No blocker found.\n\nThe problems are in the imported premise, the plan for measuring, and where the skip is recorded:\n\n- **The premise is wrong.** The design assumes skipping the store loses no bytes. Microsoft's Windows Sandbox architecture page says the dynamic base image holds pristine copies of mutable OS files, about 500 MB. So excluding it drops real bytes, and the open question to the person asks only about Hives and Bindings.\n- **Boot A will almost certainly fail on its first cold scan, for a reason the fix does not touch.**\n  - The wcifs leak is first-touch only, so it is capped at about 0.33 GB per boot. It cannot build up scan after scan to 30 GB.\n  - Microsoft Q&A 5966064 reports 25H2 keeping about 1 KB of FMfn/File per first-time open, reaching 24.4 GB (13.6 GB paged, 10.8 GB nonpaged). That is the report's shape. This boot's FMfn (2.17M outstanding) and File (2.63M) are about one per C: path.\n  - So the \"conditional\" Boot B is effectively certain. Its listing-only arm belongs in the first fresh boot.\n  - The protocol also cannot tell cache that is freed when the NTFS stream is torn down from a true leak. That is the difference between a bug and \"restart as a workaround\".\n- **The app itself is never measured unfixed.** The protocol never runs the unfixed app, so the brief's completed-versus-cancelled question about the app's own growth goes unanswered. The positive control is `dir /s`, not the app.\n- **Recording the skip as unreadable hands the store to consumers that retry unreadable folders.** The engine's `read-denied-folders` operation opens those folders with backup privilege, and eng/read-window.ps1 counts them.\n- **Wrong WCsc rises can be charged to the app.** Ambient wcifs activity comes in bursts (Windows-Sandbox#126 leaks per Sandbox session; three antivirus products are installed; nobody knows what walked the layer earlier this boot). Linear drift correction with +0 thresholds will blame the app for those bursts. The fix belongs in the open seam, which also makes the exclusion impossible to bypass by construction.\n- **Citations:**\n  - Supported: #646 (title and allocation site), WSL#41296 (fixinbound; a Microsoft contributor says a fix exists in pre-release), Q&A 5966064.\n  - Only partly supported: Windows-Sandbox#126 ties the leak to each Sandbox session, not a steady zygote rate.\n  - Could not see in the search extracts: #646's FILE_FLAG_OPEN_REPARSE_POINT negative controls and its Fast Startup comment. Not contradicted.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The fix itself is sound for the cause that has been measured. A root-aware exclusion of Containers\\Layers, applied when a folder is popped, will make the acceptance test exit 0. It follows the spike's no-go, and declining FILE_FLAG_OPEN_REPARSE_POINT is justified. No blocker found.\n\nThe problems are in the imported premise, the plan for measuring, and where the skip is recorded:\n\n- **The premise is wrong.** The design assumes skipping the store loses no bytes. Microsoft's Windows Sandbox architecture page says the dynamic base image holds pristine copies of mutable OS files, about 500 MB. So excluding it drops real bytes, and the open question to the person asks only about Hives and Bindings.\n- **Boot A will almost certainly fail on its first cold scan, for a reason the fix does not touch.**\n  - The wcifs leak is first-touch only, so it is capped at about 0.33 GB per boot. It cannot build up scan after scan to 30 GB.\n  - Microsoft Q&A 5966064 reports 25H2 keeping about 1 KB of FMfn/File per first-time open, reaching 24.4 GB (13.6 GB paged, 10.8 GB nonpaged). That is the report's shape. This boot's FMfn (2.17M outstanding) and File (2.63M) are about one per C: path.\n  - So the \"conditional\" Boot B is effectively certain. Its listing-only arm belongs in the first fresh boot.\n  - The protocol also cannot tell cache that is freed when the NTFS stream is torn down from a true leak. That is the difference between a bug and \"restart as a workaround\".\n- **The app itself is never measured unfixed.** The protocol never runs the unfixed app, so the brief's completed-versus-cancelled question about the app's own growth goes unanswered. The positive control is `dir /s`, not the app.\n- **Recording the skip as unreadable hands the store to consumers that retry unreadable folders.** The engine's `read-denied-folders` operation opens those folders with backup privilege, and eng/read-window.ps1 counts them.\n- **Wrong WCsc rises can be charged to the app.** Ambient wcifs activity comes in bursts (Windows-Sandbox#126 leaks per Sandbox session; three antivirus products are installed; nobody knows what walked the layer earlier this boot). Linear drift correction with +0 thresholds will blame the app for those bursts. The fix belongs in the open seam, which also makes the exclusion impossible to bypass by construction.\n- **Citations:**\n  - Supported: #646 (title and allocation site), WSL#41296 (fixinbound; a Microsoft contributor says a fix exists in pre-release), Q&A 5966064.\n  - Only partly supported: Windows-Sandbox#126 ties the leak to each Sandbox session, not a steady zygote rate.\n  - Could not see in the search extracts: #646's FILE_FLAG_OPEN_REPARSE_POINT negative controls and its Fast Startup comment. Not contradicted.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "claim": "The imported precondition 'everything in the store is a projection of host files counted elsewhere, so skipping it loses no bytes' is contradicted by Microsoft's own description of the dynamic base image. That image holds real pristine copies of the mutable OS files, about 500 MB on disk. So excluding the whole Layers store, including Layers\\<id>\\Files, drops real bytes from every C: total. The design's open question to the person asks only about Hives/Bindings/Specialization/dotnet.bcf and treats Files as byte-free, so the person would be deciding the counting-rule trade on the wrong premise. The not-scanned row also carries no size, so the user cannot tell how much is missing. This is the project's 'one place not to cut corners'.",
+    "evidence": "learn.microsoft.com/en-us/windows/security/application-security/application-isolation/windows-sandbox/windows-sandbox-architecture: 'A small subset of operating system files are mutable and can't be shared, so the sandbox base image contains pristine copies of them... Once installed, the dynamic base image occupies about 500 MB of disk space.' Design precondition: 'Everything in the store is a projection of host files counted elsewhere'. Open question: 'Hives, Bindings, Specialization and dotnet.bcf, whose size has not been measured'. Investigation fix direction: 'Its entries are Offline placeholders... classifies as CloudOnly', but the same investigation measured that live-layer Files\\Windows directories carry no ReparsePoint/Offline attributes.",
+    "fix": "In Boot A, run the positive control as `cmd /c dir /a /s <Layers>` without /b and keep the 'Total Files Listed' summary. That walk leaks anyway, so the figure costs nothing extra. Record the figure in the findings doc as the bound on the excluded bytes. Reword the open question so it covers Files as well as the non-Files children. Put 'size not counted' in the skipped-store row's text."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "claim": "The protocol is sized as if Boot A might pass, but the evidence already on hand predicts that the first cold completed scan breaks the 256 MiB series tolerance, which has no cold-fill exemption. The wcifs leak is first-touch only, so at about 1.5 KB for each of about 210K entries it is capped near 0.33 GB per boot. It cannot 'build up scan after scan' to 30 GB. The only candidate on record that matches the report's size and tags is the 25H2 cold-path FMfn/File retention the design itself cites. This boot's FMfn at 2.17M outstanding and File at 2.63M are about one per C: path, which fits a full C: walk. So the 'conditional' Boot B is effectively certain. As ordered, the first fresh boot spends 10 full scans answering the smaller question, and a second restart plus four more scans is needed for the dominant one.",
+    "evidence": "learn.microsoft.com/en-us/answers/questions/5966064: 'combined pool reached 24.4 GB after 47.41 hours: 10,786 MB nonpaged and 13,626 MB paged... Growth is dominated by... FMfn, FMsc, FMsl, File, IoFE, IoNm, NtfF and NtFC... 3,000 first-time opens cost about 1 KB of pool per path.' The report says Paged about 21 GB and Nonpaged about 10 GB. Survey: 'FMfn 1.17 GB paged (2.17M outstanding), File 1.0 GB nonpaged (2.63M outstanding)'. Design: 'Boot B runs only if Boot A's app runs break the tolerance on FMfn/File/NtfF'.",
+    "fix": "Put the listing-only scratch arm (it has the exclusion too) at the start of Boot A, right after the idle baseline. Then run the shipped fixed app, then the remaining arms. Evaluate DONE (c)'s tolerance against the pre-scan baseline taken before the listing-only runs. One fresh boot then answers both the wcifs question and the listing-versus-per-file-probe question. Drop Boot B, or keep it only as the fallback if Boot A goes VOID."
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "under-engineering",
+    "claim": "The protocol marks 60 s after exit with the machine under no memory pressure. It therefore cannot tell pool retained as cache, which is freed when the NTFS stream is torn down, from a true leak. The decidable disagreement's third branch ('both arms fail alike: the cause is the OS... documented workaround (true Restart)... FAIL') would then record reclaimable cache as an OS leak, and document restarting as the fix for something that is not a leak. The reporter's machine hit exhaustion, which is exactly the regime where cache would have been trimmed and a leak would not. The protocol never goes there.",
+    "evidence": "learn.microsoft.com/zh-cn/answers/questions/5946136 title: 'sustained FMfn paged-pool retention until NTFS stream teardown'. Design tolerance: 'measured after FsAnalyser.exe exits... no exemption for first-scan cold fill'. Decidable disagreement outcome 3.",
+    "fix": "After the fixed arms, add an unelevated memory-pressure step to the protocol: a scratch process commits and touches about 90% of Available MBytes, holds it for 60 s, then exits. Take a mark afterwards. Report the tolerance both before and after the pressure step. Tags that fall under pressure are recorded as cache. Only what survives the pressure step is judged against 256 MiB, and only that can route to the OS-leak branch. Keep the 32 MiB warm-repeat cap as the scan-after-scan discriminator."
+   },
+   {
+    "id": "M4",
+    "severity": "major",
+    "dimension": "drift-from-design",
+    "claim": "The brief's step 1 asks for pool before, after and after exit across completed and cancelled C: scans 'so it is clear which case grows the pool'. That is a measurement of the app's own behaviour. Every app run in Boot A and Boot B is the FIXED app, and the positive control is `dir /s` of Layers. So the report's shape ('built up scan after scan') and the completed-versus-cancelled split are never reproduced with the app that caused the report. DONE (a)'s 'run logs' then show the growing tag only from cmd.exe, and the fix's effect is never shown against the unfixed app on the same boot.",
+    "evidence": "Brief: 'Run completed-to-the-end scans and cancelled or closed-mid-scan scans as separate runs, so it is clear which case grows the pool.' Design Boot A order: '2. 5 completed C: scans. 3. 5 cancelled scans... 5. Positive control: `cmd /c dir /a /s /b <Layers> > NUL`'. Build-check criterion 1: missing.",
+    "fix": "Before the dir positive control in Boot A, add an unfixed arm built from `git archive afd021d` and published the same way. Run one completed C: scan: this is the positive control and must leak WCsc about equal to the untouched entries, which proves the APP walks the store. Then run one more completed and one cancelled unfixed scan, marked exactly like the fixed arms. Keep `dir /s` after that for criterion 5."
+   },
+   {
+    "id": "M5",
+    "severity": "major",
+    "dimension": "cross-cutting-conformance",
+    "claim": "The skipped store goes through the access-denied completion path and into the same not-read record, with only a reason field to tell them apart. Every consumer that treats 'unreadable folders' as things to retry or count must now remember to filter by reason. This is an invariant held by remembering, and at least two such consumers already exist. (1) The engine's admin operation `read-denied-folders` 'opens exactly the paths a scan reported as unreadable, with SeBackupPrivilege... and returns what it contains -- counts'. Handed a C: --report, it opens the store with backup semantics, and if it counts recursively it walks all about 210K WCI entries. That leaks until restart and could spoil a fresh-boot validation. (2) eng/read-window.ps1's unreadable counts change on every C: scan unless it is updated to filter. The design's claim that counts are unchanged holds only for scans that never reach a store.",
+    "evidence": "Design key decision: 'A skipped store is completed through the existing access-denied completion path, with a distinct reason'. Contract: 'additive to the record and the schema-1 --report'. Admin operations list: read-denied-folders. Taste disagreement: 'Uncontested so far: the skipped store goes into the existing unreadable-folders panel with its own reason, rather than into a separate list.'",
+    "fix": "Break the tie toward a separate collection. Keep the shared completion mechanics (0 children, parent roll-up, progress), but write the skip into its own `skippedStores` list in the scan result and as a separate array in schema-1 --report, never into the unreadable list. Then nothing that iterates unreadable folders can reach the store by construction. The panel can render both lists."
+   },
+   {
+    "id": "M6",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "claim": "The tolerance for app runs is 'WCsc/WCfc allocs: 0 above drift' and 'PID 4 0x00120089 handles: +0 above drift', with drift taken as an idle rate multiplied by time from windows placed during boot settling. Ambient wcifs activity comes in bursts, not at a steady rate. The engine's own record put 132K WCsc in 2 of 37 intervals. Windows-Sandbox#126 leaks per Sandbox session. Three antivirus products are installed. The investigation left open who walked the 210K entries earlier this boot. The shipped exe gives no way to attribute a WCsc rise to itself. So one outside burst during an app run is a false FAIL on a boot that cannot be repeated, and a burst in an idle window inflates drift and hides a real app leak. The +0 handle threshold is also a knife edge: about 48 non-leak System handles at 0x00120089 already churn.",
+    "evidence": "github.com/microsoft/Windows-Sandbox/issues/126: 'Every Windows Sandbox session causes the host's System process to accumulate kernel file handles'. The design says instead: 'Drift correction absorbs the CmService zygote's own wcifs leak'. Investigation: 'all in 2 of 37 intervals. These are bursts'. Pre-existing baseline: 211,070 handles at 0x00120089 against 211,022 live WCsc.",
+    "fix": "Give the app a count of its own opens under an active excluded store. Put the count in the open seam (see m4) and publish it in --report as `opensUnderExcludedStore`, which must be 0. Judge the app's wcifs contribution by that count. Record a WCsc rise during a run that has 0 such opens as ambient, not as a FAIL. Mark each gap between runs, so drift is estimated per gap and burst-aware rather than as one linear rate. Replace '+0 handles' with 'handle rise ≤ the WCsc rise in the same window'."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "The design matches the store by location string and dismisses 'on another drive' as immaterial because 'another drive can never be at or under a C: prefix'. That is false for aliases of C:. A `subst X: C:\\ProgramData` drive is listed by DriveInfo, and \\\\?\\Volume{GUID}\\ roots name the same volume. A scan of X:\\ reaches X:\\Microsoft\\Windows\\Containers\\Layers, the prefix never matches, and the scan walks the live layer.",
+    "evidence": "Design case (non-material): 'the path is in 8.3 short form, is reached through a junction, or is on another drive... Another drive can never be at or under a C: prefix.' Stack: 'drives come from DriveInfo'.",
+    "fix": "At scan start, resolve the root once with GetFinalPathNameByHandle(VOLUME_NAME_DOS) on the handle the scanner already opens to list it. Rebase the store location onto the root string the scanner uses to build child paths, and compute IsActiveFor on the final path."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "IsInside strips \\\\?\\ from every popped folder and runs it through GetFullPath. GetFullPath trims trailing dots and spaces from path components. So a legal sibling such as '...\\Containers\\Layers.' or 'Layers ' normalises onto the store and is silently skipped: an under-count with a misleading 'container layer store' row. SL-088 already paid for this class of path misparse. Child paths are built from listing names and are already canonical, so the round-trip adds risk and gains nothing.",
+    "evidence": "Design contract: 'strip \\\\?\\, GetFullPath, trim any trailing separator... applied to IsInside(folderPath)'. Commit 41f82cc (SL-088): 'IsMisparsed now checks the reserved-name list against the whole component (trailing spaces trimmed)'.",
+    "fix": "Normalise only the root and the store location. Compare popped paths, \\\\?\\-stripped, against the normalised store with an OrdinalIgnoreCase at-or-under compare that respects the separator boundary, with no GetFullPath. Add 'Layers.' and 'Layers ' siblings to the %TEMP% cases."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "Architecture rule 1's regex catches only `Containers\\Layers` and `\"Containers\", \"Layers\"`. It misses forward slashes and composition split across calls, such as Path.Combine(c, \"Layers\") with c built elsewhere, so the second copy the rule exists to stop can still be written. Rule 2's `^` anchor has no multiline flag. If the fitness harness matches the pattern against whole-file content, `^` means the start of the file, and a fltmc or poolmon call on any later line never trips the rule. Rule 2 also covers only PoolWatch.ps1, not any helper the protocol is split into.",
+    "evidence": "architecture_rules[0].must_not_match `(?i)containers(\\\\{1,2}|\"\\s*,\\s*\")layers`. architecture_rules[1] `(?i)^\\s*(&\\s*)?(Start-Process...)?(poolmon|wpr|xperf|fltmc)`. files: tests/window/PoolWatch.ps1.",
+    "fix": "Rule 1: add `/` to the separator class, and add a second pattern forbidding the string literal `\"Layers\"` (case-insensitive) in src outside ContainerLayerStore.cs. Rule 2: use `(?im)`, and widen files to tests/window/PoolWatch*.ps1. To settle whether rule 2 can fire at all, run the harness against a fixture with fltmc on line 2."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "under-engineering",
+    "claim": "The exclusion lives only in Scanner.Run.Execute's pop loop. Any other path that lists or opens a folder bypasses it: a later rescan-subtree feature, a second walker, or a refactor of the loop. The architecture rule stops code from composing the path string but not from opening under it. The spikes already had the stronger form: a tripwire at the Kernel32.CreateFile / OpenDirectory choke point that refuses an open under the store before it is issued. The design dropped it from the product.",
+    "evidence": "Design: 'Scanner descent check... right after _pending.Pop()... DirectoryReader.cs and the open path are not changed.' Spike layer-store-exclusion: 'tripwire... called from SynchronousIoCancel.OpenDirectory, SizeProbe.Probe and Kernel32.CreateFile'.",
+    "fix": "Pass the scan's active-store rule into DirectoryReader.Read and SynchronousIoCancel.OpenDirectory. Make them refuse, returning the skip outcome, and count any path the rule says is inside a store. The pop loop keeps its check as the fast path. The count becomes M6's `opensUnderExcludedStore`."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "The acceptance project is committed 'unchanged'. Its assembly name is FsAnalyser.Core.Tests, the same as the real test project, and its membership in FsAnalyser.slnx is left to build. It depends on a real live layer, so what it does on a machine without CmService, or after the layer is torn down, is not specified. The new schema-1 reason, or the separate list per M5, and the panel row have no named test. There is no App test project, and the case 'the result holds both an access-denied folder and the skipped store' maps to no WindowCases entry.",
+    "evidence": "Design: 'Its assembly name is FsAnalyser.Core.Tests, the same as the real Core.Tests. Build decides whether it joins FsAnalyser.slnx.' Stack: 'App window state is verified by the published exe's own --report... through eng/read-window.ps1'.",
+    "fix": "Give the bug-test project its own AssemblyName and keep it out of the default solution filter, run by its own command. Have it fail with a clear message, not pass, when no store exists. Add one WindowCases case that scans C:\\ProgramData\\Microsoft\\Windows\\Containers with --report and asserts the skipped-store entry, 0 opens under the store, and an unchanged unreadable count."
+   },
+   {
+    "id": "m6",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "claim": "The cancelled arm says '3 with Cancel, 2 with the window closed' but not when to cancel. If a cancel lands before the scan reaches C:\\ProgramData\\Microsoft\\Windows\\Containers, that run never exercises the skip. If it lands outside active synchronous I/O, it never exercises SC-017's CancelSynchronousIo path, and that is the lead the brief names for cancelled scans. The design also does not say whether a window-closed run still writes --report. If it does not, 'how far it got' is lost for 2 of the 5 cancelled runs.",
+    "evidence": "Design Protocol mode: '5 cancelled scans: 3 with Cancel, 2 with the window closed... Launches the published exe with --report <file> so each run records how far it got.'",
+    "fix": "Set the cancel point from progress: cancel after the scan has passed ProgramData, while it is inside a large tree such as C:\\Windows. Record the folder count at cancel in the mark. Before the boot, check once on a small root that closing the window mid-scan still writes --report."
+   },
+   {
+    "id": "m7",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "claim": "If the handle query fails, the mark contract writes null handle fields and carries on. But -Diff then has to judge 'PID 4 0x00120089 handles: +0' with no data, and the design does not say what it prints. A silent PASS on missing data would slip a boot-spoiling blind spot into a verdict.",
+    "evidence": "Contract PoolWatch -Mark error_cases: 'If the handle query fails, the handle fields are null and the mark is still written.' -Diff: 'then a PASS/FAIL line'.",
+    "fix": "When any input field is null, -Diff prints UNDECIDED for that criterion, with the reason, and the overall verdict cannot be PASS."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M1: the 'store is pure projection' precondition is refuted by Microsoft's Windows Sandbox architecture page (pristine copies, about 500 MB). M2: wcifs is capped near 0.33 GB per boot and cannot explain growth scan after scan, while Q&A 5966064's 24.4 GB FMfn/File case matches the report, so Boot A will predictably fail on the cold scan. M6: 'drift correction absorbs the zygote leak' conflicts with Windows-Sandbox#126, where the leak is per session and comes in bursts."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "m1: alias roots (subst, volume GUID paths) defeat the location compare. m2: the GetFullPath round-trip folds 'Layers.' and 'Layers ' onto the store. m6: the cancel point is unspecified, and --report on window close is unverified. The design's own case list (root at, above and under the store; prefix forms; empty known folder; last pending child) is otherwise thorough."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "M3: nothing separates reclaimable cache from a leak (no pressure step). m4: the exclusion is enforced only in the pop loop, not in the open seam the spikes already instrumented."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none material. The excluded-store list versus a bool is taste: injecting a test store needs a seam either way, and a single injectable path would do. PoolWatch -Protocol's gating is justified, because first touch can be used only once per boot."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "Covered under m5 (the bug-test assembly-name collision and slnx membership left to build) and M5 (the schema-1 not-read record shape). The ContainerLayerStore/ScanOptions split also leaves open whether the matcher or ScanOptions drops bad entries. That is minor and not listed separately."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "m7: a null handle query has no UNDECIDED outcome in -Diff. The skip's completion path (0 children, roll-up, progress, no AfterFolder) and the unresolvable known folder (empty prefix dropped) are handled."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "M4: the protocol never runs the unfixed app, so the brief's step 1 (completed versus cancelled growth, run logs of the growth) is met in letter only. The design is otherwise consistent with the decided stack (unelevated PoolWatch.ps1, JSONL under docs/design, fltmc supplied by the person), with the no-go spike (root-aware), and with Q-004 (a SizeProbe change goes to the person)."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "M5: routing the skip through the unreadable record makes every unreadable consumer (read-denied-folders, read-window counts) responsible for filtering it. m3: rule 1's regex has gaps, rule 2's `^` anchor may never fire, and rule 2 covers only one file."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "m5: nothing covers the report or panel for the skipped store, and the acceptance project's isolation is unspecified. The %TEMP% Core tests for the predicate and completion cover the material cases, and the counting-rule tests run unchanged."
+   },
+   {
+    "dimension": "security",
+    "result": "none: the change removes a path the scanner walks and adds no input surface. PoolWatch reads counts only, runs unelevated, and commits no names. The one elevated consumer that is a risk (read-denied-folders) is a leak hazard, not a security one, and is raised as M5."
+   }
+  ]
+ }
+}

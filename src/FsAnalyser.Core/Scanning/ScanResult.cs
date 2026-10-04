@@ -12,6 +12,51 @@ public enum ScanStatus
 
     /// <summary>The root itself could not be opened or listed; see <see cref="ScanResult.RootError"/>.</summary>
     RootUnreadable,
+
+    /// <summary>
+    /// Not scanned at all, on purpose: nothing was listed or probed. <see cref="ScanResult.Refusal"/> says why (SL-095).
+    /// A result, never an exception.
+    /// </summary>
+    Refused,
+}
+
+/// <summary>Why a scan was <see cref="ScanStatus.Refused"/>.</summary>
+public enum ScanRefusal
+{
+    /// <summary>The scan was not refused.</summary>
+    None,
+
+    /// <summary>
+    /// The root is the Windows container layer store or a folder inside it, which wcifs.sys leaks kernel memory and a
+    /// System handle for, entry by entry, until a restart (SL-095, Q-179, Q-182; <see cref="Workarounds.ContainerLayerStore"/>).
+    /// </summary>
+    ContainerLayerStore,
+}
+
+/// <summary>Why a folder under the root was left out on purpose.</summary>
+public enum NotScannedReason
+{
+    /// <summary>The Windows container layer store (SL-095; <see cref="Workarounds.ContainerLayerStore"/>).</summary>
+    ContainerLayerStore,
+}
+
+/// <summary>
+/// A folder under the root the scan reached and left out on purpose, never opened: its entry and why (SL-095). It is
+/// kept apart from <see cref="ScanResult.Unreadable"/> by construction, so nothing that reads or retries unreadable
+/// folders can reach it (review M5). Its size is not counted anywhere; it is in the volume's coverage gap. Only Core
+/// makes one.
+/// </summary>
+public sealed record NotScannedFolder
+{
+    internal NotScannedFolder(int entry, NotScannedReason reason)
+    {
+        Entry = entry;
+        Reason = reason;
+    }
+
+    public int Entry { get; }
+
+    public NotScannedReason Reason { get; }
 }
 
 /// <summary>
@@ -72,6 +117,22 @@ public sealed class ScanResult
     public ScanTotals Totals { get; init; }
 
     public IReadOnlyList<UnreadableFolder> Unreadable { get; init; } = [];
+
+    /// <summary>Why the scan was refused; None unless <see cref="Status"/> is Refused.</summary>
+    public ScanRefusal Refusal { get; init; }
+
+    /// <summary>
+    /// The folders the scan reached and left out on purpose: the Windows container layer store, at most once (SL-095).
+    /// Never in <see cref="Unreadable"/>, and their sizes are in no total.
+    /// </summary>
+    public IReadOnlyList<NotScannedFolder> SkippedStores { get; init; } = [];
+
+    /// <summary>
+    /// How many listings of a folder at or under a skipped store the scan's backstop refused (SL-095, review m4, M6).
+    /// 0 whenever the walk's own check held, which is every scan so far: anything else is a way into the store that
+    /// check missed.
+    /// </summary>
+    public int OpensUnderExcludedStore { get; init; }
 
     /// <summary>
     /// The scan root's direct children as the scan left them: the final snapshot (Final set), the same object

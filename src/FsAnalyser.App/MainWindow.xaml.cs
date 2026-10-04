@@ -65,6 +65,9 @@ public partial class MainWindow : Window
     private bool _skipNextRefresh;
     private ScrollViewer? _topLevelScroll;
     private FolderTreeSession? _treeSession; // the completed scan the folder tree shows; closed as the next one starts
+    // The precautions against outside defects (Core's Workarounds): all on as the app starts, for this session. The
+    // app keeps nothing on disk, so a precaution a person turned off is on again at the next start.
+    private WorkaroundSwitches _precautions = WorkaroundSwitches.Defaults;
 
     public MainWindow(string? launchPath)
     {
@@ -88,6 +91,9 @@ public partial class MainWindow : Window
 
     /// <summary>The result behind the ending on screen; null when the ending came before any result.</summary>
     internal ScanResult? LastResult { get; private set; }
+
+    /// <summary>Which precautions against outside defects are on, as the next scan will take them.</summary>
+    internal WorkaroundSwitches Precautions => _precautions;
 
     /// <summary>How long ranking the largest files took for the list on screen; null when no list was made.</summary>
     internal double? LargestFilesMs { get; private set; }
@@ -203,9 +209,21 @@ public partial class MainWindow : Window
             StartScan(dialog.FolderName);
     }
 
+    // The precautions, each with its outside defect, what the app does and what turning it off brings back; turning one
+    // off asks first, with that consequence in the question (PrecautionsWindow). The next scan takes what is set here.
+    private void OnPrecautions(object sender, RoutedEventArgs e)
+    {
+        var dialog = new PrecautionsWindow(_precautions) { Owner = this };
+        dialog.ShowDialog();
+        _precautions = dialog.Switches;
+        int off = Workarounds.All.Count(w => !_precautions.IsOn(w.Id));
+        PrecautionsButton.Content = off == 0 ? "Precautions..." : $"Precautions ({off} off)...";
+    }
+
     private void SetPickersEnabled(bool enabled)
     {
         ChooseFolderButton.IsEnabled = enabled;
+        PrecautionsButton.IsEnabled = enabled;
         foreach (UIElement button in DrivePanel.Children)
             button.IsEnabled = enabled;
     }
@@ -236,6 +254,7 @@ public partial class MainWindow : Window
         _cancel = new CancellationTokenSource();
         ScanProgress progress = _progress;
         CancellationToken token = _cancel.Token;
+        WorkaroundSwitches precautions = _precautions;
         ScanningTitle.Text = $"Reading {path}";
         CancelButton.IsEnabled = true;
         ScanningPanel.Visibility = Visibility.Visible;
@@ -247,7 +266,7 @@ public partial class MainWindow : Window
         Exception? failure = null;
         try
         {
-            result = await Task.Factory.StartNew(() => Scanner.Scan(path, progress, token),
+            result = await Task.Factory.StartNew(() => Scanner.Scan(path, progress, token, precautions),
                 CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
         catch (ArgumentException e) when (e.ParamName == "root")
@@ -471,6 +490,16 @@ public partial class MainWindow : Window
             ShowProblem($"Could not read {result.Root}", $"{Win32Message(result.RootError)} (Windows error {result.RootError})");
             return;
         }
+        if (result.Status == ScanStatus.Refused)
+        {
+            // Decided in Core, before anything was opened (Q-179, Q-182): the line says why, and how to turn it off.
+            Workaround precaution = Workarounds.ContainerLayerStore;
+            ShowProblem($"Not scanned: {result.Root}",
+                "Windows container layers can't be scanned safely: the wcifs filter leaks kernel memory and a System handle " +
+                "for each entry read, until a full restart. This folder is in the Windows container layer store, so nothing " +
+                $"in it was read.\n{precaution.Defect}\nThe precaution '{precaution.Title}' is on; it can be turned off under Precautions.");
+            return;
+        }
 
         bool finished = result.Status == ScanStatus.Completed;
         Paint(finished ? Finished : Stopped);
@@ -493,15 +522,26 @@ public partial class MainWindow : Window
             notes.Add($"{result.ProbeFailures:N0} files could not be opened to read their true size on disk; their listed size was used.");
         if (result.VanishedBeforeProbe > 0)
             notes.Add($"{result.VanishedBeforeProbe:N0} files were deleted before their true size could be read; their listed size was used.");
+        // Beside the totals they are missing from: what was left out on purpose, and why (SL-095).
+        IReadOnlyList<NotScannedRow> notScanned = UnreadableRows.NotScanned(result.SkippedStores, result.Store.GetPath);
+        foreach (NotScannedRow row in notScanned)
+        {
+            notes.Add($"Not scanned, size not counted: {row.Path} (Windows container layers). {Workarounds.ContainerLayerStore.Defect} " +
+                $"The precaution '{Workarounds.ContainerLayerStore.Title}' left it out; it can be turned off under Precautions.");
+        }
         OutcomeNotes.Text = string.Join("\n", notes);
         OutcomeNotes.Visibility = notes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
-        // One row per failed folder in the scan's record, in path order, and the header counts those rows (SL-087).
+        // One row per failed folder in the scan's record, in path order, and the header counts those rows (SL-087). A folder
+        // left out on purpose is a row of its own kind above them, never counted among them, with no 'Show in Explorer':
+        // browsing the layer store is what the precaution avoids (SL-095, review Y6).
         IReadOnlyList<UnreadableRow> unreadable = UnreadableRows.Build(result.Unreadable, result.Store.GetPath);
-        if (unreadable.Count > 0)
+        if (unreadable.Count > 0 || notScanned.Count > 0)
         {
-            UnreadableTab.Header = $"Unreadable folders ({unreadable.Count:N0})";
-            UnreadableList.ItemsSource = unreadable;
+            UnreadableTab.Header = unreadable.Count == 0 ? $"Not scanned ({notScanned.Count:N0})"
+                : notScanned.Count == 0 ? $"Unreadable folders ({unreadable.Count:N0})"
+                : $"Unreadable folders ({unreadable.Count:N0}), not scanned ({notScanned.Count:N0})";
+            UnreadableList.ItemsSource = notScanned.Cast<object>().Concat(unreadable).ToList();
             UnreadableTab.Visibility = Visibility.Visible;
         }
         else
@@ -724,10 +764,15 @@ public partial class MainWindow : Window
     /// <summary>One row of the largest-files list: the texts it shows, and the on-disk bytes it was ranked by.</summary>
     internal sealed record LargestFileRow(long OnDisk, string OnDiskText, string SizeText, string Path);
 
+    // A row with no path here has its 'Show in Explorer' disabled: a NotScannedRow, the Windows container layer store,
+    // whose browsing in Explorer is what its precaution avoids (SL-095, review Y6), and so is the store's row in the
+    // results list and the folder tree.
     private static string PathOf(object? row) => row switch
     {
         LargestFileRow file => file.Path,
+        FolderTreeNode node when node.NotScanned => string.Empty,
         FolderTreeNode node => node.FullPath,
+        TopLevelRow { State: TopLevelState.NotScanned } => string.Empty,
         TopLevelRow top => top.Path,
         UnreadableRow unreadable => unreadable.Path,
         _ => string.Empty

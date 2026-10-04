@@ -54,6 +54,15 @@ using System.Windows.Threading;
 /// cancel delay, close a close delay, and throw is not armed. Cancel is pressed only if pressable; the window
 /// is closed only while its scan is still running (ScanningPanel on screen).
 ///
+/// With a progress trigger (SL-095, the pool protocol's cancelled runs) stop and close act at a point of the scan's own
+/// progress, read off the window, instead of the first moment Cancel is pressable: FSA_HOOK_AT_FOLDERS=n once the
+/// counters show n folders; FSA_HOOK_PAST=&lt;path&gt; with FSA_HOOK_PAST_FOLDERS=n once the folder being listed has
+/// gone past that path in the walk's order (logged "passed folders=n") and n more folders were listed; FSA_HOOK_AT_SIZED=n
+/// once n files have been sized. One of the three, never with FSA_HOOK_ARMED; FSA_HOOK_TRIGGER_DEADLINE_S bounds the
+/// wait (3600 s). The action logs "acted mode=... folders=n sized=n current=...", the count the run's mark records.
+/// A scan that ends first logs "refused ... ended before the trigger": that run is a full one. Closing the window
+/// mid-scan writes no --report (exit 70, as WindowReport documents), so for a closed run this log is the record.
+///
 /// rescan (SL-040) starts a second scan once the first has shown its list of largest files, and makes the
 /// report read the window at that second point instead of at the first ending. It watches LargestFilesPanel
 /// from the window's first Loaded; when the first ending shows it, it waits for the list's rows to be laid
@@ -389,6 +398,15 @@ internal class StartupHook
                     DriveAfterList(mode, missing);
                 return;
             }
+            if (mode is "stop" or "close" && ProgressTrigger.FromEnvironment(out string? triggerError) is var trigger
+                && (trigger is not null || triggerError is not null))
+            {
+                if (triggerError is not null || !string.IsNullOrEmpty(marker))
+                    Log($"refused mode={mode} reason={triggerError ?? "a progress trigger is not armed by a marker"}");
+                else
+                    DriveAtProgress(mode, trigger!);
+                return;
+            }
             if (string.IsNullOrEmpty(marker))
             {
                 Drive(mode);
@@ -516,6 +534,152 @@ internal class StartupHook
                 return null;
             });
         }
+    }
+
+    // SL-095's cancelled runs, at a point of the scan's own progress rather than a clock: stop presses Cancel, close
+    // closes the window, once the trigger is met and while the scan still runs. Read off the window as a person sees it:
+    // CountersText's folder count, and CurrentFolderText, the folder being listed or, once every folder is, the files
+    // sized so far. The hook holds no path of its own: FSA_HOOK_PAST names it. A scan that ends first is logged as
+    // "refused ... ended before the trigger", and the run counts as a full one.
+    private sealed record ProgressTrigger(int? AtFolders, string? Past, int PastFolders, int? AtSized, TimeSpan Deadline)
+    {
+        public static ProgressTrigger? FromEnvironment(out string? error)
+        {
+            error = null;
+            int? atFolders = Number("FSA_HOOK_AT_FOLDERS", ref error);
+            int? pastFolders = Number("FSA_HOOK_PAST_FOLDERS", ref error);
+            int? atSized = Number("FSA_HOOK_AT_SIZED", ref error);
+            int? deadline = Number("FSA_HOOK_TRIGGER_DEADLINE_S", ref error);
+            string? past = Environment.GetEnvironmentVariable("FSA_HOOK_PAST") is { Length: > 0 } p ? p.TrimEnd('\\') : null;
+            if (error is not null)
+                return null;
+            int set = (atFolders is null ? 0 : 1) + (past is null ? 0 : 1) + (atSized is null ? 0 : 1);
+            if (set == 0)
+            {
+                if (pastFolders is not null)
+                    error = "FSA_HOOK_PAST_FOLDERS needs FSA_HOOK_PAST";
+                return null;
+            }
+            if (set > 1)
+            {
+                error = "set one of FSA_HOOK_AT_FOLDERS, FSA_HOOK_PAST and FSA_HOOK_AT_SIZED";
+                return null;
+            }
+            return new ProgressTrigger(atFolders, past, pastFolders ?? 0, atSized, TimeSpan.FromSeconds(deadline ?? 3600));
+        }
+
+        private static int? Number(string name, ref string? error)
+        {
+            string? text = Environment.GetEnvironmentVariable(name);
+            if (string.IsNullOrEmpty(text))
+                return null;
+            if (int.TryParse(text, out int n) && n >= 0)
+                return n;
+            error ??= $"{name} is not a whole number";
+            return null;
+        }
+
+        public string Describe() =>
+            AtFolders is int f ? $"atfolders={f}" : Past is not null ? $"past={Past} pastfolders={PastFolders}" : $"atsized={AtSized}";
+    }
+
+    // Whether the walk, depth-first in listing order, has gone past <past> without being in it: at the first path
+    // component where they differ, the folder's sorts after the store's. Never true for a folder at or under it.
+    private static bool HasPassed(string folder, string past)
+    {
+        string[] a = folder.TrimEnd('\\').Split('\\'), b = past.Split('\\');
+        for (int i = 0; i < Math.Min(a.Length, b.Length); i++)
+        {
+            int order = string.Compare(a[i], b[i], StringComparison.OrdinalIgnoreCase);
+            if (order != 0)
+                return order > 0;
+        }
+        return false; // one begins the other: an ancestor of the store, or the store or below it
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void DriveAtProgress(string mode, ProgressTrigger trigger)
+    {
+        if (WaitForApplication(mode) is not { } app)
+            return;
+        Log($"trigger mode={mode} {trigger.Describe()}");
+        bool scanSeen = false;
+        int? passedAt = null;
+        while (Clock.Elapsed < trigger.Deadline)
+        {
+            string? outcome = null;
+            try
+            {
+                app.Dispatcher.Invoke(() =>
+                {
+                    Window? window = app.MainWindow;
+                    if (window?.FindName("ScanningPanel") is not UIElement panel)
+                        return;
+                    if (!panel.IsVisible)
+                    {
+                        if (scanSeen)
+                            outcome = "ended";
+                        return;
+                    }
+                    scanSeen = true;
+                    string counters = (window.FindName("CountersText") as TextBlock)?.Text ?? "";
+                    string current = (window.FindName("CurrentFolderText") as TextBlock)?.Text ?? "";
+                    int folders = FoldersIn(counters);
+                    const string Sizing = "Reading each file's own size: ";
+                    int? sized = current.StartsWith(Sizing, StringComparison.Ordinal) ? LeadingNumber(current[Sizing.Length..]) : null;
+                    if (trigger.Past is { } past && passedAt is null && sized is null && HasPassed(current, past))
+                    {
+                        passedAt = folders;
+                        Log($"passed folders={folders} current={current} ms={Clock.ElapsedMilliseconds}");
+                    }
+                    // A folder trigger the listing outran still acts, in the sizing pass: the log's sized= says which.
+                    bool due = trigger.AtFolders is int at ? folders >= at
+                        : trigger.AtSized is int atSized ? sized >= atSized
+                        : passedAt is int from && folders >= from + trigger.PastFolders;
+                    if (!due)
+                        return;
+                    var button = window.FindName("CancelButton") as FrameworkElement;
+                    if (mode == "stop" && (button is null || !Pressable(button)))
+                        return;
+                    Log($"acted mode={mode} {trigger.Describe()} folders={folders} sized={sized?.ToString() ?? "-"} current={current} ms={Clock.ElapsedMilliseconds} utc={Utc()}");
+                    if (mode == "close")
+                        window.Closed += (_, _) => Log($"closed ms={Clock.ElapsedMilliseconds} utc={Utc()}");
+                    Pressing(app, mode, () => Act(mode, app, mode == "stop" ? button : null));
+                    outcome = "acted";
+                }, DispatcherPriority.Normal);
+            }
+            catch (OperationCanceledException) when (app.Dispatcher.HasShutdownStarted)
+            {
+                Log($"refused mode={mode} reason=the app shut down before the trigger");
+                return;
+            }
+            if (outcome == "acted")
+                return;
+            if (outcome == "ended")
+            {
+                Log($"refused mode={mode} reason=the scan ended before the trigger {trigger.Describe()}; a full run");
+                return;
+            }
+            Thread.Sleep(ProbeEvery);
+        }
+        Log($"refused mode={mode} reason=the trigger {trigger.Describe()} was not met within {trigger.Deadline.TotalSeconds:N0} s");
+    }
+
+    // "1,234 files, 5,678 folders, ...": the folder count, whatever the thousands separator.
+    private static int FoldersIn(string counters)
+    {
+        int at = counters.IndexOf(" folders", StringComparison.Ordinal);
+        if (at < 0)
+            return 0;
+        int start = counters.LastIndexOf(", ", at, StringComparison.Ordinal);
+        string digits = new(counters[(start < 0 ? 0 : start + 2)..at].Where(char.IsAsciiDigit).ToArray());
+        return int.TryParse(digits, out int n) ? n : 0;
+    }
+
+    private static int? LeadingNumber(string text)
+    {
+        string digits = new(text.TakeWhile(c => char.IsAsciiDigit(c) || c is ',' or '.' or ' ' or ' ').Where(char.IsAsciiDigit).ToArray());
+        return int.TryParse(digits, out int n) ? n : null;
     }
 
     // size, FSA_HOOK_MINSIZE and FSA_HOOK_DRIVES (SL-040, O-027, the window-size rework and O-028): the window at

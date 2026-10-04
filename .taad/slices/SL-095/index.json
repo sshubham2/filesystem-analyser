@@ -1,0 +1,399 @@
+{
+ "schema": "slice-record@1",
+ "slice": "SL-095",
+ "title": "Find what leaves tens of GB of kernel pool allocated after repeated C: scans, and stop the app causing it",
+ "status": "active",
+ "branch": "slice/SL-095",
+ "opened_at": "2026-09-30T21:15:29.365Z",
+ "merge_commit": null,
+ "how_to_read": "Each attempt is one line and a `details` filename in this same directory. Open a detail file ONLY when this index points you at one -- the summaries are here so you do not have to. `caused_by` is what sent the stage back; `changed` is what the attempt then touched, counted by kind. Several attempts in a row that were caused by the same stage and changed no `src` is a loop, not progress.",
+ "open": [
+  {
+   "stage": "repro",
+   "issue": "observed: Failed AScanOfTheContainerStoreDoesNotWalkIntoTheLiveLayersFiles [150 ms]: the scan walked into a live container layer, listing C:\\ProgramData\\Microsoft\\Windows\\Containers\\Layers\\1f35079a-cec9-427c-b64d-e12db8dd08c0\\Files ... (microsoft/Windows-Containers#646)"
+  },
+  {
+   "stage": "build-check",
+   "issue": "1. Repeatable pool measurement: Pool Paged/Nonpaged Bytes logged before a scan, after it, and after FsAnalyser.exe exits; at least 5 runs each of completed and cancelled/closed C: scans, kept separate: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "2. The growing pool tag is named, with its owning driver and vendor: partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "3. Filters on C: (fltmc filters), antivirus and OneDrive state recorded: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "4. If the growth follows the app, narrow it by switching off one behaviour at a time (SC-070/074 last-access suppression, SC-067 reparse re-open, SC-017 CancelSynchronousIo, SC-011 metadata probe): missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "5. Whether other tools that scan C: (dir /s, another disk-usage tool) cause the same growth: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "DONE (a): growing tag and owning driver written down with the run logs: partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "DONE (b): app changed so the scan does not trigger the leak, or a documented workaround if the cause is outside the app: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "DONE (c): with the change in place, 5 full plus 5 cancelled C: scans leave Paged and Nonpaged pool within a stated tolerance of the pre-scan baseline after exit, with no reboot: missing"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Q-178 was decided for SL-094's DONE (c) and names docs/design/SL-094-runs/. This design applies its three conditions to SL-095's DONE (c) under outcome C, with logs under docs/design/SL-095-runs/. If the person does not accept that, outcome C records DONE (c) as FAIL, and nothing more can be built in this app to meet it."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "If arm L is over T (likely, given the cited ~1 KB per first-time path and run 2428's +0.50 GB), Q-178's condition (2) needs a dir of C: from a second fresh Restart. The dir is issued per sibling root, so it never enters the store. Is a second Restart-and-idle session acceptable? The alternative is for the first session to run dir on a deterministic half of C: before arm L, accepting a per-entry comparison between halves of different composition."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "A refused root makes the report exit 0 with outcome \"refused\". A distinct nonzero exit code would also be defensible."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "A new NotScanned EntryKind, rather than reusing Unreadable with a reason field."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The refusal is decided in Core's Scanner.Scan, rather than in an App pre-check that shares ContainerLayerStore. Q-182 only requires the same matching."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The refusal is a status line rather than a dialog."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The exclusion check sits in Scanner.Run.FolderDone. The spike's scratch rig also hooked DirectoryReader.Open."
+  }
+ ],
+ "stages": [
+  {
+   "stage": "repro",
+   "title": "Repro",
+   "order": 1,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "build-check",
+   "title": "Build check",
+   "order": 2,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "risk-spike",
+   "title": "Risk spike",
+   "order": 3,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "design-slice",
+   "title": "Design",
+   "order": 4,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-30T23:02:29.371Z",
+     "head": "afd021d2e231a732a596033c22af811201e6659d",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-10-04T15:17:05.824Z",
+     "head": "afd021d2e231a732a596033c22af811201e6659d",
+     "summary": "",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "Trip 1 of 2 back to the risk spike: the design left 1 fork that only a measurement can settle. O-003: unsettled design fork: Does the unattributed FMfn/File/NtfF mass come from the app's per-file metadata open (the SL-056 probe)? That is: does a scan with the fix in place still break the tolerance on a cold C: scan while a listing-only walk of the same paths does not? On this boot that mass is 1.17 GB / 1.0 GB / 433 MB outstanding, against about 290 MB of wcifs. Its context: The proposal and the investigation treat the wcifs first-touch leak as the app's cause. They ruled out the app's own handles: File was about +4 per run whatever the tree size, on small, probably warm trees. On the other side: - The survey measured wcifs at about 290 MB of 8.3 GB. - The repeat-walk marks still grew FMfn by about 3.6K net per five walks. - Microsoft Q&A 5966064 reports 25H2 keeping about 1 KB of FMfn/File per first-time open. Outcomes: - Boot A within tolerance: the exclusion is the whole fix. - Boot B shows the listing-only arm within tolerance but the per-file probe arm not: the SizeProbe from SL-056 (Q-004, the person's decision) is implicated. The component boundary and the counting contract change, which needs re-synthesis and the person. - Both arms fail alike: the cause is the OS. DONE (b) becomes a documented workaround (true Restart), and the tolerance row records FAIL. The synthesis marked this as forcing a re-synthesis: the losing answer moves a component boundary, a contract or the data model. How the person would measure it: reboot only if absolutely required How the fork decider would measure it: This fork is a measurement, and no decision can stand in for it. Nothing measured so far can tell outcome A, B or C apart. Getting that measurement needs a person, for two reasons. First, it needs a fresh boot: a true Shut down plus Restart, which only a person can do. The true-restart spike is still undecided for exactly that reason. Second, one of the three outcomes (B) reverses Q-004, which was the person's decision. Settled now, so the builder has no fork to settle in code: (1) Build the root-aware, pop-time exclusion of %ProgramData%\\Microsoft\\Windows\\Containers\\Layers exactly as designed. All three outcomes need it, because the wcifs first-touch leak is measured and real. (2) Leave the SL-056 SizeProbe and the counting contract as they are. Do not remove it, gate it or re-route it on speculation. (3) Add one internal, test-only switch that turns off the per-file metadata open. It must not reach the UI or ScanOptions defaults, so it can be deleted whichever outcome wins. The listing-only arm needs it. (4) Do not write DONE (b) as a 'true Restart' workaround. Do not record the tolerance row as PASS or FAIL until the fresh-boot data exists. First fresh boot protocol, all on one boot, with the fix in place: (a) Record the baseline: PoolWatch counters, a full pool-tag snapshot and the System handle count. (b) Run the LISTING-ONLY arm first: the app with the probe switched off, on half H1 of C:'s top-level folders. Listing opens only directories, so it does not warm the files the next arm needs cold. (c) Run the PER-FILE PROBE arm: the app as shipped, on the same H1. Its file opens are still first-touch. (d) Run a NON-APP per-file-open control on the disjoint half H2, for example a PowerShell loop that opens each file for attributes. Without it, outcome B cannot tell 'the app's probe is at fault' apart from 'the OS leaks about 1 KB per first open and any tool that opens files triggers it', which is the Q&A 5966064 shape on 26200/25H2. (e) Repeat arm (c) five times on H1 to see whether FMfn/File/NtfF keep growing scan after scan or level off once warm. The report claims they keep growing, and wcifs does not explain that. (f) After each FsAnalyser.exe exit, snapshot at +0 and at +10 min, so cache that is freed on teardown is not counted as leak. How to read the results: - Only (c) grows, and (d) does not: the probe is implicated. Re-synthesise with the person on Q-004. - (c) and (d) grow alike and (b) does not: the cause is the OS, triggered by any per-file open. DONE (b) becomes a documented workaround plus a warning, and the tolerance row records FAIL. - None of them grows past tolerance: the exclusion is the whole fix. What the person must do: perform the true Restart, run or authorise the arms, and be ready to re-decide Q-004 if the probe alone is implicated. Reality has not answered this yet. The only data comes from one boot about 27 h old, where the paths were already warm. Its surprises are FMfn +3.6K net per five repeat walk… The risk spike measures these first. Write the design again with what it measured: its experiments are under what reality already said about this slice.",
+      "cause": "fork-measure",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "design-slice-2.json"
+    },
+    {
+     "n": 3,
+     "state": "passed",
+     "at": "2026-10-04T16:51:03.183Z",
+     "head": "afd021d2e231a732a596033c22af811201e6659d",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "Trip 2 of 2 back to the risk spike: the design left 1 fork that only a measurement can settle. O-028: unsettled design fork: O-003: with the Layers exclusion in place, does a cold full C: scan still break the tolerance through the per-file metadata open (SL-056 SizeProbe), while a listing-only walk of the same paths does not? Its context: A: within tolerance, so the exclusion is the whole fix. B: the listing-only arm passes and the probe arm fails, so SizeProbe is implicated. The counting contract and the Q-004 decision change, which needs the person and a re-synthesis. C: both arms fail alike, including the plain non-app open, so the cause is the OS. DONE (b) becomes a documented Restart workaround and the tolerance row records FAIL. The engine cannot settle this. Its cold full-C: arm was stopped by the machine guard at +0.50 GB (run 2428), the fresh-tree substitute failed V1, and a true Restart is a person's action. Route: the person runs PoolWatch.ps1 -Protocol after this build. Everything built here is needed in all three outcomes. The synthesis marked this as forcing a re-synthesis: the losing answer moves a component boundary, a contract or the data model. How the fork decider would measure it: Send this back to the risk spike. It uses the slice's second and last spike lap. Do not let the build host this experiment, and do not wait for PoolWatch.ps1 -Protocol after the build. THE ONE STEP THE PERSON TAKES: one restart. Then log on, leave the machine idle with no other apps opened, and let the spike run. Nothing on the machine as it stands can stand in for this: - this boot is 27 h old, and its first touches of C: and the layer are already spent; - the fresh-tree substitute failed V1 (creating the files alone keeps 5.5 FMfn per file); - the earlier cold arm was stopped by the guard at +0.50 GB (run 2428). WHAT TO MEASURE, all on that fresh boot. Every arm runs in its own process, which exits before its after-reading. Each reading records: - Pool Paged Bytes and Pool Nonpaged Bytes; - per-tag allocations, frees and bytes for FMfn, File, NtfF, Toke, every WC* tag and FMwi/FMfc; - the System process handle count. The spike applies the Layers-store exclusion in its own rig, using the same prefix rule the design composes (the whole Containers\\Layers store). It does not need the product build. 0. Idle drift: one idle window before arm L and one of the same length after arm P. Every delta below is corrected by the idle drift over the same duration. 1. Arm L, first: a cold listing-only walk of all of C: with the Layers store excluded. Use the app's Scanner with the internal ProbeRule seam set to listing-only, as both earlier spikes did. Record its full-scale delta after exit and the list of files it saw. 2. Split L's file list into two disjoint halves by a deterministic hash of the path. 3. Arm S: open half A through the app's own SizeProbe code path, the per-file metadata open from SL-056, as the earlier PROBE arm did. 4. Arm P: open half B with a plain non-app open (an ordinary CreateFile or .NET open, then close). P opens only paths from L's list, so it can never touch the Layers store. Size S and P so the projected growth stays under the 0.50 GB machine guard; cap each at a sample if needed. Turn each into a per-file net cost per tag and in bytes, then project it to full C: using L's file count. Any WC* rise in any arm counts against that arm, never as ambient. TOLERANCE: use the one the design's tolerance row states. If the row has none, use 64 MB per pool or 3x the idle drift over the same duration, whichever is larger, and write that into the row. HOW THE RESULT DECIDES THE FORK, in this order: (i) If L at full scale is over tolerance, or the guard stops L, the outcome is C: even a listing breaks it. DONE (b) becomes the documented Restart workaround and the tolerance row records FAIL. (ii) If L is within tolerance and S's projection is within tolerance, the outcome is A: the exclusion is the whole fix, and SizeProbe, the counting contract and Q-004 stay as they are. (iii) If L is within, S is over and P is within, the outcome is B: SizeProbe is implicated. The Q-004 / SL-056 counting contract goes to the person and the design is s… The risk spike measures these first. Write the design again with what it measured: its experiments are under what reality already said about this slice.",
+      "cause": "fork-measure",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "design-slice-3.json"
+    },
+    {
+     "n": 4,
+     "state": "unrecorded",
+     "at": "2026-10-04T16:55:25.321Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "Trip 2 of 2 back to the risk spike: the design left 1 fork that only a measurement can settle. O-028: unsettled design fork: O-003: with the Layers exclusion in place, does a cold full C: scan still break the tolerance through the per-file metadata open (SL-056 SizeProbe), while a listing-only walk of the same paths does not? Its context: A: within tolerance, so the exclusion is the whole fix. B: the listing-only arm passes and the probe arm fails, so SizeProbe is implicated. The counting contract and the Q-004 decision change, which needs the person and a re-synthesis. C: both arms fail alike, including the plain non-app open, so the cause is the OS. DONE (b) becomes a documented Restart workaround and the tolerance row records FAIL. The engine cannot settle this. Its cold full-C: arm was stopped by the machine guard at +0.50 GB (run 2428), the fresh-tree substitute failed V1, and a true Restart is a person's action. Route: the person runs PoolWatch.ps1 -Protocol after this build. Everything built here is needed in all three outcomes. The synthesis marked this as forcing a re-synthesis: the losing answer moves a component boundary, a contract or the data model. How the fork decider would measure it: Send this back to the risk spike. It uses the slice's second and last spike lap. Do not let the build host this experiment, and do not wait for PoolWatch.ps1 -Protocol after the build. THE ONE STEP THE PERSON TAKES: one restart. Then log on, leave the machine idle with no other apps opened, and let the spike run. Nothing on the machine as it stands can stand in for this: - this boot is 27 h old, and its first touches of C: and the layer are already spent; - the fresh-tree substitute failed V1 (creating the files alone keeps 5.5 FMfn per file); - the earlier cold arm was stopped by the guard at +0.50 GB (run 2428). WHAT TO MEASURE, all on that fresh boot. Every arm runs in its own process, which exits before its after-reading. Each reading records: - Pool Paged Bytes and Pool Nonpaged Bytes; - per-tag allocations, frees and bytes for FMfn, File, NtfF, Toke, every WC* tag and FMwi/FMfc; - the System process handle count. The spike applies the Layers-store exclusion in its own rig, using the same prefix rule the design composes (the whole Containers\\Layers store). It does not need the product build. 0. Idle drift: one idle window before arm L and one of the same length after arm P. Every delta below is corrected by the idle drift over the same duration. 1. Arm L, first: a cold listing-only walk of all of C: with the Layers store excluded. Use the app's Scanner with the internal ProbeRule seam set to listing-only, as both earlier spikes did. Record its full-scale delta after exit and the list of files it saw. 2. Split L's file list into two disjoint halves by a deterministic hash of the path. 3. Arm S: open half A through the app's own SizeProbe code path, the per-file metadata open from SL-056, as the earlier PROBE arm did. 4. Arm P: open half B with a plain non-app open (an ordinary CreateFile or .NET open, then close). P opens only paths from L's list, so it can never touch the Layers store. Size S and P so the projected growth stays under the 0.50 GB machine guard; cap each at a sample if needed. Turn each into a per-file net cost per tag and in bytes, then project it to full C: using L's file count. Any WC* rise in any arm counts against that arm, never as ambient. TOLERANCE: use the one the design's tolerance row states. If the row has none, use 64 MB per pool or 3x the idle drift over the same duration, whichever is larger, and write that into the row. HOW THE RESULT DECIDES THE FORK, in this order: (i) If L at full scale is over tolerance, or the guard stops L, the outcome is C: even a listing breaks it. DONE (b) becomes the documented Restart workaround and the tolerance row records FAIL. (ii) If L is within tolerance and S's projection is within tolerance, the outcome is A: the exclusion is the whole fix, and SizeProbe, the counting contract and Q-004 stay as they are. (iii) If L is within, S is over and P is within, the outcome is B: SizeProbe is implicated. The Q-004 / SL-056 counting contract goes to the person and the design is s… The risk spike measures these first. Write the design again with what it measured: its experiments are under what reality already said about this slice.",
+      "cause": "fork-measure",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "design-slice-4.json"
+    },
+    {
+     "n": 5,
+     "state": "unrecorded",
+     "at": "2026-10-04T16:57:08.278Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "Trip 2 of 2 back to the risk spike: the design left 1 fork that only a measurement can settle. O-028: unsettled design fork: O-003: with the Layers exclusion in place, does a cold full C: scan still break the tolerance through the per-file metadata open (SL-056 SizeProbe), while a listing-only walk of the same paths does not? Its context: A: within tolerance, so the exclusion is the whole fix. B: the listing-only arm passes and the probe arm fails, so SizeProbe is implicated. The counting contract and the Q-004 decision change, which needs the person and a re-synthesis. C: both arms fail alike, including the plain non-app open, so the cause is the OS. DONE (b) becomes a documented Restart workaround and the tolerance row records FAIL. The engine cannot settle this. Its cold full-C: arm was stopped by the machine guard at +0.50 GB (run 2428), the fresh-tree substitute failed V1, and a true Restart is a person's action. Route: the person runs PoolWatch.ps1 -Protocol after this build. Everything built here is needed in all three outcomes. The synthesis marked this as forcing a re-synthesis: the losing answer moves a component boundary, a contract or the data model. How the fork decider would measure it: Send this back to the risk spike. It uses the slice's second and last spike lap. Do not let the build host this experiment, and do not wait for PoolWatch.ps1 -Protocol after the build. THE ONE STEP THE PERSON TAKES: one restart. Then log on, leave the machine idle with no other apps opened, and let the spike run. Nothing on the machine as it stands can stand in for this: - this boot is 27 h old, and its first touches of C: and the layer are already spent; - the fresh-tree substitute failed V1 (creating the files alone keeps 5.5 FMfn per file); - the earlier cold arm was stopped by the guard at +0.50 GB (run 2428). WHAT TO MEASURE, all on that fresh boot. Every arm runs in its own process, which exits before its after-reading. Each reading records: - Pool Paged Bytes and Pool Nonpaged Bytes; - per-tag allocations, frees and bytes for FMfn, File, NtfF, Toke, every WC* tag and FMwi/FMfc; - the System process handle count. The spike applies the Layers-store exclusion in its own rig, using the same prefix rule the design composes (the whole Containers\\Layers store). It does not need the product build. 0. Idle drift: one idle window before arm L and one of the same length after arm P. Every delta below is corrected by the idle drift over the same duration. 1. Arm L, first: a cold listing-only walk of all of C: with the Layers store excluded. Use the app's Scanner with the internal ProbeRule seam set to listing-only, as both earlier spikes did. Record its full-scale delta after exit and the list of files it saw. 2. Split L's file list into two disjoint halves by a deterministic hash of the path. 3. Arm S: open half A through the app's own SizeProbe code path, the per-file metadata open from SL-056, as the earlier PROBE arm did. 4. Arm P: open half B with a plain non-app open (an ordinary CreateFile or .NET open, then close). P opens only paths from L's list, so it can never touch the Layers store. Size S and P so the projected growth stays under the 0.50 GB machine guard; cap each at a sample if needed. Turn each into a per-file net cost per tag and in bytes, then project it to full C: using L's file count. Any WC* rise in any arm counts against that arm, never as ambient. TOLERANCE: use the one the design's tolerance row states. If the row has none, use 64 MB per pool or 3x the idle drift over the same duration, whichever is larger, and write that into the row. HOW THE RESULT DECIDES THE FORK, in this order: (i) If L at full scale is over tolerance, or the guard stops L, the outcome is C: even a listing breaks it. DONE (b) becomes the documented Restart workaround and the tolerance row records FAIL. (ii) If L is within tolerance and S's projection is within tolerance, the outcome is A: the exclusion is the whole fix, and SizeProbe, the counting contract and Q-004 stay as they are. (iii) If L is within, S is over and P is within, the outcome is B: SizeProbe is implicated. The Q-004 / SL-056 counting contract goes to the person and the design is s… The risk spike measures these first. Write the design again with what it measured: its experiments are under what reality already said about this slice.",
+      "cause": "fork-measure",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "design-slice-5.json"
+    },
+    {
+     "n": 6,
+     "state": "unrecorded",
+     "at": "2026-10-04T16:58:30.932Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "Trip 2 of 2 back to the risk spike: the design left 1 fork that only a measurement can settle. O-028: unsettled design fork: O-003: with the Layers exclusion in place, does a cold full C: scan still break the tolerance through the per-file metadata open (SL-056 SizeProbe), while a listing-only walk of the same paths does not? Its context: A: within tolerance, so the exclusion is the whole fix. B: the listing-only arm passes and the probe arm fails, so SizeProbe is implicated. The counting contract and the Q-004 decision change, which needs the person and a re-synthesis. C: both arms fail alike, including the plain non-app open, so the cause is the OS. DONE (b) becomes a documented Restart workaround and the tolerance row records FAIL. The engine cannot settle this. Its cold full-C: arm was stopped by the machine guard at +0.50 GB (run 2428), the fresh-tree substitute failed V1, and a true Restart is a person's action. Route: the person runs PoolWatch.ps1 -Protocol after this build. Everything built here is needed in all three outcomes. The synthesis marked this as forcing a re-synthesis: the losing answer moves a component boundary, a contract or the data model. How the fork decider would measure it: Send this back to the risk spike. It uses the slice's second and last spike lap. Do not let the build host this experiment, and do not wait for PoolWatch.ps1 -Protocol after the build. THE ONE STEP THE PERSON TAKES: one restart. Then log on, leave the machine idle with no other apps opened, and let the spike run. Nothing on the machine as it stands can stand in for this: - this boot is 27 h old, and its first touches of C: and the layer are already spent; - the fresh-tree substitute failed V1 (creating the files alone keeps 5.5 FMfn per file); - the earlier cold arm was stopped by the guard at +0.50 GB (run 2428). WHAT TO MEASURE, all on that fresh boot. Every arm runs in its own process, which exits before its after-reading. Each reading records: - Pool Paged Bytes and Pool Nonpaged Bytes; - per-tag allocations, frees and bytes for FMfn, File, NtfF, Toke, every WC* tag and FMwi/FMfc; - the System process handle count. The spike applies the Layers-store exclusion in its own rig, using the same prefix rule the design composes (the whole Containers\\Layers store). It does not need the product build. 0. Idle drift: one idle window before arm L and one of the same length after arm P. Every delta below is corrected by the idle drift over the same duration. 1. Arm L, first: a cold listing-only walk of all of C: with the Layers store excluded. Use the app's Scanner with the internal ProbeRule seam set to listing-only, as both earlier spikes did. Record its full-scale delta after exit and the list of files it saw. 2. Split L's file list into two disjoint halves by a deterministic hash of the path. 3. Arm S: open half A through the app's own SizeProbe code path, the per-file metadata open from SL-056, as the earlier PROBE arm did. 4. Arm P: open half B with a plain non-app open (an ordinary CreateFile or .NET open, then close). P opens only paths from L's list, so it can never touch the Layers store. Size S and P so the projected growth stays under the 0.50 GB machine guard; cap each at a sample if needed. Turn each into a per-file net cost per tag and in bytes, then project it to full C: using L's file count. Any WC* rise in any arm counts against that arm, never as ambient. TOLERANCE: use the one the design's tolerance row states. If the row has none, use 64 MB per pool or 3x the idle drift over the same duration, whichever is larger, and write that into the row. HOW THE RESULT DECIDES THE FORK, in this order: (i) If L at full scale is over tolerance, or the guard stops L, the outcome is C: even a listing breaks it. DONE (b) becomes the documented Restart workaround and the tolerance row records FAIL. (ii) If L is within tolerance and S's projection is within tolerance, the outcome is A: the exclusion is the whole fix, and SizeProbe, the counting contract and Q-004 stay as they are. (iii) If L is within, S is over and P is within, the outcome is B: SizeProbe is implicated. The Q-004 / SL-056 counting contract goes to the person and the design is s… The risk spike measures these first. Write the design again with what it measured: its experiments are under what reality already said about this slice.",
+      "cause": "fork-measure",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "design-slice-6.json"
+    },
+    {
+     "n": 7,
+     "state": "unrecorded",
+     "at": "2026-10-04T16:59:34.744Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "Trip 2 of 2 back to the risk spike: the design left 1 fork that only a measurement can settle. O-028: unsettled design fork: O-003: with the Layers exclusion in place, does a cold full C: scan still break the tolerance through the per-file metadata open (SL-056 SizeProbe), while a listing-only walk of the same paths does not? Its context: A: within tolerance, so the exclusion is the whole fix. B: the listing-only arm passes and the probe arm fails, so SizeProbe is implicated. The counting contract and the Q-004 decision change, which needs the person and a re-synthesis. C: both arms fail alike, including the plain non-app open, so the cause is the OS. DONE (b) becomes a documented Restart workaround and the tolerance row records FAIL. The engine cannot settle this. Its cold full-C: arm was stopped by the machine guard at +0.50 GB (run 2428), the fresh-tree substitute failed V1, and a true Restart is a person's action. Route: the person runs PoolWatch.ps1 -Protocol after this build. Everything built here is needed in all three outcomes. The synthesis marked this as forcing a re-synthesis: the losing answer moves a component boundary, a contract or the data model. How the fork decider would measure it: Send this back to the risk spike. It uses the slice's second and last spike lap. Do not let the build host this experiment, and do not wait for PoolWatch.ps1 -Protocol after the build. THE ONE STEP THE PERSON TAKES: one restart. Then log on, leave the machine idle with no other apps opened, and let the spike run. Nothing on the machine as it stands can stand in for this: - this boot is 27 h old, and its first touches of C: and the layer are already spent; - the fresh-tree substitute failed V1 (creating the files alone keeps 5.5 FMfn per file); - the earlier cold arm was stopped by the guard at +0.50 GB (run 2428). WHAT TO MEASURE, all on that fresh boot. Every arm runs in its own process, which exits before its after-reading. Each reading records: - Pool Paged Bytes and Pool Nonpaged Bytes; - per-tag allocations, frees and bytes for FMfn, File, NtfF, Toke, every WC* tag and FMwi/FMfc; - the System process handle count. The spike applies the Layers-store exclusion in its own rig, using the same prefix rule the design composes (the whole Containers\\Layers store). It does not need the product build. 0. Idle drift: one idle window before arm L and one of the same length after arm P. Every delta below is corrected by the idle drift over the same duration. 1. Arm L, first: a cold listing-only walk of all of C: with the Layers store excluded. Use the app's Scanner with the internal ProbeRule seam set to listing-only, as both earlier spikes did. Record its full-scale delta after exit and the list of files it saw. 2. Split L's file list into two disjoint halves by a deterministic hash of the path. 3. Arm S: open half A through the app's own SizeProbe code path, the per-file metadata open from SL-056, as the earlier PROBE arm did. 4. Arm P: open half B with a plain non-app open (an ordinary CreateFile or .NET open, then close). P opens only paths from L's list, so it can never touch the Layers store. Size S and P so the projected growth stays under the 0.50 GB machine guard; cap each at a sample if needed. Turn each into a per-file net cost per tag and in bytes, then project it to full C: using L's file count. Any WC* rise in any arm counts against that arm, never as ambient. TOLERANCE: use the one the design's tolerance row states. If the row has none, use 64 MB per pool or 3x the idle drift over the same duration, whichever is larger, and write that into the row. HOW THE RESULT DECIDES THE FORK, in this order: (i) If L at full scale is over tolerance, or the guard stops L, the outcome is C: even a listing breaks it. DONE (b) becomes the documented Restart workaround and the tolerance row records FAIL. (ii) If L is within tolerance and S's projection is within tolerance, the outcome is A: the exclusion is the whole fix, and SizeProbe, the counting contract and Q-004 stay as they are. (iii) If L is within, S is over and P is within, the outcome is B: SizeProbe is implicated. The Q-004 / SL-056 counting contract goes to the person and the design is s… The risk spike measures these first. Write the design again with what it measured: its experiments are under what reality already said about this slice.",
+      "cause": "fork-measure",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "design-slice-7.json"
+    },
+    {
+     "n": 8,
+     "state": "unrecorded",
+     "at": "2026-10-04T17:00:28.909Z",
+     "head": "",
+     "summary": "no designer returned a usable proposal, so there was nothing to compose.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "Trip 2 of 2 back to the risk spike: the design left 1 fork that only a measurement can settle. O-028: unsettled design fork: O-003: with the Layers exclusion in place, does a cold full C: scan still break the tolerance through the per-file metadata open (SL-056 SizeProbe), while a listing-only walk of the same paths does not? Its context: A: within tolerance, so the exclusion is the whole fix. B: the listing-only arm passes and the probe arm fails, so SizeProbe is implicated. The counting contract and the Q-004 decision change, which needs the person and a re-synthesis. C: both arms fail alike, including the plain non-app open, so the cause is the OS. DONE (b) becomes a documented Restart workaround and the tolerance row records FAIL. The engine cannot settle this. Its cold full-C: arm was stopped by the machine guard at +0.50 GB (run 2428), the fresh-tree substitute failed V1, and a true Restart is a person's action. Route: the person runs PoolWatch.ps1 -Protocol after this build. Everything built here is needed in all three outcomes. The synthesis marked this as forcing a re-synthesis: the losing answer moves a component boundary, a contract or the data model. How the fork decider would measure it: Send this back to the risk spike. It uses the slice's second and last spike lap. Do not let the build host this experiment, and do not wait for PoolWatch.ps1 -Protocol after the build. THE ONE STEP THE PERSON TAKES: one restart. Then log on, leave the machine idle with no other apps opened, and let the spike run. Nothing on the machine as it stands can stand in for this: - this boot is 27 h old, and its first touches of C: and the layer are already spent; - the fresh-tree substitute failed V1 (creating the files alone keeps 5.5 FMfn per file); - the earlier cold arm was stopped by the guard at +0.50 GB (run 2428). WHAT TO MEASURE, all on that fresh boot. Every arm runs in its own process, which exits before its after-reading. Each reading records: - Pool Paged Bytes and Pool Nonpaged Bytes; - per-tag allocations, frees and bytes for FMfn, File, NtfF, Toke, every WC* tag and FMwi/FMfc; - the System process handle count. The spike applies the Layers-store exclusion in its own rig, using the same prefix rule the design composes (the whole Containers\\Layers store). It does not need the product build. 0. Idle drift: one idle window before arm L and one of the same length after arm P. Every delta below is corrected by the idle drift over the same duration. 1. Arm L, first: a cold listing-only walk of all of C: with the Layers store excluded. Use the app's Scanner with the internal ProbeRule seam set to listing-only, as both earlier spikes did. Record its full-scale delta after exit and the list of files it saw. 2. Split L's file list into two disjoint halves by a deterministic hash of the path. 3. Arm S: open half A through the app's own SizeProbe code path, the per-file metadata open from SL-056, as the earlier PROBE arm did. 4. Arm P: open half B with a plain non-app open (an ordinary CreateFile or .NET open, then close). P opens only paths from L's list, so it can never touch the Layers store. Size S and P so the projected growth stays under the 0.50 GB machine guard; cap each at a sample if needed. Turn each into a per-file net cost per tag and in bytes, then project it to full C: using L's file count. Any WC* rise in any arm counts against that arm, never as ambient. TOLERANCE: use the one the design's tolerance row states. If the row has none, use 64 MB per pool or 3x the idle drift over the same duration, whichever is larger, and write that into the row. HOW THE RESULT DECIDES THE FORK, in this order: (i) If L at full scale is over tolerance, or the guard stops L, the outcome is C: even a listing breaks it. DONE (b) becomes the documented Restart workaround and the tolerance row records FAIL. (ii) If L is within tolerance and S's projection is within tolerance, the outcome is A: the exclusion is the whole fix, and SizeProbe, the counting contract and Q-004 stay as they are. (iii) If L is within, S is over and P is within, the outcome is B: SizeProbe is implicated. The Q-004 / SL-056 counting contract goes to the person and the design is s… The risk spike measures these first. Write the design again with what it measured: its experiments are under what reality already said about this slice.",
+      "cause": "fork-measure",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "design-slice-8.json"
+    },
+    {
+     "n": 9,
+     "state": "unrecorded",
+     "at": "2026-10-04T17:01:19.132Z",
+     "head": "",
+     "summary": "",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "Trip 2 of 2 back to the risk spike: the design left 1 fork that only a measurement can settle. O-028: unsettled design fork: O-003: with the Layers exclusion in place, does a cold full C: scan still break the tolerance through the per-file metadata open (SL-056 SizeProbe), while a listing-only walk of the same paths does not? Its context: A: within tolerance, so the exclusion is the whole fix. B: the listing-only arm passes and the probe arm fails, so SizeProbe is implicated. The counting contract and the Q-004 decision change, which needs the person and a re-synthesis. C: both arms fail alike, including the plain non-app open, so the cause is the OS. DONE (b) becomes a documented Restart workaround and the tolerance row records FAIL. The engine cannot settle this. Its cold full-C: arm was stopped by the machine guard at +0.50 GB (run 2428), the fresh-tree substitute failed V1, and a true Restart is a person's action. Route: the person runs PoolWatch.ps1 -Protocol after this build. Everything built here is needed in all three outcomes. The synthesis marked this as forcing a re-synthesis: the losing answer moves a component boundary, a contract or the data model. How the fork decider would measure it: Send this back to the risk spike. It uses the slice's second and last spike lap. Do not let the build host this experiment, and do not wait for PoolWatch.ps1 -Protocol after the build. THE ONE STEP THE PERSON TAKES: one restart. Then log on, leave the machine idle with no other apps opened, and let the spike run. Nothing on the machine as it stands can stand in for this: - this boot is 27 h old, and its first touches of C: and the layer are already spent; - the fresh-tree substitute failed V1 (creating the files alone keeps 5.5 FMfn per file); - the earlier cold arm was stopped by the guard at +0.50 GB (run 2428). WHAT TO MEASURE, all on that fresh boot. Every arm runs in its own process, which exits before its after-reading. Each reading records: - Pool Paged Bytes and Pool Nonpaged Bytes; - per-tag allocations, frees and bytes for FMfn, File, NtfF, Toke, every WC* tag and FMwi/FMfc; - the System process handle count. The spike applies the Layers-store exclusion in its own rig, using the same prefix rule the design composes (the whole Containers\\Layers store). It does not need the product build. 0. Idle drift: one idle window before arm L and one of the same length after arm P. Every delta below is corrected by the idle drift over the same duration. 1. Arm L, first: a cold listing-only walk of all of C: with the Layers store excluded. Use the app's Scanner with the internal ProbeRule seam set to listing-only, as both earlier spikes did. Record its full-scale delta after exit and the list of files it saw. 2. Split L's file list into two disjoint halves by a deterministic hash of the path. 3. Arm S: open half A through the app's own SizeProbe code path, the per-file metadata open from SL-056, as the earlier PROBE arm did. 4. Arm P: open half B with a plain non-app open (an ordinary CreateFile or .NET open, then close). P opens only paths from L's list, so it can never touch the Layers store. Size S and P so the projected growth stays under the 0.50 GB machine guard; cap each at a sample if needed. Turn each into a per-file net cost per tag and in bytes, then project it to full C: using L's file count. Any WC* rise in any arm counts against that arm, never as ambient. TOLERANCE: use the one the design's tolerance row states. If the row has none, use 64 MB per pool or 3x the idle drift over the same duration, whichever is larger, and write that into the row. HOW THE RESULT DECIDES THE FORK, in this order: (i) If L at full scale is over tolerance, or the guard stops L, the outcome is C: even a listing breaks it. DONE (b) becomes the documented Restart workaround and the tolerance row records FAIL. (ii) If L is within tolerance and S's projection is within tolerance, the outcome is A: the exclusion is the whole fix, and SizeProbe, the counting contract and Q-004 stay as they are. (iii) If L is within, S is over and P is within, the outcome is B: SizeProbe is implicated. The Q-004 / SL-056 counting contract goes to the person and the design is s… The risk spike measures these first. Write the design again with what it measured: its experiments are under what reality already said about this slice.",
+      "cause": "fork-measure",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "design-slice-9.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique",
+   "title": "Critique",
+   "order": 5,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-30T23:16:06.901Z",
+     "head": "afd021d2e231a732a596033c22af811201e6659d",
+     "summary": "The fix itself is sound for the cause that has been measured.",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-10-04T15:38:05.639Z",
+     "head": "afd021d2e231a732a596033c22af811201e6659d",
+     "summary": "The rework answers most of the first pass: - **M1:** the row now says \"size not counted\", the `dir /a /s` total is kept as an upper bound, and the question to the person now covers Layers\\<id>\\Files too.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "critique passed on 2026-09-30T23:27:45.245Z, and design-slice has judged since (2026-10-04T15:35:36.347Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "cause": "knock-on",
+      "stage": "design-slice",
+      "from": [
+       "design-slice"
+      ]
+     },
+     "changed": {},
+     "details": "critique-2.json"
+    },
+    {
+     "n": 3,
+     "state": "passed",
+     "at": "2026-10-04T17:23:38.315Z",
+     "head": "afd021d2e231a732a596033c22af811201e6659d",
+     "summary": "The product change in attempt 3 is sound: - The root is resolved string-first, with a handle fallback, so subst, 8.3, volume-GUID and symlink roots such as C:\\Users\\All Users map correctly.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "critique passed on 2026-10-04T15:46:19.580Z, and design-slice has judged since (2026-10-04T17:21:58.292Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "cause": "knock-on",
+      "stage": "design-slice",
+      "from": [
+       "design-slice"
+      ]
+     },
+     "changed": {},
+     "details": "critique-3.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique-review",
+   "title": "Critique review",
+   "order": 6,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-09-30T23:27:45.578Z",
+     "head": "afd021d2e231a732a596033c22af811201e6659d",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-review-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-10-04T15:46:19.850Z",
+     "head": "afd021d2e231a732a596033c22af811201e6659d",
+     "summary": "",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "critique-review passed on 2026-09-30T23:27:45.689Z, and design-slice has judged since (2026-10-04T15:35:36.347Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "cause": "knock-on",
+      "stage": "design-slice",
+      "from": [
+       "design-slice"
+      ]
+     },
+     "changed": {},
+     "details": "critique-review-2.json"
+    },
+    {
+     "n": 3,
+     "state": "passed",
+     "at": "2026-10-04T17:40:26.705Z",
+     "head": "afd021d2e231a732a596033c22af811201e6659d",
+     "summary": "",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "critique-review passed on 2026-10-04T15:46:19.904Z, and design-slice has judged since (2026-10-04T17:21:58.292Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "cause": "knock-on",
+      "stage": "design-slice",
+      "from": [
+       "design-slice"
+      ]
+     },
+     "changed": {},
+     "details": "critique-review-3.json"
+    }
+   ]
+  },
+  {
+   "stage": "build-slice",
+   "title": "Build",
+   "order": 7,
+   "state": "waiting",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "waiting",
+     "at": "2026-10-04T17:40:27.314Z",
+     "head": "afd021d2e231a732a596033c22af811201e6659d",
+     "summary": "stopped by the engine to protect the machine: the kernel's memory grew 0.54 GB while run 2459 was running, past the 0.5 GB one run may cause.",
+     "caused_by": null,
+     "changed": {},
+     "details": "build-slice-1.json"
+    }
+   ]
+  }
+ ]
+}

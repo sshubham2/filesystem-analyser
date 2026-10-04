@@ -74,9 +74,10 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
 
     /// <summary>
     /// A folder under the root has committed its listing: <paramref name="row"/> is its top-level row. The
-    /// one call for every folder that exits a listing, readable or not, so pending moves once per folder.
+    /// one call for every folder that exits a listing, readable or not, so pending moves once per folder. A folder left
+    /// out on purpose (<paramref name="notScanned"/>, SL-095) exits here too, with nothing listed and nothing pushed.
     /// </summary>
-    public void FolderExited(int folder, int row, bool unreadable, int subfoldersPushed, in ScanTotals totals)
+    public void FolderExited(int folder, int row, bool unreadable, int subfoldersPushed, in ScanTotals totals, bool notScanned = false)
     {
         ref Row r = ref _rows[row];
         r.Bytes += totals.Bytes - _credited.Bytes;
@@ -93,6 +94,7 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
         {
             r.Started = true;
             r.OwnUnreadable = unreadable;
+            r.OwnNotScanned = notScanned;
             r.OwnListedPartway = unreadable && _store!.ChildCount(folder) > 0; // its listing is committed by now
         }
         else if (unreadable)
@@ -186,6 +188,7 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
             EntryKind.Link => TopLevelState.NotFollowed,
             _ when !r.Started => TopLevelState.NotRead,
             _ when r.Pending > 0 => final ? TopLevelState.StoppedPartway : TopLevelState.Reading,
+            _ when r.OwnNotScanned => TopLevelState.NotScanned,
             _ => r.OwnUnreadable ? TopLevelState.Unreadable : TopLevelState.Done,
         };
         if (state == TopLevelState.Done && (r.Bytes, r.OnDisk) != (r.SettledBytes, r.SettledOnDisk))
@@ -210,6 +213,7 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
         public int Pending; // its own folder and every folder pushed under it, less those that exited a listing
         public bool Started; // its own folder has exited its listing
         public bool OwnUnreadable;
+        public bool OwnNotScanned; // its own folder is the store, left out on purpose (SL-095)
         public bool OwnListedPartway; // its own folder's listing failed after something was listed in it
         public bool Revised; // built Done with figures other than the settled ones; never cleared
         public bool Dirty;
