@@ -78,9 +78,15 @@ $Tolerance = @{
     GuardPoolBytes   = 4GB      # ... or Paged + Nonpaged rise this far above R0
     PressureFloorMB  = 4608     # the pressure step commits memory down to this, above the guard (review X2)
     MarkEverySec     = 60
-    SettleStepBytes  = 16MB     # between R0 and I0, the boot has settled when two gaps in a row each move both pools less (spike 3's V2)
-    SettleCapSec     = 1800     # ... and the protocol stops if it has not within 30 min of R0 (review R2-N1)
+    IdleDriftSeen    = 10936    # B/s: spike 3's paged idle drift on this PC once its boot had settled
+    SettleCapSec     = 1800     # between R0 and I0 the protocol waits for the boot to settle, and stops if it has not within 30 min of R0 (review R2-N1)
 }
+# The boot has settled when two gaps in a row each move both pools slower than this: DriftDisagree x spike 3's idle drift,
+# 32,808 B/s, about 1.9 MiB a minute. I0 drifting faster than that against an I1 that drifts as spike 3's did is the VOID
+# below, so a looser gate (spike 3's V2, 16 MiB a gap) let a boot still settling start a session that VOIDs at its end
+# (review R3-1). A rate over the gap, but over at least MarkEverySec: a real gap is a minute long, and the 2 s gaps of
+# -Smoke are allowed a minute's movement each rather than measuring a rate from two seconds of ordinary churn.
+$Tolerance.SettleRateBytesPerSec = $Tolerance.DriftDisagree * $Tolerance.IdleDriftSeen
 $WatchedTags = @('WCsc', 'WCfc', 'WCri', 'WCfn', 'WCse', 'WCss', 'WCce', 'WCrb', 'WCro', 'FMwi', 'FMfc', 'FMfn', 'File', 'NtfF', 'Ntff', 'NtFC', 'Toke', 'SeAt')
 $LeakTags = @('WCsc', 'WCfc', 'WCri', 'FMwi')
 $CacheTags = @('FMfn', 'File', 'NtfF')
@@ -354,11 +360,15 @@ function Test-FltmcList($lines) {
     [pscustomobject]@{ isList = $header -and -not $refused; first = $(if ($lines.Count) { $lines[0].Trim() } else { '' }) }
 }
 
+# A text file's lines as plain strings, for whatever is written back out as JSON: Windows PowerShell 5.1's ConvertTo-Json
+# writes each line Get-Content returns as an object of its PSPath, PSDrive and provider, about 200 KB a line.
+function Read-Lines([string] $file) { [IO.File]::ReadAllLines((Convert-Path -LiteralPath $file)) }
+
 # The paste as the environment record keeps it: its lines when it is the filter list, otherwise what it is instead.
 function Read-FltmcPaste([string] $file) {
     $none = 'not supplied: needs an administrator; paste `fltmc filters` into fltmc.txt'
     if (-not (Test-Path -LiteralPath $file)) { return $none }
-    $lines = @(Get-Content -LiteralPath $file)
+    $lines = @(Read-Lines $file)
     $t = Test-FltmcList $lines
     if ($t.isList) { return , $lines }
     if (-not $t.first) { return $none }
@@ -450,12 +460,15 @@ function Invoke-ExeArm([string] $name, [string] $kind, [string] $exe, [string] $
     $line = Invoke-Arm $name $kind $exe @($root, '--report', $reportFile) $vars @{ hook = $hook }
     $core = $null; $acted = $null
     if (Test-Path -LiteralPath $reportFile) { $r = Get-Content -LiteralPath $reportFile -Raw | ConvertFrom-Json; $core = $r.core; $line['outcome'] = $r.outcome }
-    if (Test-Path -LiteralPath $hookLog) { $acted = @(Get-Content -LiteralPath $hookLog | Where-Object { $_ -match '^(acted|refused|passed)' }) }
+    if (Test-Path -LiteralPath $hookLog) { $acted = @(Read-Lines $hookLog | Where-Object { $_ -match '^(acted|refused|passed)' }) }
     $line['report'] = $core; $line['hookLog'] = $acted
     $folders = $null
     foreach ($l in @($acted)) { if ($l -match '^acted .* folders=(\d+)') { $folders = [long]$Matches[1] } }
     $line['foldersAtCancel'] = $folders
     $line['ranFull'] = [bool](@($acted) -match 'ended before the trigger')
+    # Whether the hook pressed Cancel or closed the window at all. It refuses without acting when the scan ends first
+    # (ranFull), when the app shuts down before the trigger, and when the trigger's deadline passes (review R2-R3-3).
+    $line['acted'] = [bool](@($acted) -match '^acted ')
     # Rewrite the arm's line with what the report and the hook said.
     $lines = @(Get-Content -LiteralPath (Join-Path $RunDir 'arms.jsonl'))
     $lines[-1] = $line | ConvertTo-Json -Compress -Depth 6
@@ -587,15 +600,17 @@ function Drift([double[]] $rates) {
     ($kept | Measure-Object -Average).Average
 }
 
-# The boot has settled when the last two gaps of the settle marks each moved both pools by less than SettleStepBytes
-# (spike 3's V2 rule). -Protocol waits on it before I0; -Report checks it again from the marks (review R2-N1).
+# The boot has settled when the last two gaps of the settle marks each moved both pools slower than
+# SettleRateBytesPerSec. -Protocol waits on it before I0; -Report checks it again from the marks (reviews R2-N1, R3-1).
 function Test-Settled($settleMarks) {
     $s = @($settleMarks | Sort-Object { Utc $_ })
     if ($s.Count -lt 3) { return $false }
     foreach ($i in ($s.Count - 2), ($s.Count - 1)) {
+        $dt = Seconds $s[$i - 1] $s[$i]
+        if ($dt -le 0) { return $false }
         foreach ($pool in 'pagedBytes', 'nonpagedBytes') {
             if ($null -eq $s[$i].$pool -or $null -eq $s[$i - 1].$pool) { return $false }
-            if ([Math]::Abs([long]$s[$i].$pool - [long]$s[$i - 1].$pool) -ge $Tolerance.SettleStepBytes) { return $false }
+            if ([Math]::Abs([long]$s[$i].$pool - [long]$s[$i - 1].$pool) -ge $Tolerance.SettleRateBytesPerSec * [Math]::Max($dt, $Tolerance.MarkEverySec)) { return $false }
         }
     }
     $true
@@ -637,7 +652,7 @@ function Get-Verdict($marks, $arms) {
     if ($settle.Count -eq 0) { $why.Add('UNDECIDED: there are no settle marks between R0 and I0'); return (Done 'UNDECIDED' $null) }
     if (-not (Test-Settled $settle)) {
         $s = @($settle | Sort-Object { Utc $_ })
-        $why.Add(('VOID: the boot had not settled before I0: {0} settle marks, the last gap moved paged {1:N1} MiB and nonpaged {2:N1} MiB, against {3} MiB (spike 3''s V2)' -f $s.Count, $(if ($s.Count -ge 2) { ([long]$s[-1].pagedBytes - [long]$s[-2].pagedBytes) / 1MB } else { 0 }), $(if ($s.Count -ge 2) { ([long]$s[-1].nonpagedBytes - [long]$s[-2].nonpagedBytes) / 1MB } else { 0 }), ($Tolerance.SettleStepBytes / 1MB)))
+        $why.Add(('VOID: the boot had not settled before I0: {0} settle marks, the last gap moved paged {1:N1} MiB and nonpaged {2:N1} MiB in {3:N0} s, against {4:N2} MiB a minute ({5} x spike 3''s idle drift of {6:N0} B/s, the most I0 may drift before the run is VOID)' -f $s.Count, $(if ($s.Count -ge 2) { ([long]$s[-1].pagedBytes - [long]$s[-2].pagedBytes) / 1MB } else { 0 }), $(if ($s.Count -ge 2) { ([long]$s[-1].nonpagedBytes - [long]$s[-2].nonpagedBytes) / 1MB } else { 0 }), $(if ($s.Count -ge 2) { Seconds $s[-2] $s[-1] } else { 0 }), ($Tolerance.SettleRateBytesPerSec * 60 / 1MB), $Tolerance.DriftDisagree, $Tolerance.IdleDriftSeen))
         return (Done 'VOID' $null)
     }
     foreach ($need in 'I0/00', 'I1/00', 'L/before', 'L/settled', 'C/before', 'C/settled') {
@@ -701,11 +716,14 @@ function Get-Verdict($marks, $arms) {
 
     # The ten exe runs DONE (c) is judged on, all there and each one a run (code review M1): five full and five cancelled
     # or closed, each with its before and settled marks. One the guard stopped counts as over T below; any other full run
-    # that did not end with exit 0 and a Completed report, or a cancelled run that wrote no report, decides nothing. A
-    # cancelled or closed run whose trigger never fired ran to the end, and is not one of the five (FsaWindowHook contract).
+    # that did not end with exit 0 and a Completed report decides nothing. A cancelled or closed run counts only when the
+    # hook acted, pressing Cancel or closing the window (review R2-R3-3), and a cancelled one only when its report says
+    # Cancelled. One whose trigger never fired ran to the end, and is not one of the five (FsaWindowHook contract).
     $fullArms = @($arms | Where-Object { $_.type -eq 'exe-full' })
     $stopArms = @($arms | Where-Object { $_.type -eq 'exe-cancel' -or $_.type -eq 'exe-close' })
     if ($fullArms.Count -ne 5 -or $stopArms.Count -ne 5) { $why.Add("UNDECIDED: the protocol's ten exe runs are not all there: $($fullArms.Count) full of 5, $($stopArms.Count) cancelled or closed of 5"); return (Done 'UNDECIDED' $null) }
+    # Run logs written before Invoke-ExeArm recorded 'acted' say it in the hook's own lines.
+    function Acted($a) { if ($null -ne $a.acted) { [bool]$a.acted } else { [bool](@($a.hookLog) -match '^acted ') } }
     foreach ($a in @($fullArms) + @($stopArms)) {
         foreach ($need in "$($a.arm)/before", "$($a.arm)/settled") {
             if (-not $byLabel.ContainsKey($need)) { $why.Add("UNDECIDED: mark $need is missing"); return (Done 'UNDECIDED' $null) }
@@ -714,7 +732,14 @@ function Get-Verdict($marks, $arms) {
         if ($a.type -eq 'exe-full' -and ($a.exitCode -ne 0 -or $null -eq $a.report -or $a.report.status -ne 'Completed')) {
             $why.Add("UNDECIDED: full run $($a.arm) did not complete: exit $($a.exitCode), $(if ($null -eq $a.report) { 'no report' } else { "report status $($a.report.status)" })"); return (Done 'UNDECIDED' $null)
         }
+        if ($a.type -eq 'exe-full' -or $a.ranFull) { continue } # a run that ended before its trigger is counted below
+        $what = if ($a.type -eq 'exe-close') { 'closed' } else { 'cancelled' }
+        if (-not (Acted $a)) {
+            $refused = @(@($a.hookLog) | Where-Object { $_ -match '^refused ' }) | Select-Object -First 1
+            $why.Add("UNDECIDED: $what run $($a.arm) never stopped the scan: $(if ($refused) { "the hook logged '$refused'" } else { 'the hook logged no acted line' }) (exit $($a.exitCode))"); return (Done 'UNDECIDED' $null)
+        }
         if ($a.type -eq 'exe-cancel' -and $null -eq $a.report) { $why.Add("UNDECIDED: cancelled run $($a.arm) wrote no report (exit $($a.exitCode)), so what it opened under the store is unread"); return (Done 'UNDECIDED' $null) }
+        if ($a.type -eq 'exe-cancel' -and $a.report.status -ne 'Cancelled') { $why.Add("UNDECIDED: cancelled run $($a.arm)'s report says $($a.report.status), not Cancelled: the Cancel did not stop the scan"); return (Done 'UNDECIDED' $null) }
     }
     $ranOn = @($stopArms | Where-Object { $_.ranFull } | ForEach-Object { $_.arm })
     if ($ranOn.Count) { $why.Add("UNDECIDED: only $(5 - $ranOn.Count) of the 5 cancelled or closed runs stopped before the end; $($ranOn -join ', ') ran to the end because the hook's trigger never fired"); return (Done 'UNDECIDED' $null) }
@@ -759,9 +784,12 @@ function Get-Verdict($marks, $arms) {
         $reclaimed = $true
     }
 
-    # The per-file opens, projected to full C: from L's file count (O-003).
+    # The per-file opens, projected to full C: from L's file count (O-003). An arm the guard stopped is over T without a
+    # projection: ScanArm prints its summary only after its loop, so a killed one has none (review R3-2).
+    $sStop = [bool]($armBy['S'] -and $armBy['S'].guardStop); $pStop = [bool]($armBy['P'] -and $armBy['P'].guardStop)
     foreach ($arm in 'S', 'P') {
         $n = $result.arms[$arm]; $line = $armBy[$arm]
+        if ($line -and $line.guardStop) { continue }
         if ($null -eq $n -or $null -eq $line -or $null -eq $line.summary -or $null -eq $listed) { $why.Add("UNDECIDED: arm $arm or L's file count is missing"); return (Done 'UNDECIDED' $null) }
         $count = [Math]::Max(1, [long]$line.summary.opened + [long]$line.summary.failed)
         $n['perFilePaged'] = $n.pagedBytes / $count; $n['perFileNonpaged'] = $n.nonpagedBytes / $count
@@ -770,9 +798,15 @@ function Get-Verdict($marks, $arms) {
         $n['projectedPaged'] = [long]($baseP + $n.perFilePaged * $listed); $n['projectedNonpaged'] = [long]($baseN + $n.perFileNonpaged * $listed)
     }
     $S = $result.arms['S']; $P = $result.arms['P']
-    $sOver = [bool]$armBy['S'].guardStop -or $S.projectedPaged -gt $T['pagedBytes'] -or $S.projectedNonpaged -gt $T['nonpagedBytes']
-    $pOver = [bool]$armBy['P'].guardStop -or $P.projectedPaged -gt $T['pagedBytes'] -or $P.projectedNonpaged -gt $T['nonpagedBytes']
-    if ($sOver -and -not $pOver) { $why.Add("B: the app's per-file probe$(if ($armBy['S'].guardStop) { " (stopped by the guard: $($armBy['S'].guardStop))" }) projects over T where a plain open does not"); return (Done 'B' 'FAIL') }
+    $sOver = $sStop -or ($S -and ($S.projectedPaged -gt $T['pagedBytes'] -or $S.projectedNonpaged -gt $T['nonpagedBytes']))
+    $pOver = $pStop -or ($P -and ($P.projectedPaged -gt $T['pagedBytes'] -or $P.projectedNonpaged -gt $T['nonpagedBytes']))
+    if ($sOver -and -not $pOver) { $why.Add("B: the app's per-file probe$(if ($sStop) { " (stopped by the guard: $($armBy['S'].guardStop))" }) projects over T where a plain open does not"); return (Done 'B' 'FAIL') }
+    if ($sOver -and $pOver -and ($sStop -or $pStop)) {
+        # The excess rule with 'stopped' for a projection past anything measured: the probe stopped where the plain open
+        # was not is beyond it (B); the plain open stopped, the probe stopped too or not, is no excess of the probe's (C).
+        if ($sStop -and -not $pStop) { $why.Add("B: the app's per-file probe was stopped by the guard ($($armBy['S'].guardStop)) where a plain open of as many files projects over T without being stopped"); return (Done 'B' 'FAIL') }
+        $why.Add("C: the plain open was stopped by the guard ($($armBy['P'].guardStop)) and the probe $(if ($sStop) { "was too ($($armBy['S'].guardStop))" } else { 'projects over T' }): both over T, the probe by nothing beyond the plain open"); return (Done 'C' 'OS-recorded only if Q-178 conditions (1)-(3) hold, with the session-2 non-app walk; otherwise FAIL')
+    }
     if ($sOver -and $pOver) {
         $excess = [Math]::Max($S.projectedPaged - $P.projectedPaged, $S.projectedNonpaged - $P.projectedNonpaged)
         $noise = 2 * [Math]::Max([Math]::Abs($drift['pagedBytes']), [Math]::Abs($drift['nonpagedBytes'])) * $Tolerance.WindowSec
@@ -905,7 +939,7 @@ switch ($PSCmdlet.ParameterSetName) {
                 $vars = @{ DOTNET_STARTUP_HOOKS = $HookDll; FSA_HOOK_MODE = $mode; FSA_HOOK_LOG = $log } + $trigger.at
                 $p = Start-Arm $exe @($probe, '--report', $rep) $vars $null
                 $null = $p.WaitForExit(600000) # close mode exits 70 with no report, as WindowReport documents
-                $checks += [ordered]@{ exe = $exe; mode = $mode; trigger = $trigger.at; exit = $p.ExitCode; report = (Test-Path $rep); acted = @(if (Test-Path $log) { Get-Content $log | Where-Object { $_ -match '^(acted|refused)' } }) }
+                $checks += [ordered]@{ exe = $exe; mode = $mode; trigger = $trigger.at; exit = $p.ExitCode; report = (Test-Path $rep); acted = @(if (Test-Path $log) { Read-Lines $log | Where-Object { $_ -match '^(acted|refused)' } }) }
             }
         }
         $dead = @($checks | Where-Object { -not (@($_.acted) -match '^acted ') })
@@ -983,7 +1017,7 @@ switch ($PSCmdlet.ParameterSetName) {
             $script:R0 = Write-Mark 'R0'
             # R0 stays the boot-age and guard reference; I0 waits for the boot to settle (review R2-N1).
             if (-not (Wait-Settle)) {
-                Write-Warning "PoolWatch -Protocol stopped: the boot had not settled $($script:SettleCap) s after R0 (two gaps in a row under $($Tolerance.SettleStepBytes / 1MB) MiB on both pools). The marks are in $RunDir; -Report says VOID. Restart and run it again."
+                Write-Warning "PoolWatch -Protocol stopped: the boot had not settled $($script:SettleCap) s after R0 (two gaps in a row each moving both pools under $([Math]::Round($Tolerance.SettleRateBytesPerSec * 60 / 1MB, 2)) MiB a minute). The marks are in $RunDir; -Report says VOID. Restart and run it again."
             }
             elseif ($Session -eq 2) {
                 Wait-Idle 'I0' $Tolerance.WindowSec

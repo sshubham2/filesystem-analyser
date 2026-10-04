@@ -106,13 +106,18 @@ paste of what unelevated fltmc prints here ('Filter listing failed with error: 0
 Per pool, Paged and Nonpaged: **T = max(64 MiB, 3 x |idle drift| over a window of the same length)**. Idle drift comes
 from I0 and I1, 20 minutes each, per gap between marks, with any gap whose rate is over 3x the median gap's left out as
 a burst. I0 begins only once the boot has settled: after R0, a `settle/NN` mark every minute until two gaps in a row
-each move both pools by less than 16 MiB (spike 3's V2 rule; spike 3 measured about 1 GiB of boot settle on this PC),
-for at most 30 minutes. R0 stays the boot-age and guard reference; the pre-scan baseline is `L/before`, which the
-post-pressure figure is judged from. Every arm's reading is taken 10 minutes after its process exits, net of drift. An
-arm the guard stopped (L, S, P or an exe run) counts as over T.
+each move both pools slower than 3 x spike 3's idle drift of 10,936 B/s, 32,808 B/s or about 1.9 MiB a minute, for at
+most 30 minutes (spike 3 measured about 1 GiB of boot settle on this PC). The gate is as strict as the VOID it protects:
+I0 drifting more than 3x I1 VOIDs the run, so the 16 MiB-a-gap gate first built (spike 3's V2 rule) let a boot still
+growing 2-16 MiB a minute start a session that VOIDs at its end (review R3-1). R0 stays the boot-age and guard
+reference; the pre-scan baseline is `L/before`, which the post-pressure figure is judged from. Every arm's reading is
+taken 10 minutes after its process exits, net of drift. An arm the guard stopped (L, S, P or an exe run) counts as over
+T. A ScanArm the guard killed prints no summary, so a stopped S or P is over T with no projection (review R3-2): S
+stopped while P is not is B; P stopped, with S stopped or only projecting over T, is C, the probe by nothing beyond it.
 
 **PASS (outcome A)** needs all of: all ten exe runs there (five full, each exiting 0 with a Completed report, and five
-cancelled or closed that each stopped before the end), each within T; the 10 together within T; the cold projection
+cancelled or closed that each stopped before the end: the hook pressed Cancel or closed the window, and each Cancel's
+report says Cancelled), each within T; the 10 together within T; the cold projection
 L_net + s x N_full within T for the per-file probe; every arm's WCsc rise inside the idle envelope of the neighbouring
 gaps and its 0x120089 handle rise no more than its WCsc rise; every exe report's `opensUnderExcludedStore` 0 and every
 full run's `skippedStores` 1; and the closing control armable: its WCsc rise at least half the entries it listed, with
@@ -123,11 +128,11 @@ Otherwise, in this order (`PoolWatch.ps1 -Report`, pinned by `PoolWatchReportTes
 | Outcome | When | Records |
 |---------|------|---------|
 | VOID | R0 more than 30 min after the boot; the boot not settled within 30 min of R0 (-Protocol stops there); I0 and I1 drift more than 3x apart; the closing control not armable; an arm's process did not exit | nothing; the run decides nothing |
-| UNDECIDED | a mark or a reading a criterion needs is missing or null (no settle marks; tags, or the class 64 0x120089 handle count of an arm or the closing control); the ten exe runs not all there with their before and settled marks; a full run that did not exit 0 with a Completed report, or a cancelled run with no report, unless the guard stopped it; a cancelled or closed run whose trigger never fired; L over T with no pressure step, or with one that took nothing back (INEFFECTIVE) | nothing; never PASS |
+| UNDECIDED | a mark or a reading a criterion needs is missing or null (no settle marks; tags, or the class 64 0x120089 handle count of an arm or the closing control); the ten exe runs not all there with their before and settled marks; a full run that did not exit 0 with a Completed report, unless the guard stopped it; a cancelled or closed run whose hook never acted (the scan ended before the trigger, the app shut down before it, or its deadline passed), or a cancelled run with no report or one that does not say Cancelled, unless the guard stopped it; L over T with no pressure step, or with one that took nothing back (INEFFECTIVE) | nothing; never PASS |
 | WCIFS-UNATTRIBUTED | an arm's WCsc or handle rise outside the idle envelope, or an exe run that opened under the store or (full run) did not record it | blocks A until a person looks |
-| C | L over T, and what L kept survives the pressure step; or the probe and a plain open both project over T, alike | DONE (c) OS-recorded only if Q-178's three conditions hold (Q-184), with the session-2 non-app walk (Q-185); otherwise FAIL |
+| C | L over T, and what L kept survives the pressure step; or the probe and a plain open both project over T, alike; or the plain open stopped by the guard, with the probe stopped too or over T | DONE (c) OS-recorded only if Q-178's three conditions hold (Q-184), with the session-2 non-app walk (Q-185); otherwise FAIL |
 | A (reclaimed) | L over T before the pressure step, within it after: the retention was cache | continues to the remaining clauses |
-| B | the probe projects over T where a plain open does not, or by more than half T beyond it | FAIL; Q-183's new design opens with this run's data |
+| B | the probe projects over T (or the guard stopped it) where a plain open does not, or by more than half T beyond it, or the guard stopped it where a plain open over T was not stopped | FAIL; Q-183's new design opens with this run's data |
 | FAIL / FAIL-cancel | a full exe run, or the 10 together, over T / a cancelled or closed run over T while the full runs are within | FAIL; FAIL-cancel implicates the cancel path (follow-up) |
 
 **Result: pending.** No protocol run exists. DONE (c) stays open until `docs/design/SL-095-runs/session-1/result.txt`

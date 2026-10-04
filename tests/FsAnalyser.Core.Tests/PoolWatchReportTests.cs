@@ -36,11 +36,18 @@ public class PoolWatchReportTests
     [InlineData("exe-settled-missing", "UNDECIDED", "none")]            // code review M1: F4's settled mark was never taken
     [InlineData("exe-guard-stop", "FAIL", "FAIL")]                      // code review M1: the guard stopped F2, so it is over T
     [InlineData("cancel-guard-stop", "FAIL-cancel", "FAIL")]            // ... and X1, a cancelled run
-    [InlineData("probe-guard-stop", "B", "FAIL")]                       // ... and S, the per-file probe
+    [InlineData("probe-guard-stop", "B", "FAIL")]                       // ... and S, the per-file probe, killed with no summary (R3-2)
+    [InlineData("probe-and-plain-guard-stop", "C", "OS-recorded")]      // R3-2: both stopped, alike
+    [InlineData("probe-over-plain-guard-stop", "C", "OS-recorded")]     // R3-2: the plain open stopped, the probe only over T
     [InlineData("cancel-ran-full", "UNDECIDED", "none")]                // X3's trigger never fired: four cancelled runs, not five
+    [InlineData("close-app-shut-down-before-trigger", "UNDECIDED", "none")] // R2-R3-3: X4's app crashed before the close
+    [InlineData("cancel-trigger-deadline", "UNDECIDED", "none")]        // R2-R3-3: X2's trigger deadline passed, the scan ran on
+    [InlineData("cancel-not-cancelled", "UNDECIDED", "none")]           // R2-R3-3: X1 pressed Cancel, its report says Completed
     [InlineData("boot-settles-before-i0", "A", "PASS")]                 // R2-N1: 1 GiB of boot settle, all before I0
     [InlineData("boot-settles-then-listing-reclaimed", "A", "PASS")]    // ... and post-pressure is judged from L/before, not R0
+    [InlineData("boot-settles-slowly", "A", "PASS")]                    // R3-1: 10 MiB gaps are still settling; 1 MiB gaps are not
     [InlineData("boot-never-settled", "VOID", "none")]                  // R2-N1: no two quiet gaps within the cap
+    [InlineData("settle-gate-on-10-mib-gaps", "VOID", "none")]          // R3-1: the 16 MiB gate passed, I0 grew 2 MiB a minute
     [InlineData("settle-marks-missing", "UNDECIDED", "none")]           // R2-N1: R0 straight into I0
     public void TheReportRoutesARunAsTheToleranceRowSays(string scenario, string outcome, string verdict)
     {
@@ -100,6 +107,73 @@ public class PoolWatchReportTests
 
         string none = Judge("settle-marks-missing");
         Assert.Contains("REASON UNDECIDED: there are no settle marks between R0 and I0", none);
+    }
+
+    /// <summary>
+    /// Review R3-1: the settle gate is as strict as the drift rule it protects. I0 drifting more than 3x I1 VOIDs the
+    /// run, and at spike 3's 10,936 B/s idle drift that is about 1.9 MiB a minute, so a boot still growing 10 MiB a gap
+    /// has not settled: the gate that let it through (16 MiB a gap) started a session that VOIDed on drift at its end.
+    /// Here the last two settle gaps are 10 MiB and I0 grows 2 MiB a minute: the reason is the settle, decided from the
+    /// settle marks, never the drift (and -Protocol's own wait, the same Test-Settled, would not have started I0). A boot
+    /// that slows from 10 MiB gaps to 1 MiB gaps settles there and its run is judged.
+    /// </summary>
+    [Fact]
+    public void TheSettleGateIsAsStrictAsTheDriftRuleItProtects()
+    {
+        string gate = Judge("settle-gate-on-10-mib-gaps");
+        Assert.Contains("OUTCOME VOID\n", gate);
+        Assert.Contains("REASON VOID: the boot had not settled before I0: 15 settle marks, the last gap moved paged 10.0 MiB", gate);
+        Assert.Contains("in 60 s, against 1.88 MiB a minute (3 x spike 3's idle drift of 10,936 B/s", gate);
+        Assert.DoesNotContain("idle drift of pagedBytes disagrees", gate);
+
+        string slow = Judge("boot-settles-slowly");
+        Assert.Contains("OUTCOME A\n", slow);
+        Assert.Contains("VERDICT PASS", slow);
+    }
+
+    /// <summary>
+    /// Review R2-R3-3: a cancelled or closed run is one of DONE (c)'s five only when the hook pressed Cancel or closed
+    /// the window. The hook refuses without acting when the app shuts down before the trigger (a crash) and when the
+    /// trigger's deadline passes while the scan runs on; and a Cancel the scan finished before is not a cancelled run.
+    /// Each names the run and what the hook logged, and none reads PASS.
+    /// </summary>
+    [Fact]
+    public void CancelledOrClosedRunsCountOnlyWhenTheHookActed()
+    {
+        foreach ((string scenario, string line) in new[]
+        {
+            ("close-app-shut-down-before-trigger", "REASON UNDECIDED: closed run X4 never stopped the scan: the hook logged 'refused mode=close reason=the app shut down before the trigger' (exit 70)"),
+            ("cancel-trigger-deadline", "REASON UNDECIDED: cancelled run X2 never stopped the scan: the hook logged 'refused mode=stop reason=the trigger past=C:\\Users +1000 folders was not met within 3600 s' (exit 0)"),
+            ("cancel-not-cancelled", "REASON UNDECIDED: cancelled run X1's report says Completed, not Cancelled"),
+        })
+        {
+            string output = Judge(scenario);
+            Assert.Contains("OUTCOME UNDECIDED\n", output);
+            Assert.Contains(line, output);
+            Assert.DoesNotContain("VERDICT PASS", output);
+        }
+    }
+
+    /// <summary>
+    /// Review R3-2: an S or P arm the guard stopped is over T as a killed ScanArm leaves it, with no summary (it prints
+    /// one only after its loop), not UNDECIDED for a missing file count. The probe stopped while the plain open is
+    /// within T is B; with the plain open stopped too, or the plain open stopped and the probe only over T, it is C.
+    /// </summary>
+    [Fact]
+    public void AGuardStoppedProbeOrPlainOpenWithNoSummaryIsOverT()
+    {
+        foreach ((string scenario, string outcome, string line) in new[]
+        {
+            ("probe-guard-stop", "B", "REASON B: the app's per-file probe (stopped by the guard: available 4000 MB, pool 9.1 GB) projects over T where a plain open does not"),
+            ("probe-and-plain-guard-stop", "C", "REASON C: the plain open was stopped by the guard (available 4000 MB, pool 9.1 GB) and the probe was too"),
+            ("probe-over-plain-guard-stop", "C", "REASON C: the plain open was stopped by the guard (available 4000 MB, pool 9.1 GB) and the probe projects over T"),
+        })
+        {
+            string output = Judge(scenario);
+            Assert.Contains($"OUTCOME {outcome}\n", output);
+            Assert.Contains(line, output);
+            Assert.DoesNotContain("file count is missing", output);
+        }
     }
 
     /// <summary>
@@ -301,16 +375,20 @@ public class PoolWatchReportTests
             Mark("R0");
             if (!Settle(scenario))
                 return; // -Protocol stops when the boot has not settled within the cap (review R2-N1)
-            Idle("I0", burstAt: scenario == "idle-burst" ? 7 : -1);
+            Idle("I0", burstAt: scenario == "idle-burst" ? 7 : -1, perGap: scenario == "settle-gate-on-10-mib-gaps" ? 2 * MiB : 0);
 
             bool listingOver = scenario.StartsWith("listing-over", StringComparison.Ordinal) || scenario == "boot-settles-then-listing-reclaimed";
             long listingPool = listingOver ? 500 * MiB : 2 * MiB;
             Arm("L", "listing", summary: new() { ["listed"] = 1_000_000L }, pagedRise: listingPool,
                 wcscRise: scenario == "wcsc-during-listing" ? 400 : 0);
-            Arm("S", "probe", summary: new() { ["opened"] = 50_000L, ["failed"] = 0L },
-                pagedRise: scenario == "probe-over-plain-within" ? 40 * MiB : 1 * MiB,
-                guardStop: scenario == "probe-guard-stop" ? guard : null);
-            Arm("P", "plain", summary: new() { ["opened"] = 50_000L, ["failed"] = 0L }, pagedRise: 1 * MiB);
+            // A ScanArm the guard killed printed no summary and exited -1 (review R3-2).
+            bool sStopped = scenario is "probe-guard-stop" or "probe-and-plain-guard-stop";
+            bool pStopped = scenario is "probe-and-plain-guard-stop" or "probe-over-plain-guard-stop";
+            Arm("S", "probe", summary: sStopped ? null : new() { ["opened"] = 50_000L, ["failed"] = 0L },
+                pagedRise: scenario is "probe-over-plain-within" or "probe-over-plain-guard-stop" ? 40 * MiB : 1 * MiB,
+                exitCode: sStopped ? -1 : 0, guardStop: sStopped ? guard : null);
+            Arm("P", "plain", summary: pStopped ? null : new() { ["opened"] = 50_000L, ["failed"] = 0L }, pagedRise: 1 * MiB,
+                exitCode: pStopped ? -1 : 0, guardStop: pStopped ? guard : null);
             if (scenario == "aborted-before-f1")
             {
                 // -Protocol's own stop after L and P (review N1): the abort mark, and nothing after it.
@@ -327,10 +405,25 @@ public class PoolWatchReportTests
                 }
                 for (int i = 1; i <= 5; i++)
                 {
+                    // What the hook logged (FsaWindowHook): it acted, or refused because the scan ended first, the app
+                    // shut down first, or the trigger's deadline passed (review R2-R3-3).
+                    string mode = i <= 3 ? "stop" : "close";
                     bool stopped = scenario == "cancel-guard-stop" && i == 1;
-                    Arm($"X{i}", i <= 3 ? "exe-cancel" : "exe-close", report: i <= 3 && !stopped ? Report() : null,
+                    bool ranFull = scenario == "cancel-ran-full" && i == 3;
+                    bool shutDown = scenario == "close-app-shut-down-before-trigger" && i == 4;
+                    bool deadline = scenario == "cancel-trigger-deadline" && i == 2;
+                    string log = ranFull ? $"refused mode={mode} reason=the scan ended before the trigger sized=200000; a full run"
+                        : shutDown ? $"refused mode={mode} reason=the app shut down before the trigger"
+                        : deadline ? $"refused mode={mode} reason=the trigger past=C:\\Users +1000 folders was not met within 3600 s"
+                        : stopped ? $"passed folders=12000 current=C:\\Windows ms=90000"
+                        : $"acted mode={mode} past=C:\\Users +1000 folders folders=41000 sized=- current=C:\\Windows\\WinSxS ms=120000";
+                    bool acted = log.StartsWith("acted ", StringComparison.Ordinal);
+                    Dictionary<string, object?>? report = i > 3 || stopped ? null
+                        : ranFull || deadline || (scenario == "cancel-not-cancelled" && i == 1) ? Report() : Report("Cancelled");
+                    Arm($"X{i}", i <= 3 ? "exe-cancel" : "exe-close", report: report,
                         pagedRise: scenario == "cancelled-run-over" && i == 2 ? 200 * MiB : 1 * MiB,
-                        ranFull: scenario == "cancel-ran-full" && i == 3, exitCode: stopped ? -1 : i <= 3 ? 0 : 70, guardStop: stopped ? guard : null);
+                        ranFull: ranFull, exitCode: stopped ? -1 : i <= 3 ? 0 : 70, guardStop: stopped ? guard : null,
+                        acted: acted, hookLog: [log]);
                 }
             }
 
@@ -351,40 +444,51 @@ public class PoolWatchReportTests
             Arm("C", "control", pagedRise: 0, wcscRise: controlRise, extra: new() { ["entries"] = entries });
         }
 
-        private static Dictionary<string, object?> Report() => new() { ["status"] = "Completed", ["skippedStores"] = 1, ["opensUnderExcludedStore"] = 0 };
+        private static Dictionary<string, object?> Report(string status = "Completed") => new() { ["status"] = status, ["skippedStores"] = 1, ["opensUnderExcludedStore"] = 0 };
 
         /// <summary>
-        /// Between R0 and I0, a mark a minute until two gaps in a row move each pool by under 16 MiB. A quiet boot settles
-        /// at once; one that grows 1 GiB does so over twelve gaps, then goes quiet; one that never settles reaches the
-        /// 30 min cap. False when it did not settle, where -Protocol stops.
+        /// Between R0 and I0, a mark a minute until two gaps in a row move each pool slower than about 1.9 MiB a minute
+        /// (review R3-1). A quiet boot settles at once; one that grows 1 GiB does so over twelve gaps, then goes quiet;
+        /// one that slows to 10 MiB gaps and then 1 MiB gaps settles on the 1 MiB ones; one that never settles reaches
+        /// the 30 min cap. The 10 MiB scenario is the log the 16 MiB gate wrote: it went on into I0 after two 10 MiB gaps.
+        /// False when it did not settle, where -Protocol stops.
         /// </summary>
         private bool Settle(string scenario)
         {
             if (scenario == "settle-marks-missing")
                 return true;
-            int growing = scenario switch { "boot-never-settled" => 30, _ when scenario.StartsWith("boot-settles", StringComparison.Ordinal) => 12, _ => 0 };
-            long step = scenario == "boot-never-settled" ? 40 * MiB : 85 * MiB;
-            int quiet = scenario == "boot-never-settled" ? 0 : 2;
-            Mark("settle/00");
-            for (int i = 1; i <= growing + quiet; i++)
+            (int Gaps, long Step)[] phases = scenario switch
             {
-                _t += 60;
-                if (i <= growing)
+                "boot-never-settled" => [(30, 40 * MiB)],
+                "settle-gate-on-10-mib-gaps" => [(12, 85 * MiB), (2, 10 * MiB)],
+                "boot-settles-slowly" => [(12, 85 * MiB), (6, 10 * MiB), (2, 1 * MiB)],
+                _ when scenario.StartsWith("boot-settles", StringComparison.Ordinal) => [(12, 85 * MiB), (2, 0)],
+                _ => [(2, 0)],
+            };
+            Mark("settle/00");
+            int n = 0;
+            foreach ((int gaps, long step) in phases)
+            {
+                for (int i = 0; i < gaps; i++)
                 {
+                    _t += 60;
                     _paged += step;
                     _nonpaged += step / 8;
+                    Mark($"settle/{++n:D2}");
                 }
-                Mark($"settle/{i:D2}");
             }
-            return quiet > 0;
+            return scenario != "boot-never-settled";
         }
 
-        private void Idle(string window, int burstAt)
+        private void Idle(string window, int burstAt, long perGap = 0)
         {
             for (int i = 0; i <= 20; i++)
             {
                 if (i > 0)
+                {
                     _t += 60;
+                    _paged += perGap;
+                }
                 if (i == burstAt)
                     _paged += 300 * MiB; // a burst: someone else's, in one gap, and it stays
                 Mark($"{window}/{i:D2}");
@@ -393,7 +497,7 @@ public class PoolWatchReportTests
 
         private void Arm(string name, string type, Dictionary<string, object>? summary = null, Dictionary<string, object?>? report = null,
             long pagedRise = 0, long wcscRise = 0, bool? ranFull = null, Dictionary<string, object>? extra = null, int exitCode = 0,
-            string? guardStop = null)
+            string? guardStop = null, bool? acted = null, string[]? hookLog = null)
         {
             Mark($"{name}/before");
             _t += 300;
@@ -406,7 +510,7 @@ public class PoolWatchReportTests
             var line = new Dictionary<string, object?>
             {
                 ["kind"] = "arm", ["arm"] = name, ["type"] = type, ["exitCode"] = exitCode, ["guardStop"] = guardStop, ["summary"] = summary,
-                ["report"] = report, ["ranFull"] = ranFull,
+                ["report"] = report, ["ranFull"] = ranFull, ["acted"] = acted, ["hookLog"] = hookLog,
             };
             foreach (var pair in extra ?? [])
                 line[pair.Key] = pair.Value;
