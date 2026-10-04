@@ -90,20 +90,35 @@ public class ContainerLayerStoreTests
         Assert.DoesNotContain(Scans.ByPath(result.Store).Keys, path => UnderStore(path, tree));
     }
 
-    /// <summary>The store as a row directly under the root (a scan of its parent, ...\Containers): a row of its own state.</summary>
+    /// <summary>
+    /// C-015: the root is the store's parent (...\Containers, as the bug test scans on this PC). The walk pushes Layers
+    /// like any folder and only the pop-time check stops it: the store is an entry and a row of its own state, never
+    /// opened or listed, the one SkippedStores entry, not in Unreadable, and the backstop refused nothing.
+    /// </summary>
     [Fact]
     public void TheStoreAsATopLevelRowIsNotScannedNeitherDoneNorUnreadable()
     {
         using TempTree tree = PlantedTree();
+        var progress = new ScanProgress();
+        var listed = new List<string>();
 
-        ScanResult result = Scans.Run(tree.PathOf(@"x\Containers"), Planted(tree));
+        ScanResult result = Scanner.Scan(tree.PathOf(@"x\Containers"), progress, CancellationToken.None,
+            Planted(tree, _ => listed.Add(progress.CurrentFolder!)));
 
         Assert.Equal(ScanStatus.Completed, result.Status);
         TopLevelRow layers = result.TopLevel!.Rows.Single(r => r.Name == "Layers");
         Assert.Equal(TopLevelState.NotScanned, layers.State);
         Assert.Equal(0, layers.Bytes);
         Assert.Equal(TopLevelState.Done, result.TopLevel.Rows.Single(r => r.Name == "ContainerStorages").State);
-        Assert.Single(result.SkippedStores);
+        int store = Scans.Find(result, tree.PathOf(Store));
+        Assert.Equal(store, Assert.Single(result.SkippedStores).Entry);
+        Assert.True((result.Store.Flags(store) & EntryFlags.NotScanned) != 0);
+        Assert.True((result.Store.Flags(store) & EntryFlags.Unreadable) == 0);
+        Assert.Equal(0, result.Store.ChildCount(store));
+        Assert.Empty(result.Unreadable);
+        Assert.Equal(0, result.OpensUnderExcludedStore);
+        Assert.DoesNotContain(listed, path => UnderStore(path, tree) || path == tree.PathOf(Store));
+        Assert.Contains(tree.PathOf(@"x\Containers\ContainerStorages"), listed);
         Assert.Equal(10, result.Totals.Bytes);
     }
 

@@ -581,8 +581,9 @@ function Get-Verdict($marks, $arms) {
     $c = Net 'C'; $cArm = $armBy['C']
     $result.arms['C'] = $c
     if ($null -eq $c.wcsc -or $null -eq $cArm -or $null -eq $cArm.entries) { $why.Add('UNDECIDED: the closing control has no WCsc reading or no entry count'); return (Done 'UNDECIDED' $null) }
+    if ($null -eq $c.handles120089) { $why.Add('UNDECIDED: the closing control has no 0x120089 handle reading (the class 64 handle query failed)'); return (Done 'UNDECIDED' $null) }
     $armable = $c.wcsc -ge $Tolerance.ControlArmable * [long]$cArm.entries -and $c.wcsc -gt 0 `
-        -and ($null -eq $c.handles120089 -or [Math]::Abs($c.handles120089 - $c.wcsc) -le [Math]::Max(5, 0.5 * $c.wcsc))
+        -and [Math]::Abs($c.handles120089 - $c.wcsc) -le [Math]::Max(5, 0.5 * $c.wcsc)
     if (-not $armable) { $why.Add("VOID: the closing control leaked $($c.wcsc) WCsc (0x120089 handles $($c.handles120089)) over $($cArm.entries) entries: the layer was not armable, so 0 WC* in the arms says nothing"); return (Done 'VOID' $null) }
 
     # Every fixed arm: pool against T, and wcifs against the idle envelope (reviews N1, N2, X5).
@@ -596,8 +597,9 @@ function Get-Verdict($marks, $arms) {
         if ($a -and $a.report -and [long]$a.report.opensUnderExcludedStore -ne 0) { $unattributed += "$name opened $($a.report.opensUnderExcludedStore) folders under the store" }
         if ($a -and $a.type -like 'exe-*' -and -not $a.ranFull -and $a.report -and [long]$a.report.skippedStores -lt 1 -and $a.type -eq 'exe-full') { $unattributed += "$name's report has no skipped store entry" }
         if ($null -eq $n.wcsc) { $why.Add("UNDECIDED: arm $name has no WCsc reading"); return (Done 'UNDECIDED' $null) }
+        if ($null -eq $n.handles120089) { $why.Add("UNDECIDED: arm $name has no 0x120089 handle reading (the class 64 handle query failed)"); return (Done 'UNDECIDED' $null) }
         if ($n.wcsc -gt $n.wcAllowed) { $unattributed += "$name WCsc +$($n.wcsc) over the idle envelope $([Math]::Round($n.wcAllowed, 1))" }
-        if ($null -ne $n.handles120089 -and $n.handles120089 -gt [Math]::Max($n.wcsc, 0) + $n.handleAllowed + 48) { $unattributed += "$name 0x120089 handles +$($n.handles120089) over its WCsc rise" }
+        if ($n.handles120089 -gt [Math]::Max($n.wcsc, 0) + $n.handleAllowed + 48) { $unattributed += "$name 0x120089 handles +$($n.handles120089) over its WCsc rise" }
     }
     $L = $result.arms['L']
     if ($null -eq $L) { $why.Add('UNDECIDED: arm L has no net reading'); return (Done 'UNDECIDED' $null) }
@@ -662,6 +664,22 @@ function Get-Verdict($marks, $arms) {
     Done 'A' 'PASS'
 }
 
+# Criterion 3's filter list, apart from the pool verdict above, which does not rest on it: the `fltmc filters` output a
+# person pasted (fltmc.txt beside the run or its prepare folder, or as an environment record carries it). Missing, it
+# reads UNDECIDED, never recorded (review m7).
+function Get-FiltersLine {
+    foreach ($f in (Join-Path $RunDir 'fltmc.txt'), (Join-Path $RunDir 'prepare\fltmc.txt')) {
+        if ((Test-Path -LiteralPath $f) -and @(Get-Content -LiteralPath $f | Where-Object { $_.Trim() }).Count) { return "FILTERS recorded: $f" }
+    }
+    foreach ($f in (Join-Path $RunDir 'environment.json'), (Join-Path $RunDir 'prepare\prepare.json')) {
+        if (-not (Test-Path -LiteralPath $f)) { continue }
+        $e = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json
+        if ($e.kind -eq 'prepare') { $e = $e.environment }
+        if ($e.fltmcFilters -is [array] -and @($e.fltmcFilters | Where-Object { "$_".Trim() }).Count) { return "FILTERS recorded: $f" }
+    }
+    'FILTERS UNDECIDED: no `fltmc filters` output was supplied (it needs an administrator), so criterion 3''s filter list is not recorded'
+}
+
 # ---- Modes ----
 
 $script:MarkEvery = $Tolerance.MarkEverySec
@@ -690,12 +708,14 @@ switch ($PSCmdlet.ParameterSetName) {
     }
     'Report' {
         $v = Get-Verdict (Read-Jsonl (Join-Path $RunDir 'marks.jsonl')) (Read-Jsonl (Join-Path $RunDir 'arms.jsonl'))
+        $filters = Get-FiltersLine
         "OUTCOME $($v.outcome)"
         "VERDICT $(if ($v.verdict) { $v.verdict } else { 'none' })"
         foreach ($r in $v.reasons) { "REASON $r" }
+        $filters
         if (-not $NoWrite) {
             $v | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $RunDir 'result.json') -Encoding UTF8
-            @("OUTCOME $($v.outcome)", "VERDICT $($v.verdict)") + @($v.reasons | ForEach-Object { "REASON $_" }) | Set-Content -LiteralPath (Join-Path $RunDir 'result.txt') -Encoding UTF8
+            @("OUTCOME $($v.outcome)", "VERDICT $($v.verdict)") + @($v.reasons | ForEach-Object { "REASON $_" }) + @($filters) | Set-Content -LiteralPath (Join-Path $RunDir 'result.txt') -Encoding UTF8
         }
     }
     'Prepare' {

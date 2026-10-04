@@ -95,7 +95,9 @@ WdFilter, bindflt, FileInfo, luafv and storqosflt running; minifilter instances 
 328010, CldFlt 180451, FileInfo 40500 (wcifs attaches at run time and lists none); antivirus Kaspersky (three entries),
 Windows Defender and McAfee; OneDrive running; HiberbootEnabled 1 (Fast Startup on); one layer, 1f35079a. `fltmc filters`
 needs an administrator and is not here: a person who chooses to runs it in an elevated window of their own and pastes it
-into `fltmc.txt` in the run folder, which `-Environment` appends.
+into `fltmc.txt` in the run folder, which `-Environment` appends. `-Report` prints a `FILTERS` line apart from the pool
+verdict: `recorded` when `fltmc.txt` (in the run folder or its `prepare` folder) or an environment record holds the
+paste, and `UNDECIDED` otherwise, never recorded.
 
 ## The tolerance row (written 5 Oct 2026, before any protocol run)
 
@@ -114,7 +116,7 @@ Otherwise, in this order (`PoolWatch.ps1 -Report`, pinned by `PoolWatchReportTes
 | Outcome | When | Records |
 |---------|------|---------|
 | VOID | R0 more than 30 min after the boot; I0 and I1 drift more than 3x apart; the closing control not armable; an arm's process did not exit | nothing; the run decides nothing |
-| UNDECIDED | a mark or a reading a criterion needs is missing or null; L over T with no pressure step, or with one that took nothing back (INEFFECTIVE) | nothing; never PASS |
+| UNDECIDED | a mark or a reading a criterion needs is missing or null (tags, or the class 64 0x120089 handle count of an arm or the closing control); L over T with no pressure step, or with one that took nothing back (INEFFECTIVE) | nothing; never PASS |
 | WCIFS-UNATTRIBUTED | an arm's WCsc or handle rise outside the idle envelope, or an exe run that opened under the store or (full run) did not record it | blocks A until a person looks |
 | C | L over T, and what L kept survives the pressure step; or the probe and a plain open both project over T, alike | DONE (c) OS-recorded only if Q-178's three conditions hold (Q-184), with the session-2 non-app walk (Q-185); otherwise FAIL |
 | A (reclaimed) | L over T before the pressure step, within it after: the retention was cache | continues to the remaining clauses |

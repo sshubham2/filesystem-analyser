@@ -943,22 +943,26 @@ rules:
     files: src/**/*.cs
     must_not_match:
     - (?i)containers(\\{1,2}|/{1,2}|"\s*,\s*")layers
+    - '(?m)(?i:["\\/]Layers(?=["\\/]))'
     because: 'A second hand-written check of the store path reproduces the no-go the spike measured:
       a rule that is not root-aware skipped 3 of 3 subfolders when the user picked a root inside
       the store. A copy that skips the \\?\ strip or the separator boundary either walks the
       live layer again, leaking wcifs pool until a restart, or excludes a sibling folder the
-      user wants counted.'
+      user wants counted. A store path built across calls (containers + @"\Layers\") is the same
+      copy, so any Layers path segment in a literal counts.'
     except_files:
     - src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs
   - name: the pool measurement never needs elevation
-    files: tests/window/PoolWatch*.ps1
+    files: tests/window/**
     must_not_match:
     - (?im)-Verb\s+['"]?RunAs\b
+    - (?im)\bVerb\s*=\s*"runas"
     - (?im)^\s*(&\s*)?(Start-Process\s+(-FilePath\s+)?)?['"]?(poolmon|wpr|xperf|fltmc)(\.exe)?['"]?(\s|$)
     because: The protocol runs once per fresh boot, and first touch of the layer is single-use.
       An elevation prompt, or a tool that fails unelevated, spoils a boot the person had to
-      restart for. The project decided on unelevated SystemPoolTagInformation marks, with fltmc
-      output supplied separately by the person.
+      restart for. That holds for every script and rig the protocol starts from tests/window,
+      not only PoolWatch.ps1. The project decided on unelevated SystemPoolTagInformation marks,
+      with fltmc output supplied separately by the person.
 
   # settled by SL-095
   - name: the container layer store path is composed in one place
