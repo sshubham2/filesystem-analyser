@@ -19,6 +19,7 @@
 #   PoolWatch.ps1 -Protocol -Session 2 [-RunDir <dir>]    a second Restart, only if arm L was over T: the non-app walk of C:
 #                                                         (Q-178 condition 2, Q-185)
 #   PoolWatch.ps1 -Report [-RunDir <dir>] [-NoWrite]      judges the run against the tolerance row: OUTCOME and VERDICT lines
+#   PoolWatch.ps1 -NoLinkCheck                            the check -Prepare makes of the no-link walker, on its own
 #   PoolWatch.ps1 -Protocol -Smoke -Root <dir>            the protocol's machinery on a small folder, seconds instead of
 #                                                         minutes, no boot-age check: proves the rig, measures nothing
 #
@@ -45,6 +46,7 @@ param(
     [Parameter(ParameterSetName = 'Protocol')] [Parameter(ParameterSetName = 'Prepare')] [string] $Root,
     [Parameter(ParameterSetName = 'Report', Mandatory = $true)] [switch] $Report,
     [Parameter(ParameterSetName = 'Report')] [switch] $NoWrite,
+    [Parameter(ParameterSetName = 'NoLinkCheck', Mandatory = $true)] [switch] $NoLinkCheck,
     [Parameter(ParameterSetName = 'PressureChild', Mandatory = $true)] [switch] $PressureChild,
     [Parameter(ParameterSetName = 'PressureChild')] [long] $FloorMB = 4608,
     [Parameter(ParameterSetName = 'PressureChild')] [int] $HoldSec = 60,
@@ -76,6 +78,8 @@ $Tolerance = @{
     GuardPoolBytes   = 4GB      # ... or Paged + Nonpaged rise this far above R0
     PressureFloorMB  = 4608     # the pressure step commits memory down to this, above the guard (review X2)
     MarkEverySec     = 60
+    SettleStepBytes  = 16MB     # between R0 and I0, the boot has settled when two gaps in a row each move both pools less (spike 3's V2)
+    SettleCapSec     = 1800     # ... and the protocol stops if it has not within 30 min of R0 (review R2-N1)
 }
 $WatchedTags = @('WCsc', 'WCfc', 'WCri', 'WCfn', 'WCse', 'WCss', 'WCce', 'WCrb', 'WCro', 'FMwi', 'FMfc', 'FMfn', 'File', 'NtfF', 'Ntff', 'NtFC', 'Toke', 'SeAt')
 $LeakTags = @('WCsc', 'WCfc', 'WCri', 'FMwi')
@@ -84,7 +88,7 @@ $CacheTags = @('FMfn', 'File', 'NtfF')
 # ---- Reading the machine ----
 
 # -Report and -Attribute read files only, so they compile nothing (Windows PowerShell's Add-Type needs a writable %TEMP%).
-if ($PSCmdlet.ParameterSetName -notin 'Report', 'Attribute' -and -not ('PoolWatchNative' -as [type])) {
+if ($PSCmdlet.ParameterSetName -notin 'Report', 'Attribute', 'NoLinkCheck' -and -not ('PoolWatchNative' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -337,8 +341,28 @@ function Get-EnvironmentRecord {
         hiberbootEnabled  = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -ErrorAction SilentlyContinue).HiberbootEnabled
         cmService         = if ($cm) { [ordered]@{ state = $cm.State; processId = $cm.ProcessId; startUtc = $cmStart } } else { $null }
         layerIds          = $layers
-        fltmcFilters      = if (Test-Path $fltmc) { @(Get-Content -LiteralPath $fltmc) } else { 'not supplied: needs an administrator; paste `fltmc filters` into fltmc.txt' }
+        fltmcFilters      = Read-FltmcPaste $fltmc
     }
+}
+
+# A pasted `fltmc filters` counts only when it is the filter list: fltmc's header line, and no refusal. Unelevated, fltmc
+# prints 'Filter listing failed with error: 0x80070005' and 'Access is denied.', which is no list (review R2-N3).
+function Test-FltmcList($lines) {
+    $lines = @($lines | ForEach-Object { "$_" } | Where-Object { $_.Trim() })
+    $header = @($lines | Where-Object { $_ -match '^\s*Filter Name\s+Num Instances' }).Count -gt 0
+    $refused = @($lines | Where-Object { $_ -match '0x8007|Access is denied|failed' }).Count -gt 0
+    [pscustomobject]@{ isList = $header -and -not $refused; first = $(if ($lines.Count) { $lines[0].Trim() } else { '' }) }
+}
+
+# The paste as the environment record keeps it: its lines when it is the filter list, otherwise what it is instead.
+function Read-FltmcPaste([string] $file) {
+    $none = 'not supplied: needs an administrator; paste `fltmc filters` into fltmc.txt'
+    if (-not (Test-Path -LiteralPath $file)) { return $none }
+    $lines = @(Get-Content -LiteralPath $file)
+    $t = Test-FltmcList $lines
+    if ($t.isList) { return , $lines }
+    if (-not $t.first) { return $none }
+    "not a filter list: $($t.first)"
 }
 
 # Who owns a tag: Microsoft's pooltag.txt when given (it names ntoskrnl's own tags, File and Toke among them), else the
@@ -439,6 +463,19 @@ function Invoke-ExeArm([string] $name, [string] $kind, [string] $exe, [string] $
     $line
 }
 
+# Between R0 and I0: a mark every minute until the boot has settled (Test-Settled), so that I0's drift is idle and not
+# the boot's own growth, which spike 3 measured at about 1 GiB here (review R2-N1). True when it settled within the cap.
+function Wait-Settle {
+    $every = [Math]::Max(1, $script:MarkEvery)
+    $settle = @(Write-Mark 'settle/00')
+    for ($i = 1; $i * $every -le $script:SettleCap; $i++) {
+        Start-Sleep -Seconds $every
+        $settle += Write-Mark ('settle/{0:D2}' -f $i)
+        if (Test-Settled $settle) { return $true }
+    }
+    $false
+}
+
 function Wait-Idle([string] $name, [int] $seconds) {
     $marks = [Math]::Max(1, [int]($seconds / [Math]::Max(1, $script:MarkEvery)))
     $null = Write-Mark "$name/00"
@@ -459,10 +496,60 @@ function Invoke-Pressure([string] $name) {
     $line
 }
 
-# A non-app walk that never follows a directory link: robocopy's list-only mode with /XJ, per root (review X3).
-function Invoke-NoLinkWalk([string[]] $roots, [string] $log) {
+# A non-app walk that never follows a directory link: robocopy's list-only mode with /XJ, per root (review X3). One set
+# of flags for every such walk, the session-2 walk of C: included, and for -Prepare's check of them (review R2-N2).
+$NoLinkFlags = @('/L', '/E', '/XJ', '/R:0', '/W:0', '/NP', '/BYTES', '/NJH')
+function Invoke-NoLinkWalk([string[]] $roots, [string] $log, [string[]] $extra = @('/NFL', '/NDL')) {
     $empty = Join-Path $RunDir 'robocopy-target-never-created'
-    foreach ($r in $roots) { & robocopy.exe $r $empty /L /E /XJ /R:0 /W:0 /NP /BYTES /NFL /NDL /NJH /LOG+:$log | Out-Null }
+    foreach ($r in $roots) { & robocopy.exe $r $empty @NoLinkFlags @extra /LOG+:$log | Out-Null }
+}
+
+# The check -Prepare makes of that walker, built so that it can fail (review R2-N2). Three walks, all through
+# Invoke-NoLinkWalk's flags: (1) a planted tree whose 'All Users' is a junction, and 'Linked' a directory symlink where
+# Windows lets this user make one (C:\Users\All Users is one), to a folder outside it: the walk must count none of that
+# folder's bytes, nor list its Microsoft folder at three levels; (2) the same listing without /XJ, which must see through
+# the junction, or the check could not have seen a link followed; (3) the walker at three levels over the real C:\Users
+# with every child but All Users left out (/XD), so that no one's own folders are listed. 'skips' is all three.
+function Test-NoLinkWalker {
+    $dir = Join-Path $Artifacts ('nolink-check-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    $root = Join-Path $dir 'root'; $target = Join-Path $dir 'target'
+    New-Item -ItemType Directory -Force -Path (Join-Path $target 'Microsoft\deep'), $root | Out-Null
+    [IO.File]::WriteAllBytes((Join-Path $target 'Microsoft\deep\x.bin'), (New-Object byte[] 1000))
+    [IO.File]::WriteAllBytes((Join-Path $root 'a.bin'), (New-Object byte[] 10))
+    $links = @(Join-Path $root 'All Users')
+    New-Item -ItemType Junction -Path $links[0] -Target $target | Out-Null
+    $symlinkMade = $false
+    try { New-Item -ItemType SymbolicLink -Path (Join-Path $root 'Linked') -Target $target -ErrorAction Stop | Out-Null; $links += Join-Path $root 'Linked'; $symlinkMade = $true } catch { }
+    try {
+        $seen = { param($log, $name) [bool](Select-String -LiteralPath $log -SimpleMatch -Pattern "$name\Microsoft" -Quiet) }
+        $quiet = Join-Path $dir 'walk.log'; $listed = Join-Path $dir 'walk-dirs.log'; $followed = Join-Path $dir 'followed.log'
+        Invoke-NoLinkWalk @($root) $quiet
+        Invoke-NoLinkWalk @($root) $listed @('/NFL', '/LEV:3')
+        $noXj = @($NoLinkFlags | Where-Object { $_ -ne '/XJ' })
+        & robocopy.exe $root (Join-Path $dir 'never') @noXj /NFL /LEV:3 /LOG:$followed | Out-Null
+        $bytes = Read-RobocopyBytes $quiet
+        $usersSkipped = $null
+        $users = Split-Path -Parent $env:PUBLIC
+        if ($users -and (Test-Path -LiteralPath (Join-Path $users 'All Users'))) {
+            $others = @(Get-ChildItem -LiteralPath $users -Directory -Force | Where-Object { $_.Name -ne 'All Users' } | ForEach-Object FullName)
+            $log = Join-Path $dir 'users.log'
+            Invoke-NoLinkWalk @($users) $log (@('/NFL', '/LEV:3') + @(if ($others.Count) { @('/XD') + $others }))
+            $usersSkipped = -not (& $seen $log 'All Users')
+        }
+        $check = [ordered]@{
+            plantedBytes              = $bytes
+            plantedLinksSkipped       = $bytes -eq 10 -and -not (& $seen $listed 'All Users') -and -not (& $seen $listed 'Linked')
+            plantedSymlinkMade        = $symlinkMade
+            detectorSeesAFollowedLink = & $seen $followed 'All Users'
+            usersAllUsersSkipped      = $usersSkipped
+        }
+        $check['skips'] = [bool]($check.plantedLinksSkipped -and $check.detectorSeesAFollowedLink -and $usersSkipped -ne $false)
+        $check
+    }
+    finally {
+        foreach ($l in $links) { if (Test-Path -LiteralPath $l) { [IO.Directory]::Delete($l) } } # the links, never what they point at
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # Robocopy's own byte total from a /L /BYTES log, the store's upper bound (review Y4).
@@ -500,6 +587,20 @@ function Drift([double[]] $rates) {
     ($kept | Measure-Object -Average).Average
 }
 
+# The boot has settled when the last two gaps of the settle marks each moved both pools by less than SettleStepBytes
+# (spike 3's V2 rule). -Protocol waits on it before I0; -Report checks it again from the marks (review R2-N1).
+function Test-Settled($settleMarks) {
+    $s = @($settleMarks | Sort-Object { Utc $_ })
+    if ($s.Count -lt 3) { return $false }
+    foreach ($i in ($s.Count - 2), ($s.Count - 1)) {
+        foreach ($pool in 'pagedBytes', 'nonpagedBytes') {
+            if ($null -eq $s[$i].$pool -or $null -eq $s[$i - 1].$pool) { return $false }
+            if ([Math]::Abs([long]$s[$i].$pool - [long]$s[$i - 1].$pool) -ge $Tolerance.SettleStepBytes) { return $false }
+        }
+    }
+    $true
+}
+
 # The WCsc rise of each named arm, before to settled, against the envelope of I0's idle gaps: the reason the first arm
 # over it is, or null. -Protocol asks it after L and P, before any exe run (review N1).
 function Test-ArmWcifs([string[]] $names) {
@@ -528,11 +629,20 @@ function Get-Verdict($marks, $arms) {
     # -Protocol stopped before F1 because wcifs moved during L or P beyond the idle envelope (review N1): a person decides.
     if ($byLabel.ContainsKey('abort')) { $why.Add("WCIFS-UNATTRIBUTED: the protocol stopped before F1: $($byLabel['abort'].reason)"); return (Done 'WCIFS-UNATTRIBUTED' $null) }
 
-    foreach ($need in 'R0', 'I0/00', 'I1/00', 'L/before', 'L/settled', 'C/before', 'C/settled') {
-        if (-not $byLabel.ContainsKey($need)) { $why.Add("UNDECIDED: mark $need is missing"); return (Done 'UNDECIDED' $null) }
-    }
+    if (-not $byLabel.ContainsKey('R0')) { $why.Add('UNDECIDED: mark R0 is missing'); return (Done 'UNDECIDED' $null) }
     $R0 = $byLabel['R0']
     if ($null -eq $R0.uptimeSec -or $R0.uptimeSec -gt $Tolerance.BootAgeMaxSec) { $why.Add("VOID: the boot was $($R0.uptimeSec) s old at R0, over $($Tolerance.BootAgeMaxSec) s"); return (Done 'VOID' $null) }
+    # I0 begins only once the boot has settled (review R2-N1): otherwise its drift is the boot's own growth.
+    $settle = @($marks | Where-Object { $_.label -like 'settle/*' })
+    if ($settle.Count -eq 0) { $why.Add('UNDECIDED: there are no settle marks between R0 and I0'); return (Done 'UNDECIDED' $null) }
+    if (-not (Test-Settled $settle)) {
+        $s = @($settle | Sort-Object { Utc $_ })
+        $why.Add(('VOID: the boot had not settled before I0: {0} settle marks, the last gap moved paged {1:N1} MiB and nonpaged {2:N1} MiB, against {3} MiB (spike 3''s V2)' -f $s.Count, $(if ($s.Count -ge 2) { ([long]$s[-1].pagedBytes - [long]$s[-2].pagedBytes) / 1MB } else { 0 }), $(if ($s.Count -ge 2) { ([long]$s[-1].nonpagedBytes - [long]$s[-2].nonpagedBytes) / 1MB } else { 0 }), ($Tolerance.SettleStepBytes / 1MB)))
+        return (Done 'VOID' $null)
+    }
+    foreach ($need in 'I0/00', 'I1/00', 'L/before', 'L/settled', 'C/before', 'C/settled') {
+        if (-not $byLabel.ContainsKey($need)) { $why.Add("UNDECIDED: mark $need is missing"); return (Done 'UNDECIDED' $null) }
+    }
     foreach ($a in $arms) {
         if ($a.type -ne 'pressure' -and $null -eq $a.exitCode -and -not $a.guardStop) { $why.Add("VOID: arm $($a.arm)'s process did not exit"); return (Done 'VOID' $null) }
     }
@@ -576,6 +686,9 @@ function Get-Verdict($marks, $arms) {
         }
     }
     function Over($net) { $net.pagedBytes -gt $T['pagedBytes'] -or $net.nonpagedBytes -gt $T['nonpagedBytes'] }
+    # An arm the guard stopped counts as over T, whatever its marks say (the PoolWatch contract), not only L.
+    function OverArm([string] $name) { [bool]($armBy[$name] -and $armBy[$name].guardStop) -or (Over $result.arms[$name]) }
+    function ArmName($a) { if ($a.guardStop) { "$($a.arm) (stopped by the guard: $($a.guardStop))" } else { $a.arm } }
 
     # The closing control: was the layer still armable on this boot (spike 85's VOID; review Y3)?
     $c = Net 'C'; $cArm = $armBy['C']
@@ -585,6 +698,26 @@ function Get-Verdict($marks, $arms) {
     $armable = $c.wcsc -ge $Tolerance.ControlArmable * [long]$cArm.entries -and $c.wcsc -gt 0 `
         -and [Math]::Abs($c.handles120089 - $c.wcsc) -le [Math]::Max(5, 0.5 * $c.wcsc)
     if (-not $armable) { $why.Add("VOID: the closing control leaked $($c.wcsc) WCsc (0x120089 handles $($c.handles120089)) over $($cArm.entries) entries: the layer was not armable, so 0 WC* in the arms says nothing"); return (Done 'VOID' $null) }
+
+    # The ten exe runs DONE (c) is judged on, all there and each one a run (code review M1): five full and five cancelled
+    # or closed, each with its before and settled marks. One the guard stopped counts as over T below; any other full run
+    # that did not end with exit 0 and a Completed report, or a cancelled run that wrote no report, decides nothing. A
+    # cancelled or closed run whose trigger never fired ran to the end, and is not one of the five (FsaWindowHook contract).
+    $fullArms = @($arms | Where-Object { $_.type -eq 'exe-full' })
+    $stopArms = @($arms | Where-Object { $_.type -eq 'exe-cancel' -or $_.type -eq 'exe-close' })
+    if ($fullArms.Count -ne 5 -or $stopArms.Count -ne 5) { $why.Add("UNDECIDED: the protocol's ten exe runs are not all there: $($fullArms.Count) full of 5, $($stopArms.Count) cancelled or closed of 5"); return (Done 'UNDECIDED' $null) }
+    foreach ($a in @($fullArms) + @($stopArms)) {
+        foreach ($need in "$($a.arm)/before", "$($a.arm)/settled") {
+            if (-not $byLabel.ContainsKey($need)) { $why.Add("UNDECIDED: mark $need is missing"); return (Done 'UNDECIDED' $null) }
+        }
+        if ($a.guardStop) { continue }
+        if ($a.type -eq 'exe-full' -and ($a.exitCode -ne 0 -or $null -eq $a.report -or $a.report.status -ne 'Completed')) {
+            $why.Add("UNDECIDED: full run $($a.arm) did not complete: exit $($a.exitCode), $(if ($null -eq $a.report) { 'no report' } else { "report status $($a.report.status)" })"); return (Done 'UNDECIDED' $null)
+        }
+        if ($a.type -eq 'exe-cancel' -and $null -eq $a.report) { $why.Add("UNDECIDED: cancelled run $($a.arm) wrote no report (exit $($a.exitCode)), so what it opened under the store is unread"); return (Done 'UNDECIDED' $null) }
+    }
+    $ranOn = @($stopArms | Where-Object { $_.ranFull } | ForEach-Object { $_.arm })
+    if ($ranOn.Count) { $why.Add("UNDECIDED: only $(5 - $ranOn.Count) of the 5 cancelled or closed runs stopped before the end; $($ranOn -join ', ') ran to the end because the hook's trigger never fired"); return (Done 'UNDECIDED' $null) }
 
     # Every fixed arm: pool against T, and wcifs against the idle envelope (reviews N1, N2, X5).
     $unattributed = @()
@@ -610,14 +743,14 @@ function Get-Verdict($marks, $arms) {
     if ($prNet) {
         $fell = @($CacheTags | Where-Object { $x = Live $byLabel['PR/before'] $_; $y = Live $byLabel['PR/after'] $_; $null -ne $x -and $null -ne $y -and $y -lt 0.99 * $x })
         $effective = $fell.Count -gt 0
-        $post = Net 'post-pressure' 'R0' 'PR/after'
+        $post = Net 'post-pressure' 'L/before' 'PR/after' # from the pre-scan baseline; R0 is before the boot's settle
         $result.arms['PR'] = [ordered]@{ effective = $effective; fell = $fell; minAvailableMB = $pr.summary.minAvailableMB; lowMemorySeen = $pr.summary.lowMemorySeen }
         $result.arms['post-pressure'] = $post
     }
 
     $listed = $null; if ($armBy['L'] -and $armBy['L'].summary) { $listed = [long]$armBy['L'].summary.listed }
     $reclaimed = $false
-    $lOver = ($armBy['L'] -and $armBy['L'].guardStop) -or (Over $L)
+    $lOver = OverArm 'L'
     if ($lOver) {
         if ($null -eq $effective) { $why.Add('UNDECIDED: L is over T and there is no pressure step to tell cache from leak'); return (Done 'UNDECIDED' $null) }
         if (-not $effective) { $why.Add('UNDECIDED: L is over T and the pressure step was INEFFECTIVE: no watched tag fell, so cache and leak cannot be told apart'); return (Done 'UNDECIDED' $null) }
@@ -637,9 +770,9 @@ function Get-Verdict($marks, $arms) {
         $n['projectedPaged'] = [long]($baseP + $n.perFilePaged * $listed); $n['projectedNonpaged'] = [long]($baseN + $n.perFileNonpaged * $listed)
     }
     $S = $result.arms['S']; $P = $result.arms['P']
-    $sOver = $S.projectedPaged -gt $T['pagedBytes'] -or $S.projectedNonpaged -gt $T['nonpagedBytes']
-    $pOver = $P.projectedPaged -gt $T['pagedBytes'] -or $P.projectedNonpaged -gt $T['nonpagedBytes']
-    if ($sOver -and -not $pOver) { $why.Add('B: the app''s per-file probe projects over T where a plain open does not'); return (Done 'B' 'FAIL') }
+    $sOver = [bool]$armBy['S'].guardStop -or $S.projectedPaged -gt $T['pagedBytes'] -or $S.projectedNonpaged -gt $T['nonpagedBytes']
+    $pOver = [bool]$armBy['P'].guardStop -or $P.projectedPaged -gt $T['pagedBytes'] -or $P.projectedNonpaged -gt $T['nonpagedBytes']
+    if ($sOver -and -not $pOver) { $why.Add("B: the app's per-file probe$(if ($armBy['S'].guardStop) { " (stopped by the guard: $($armBy['S'].guardStop))" }) projects over T where a plain open does not"); return (Done 'B' 'FAIL') }
     if ($sOver -and $pOver) {
         $excess = [Math]::Max($S.projectedPaged - $P.projectedPaged, $S.projectedNonpaged - $P.projectedNonpaged)
         $noise = 2 * [Math]::Max([Math]::Abs($drift['pagedBytes']), [Math]::Abs($drift['nonpagedBytes'])) * $Tolerance.WindowSec
@@ -650,8 +783,8 @@ function Get-Verdict($marks, $arms) {
     # The ten exe runs, one by one and together (the reporter's "scan after scan").
     $full = @($arms | Where-Object { $_.type -eq 'exe-full' -or ($_.type -like 'exe-c*' -and $_.ranFull) })
     $cancelled = @($arms | Where-Object { $_.type -like 'exe-c*' -and -not $_.ranFull })
-    $fullOver = @($full | Where-Object { Over $result.arms[$_.arm] } | ForEach-Object { $_.arm })
-    $cancelOver = @($cancelled | Where-Object { Over $result.arms[$_.arm] } | ForEach-Object { $_.arm })
+    $fullOver = @($full | Where-Object { OverArm $_.arm } | ForEach-Object { ArmName $_ })
+    $cancelOver = @($cancelled | Where-Object { OverArm $_.arm } | ForEach-Object { ArmName $_ })
     $exe = @($arms | Where-Object { $_.type -like 'exe-*' })
     if ($exe.Count) {
         $cumulative = Net 'exe' "$($exe[0].arm)/before" "$($exe[-1].arm)/settled"
@@ -665,18 +798,25 @@ function Get-Verdict($marks, $arms) {
 }
 
 # Criterion 3's filter list, apart from the pool verdict above, which does not rest on it: the `fltmc filters` output a
-# person pasted (fltmc.txt beside the run or its prepare folder, or as an environment record carries it). Missing, it
-# reads UNDECIDED, never recorded (review m7).
+# person pasted (fltmc.txt beside the run or its prepare folder, or as an environment record carries it). Missing, or a
+# paste that is not the list (an unelevated refusal), it reads UNDECIDED, never recorded (reviews m7, R2-N3).
 function Get-FiltersLine {
+    $notAList = $null
     foreach ($f in (Join-Path $RunDir 'fltmc.txt'), (Join-Path $RunDir 'prepare\fltmc.txt')) {
-        if ((Test-Path -LiteralPath $f) -and @(Get-Content -LiteralPath $f | Where-Object { $_.Trim() }).Count) { return "FILTERS recorded: $f" }
+        if (-not (Test-Path -LiteralPath $f)) { continue }
+        $t = Test-FltmcList (Get-Content -LiteralPath $f)
+        if ($t.isList) { return "FILTERS recorded: $f" }
+        if ($t.first -and -not $notAList) { $notAList = $t.first }
     }
     foreach ($f in (Join-Path $RunDir 'environment.json'), (Join-Path $RunDir 'prepare\prepare.json')) {
         if (-not (Test-Path -LiteralPath $f)) { continue }
         $e = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json
         if ($e.kind -eq 'prepare') { $e = $e.environment }
-        if ($e.fltmcFilters -is [array] -and @($e.fltmcFilters | Where-Object { "$_".Trim() }).Count) { return "FILTERS recorded: $f" }
+        $t = Test-FltmcList @($e.fltmcFilters)
+        if ($t.isList) { return "FILTERS recorded: $f" }
+        if ($t.first -and $t.first -notlike 'not supplied*' -and -not $notAList) { $notAList = $t.first -replace '^not a filter list:\s*', '' }
     }
+    if ($notAList) { return "FILTERS UNDECIDED: fltmc.txt holds no filter list ($notAList)" }
     'FILTERS UNDECIDED: no `fltmc filters` output was supplied (it needs an administrator), so criterion 3''s filter list is not recorded'
 }
 
@@ -686,6 +826,7 @@ $script:MarkEvery = $Tolerance.MarkEverySec
 $script:Settle = $Tolerance.SettleSec
 $script:PressureFloor = $Tolerance.PressureFloorMB
 $script:PressureHold = 60
+$script:SettleCap = $Tolerance.SettleCapSec
 $script:R0 = $null
 
 switch ($PSCmdlet.ParameterSetName) {
@@ -701,6 +842,9 @@ switch ($PSCmdlet.ParameterSetName) {
     'Attribute' {
         # Under -File a list arrives as one string, "WCsc,FMfn": split it here.
         foreach ($t in @($Tags | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) { '{0}  {1}' -f $t, (Get-TagOwner $t $PoolTagTxt) }
+    }
+    'NoLinkCheck' {
+        Test-NoLinkWalker | ConvertTo-Json -Compress
     }
     'PressureChild' {
         $r = [PoolWatchNative]::Pressure($FloorMB, $HoldSec)
@@ -768,6 +912,12 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($dead.Count) { Write-Warning "-Prepare: $($dead.Count) trigger check(s) did not act; the runs that use them would count as full runs, not cancelled ones. See triggerChecks in prepare.json before restarting." }
 
         $prepared = [ordered]@{ kind = 'prepare'; utc = (Get-Date).ToUniversalTime().ToString('o'); environment = $envRecord; triggerChecks = $checks }
+        # The no-link walker must not go through C:\Users\All Users (a link to C:\ProgramData), and the check of it must be
+        # able to fail (review R2-N2). -Protocol refuses to start unless this is true.
+        $noLink = Test-NoLinkWalker
+        $prepared['noLinkCheck'] = $noLink
+        $prepared['noLinkWalkerSkipsAllUsers'] = $noLink.skips
+        if (-not $noLink.skips) { Write-Warning "-Prepare: the no-link walker was not shown to skip directory links (noLinkCheck in prepare.json); -Protocol will not start." }
         if (-not $Smoke) {
             # The store's size, an upper bound on what is left out, never added to a total: once, on this boot, with links not followed (Y4).
             $log = Join-Path $RunDir 'store-size.robocopy.log'
@@ -787,10 +937,6 @@ switch ($PSCmdlet.ParameterSetName) {
                 if ($controls.Count -ge 3) { break }
             }
             $prepared['controls'] = $controls
-            # The no-link walker must not go through C:\Users\All Users (a link to C:\ProgramData).
-            $allUsers = Join-Path $Artifacts 'allusers-check.log'; Remove-Item $allUsers -ErrorAction SilentlyContinue
-            & robocopy.exe 'C:\Users' (Join-Path $RunDir 'never') /L /E /XJ /R:0 /W:0 /NP /NJH /NJS /NFL /LEV:2 /LOG:$allUsers | Out-Null
-            $prepared['noLinkWalkerSkipsAllUsers'] = -not [bool](Select-String -LiteralPath $allUsers -SimpleMatch 'All Users\Microsoft' -Quiet)
             # The pressure step's positive control: a cold tree's retention must fall under it, or the floor and hold change (N3).
             $tree = Join-Path $Artifacts 'pressure-control'
             if (-not (Test-Path $tree)) {
@@ -819,10 +965,11 @@ switch ($PSCmdlet.ParameterSetName) {
         $prep = $null
         $prepFile = Join-Path $RunDir 'prepare\prepare.json'
         if (Test-Path $prepFile) { $prep = Get-Content $prepFile -Raw | ConvertFrom-Json }
+        if ($prep -and $prep.noLinkWalkerSkipsAllUsers -ne $true) { throw "PoolWatch -Protocol: $prepFile does not show the no-link walker skipping directory links (noLinkWalkerSkipsAllUsers is not true; see noLinkCheck). Its walks could go through C:\Users\All Users into the live layer, so the protocol does not start (review R2-N2)." }
         $scanRoot = 'C:\'
         if ($Smoke) {
             if (-not $Root) { throw '-Smoke needs -Root, a small folder' }
-            $scanRoot = $Root; $script:MarkEvery = 2; $script:Settle = 2; $Tolerance.WindowSec = 6
+            $scanRoot = $Root; $script:MarkEvery = 2; $script:Settle = 2; $Tolerance.WindowSec = 6; $script:SettleCap = 60
         }
         else {
             $boot = Get-Boot
@@ -834,17 +981,22 @@ switch ($PSCmdlet.ParameterSetName) {
         [PoolWatchPower.Native]::SetThreadExecutionState([Convert]::ToUInt32('80000001', 16)) | Out-Null # ES_CONTINUOUS | ES_SYSTEM_REQUIRED: no sleep while it runs
         try {
             $script:R0 = Write-Mark 'R0'
-            Wait-Idle 'I0' $Tolerance.WindowSec
-            if ($Session -eq 2) {
+            # R0 stays the boot-age and guard reference; I0 waits for the boot to settle (review R2-N1).
+            if (-not (Wait-Settle)) {
+                Write-Warning "PoolWatch -Protocol stopped: the boot had not settled $($script:SettleCap) s after R0 (two gaps in a row under $($Tolerance.SettleStepBytes / 1MB) MiB on both pools). The marks are in $RunDir; -Report says VOID. Restart and run it again."
+            }
+            elseif ($Session -eq 2) {
+                Wait-Idle 'I0' $Tolerance.WindowSec
                 # Q-178 condition (2): the non-app walk of C:, per root, never following a link, from the same fresh state,
                 # and never into the store (/XD), which the app's walk also leaves out.
                 $roots = @(Get-ChildItem -LiteralPath $scanRoot -Directory -Force | Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } | ForEach-Object FullName)
                 $log = Join-Path $RunDir 'D.robocopy.log'
-                $walk = @($roots | ForEach-Object { "robocopy `"$_`" `"$RunDir\never`" /L /E /XJ /XD `"$StoreText`" /R:0 /W:0 /NP /BYTES /NFL /NDL /NJH /LOG+:`"$log`" >nul &" })
+                $walk = @($roots | ForEach-Object { "robocopy `"$_`" `"$RunDir\never`" $($NoLinkFlags -join ' ') /NFL /NDL /XD `"$StoreText`" /LOG+:`"$log`" >nul &" })
                 $null = Invoke-Arm 'D' 'dir' 'cmd.exe' (@('/c') + $walk + @('ver')) @{} @{ roots = $roots }
                 Wait-Idle 'I1' $Tolerance.WindowSec
             }
             else {
+            Wait-Idle 'I0' $Tolerance.WindowSec
             $list = Join-Path $RunDir 'L.files.txt'
             $l = Invoke-Arm 'L' 'listing' $ScanArmExe @('listing', $scanRoot, '--list-out', $list, '--progress', (Join-Path $RunDir 'L.progress.tsv'))
             $n = 1; if ($l.summary) { $n = [long]$l.summary.listed }

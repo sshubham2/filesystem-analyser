@@ -97,15 +97,22 @@ Windows Defender and McAfee; OneDrive running; HiberbootEnabled 1 (Fast Startup 
 needs an administrator and is not here: a person who chooses to runs it in an elevated window of their own and pastes it
 into `fltmc.txt` in the run folder, which `-Environment` appends. `-Report` prints a `FILTERS` line apart from the pool
 verdict: `recorded` when `fltmc.txt` (in the run folder or its `prepare` folder) or an environment record holds the
-paste, and `UNDECIDED` otherwise, never recorded.
+filter list itself, its `Filter Name  Num Instances` header and no refusal; `UNDECIDED` otherwise, never recorded. A
+paste of what unelevated fltmc prints here ('Filter listing failed with error: 0x80070005', 'Access is denied.') reads
+`FILTERS UNDECIDED: fltmc.txt holds no filter list (...)`, and the environment record keeps it as `not a filter list`.
 
 ## The tolerance row (written 5 Oct 2026, before any protocol run)
 
 Per pool, Paged and Nonpaged: **T = max(64 MiB, 3 x |idle drift| over a window of the same length)**. Idle drift comes
 from I0 and I1, 20 minutes each, per gap between marks, with any gap whose rate is over 3x the median gap's left out as
-a burst. Every arm's reading is taken 10 minutes after its process exits, net of drift.
+a burst. I0 begins only once the boot has settled: after R0, a `settle/NN` mark every minute until two gaps in a row
+each move both pools by less than 16 MiB (spike 3's V2 rule; spike 3 measured about 1 GiB of boot settle on this PC),
+for at most 30 minutes. R0 stays the boot-age and guard reference; the pre-scan baseline is `L/before`, which the
+post-pressure figure is judged from. Every arm's reading is taken 10 minutes after its process exits, net of drift. An
+arm the guard stopped (L, S, P or an exe run) counts as over T.
 
-**PASS (outcome A)** needs all of: each of the 10 exe runs within T; the 10 together within T; the cold projection
+**PASS (outcome A)** needs all of: all ten exe runs there (five full, each exiting 0 with a Completed report, and five
+cancelled or closed that each stopped before the end), each within T; the 10 together within T; the cold projection
 L_net + s x N_full within T for the per-file probe; every arm's WCsc rise inside the idle envelope of the neighbouring
 gaps and its 0x120089 handle rise no more than its WCsc rise; every exe report's `opensUnderExcludedStore` 0 and every
 full run's `skippedStores` 1; and the closing control armable: its WCsc rise at least half the entries it listed, with
@@ -115,8 +122,8 @@ Otherwise, in this order (`PoolWatch.ps1 -Report`, pinned by `PoolWatchReportTes
 
 | Outcome | When | Records |
 |---------|------|---------|
-| VOID | R0 more than 30 min after the boot; I0 and I1 drift more than 3x apart; the closing control not armable; an arm's process did not exit | nothing; the run decides nothing |
-| UNDECIDED | a mark or a reading a criterion needs is missing or null (tags, or the class 64 0x120089 handle count of an arm or the closing control); L over T with no pressure step, or with one that took nothing back (INEFFECTIVE) | nothing; never PASS |
+| VOID | R0 more than 30 min after the boot; the boot not settled within 30 min of R0 (-Protocol stops there); I0 and I1 drift more than 3x apart; the closing control not armable; an arm's process did not exit | nothing; the run decides nothing |
+| UNDECIDED | a mark or a reading a criterion needs is missing or null (no settle marks; tags, or the class 64 0x120089 handle count of an arm or the closing control); the ten exe runs not all there with their before and settled marks; a full run that did not exit 0 with a Completed report, or a cancelled run with no report, unless the guard stopped it; a cancelled or closed run whose trigger never fired; L over T with no pressure step, or with one that took nothing back (INEFFECTIVE) | nothing; never PASS |
 | WCIFS-UNATTRIBUTED | an arm's WCsc or handle rise outside the idle envelope, or an exe run that opened under the store or (full run) did not record it | blocks A until a person looks |
 | C | L over T, and what L kept survives the pressure step; or the probe and a plain open both project over T, alike | DONE (c) OS-recorded only if Q-178's three conditions hold (Q-184), with the session-2 non-app walk (Q-185); otherwise FAIL |
 | A (reclaimed) | L over T before the pressure step, within it after: the retention was cache | continues to the remaining clauses |
@@ -132,11 +139,16 @@ Otherwise, in this order (`PoolWatch.ps1 -Report`, pinned by `PoolWatchReportTes
    every binary the protocol runs (ScanArm, the window hook, the fixed app, and the unfixed app from afd021d through
    `git archive`), takes Rpre, the environment, the store's size bound, the closing control's subtrees (none holding a
    directory link; Windows\Globalization first, which the repro found untouched late in a boot), checks every hook
-   trigger fires against both builds, checks the no-link walker skips `C:\Users\All Users`, and checks the pressure step
-   reclaims a cold %TEMP% tree's retention. Nothing is built after the Restart.
+   trigger fires against both builds, checks the no-link walker, and checks the pressure step reclaims a cold %TEMP%
+   tree's retention. The no-link check uses the walker's own flags and can fail: a planted 'All Users' junction (and a
+   directory symlink where this user may make one) must count none of its target's bytes and list none of its folders
+   at three levels; the same listing without `/XJ` must go through it, or the check could not see a followed link; and
+   a three-level walk of the real `C:\Users`, every other child left out with `/XD`, must not list
+   `All Users\Microsoft`. `-NoLinkCheck` runs it alone. Nothing is built after the Restart.
 2. Start > Restart (not Shut down), sign in, open nothing but one PowerShell window, and within 30 minutes run
    `powershell -NoProfile -ExecutionPolicy Bypass -File tests\window\PoolWatch.ps1 -Protocol`. It refuses to start on an
-   older boot. About 4 hours, left alone: R0; I0; arm L, the app's listing walk of all of C: with the store left out,
+   older boot, or when prepare.json does not record the no-link walker as safe (`noLinkWalkerSkipsAllUsers`). About 4
+   hours, left alone: R0; the settle marks until the boot has settled (it stops after 30 min if it has not); I0; arm L, the app's listing walk of all of C: with the store left out,
    with a progress log and a mark every minute; arm S, the app's SizeProbe on half A of L's file list; arm P, a plain
    open of half B (both from L's list, so neither can reach the store); 5 full exe scans; 5 cancelled or closed (Cancel
    500 and 1,000 folders past the store and `C:\Users`, Cancel 200,000 files into the size pass, close 5,000 folders past
