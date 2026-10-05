@@ -5507,132 +5507,175 @@ function Clear-StaleCloudRoots {
 # fetch of s from the app's own process. $ending ends it, 8 s after that hold unless it says otherwise:
 #   release   the provider fails the held fetch, and every later one, with STATUS_CLOUD_FILE_UNSUCCESSFUL (CfExecute)
 #   kill      the provider is killed
-#   timeout   the provider stays silent until the filter gives up on s (the app's next fetch is of another folder,
-#             about 121 s in, as the cloud-hang spike measured), and then fails every fetch, as release does
-# With $stop the app runs under stop mode, armed by a marker the case writes at the hold, Cancel 2 s later; without, under
-# rows mode. Both dump the panel and arm b|3|59. The root is unregistered and deleted however the run ends.
-function Invoke-CloudSeamRun([string] $case, [string] $ending, [bool] $stop) {
+#   timeout   the provider stays silent until the filter gives up on the held fetch, about 60 s in, which shows as the
+#             app asking the provider for something again (the cloud-hang spike measured that timeout at 60.6 s, and a
+#             second one, on the fetch the app then raises, at 121 s). From then on every fetch fails at once, as under
+#             release, rather than wait out the second: a case is given 120 s in all, and the held fetch itself has
+#             already ended the way this ending is about.
+# Start-CloudSeamRun makes the root, starts its provider, denies a, and launches the app with the hook's variables given
+# to that one process (Start-App's environment), so that the runs go on side by side; Step-CloudSeamRun looks once and
+# acts when something is due; Complete-CloudSeamRun waits for the app, reads what it left and removes the root, however
+# the run went. With $stop the app runs under stop mode, armed by a marker the case writes at the hold, Cancel 2 s later;
+# without, under rows mode. Both dump the panel and arm b|3|59.
+function Start-CloudSeamRun([string] $case, [string] $ending, [bool] $stop) {
     $name = if ($stop) { "main-$ending" } else { "control-$ending" }
-    $root = Join-Path (Get-CloudCaseBase) ('fsa-cf-{0}' -f [guid]::NewGuid().ToString('N'))
-    $result = [pscustomobject]@{
-        Name = $name; Ending = $ending; Ready = $false; Exit = $null; Report = $null; Log = @(); Dump = $null; Lines = @()
+    $run = [pscustomobject]@{
+        Name = $name; Ending = $ending; Stop = $stop
+        Root = Join-Path (Get-CloudCaseBase) ('fsa-cf-{0}' -f [guid]::NewGuid().ToString('N'))
+        Marker = Join-Path $case "$name.armed"; ReportFile = Join-Path $case "$name.json"; HookLog = Join-Path $case "$name.hook.log"
+        Provider = $null; Process = $null; Ready = $false; Done = $false; Hold = $null
+        Exit = $null; Report = $null; Log = @(); Dump = $null; Lines = @()
         HoldUtc = $null; EndingUtc = $null; AppPid = 0; Registered = $true; Left = $true
     }
-    $provider = $null
     try {
-        [void][System.IO.Directory]::CreateDirectory($root)
-        $provider = Start-CfProvider 'stop-seam' $root
+        [void][System.IO.Directory]::CreateDirectory($run.Root)
+        $run.Provider = Start-CfProvider 'stop-seam' $run.Root
         $clock = [System.Diagnostics.Stopwatch]::StartNew()
-        while ($clock.Elapsed.TotalSeconds -lt 30 -and -not $provider.Ended -and -not ($provider.Lines -contains 'READY') -and @($provider.Lines | Where-Object { $_.StartsWith('ERR ') }).Count -eq 0) {
-            Receive-Provider $provider
+        while ($clock.Elapsed.TotalSeconds -lt 30 -and -not $run.Provider.Ended -and -not ($run.Provider.Lines -contains 'READY') -and @($run.Provider.Lines | Where-Object { $_.StartsWith('ERR ') }).Count -eq 0) {
+            Receive-Provider $run.Provider
             Start-Sleep -Milliseconds 25
         }
-        if (-not ($provider.Lines -contains 'READY')) {
-            Write-Host "        provider: not ready ($(($provider.Lines | Select-Object -Last 3) -join ' | '))"
-            return $result
+        if (-not ($run.Provider.Lines -contains 'READY')) {
+            Write-Host "        $($name) provider: not ready ($(($run.Provider.Lines | Select-Object -Last 3) -join ' | '))"
+            return $run
         }
-        $denied = Join-Path $root 'a'
+        $denied = Join-Path $run.Root 'a'
         Deny-Listing $denied
         if (Test-Listable $denied) {
-            Write-Host '        the deny on a did not take'
-            return $result
+            Write-Host "        $($name): the deny on a did not take"
+            return $run
         }
-        $result.Ready = $true
-        $marker = Join-Path $case "$name.armed"
-        $report = Join-Path $case "$name.json"
-        $mode = if ($stop) { 'stop' } else { 'rows' }
-        $variables = @{ FSA_HOOK_ROWS = '1'; FSA_HOOK_FAIL_LISTING = 'b|3|59' }
+        $environment = @{
+            DOTNET_STARTUP_HOOKS  = $HookDll
+            FSA_HOOK_MODE         = if ($stop) { 'stop' } else { 'rows' }
+            FSA_HOOK_LOG          = $run.HookLog
+            FSA_HOOK_ROWS         = '1'
+            FSA_HOOK_FAIL_LISTING = 'b|3|59'
+        }
         if ($stop) {
-            $variables.FSA_HOOK_ARMED = $marker
-            $variables.FSA_HOOK_CANCEL_DELAY_MS = '2000'
+            $environment.FSA_HOOK_ARMED = $run.Marker
+            $environment.FSA_HOOK_CANCEL_DELAY_MS = '2000'
         }
-        $run = Invoke-WithHook $mode $HookDll {
-            $process = Start-App "`"$root`" --report `"$report`""
-            $clock = [System.Diagnostics.Stopwatch]::StartNew()
-            $hold = $null
-            $ended = $null
-            while ($clock.Elapsed.TotalSeconds -lt 300) {
-                Receive-Provider $provider
-                $fetches = @(Get-Fetches $provider.Lines | Where-Object Pid -eq $process.Id)
-                if ($null -eq $hold) {
-                    $hold = @($fetches | Where-Object { $_.Name -ceq 's' -and $_.Outcome -ceq 'held' })[0]
-                    if ($null -ne $hold -and $stop) { [System.IO.File]::WriteAllText($marker, '') }
-                }
-                if ($null -ne $hold -and $null -eq $ended) {
-                    $due = [DateTime]::UtcNow -ge $hold.Utc.AddMilliseconds($SeamReleaseMs)
-                    if ($ending -ceq 'timeout') {
-                        # s's wait is over once the app asks for another folder: from then on every fetch fails at once.
-                        if (@($fetches | Where-Object { $_.Name -cne 's' }).Count -gt 0 -or ($process.HasExited -and $due)) {
-                            $provider.Process.StandardInput.WriteLine('release')
-                            $provider.Process.StandardInput.Flush()
-                            $ended = [DateTime]::UtcNow
-                        }
-                    }
-                    elseif ($due) {
-                        if ($ending -ceq 'kill') { $provider.Process.Kill() }
-                        else {
-                            $provider.Process.StandardInput.WriteLine('release')
-                            $provider.Process.StandardInput.Flush()
-                        }
-                        $ended = [DateTime]::UtcNow
-                    }
-                }
-                if ($process.HasExited -and ($null -eq $hold -or $null -ne $ended)) { break }
-                Start-Sleep -Milliseconds 25
+        $run.Process = Start-App "`"$($run.Root)`" --report `"$($run.ReportFile)`"" ([System.IO.Path]::GetTempPath()) $environment
+        $run.AppPid = $run.Process.Id
+        $run.Ready = $true
+    }
+    catch {
+        Write-Host "        $($name) could not start: $($_.Exception.Message)"
+    }
+    $run
+}
+
+# A line on the provider's stdin, 'release': it fails every fetch it holds, and every later one.
+function Send-ProviderRelease($provider) {
+    try {
+        $provider.Process.StandardInput.WriteLine('release')
+        $provider.Process.StandardInput.Flush()
+    }
+    catch [System.IO.IOException] { }
+}
+
+# One look at a started run: the provider's new lines, the hold and the marker, and the ending once it is due. The run
+# is done once its app has exited and its ending has been applied, or its app exited with no hold at all.
+function Step-CloudSeamRun($run) {
+    if (-not $run.Ready -or $run.Done) { return }
+    $provider = $run.Provider
+    Receive-Provider $provider
+    $held = @(Get-Fetches $provider.Lines | Where-Object { $_.Pid -eq $run.AppPid -and $_.Outcome -ceq 'held' })
+    if ($null -eq $run.Hold) {
+        $run.Hold = @($held | Where-Object Name -ceq 's')[0]
+        if ($null -ne $run.Hold -and $run.Stop) { [System.IO.File]::WriteAllText($run.Marker, '') }
+    }
+    if ($null -ne $run.Hold -and $null -eq $run.EndingUtc) {
+        $due = [DateTime]::UtcNow -ge $run.Hold.Utc.AddMilliseconds($SeamReleaseMs)
+        if ($run.Ending -ceq 'timeout') {
+            # The filter has given up on the held fetch once the app asks the provider for anything again.
+            if ($held.Count -gt 1 -or ($run.Process.HasExited -and $due)) {
+                Send-ProviderRelease $provider
+                $run.EndingUtc = if ($held.Count -gt 1) { $held[1].Utc } else { [DateTime]::UtcNow }
             }
-            Receive-Provider $provider
-            [pscustomobject]@{ Exit = (Wait-App $process 30); Hold = $hold; Ended = $ended; Pid = $process.Id }
-        } $variables
-        $result.Exit = $run.Result.Exit
-        $result.HoldUtc = if ($null -ne $run.Result.Hold) { $run.Result.Hold.Utc } else { $null }
-        $result.EndingUtc = $run.Result.Ended
-        $result.AppPid = $run.Result.Pid
-        $result.Log = $run.Log
-        $result.Dump = Read-RowsDump $run.Log
-        if (Test-Path -LiteralPath $report -PathType Leaf) { $result.Report = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json }
-        $result
+        }
+        elseif ($due) {
+            if ($run.Ending -ceq 'kill') { $provider.Process.Kill() } else { Send-ProviderRelease $provider }
+            $run.EndingUtc = [DateTime]::UtcNow
+        }
+    }
+    if ($run.Process.HasExited -and ($null -eq $run.Hold -or $null -ne $run.EndingUtc)) { $run.Done = $true }
+}
+
+# The run's end: its app given 30 s more, what it left read, and its provider stopped and its root unregistered and
+# deleted (Remove-CloudRoot), whatever came before.
+function Complete-CloudSeamRun($run) {
+    try {
+        if ($null -ne $run.Process) {
+            $run.Exit = Wait-App $run.Process 30
+            if ($null -ne $run.Hold) { $run.HoldUtc = $run.Hold.Utc }
+            $run.Log = @(if (Test-Path -LiteralPath $run.HookLog) { Get-Content -LiteralPath $run.HookLog })
+            $run.Dump = Read-RowsDump $run.Log
+            if (Test-Path -LiteralPath $run.ReportFile -PathType Leaf) { $run.Report = Get-Content -LiteralPath $run.ReportFile -Raw | ConvertFrom-Json }
+        }
     }
     finally {
+        $provider = $run.Provider
         if ($null -ne $provider) {
             if (-not $provider.Process.HasExited) {
                 try { $provider.Process.StandardInput.Close() } catch { }
                 if (-not $provider.Process.WaitForExit(5000)) { $provider.Process.Kill(); $provider.Process.WaitForExit() }
             }
             Receive-Provider $provider
-            $result.Lines = $provider.Lines.ToArray()
-            foreach ($line in @($result.Lines | Where-Object { $_ -cmatch '^(FETCH |RELEASE |ERR )' })) { Write-Host "        provider: $line" }
+            $run.Lines = $provider.Lines.ToArray()
+            foreach ($line in @($run.Lines | Where-Object { $_ -cmatch '^(FETCH |RELEASE |ERR )' })) { Write-Host "        $($run.Name) provider: $line" }
             if ($provider.Errors.Wait(5000)) {
-                foreach ($line in ($provider.Errors.Result -split "`r?`n" | Where-Object { $_ })) { Write-Host "        provider: $line" }
+                foreach ($line in ($provider.Errors.Result -split "`r?`n" | Where-Object { $_ })) { Write-Host "        $($run.Name) provider: $line" }
             }
         }
-        Undo-DenyListing (Join-Path $root 'a')
-        $gone = Remove-CloudRoot $root
-        $result.Registered = $gone.Registered
-        $result.Left = $gone.Left
+        Undo-DenyListing (Join-Path $run.Root 'a')
+        $gone = Remove-CloudRoot $run.Root
+        $run.Registered = $gone.Registered
+        $run.Left = $gone.Left
     }
 }
 
 # N-006 (-IncludeCloud, SL-089 criterion 1): Stop on the hung cloud rig, the project's first cloud window case, on
-# CfProvider's stop-seam root (Invoke-CloudSeamRun). Three controls first, one per way the held fetch of s can end, with
-# nothing pressed: the provider failing it (release), the provider killed (kill), and the filter's own timeout
-# (timeout). The cloud-hang spike measured the last two ending in success with an empty listing, so the platform gives
-# the reader no failed read, and Q-177 decided what that means: each control must reach its ending with no row for s,
-# and the run prints what each listed. A row for s there would fail the case, which is how a later Windows that reports
-# an error gets noticed; under release it is the positive control instead, the ordinary check. Then the main run: Stop 2
-# s after the hold, the release 8 s after it, as in its control. Its panel holds a and b once each and nothing for s, or
-# for t and u when the provider logged their first fetch by the app after the Stop or never. A folder no control put in
-# the list (s, and t and u too, whose fetches the provider fails the same way) has its absence recorded as the platform
-# limit Q-177 decided, never as a positive check and never as a failure of the app. Measured at SL-089's build: no
-# ending lit any of the three (docs/design/SL-089-seams.md). After each run its sync root must be unregistered and its
-# folder gone (Q-176).
+# CfProvider's stop-seam root (Start-CloudSeamRun). Three controls, one per way the held fetch of s can end, with nothing
+# pressed: the provider failing it (release), the provider killed (kill), and the filter's own timeout (timeout). The
+# cloud-hang spike measured the last two ending in success with an empty listing, so the platform gives the reader no
+# failed read, and Q-177 decided what that means: each control must reach its ending with no row for s, and the run
+# prints what each listed. A row for s there would fail the case, which is how a later Windows that reports an error
+# gets noticed; under release it is the positive control instead, the ordinary check. And the main run: Stop 2 s after
+# the hold, the release 8 s after it, as in its control. Its panel holds a and b once each and nothing for s, or for t
+# and u when the provider logged their first fetch by the app after the Stop or never. A folder no control put in the
+# list (s, and t and u too, whose fetches the provider fails the same way) has its absence recorded as the platform limit
+# Q-177 decided, never as a positive check and never as a failure of the app. Measured at SL-089's build: no ending lit
+# any of the three (docs/design/SL-089-seams.md). The four runs go side by side on roots of their own, the timeout
+# control, about 60 s, started first, so the case ends inside the 120 s a case is given. After each run its sync root
+# must be unregistered and its folder gone (Q-176). -Control runs the three controls alone.
 function Test-N006 {
     Clear-StaleCloudRoots
     $case = New-CaseFolder
+    $runs = [System.Collections.Generic.List[object]]::new()
     try {
+        try {
+            $plan = @(@('timeout', $false), @('release', $false), @('kill', $false))
+            if (-not $Control) { $plan += , @('release', $true) }
+            foreach ($step in $plan) { $runs.Add((Start-CloudSeamRun $case $step[0] $step[1])) }
+            $clock = [System.Diagnostics.Stopwatch]::StartNew()
+            while ($clock.Elapsed.TotalSeconds -lt 100 -and @($runs | Where-Object { $_.Ready -and -not $_.Done }).Count -gt 0) {
+                foreach ($run in $runs) { Step-CloudSeamRun $run }
+                Start-Sleep -Milliseconds 25
+            }
+        }
+        finally {
+            foreach ($run in $runs) {
+                try { Complete-CloudSeamRun $run }
+                catch { Write-Host "        $($run.Name): its teardown threw: $($_.Exception.Message)" }
+            }
+        }
+
         $controls = @{}
-        foreach ($ending in 'release', 'kill', 'timeout') {
+        foreach ($run in @($runs | Where-Object { -not $_.Stop })) {
+            $ending = $run.Ending
             Write-Output "  control, $($ending): the same root and failpoint, the held fetch of s ended by $ending, and no Stop"
-            $run = Invoke-CloudSeamRun $case $ending $false
             Check (-not $run.Registered) "control $($ending): its sync root is no longer registered (Q-176)"
             Check (-not $run.Left) "control $($ending): its sync root's folder is gone (Q-176)"
             if (-not $run.Ready) {
@@ -5655,7 +5698,7 @@ function Test-N006 {
         if ($Control) { return }
 
         Write-Output '  main: Stop 2 s after the hold, the release 8 s after it'
-        $main = Invoke-CloudSeamRun $case 'release' $true
+        $main = @($runs | Where-Object Stop)[0]
         Check (-not $main.Registered) 'main: its sync root is no longer registered (Q-176)'
         Check (-not $main.Left) 'main: its sync root''s folder is gone (Q-176)'
         if (-not $main.Ready) {
