@@ -7,10 +7,12 @@ using FsAnalyser.Core.Workarounds;
 namespace FsAnalyser.Core.Tests;
 
 /// <summary>
-/// SL-095: the Windows container layer store is left out of a scan by its path, and a root at or inside it is refused.
-/// Every case runs on a real NTFS tree in %TEMP% with a planted store (ScanOptions.ContainerLayerStorePath); none of
-/// them goes near the real store, whose live layer leaks wcifs pool on first touch. The planted store holds bytes, so a
-/// scan that walked into it would count them: each case says what the totals must be without them.
+/// SL-095: while the wcifs-layer-store precaution is on (Q-186), the Windows container layer store is left out of a scan
+/// by its path, and a root at or inside it is refused; with it off, both are scanned like any folder. Every case runs on
+/// a real NTFS tree in %TEMP% with a planted store (ScanOptions.ContainerLayerStorePath); none of them goes near the
+/// real store, whose live layer leaks wcifs pool and a System handle for each layer entry touched, until a restart. The
+/// planted store holds bytes, so a scan that walked into it would count them: each case says what the totals must be
+/// without them.
 /// </summary>
 public class ContainerLayerStoreTests
 {

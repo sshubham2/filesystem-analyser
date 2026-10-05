@@ -324,7 +324,7 @@ function Invoke-ExeArm([string] $name, [string] $type, [string] $root, [hashtabl
     $hookLog = Join-Path $RunDir "$name.hook.log"
     $line = [ordered]@{ kind = 'arm'; arm = $name; type = $type; root = $root; hook = $hook; exitCode = $null; report = $null; hookLog = @();
         acted = $false; foldersAtCancel = $null; ranFull = $false; guardStop = $null; guardAtStart = $false; cascadeFrom = $null; interrupted = $false
-        rehearsal = [bool]$script:Rehearsing }
+        killed = $false; rehearsal = [bool]$script:Rehearsing }
     $before = Write-Mark "$name/before"
     if ($before.availableMB -lt $Guard.AvailableMB) {
         # Not started: the guard is already exceeded, so it would be stopped at its first poll and say nothing of its own.
@@ -384,8 +384,14 @@ function Invoke-ExeArm([string] $name, [string] $type, [string] $root, [hashtabl
     finally {
         # A terminating error (a CIM reading Windows would not give) or Ctrl+C while the arm runs: FsAnalyser.exe is not
         # left scanning C: with no guard polling it, and the arm still has its line, marked interrupted (review R2-n2).
+        # Most of an arm's time is the settle after the exe has exited, so the line says whether this finally killed it
+        # or found it already gone, with its exit code (review C1).
         if (-not $written) {
-            if (-not $p.HasExited) { try { $p.Kill() } catch { }; try { $null = $p.WaitForExit(30000) } catch { } }
+            if (-not $p.HasExited) {
+                try { $p.Kill(); $line['killed'] = $true } catch { }
+                try { $null = $p.WaitForExit(30000) } catch { }
+            }
+            if (-not $line['killed'] -and $null -eq $line['exitCode']) { try { if ($p.HasExited) { $line['exitCode'] = $p.ExitCode } } catch { } }
             $line['interrupted'] = $true
             try { Add-Line (Join-Path $RunDir 'arms.jsonl') $line } catch { }
         }
@@ -451,7 +457,12 @@ function Get-Missing($plan, $marks, $arms) {
             continue
         }
         if ($a.guardAtStart) { $missing.Add("arm ${name}: not measured: guard already exceeded at start (cascade from $(if ($a.cascadeFrom) { $a.cascadeFrom } else { 'an earlier arm' }))"); continue }
-        if ($a.interrupted) { $missing.Add("arm ${name}: interrupted: -Protocol stopped while it ran, and FsAnalyser.exe was killed"); continue }
+        if ($a.interrupted) {
+            if ($a.killed) { $missing.Add("arm ${name}: interrupted while FsAnalyser.exe ran; it was killed") }
+            elseif ($null -ne $a.exitCode) { $missing.Add("arm ${name}: interrupted after FsAnalyser.exe exited (exit $($a.exitCode)), before its /settled mark") }
+            else { $missing.Add("arm ${name}: interrupted; whether FsAnalyser.exe had exited or was killed is not recorded") }
+            continue
+        }
         foreach ($need in "$name/before", "$name/exit", "$name/settled") {
             if (-not $byLabel.ContainsKey($need)) { $missing.Add("arm ${name}: mark $need is missing"); continue }
             $m = $byLabel[$need]
@@ -603,6 +614,24 @@ function Invoke-Protocol([string] $root, [hashtable[]] $stops) {
     Wait-Idle 'I1'
 }
 
+# Rehearsal scratch a killed rehearsal left behind: a killed process runs no finally, so its generated tree and run folder
+# stay. A live rehearsal writes a mark every 5 s, so a rehearse-* folder none of whose logs or folders was written in the
+# last hour has no writer, and goes (review C2).
+function Remove-StaleRehearsals([string] $parent) {
+    if (-not (Test-Path -LiteralPath $parent)) { return }
+    $cutoff = (Get-Date).AddHours(-1)
+    foreach ($old in @(Get-ChildItem -LiteralPath $parent -Directory -Filter 'rehearse-*' -ErrorAction SilentlyContinue)) {
+        $last = $old.LastWriteTime
+        foreach ($inside in 'run', 'run\marks.jsonl', 'run\arms.jsonl', 'tree') {
+            $item = Get-Item -LiteralPath (Join-Path $old.FullName $inside) -Force -ErrorAction SilentlyContinue
+            if ($item -and $item.LastWriteTime -gt $last) { $last = $item.LastWriteTime }
+        }
+        if ($last -ge $cutoff) { continue }
+        Remove-Item -LiteralPath $old.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Output "REHEARSAL stale scratch from $('{0:yyyy-MM-dd HH:mm}' -f $last) deleted: $(-not (Test-Path -LiteralPath $old.FullName)) ($($old.FullName))"
+    }
+}
+
 $script:Rehearsing = $false
 $script:LastGuardStop = $null
 
@@ -622,6 +651,7 @@ switch ($PSCmdlet.ParameterSetName) {
         $flags = [Convert]::ToUInt32('80000001', 16) # ES_CONTINUOUS | ES_SYSTEM_REQUIRED: no sleep while it runs
         if ($Rehearse) {
             $script:Rehearsing = $true
+            Remove-StaleRehearsals (Join-Path ([IO.Path]::GetTempPath()) 'fsa-poolwatch')
             $scratch = Join-Path ([IO.Path]::GetTempPath()) ('fsa-poolwatch\rehearse-' + [guid]::NewGuid().ToString('N').Substring(0, 12))
             Write-Output "REHEARSAL scratch: $scratch"
             $RunDir = Join-Path $scratch 'run'

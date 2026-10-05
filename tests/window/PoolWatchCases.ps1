@@ -4,7 +4,9 @@
 # fixture no output line may carry a judgement word: the narrowed slice judges no tolerance, and SC-128 does (fitness
 # rule 'PoolWatch reports completeness, never a verdict'). C-011 asks -Protocol to start on this boot, which is too old
 # for it, and checks that it refuses having written nothing. C-052 runs -Protocol -Rehearse end to end over a generated
-# %TEMP% tree: about five minutes, the published app run ten times, and the scratch deleted afterwards.
+# %TEMP% tree: about five minutes, the published app run ten times, and the scratch deleted afterwards. Give the command
+# that runs C-052 (or All) a timeout of at least 10 minutes: a caller that kills it mid-run leaves the rehearsal's scratch
+# behind, which the next rehearsal sweeps only once it is an hour old (review C2).
 #
 #   pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatchCases.ps1 -Case C-053
 #
@@ -248,7 +250,10 @@ function Test-C011 {
         Check (@($lines | Where-Object { $_ -match 'this boot is \d+ s old, over 1800 s' }).Count -ge 1) 'it says the boot is too old, and by how much'
         Check (-not (Test-Path -LiteralPath (Join-Path $dir 'marks.jsonl'))) 'it took no mark'
         Check (-not (Test-Path -LiteralPath (Join-Path $dir 'arms.jsonl'))) 'it wrote no plan line and started no arm'
-        Check (@(Get-Process FsAnalyser.App -ErrorAction SilentlyContinue | Where-Object { $_.StartTime -gt (Get-Date).AddMinutes(-2) }).Count -eq 0) 'it started no FsAnalyser.App'
+        # Only an app this -Protocol call could have started: its --report file would sit under $dir. Other sessions'
+        # window cases and rehearsals, and the person's own copy, are not this case's (review R2-D1).
+        $ours = @(Get-CimInstance Win32_Process -Filter "Name='FsAnalyser.App.exe'" | Where-Object { $_.CommandLine -like "*$dir*" })
+        Check ($ours.Count -eq 0) "it started no FsAnalyser.App ($($ours.Count) running with a report under $dir)"
     }
     finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
 }
@@ -296,28 +301,59 @@ function Test-P002 {
     Check ((Lines-Like $r 'ENVIRONMENT not readable: *').Count -eq 1) 'a torn prepare.json is named, and the report goes on'
 }
 
-# P-003 (review R2-n2): what -Report says of an arm -Protocol was stopped during. X3's /before mark is in marks.jsonl but
-# its arm line was never written (the old ending, before the arm's finally); F2's line was written by that finally,
-# marked interrupted, with no exit and no later marks.
+# P-003 (reviews R2-n2, C1): what -Report says of an arm -Protocol was stopped during. X3's /before mark is in
+# marks.jsonl but its arm line was never written (the old ending, before the arm's finally). F2's line was written by
+# that finally while FsAnalyser.exe still ran: marked interrupted and killed, with no exit and no later marks. F4's was
+# written by it during the settle, the likeliest moment to stop a run: the exe had exited 0, its /exit mark and report
+# are there, only /settled is missing, and nothing was killed.
 function Test-P003 {
-    $r = Invoke-Fixture 'X3 started but has no arm line; F2 interrupted' {
+    $r = Invoke-Fixture 'X3 started but has no arm line; F2 interrupted and killed; F4 interrupted after its exe exited' {
         param($run)
         $run.Arms.Remove((Arm $run 'X3')) | Out-Null
-        $f2 = Arm $run 'F2'; $f2.interrupted = $true; $f2.exitCode = $null; $f2.report = $null
+        $f2 = Arm $run 'F2'; $f2.interrupted = $true; $f2.killed = $true; $f2.exitCode = $null; $f2.report = $null
         foreach ($label in 'F2/exit', 'F2/settled') { $run.Marks.Remove((Mark $run $label)) | Out-Null }
+        $f4 = Arm $run 'F4'; $f4.interrupted = $true; $f4.killed = $false
+        $run.Marks.Remove((Mark $run 'F4/settled')) | Out-Null
     }
     Check-Incomplete $r @('arm X3: started (its /before mark is in marks.jsonl) but its arm line was never written',
-        'arm F2: interrupted: -Protocol stopped while it ran, and FsAnalyser.exe was killed')
+        'arm F2: interrupted while FsAnalyser.exe ran; it was killed',
+        'arm F4: interrupted after FsAnalyser.exe exited (exit 0), before its /settled mark')
     Check ((Lines-Like $r '  MISSING arm X3: in the plan but not in arms.jsonl*').Count -eq 0) 'X3 is not said to have never started'
     Check ((Lines-Like $r '  MISSING arm F2: mark*').Count -eq 0) 'the interrupted arm is named as interrupted, not by its missing marks'
+    Check ((Lines-Like $r '  MISSING arm F4:*killed*').Count -eq 0) 'F4, whose exe had exited, is never said to have been killed'
+    Check ((Lines-Like $r '  MISSING arm F4: mark*').Count -eq 0) 'F4 is named as interrupted, not by its missing /settled mark'
 }
 
 # C-052 (review F5): -Protocol -Rehearse end to end over a generated %TEMP% tree. -Report must read RUN COMPLETE, which
 # needs the plan line, R0, both idle windows' marks, and /before, /exit and /settled on all ten exe arms, each cancel
 # and close acted by the hook mid-scan; and the scratch must be gone afterwards. When it is not complete, the hook's
 # refused lines are in the MISSING lines echoed above, so a trigger that lost the race tells itself apart from a harness
-# defect.
+# defect. It takes about five minutes: the command running it needs a timeout of at least 10 minutes, or a kill leaves
+# the scratch behind (review C2). Rehearsal scratch over an hour old that an earlier kill left is swept as it starts.
 function Test-C052 {
+    # Two planted leftovers of the shape a killed rehearsal leaves: one last written two hours ago, which the rehearsal
+    # must sweep, and one written now, as a rehearsal still running elsewhere would be, which it must leave alone.
+    $parent = Join-Path ([IO.Path]::GetTempPath()) 'fsa-poolwatch'
+    $id = [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $stale = Join-Path $parent "rehearse-stale$id"
+    $live = Join-Path $parent "rehearse-live$id"
+    try {
+        foreach ($d in $stale, $live) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $d 'run') | Out-Null
+            Set-Content -LiteralPath (Join-Path $d 'run\marks.jsonl') -Value '{"kind":"mark"}' -Encoding UTF8
+        }
+        $old = (Get-Date).AddHours(-2)
+        foreach ($p in (Join-Path $stale 'run\marks.jsonl'), (Join-Path $stale 'run'), $stale) { (Get-Item -LiteralPath $p -Force).LastWriteTime = $old }
+        Invoke-C052Rehearsal
+        Check (-not (Test-Path -LiteralPath $stale)) 'a rehearse-* folder last written two hours ago (a killed rehearsal''s) is swept'
+        Check (Test-Path -LiteralPath (Join-Path $live 'run\marks.jsonl')) 'a rehearse-* folder written in the last hour is left alone'
+    }
+    finally {
+        foreach ($d in $stale, $live) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Invoke-C052Rehearsal {
     $lines = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $PoolWatch -Protocol -Rehearse 2>&1 | ForEach-Object { "$_" })
     $exit = $LASTEXITCODE
     $shown = @($lines | Where-Object { $_ -match '^(REHEARSAL|RUN |  MISSING|Raw nets|arm |F[1-5] |X[1-5] |I[01] |ENVIRONMENT|FILTERS)' })

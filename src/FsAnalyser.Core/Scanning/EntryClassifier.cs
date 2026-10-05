@@ -10,9 +10,11 @@ namespace FsAnalyser.Core.Scanning;
 /// is recorded and never entered or charged. Every other reparse folder (cloud, WCI, ProjFS, DFS) is
 /// entered, and every other reparse file (AppExecLink, AF_UNIX, dedup, cloud) is a file (SL-043, U-004).
 /// WOF files carry no reparse bit at all.
-/// <para>WCI reparse folders are still entered wherever they are. The Windows container layer store is not, and that is
-/// decided by its path in the walk (<see cref="ContainerLayerStore"/>), never here: a live layer's folders carry no
-/// ReparsePoint or Offline attribute (measured, SL-095), so nothing this reads tells them apart.</para>
+/// <para>WCI reparse folders are still entered wherever they are. While the wcifs-layer-store precaution is on (Q-186),
+/// the Windows container layer store is not, and that is decided by its path in the walk
+/// (<see cref="ContainerLayerStore"/>), never here: a live layer's folders carry no ReparsePoint or Offline attribute
+/// (measured, SL-095), so nothing this reads tells them apart. With the precaution off it is entered like any
+/// folder.</para>
 /// </summary>
 /// <remarks>
 /// A DFS tag has no surrogate bit, so a DFS folder is entered. Through a share, the SMB client follows its

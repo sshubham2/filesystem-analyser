@@ -4,10 +4,11 @@ namespace FsAnalyser.Core.Store;
 public enum EntryKind : byte
 {
     /// <summary>
-    /// A folder, entered and listed. Includes cloud, WCI, ProjFS and DFS folders that carry a reparse point. The one
-    /// folder never entered is the Windows container layer store, which is left out by its path, not its attributes:
-    /// a live layer's folders carry no ReparsePoint or Offline attribute (measured, SL-095). It stays a Folder with
-    /// nothing listed and is flagged <see cref="EntryFlags.NotScanned"/>.
+    /// A folder, entered and listed. Includes cloud, WCI, ProjFS and DFS folders that carry a reparse point. While the
+    /// wcifs-layer-store precaution is on (Q-186), the one folder not entered is the Windows container layer store,
+    /// which is left out by its path, not its attributes: a live layer's folders carry no ReparsePoint or Offline
+    /// attribute (measured, SL-095). It stays a Folder with nothing listed and is flagged
+    /// <see cref="EntryFlags.NotScanned"/>. With the precaution off, the store is entered and listed like any folder.
     /// </summary>
     Folder = 0,
 
@@ -53,7 +54,8 @@ public enum EntryFlags : byte
 
     /// <summary>
     /// A folder the scan reached and left out on purpose, never opened, with nothing listed under it and its size not
-    /// counted: the Windows container layer store (SL-095). Decided in Core; see <c>ScanResult.SkippedStores</c>.
+    /// counted: the Windows container layer store, while the wcifs-layer-store precaution is on (SL-095, Q-186).
+    /// Decided in Core; see <c>ScanResult.SkippedStores</c>.
     /// Never set with <see cref="Unreadable"/>.
     /// </summary>
     NotScanned = 64,
