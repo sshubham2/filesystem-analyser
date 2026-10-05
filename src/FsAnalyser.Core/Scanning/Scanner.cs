@@ -32,21 +32,38 @@ namespace FsAnalyser.Core.Scanning;
 /// <para>For a scan of a whole drive, the volume's used space is read as the scan starts, on a thread of
 /// its own (<see cref="VolumeSpace"/>), and lands in <see cref="ScanStore.VolumeUsed"/>. The scan never waits
 /// for it: it ends, completed or cancelled, whether or not the volume has answered.</para>
+/// <para>While the precaution against wcifs.sys's leak is on in <see cref="ScanOptions.EnabledWorkarounds"/>, as it is
+/// unless a person turns it off, the Windows container layer store is never opened (SL-095,
+/// <see cref="ContainerLayerStore"/>): a scan that starts at or inside it is Refused, with nothing listed or probed
+/// (Q-179, Q-182), and a scan that reaches the store below its root records it in <see cref="ScanResult.SkippedStores"/>,
+/// a folder with nothing listed whose size is not counted, never in <see cref="ScanResult.Unreadable"/>. With it off
+/// both are lifted and the walk is exactly as it was before SL-095 (Q-186); only <see cref="ContainerLayerStore"/>
+/// reads the switch.</para>
 /// </remarks>
 public static class Scanner
 {
-    /// <summary>Scans <paramref name="root"/>. Cancel interrupts a blocked call; see the remarks.</summary>
+    /// <summary>Scans <paramref name="root"/>, with every precaution on. Cancel interrupts a blocked call; see the remarks.</summary>
     /// <exception cref="ArgumentException">The root is empty or not an absolute path.</exception>
     public static ScanResult Scan(string root, ScanProgress progress, CancellationToken ct) =>
         Scan(root, progress, ct, ScanOptions.Default);
+
+    /// <summary>Scans <paramref name="root"/> with the precautions whose ids <paramref name="enabledWorkarounds"/> holds on.</summary>
+    /// <exception cref="ArgumentException">The root is empty or not an absolute path.</exception>
+    public static ScanResult Scan(string root, ScanProgress progress, CancellationToken ct, IReadOnlySet<string> enabledWorkarounds)
+    {
+        ArgumentNullException.ThrowIfNull(enabledWorkarounds);
+        return Scan(root, progress, ct, new ScanOptions { EnabledWorkarounds = enabledWorkarounds });
+    }
 
     internal static ScanResult Scan(string root, ScanProgress progress, CancellationToken ct, ScanOptions options)
     {
         ArgumentNullException.ThrowIfNull(progress);
         ArgumentNullException.ThrowIfNull(options);
         (string display, string win32) = LongPath.NormalizeRoot(root);
+        // Before the scan's own guard exists: the resolution's opens, when it needs any, are on a guard of its own.
+        StoreVerdict store = ContainerLayerStore.Resolve(win32, options.ContainerLayerStorePath, ct, options.EnabledWorkarounds);
         using var io = new SynchronousIoCancel(ct);
-        using var run = new Run(display, win32, progress, ct, options, io);
+        using var run = new Run(display, win32, progress, ct, options, io, store);
         return run.Execute();
     }
 
@@ -103,7 +120,7 @@ public static class Scanner
     }
 
     private sealed class Run(string display, string win32Root, ScanProgress progress, CancellationToken ct, ScanOptions options,
-        SynchronousIoCancel io) : IDisposable
+        SynchronousIoCancel io, StoreVerdict store) : IDisposable
     {
         private const int RootRow = -1; // the root's own listing, which belongs to no row
         private const int RemoteProtocolInfoSize = 128; // FILE_REMOTE_PROTOCOL_INFO is 116 bytes
@@ -122,6 +139,7 @@ public static class Scanner
         private readonly Stack<(int Entry, string Path, int Row)> _pending = new();
         private readonly TopLevelTracker _topLevel = new(progress, display, options.TopLevelInterval);
         private readonly List<UnreadableFolder> _unreadable = [];
+        private readonly List<NotScannedFolder> _skipped = [];
         private readonly IReadOnlyList<string> _syncRoots = options.SyncRoots is { } roots ? NormalizeSyncRoots(roots) : SyncRootsFromEnvironment();
         private readonly Stopwatch _clock = Stopwatch.StartNew();
         private bool _fullClass = options.ForceFullDirectoryClass;
@@ -136,6 +154,9 @@ public static class Scanner
             // First, before any way out of the scan, so that whatever its ending the figure is answered or
             // owned by its read (SL-043, m5). Nothing here waits for it.
             VolumeSpace.Start(display, _store.VolumeUsedSource, options.VolumeReader, options.VolumeReadBound, options.ReadVolumeOfAnyRoot);
+            if (store.Kind == StoreVerdictKind.Refuse)
+                return Finish(ScanStatus.Refused);
+            _reader.ExcludedStore = store.Excluded;
             if (ct.IsCancellationRequested)
                 return Finish(ScanStatus.Cancelled);
 
@@ -152,8 +173,21 @@ public static class Scanner
             while (_pending.Count > 0)
             {
                 (int folder, string path, int row) = _pending.Pop();
+                if (IsExcludedStore(path))
+                {
+                    if (StoreSkipped(folder, row))
+                        return Finish(ScanStatus.Cancelled);
+                    continue;
+                }
                 bool keep = KeepsLastAccess(path, (uint)_store.Attributes(folder));
                 error = _reader.Read(path, _fullClass, keep);
+                if (error == DirectoryReader.InsideExcludedStore)
+                {
+                    // The reader's backstop refused it, unopened and counted: a way in this loop's check missed.
+                    if (StoreSkipped(folder, row))
+                        return Finish(ScanStatus.Cancelled);
+                    continue;
+                }
                 CountListingOpen(keep);
                 if (FolderDone(folder, path, row, error))
                     return Finish(ScanStatus.Cancelled);
@@ -252,6 +286,26 @@ public static class Scanner
                     return false;
             }
             return true;
+        }
+
+        // The container layer store, popped like any folder: the one path the walk compares, for equality, as listed and
+        // without case (ContainerLayerStore). A sibling named Layers2, 'Layers.' or 'Layers ' is never equal to it.
+        private bool IsExcludedStore(string folderPath) =>
+            store.Excluded is { } excluded
+            && folderPath.Length == excluded.Length
+            && string.Equals(folderPath, excluded, StringComparison.OrdinalIgnoreCase);
+
+        // The store, reached by the walk and never opened (SL-095). It completes as a folder with nothing listed, the way
+        // a folder that refused its open does, so its parent's row and the rollups finish as they always do; but it is
+        // flagged and recorded as not scanned, never as unreadable, AfterFolder does not fire for it, and nothing below
+        // it is pushed. Reports whether the scan must stop.
+        private bool StoreSkipped(int folder, int row)
+        {
+            _store.SetChildren(folder, _store.Count, 0);
+            _store.AddFlags(folder, EntryFlags.NotScanned);
+            _skipped.Add(new NotScannedFolder(folder, NotScannedReason.ContainerLayerStore, ContainerLayerStore.WorkaroundId));
+            _topLevel.FolderExited(folder, row, unreadable: false, subfoldersPushed: 0, Totals, notScanned: true);
+            return ct.IsCancellationRequested;
         }
 
         private void CountListingOpen(bool asked)
@@ -466,9 +520,13 @@ public static class Scanner
             Store = _store,
             Totals = Totals,
             Unreadable = _unreadable,
+            Refusal = status == ScanStatus.Refused ? ScanRefusal.ContainerLayerStore : ScanRefusal.None,
+            RefusalWorkaroundId = status == ScanStatus.Refused ? ContainerLayerStore.WorkaroundId : null,
+            SkippedStores = _skipped,
+            OpensUnderExcludedStore = _reader.OpensUnderExcludedStore,
             ProbeFailures = _probeFailures,
             VanishedBeforeProbe = _vanished,
-            FileIdsAvailable = status != ScanStatus.RootUnreadable && _filesWithoutId == 0,
+            FileIdsAvailable = status is not (ScanStatus.RootUnreadable or ScanStatus.Refused) && _filesWithoutId == 0,
             Elapsed = _clock.Elapsed,
             Probes = _probes,
             ProbeCorrections = _probeCorrections,

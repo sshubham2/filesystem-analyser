@@ -66,11 +66,36 @@ internal sealed unsafe class DirectoryReader(SynchronousIoCancel io) : IDisposab
     public int Open(string win32Path, bool keepLastAccess, out SafeFileHandle? handle) =>
         io.OpenDirectory(win32Path, keepLastAccess, out handle);
 
-    /// <summary>Opens and lists one directory. See <see cref="Open"/> and <see cref="List"/>.</summary>
+    /// <summary>What <see cref="Read"/> returns, with no open made, for a folder at or under <see cref="ExcludedStore"/>.</summary>
+    public const int InsideExcludedStore = -1;
+
+    /// <summary>
+    /// The container layer store this scan leaves out, in the walk's spelling, or null (SL-095, <see cref="ContainerLayerStore"/>).
+    /// The walk never asks to list it: it stops at the store when it pops it. This is the backstop behind that check, at the
+    /// one call that opens a folder to list it, so that any other way a folder at or under the store reaches a listing is
+    /// refused here and counted (review m4).
+    /// </summary>
+    public string? ExcludedStore { get; set; }
+
+    /// <summary>
+    /// How many listings <see cref="Read"/> refused because the folder was at or under <see cref="ExcludedStore"/>. 0 in
+    /// every scan whose own check held; anything else is a way into the store the walk's check missed (review M6).
+    /// </summary>
+    public int OpensUnderExcludedStore { get; private set; }
+
+    /// <summary>
+    /// Opens and lists one directory. See <see cref="Open"/> and <see cref="List"/>. A folder at or under
+    /// <see cref="ExcludedStore"/> is never opened: <see cref="InsideExcludedStore"/>, with nothing listed.
+    /// </summary>
     public int Read(string win32Path, bool fullClass, bool keepLastAccess)
     {
         _count = 0;
         _namesUsed = 0;
+        if (ExcludedStore is { } store && Scanner.IsAtOrUnder(win32Path, store))
+        {
+            OpensUnderExcludedStore++;
+            return InsideExcludedStore;
+        }
         int error = Open(win32Path, keepLastAccess, out SafeFileHandle? handle);
         if (error != 0)
             return error;

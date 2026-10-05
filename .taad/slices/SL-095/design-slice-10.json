@@ -1,0 +1,495 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-095",
+ "stage": "design-slice",
+ "attempt": 10,
+ "at": "2026-10-04T22:40:08.537Z",
+ "head": "",
+ "run_id": 2495,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "reason": "Composed from a single proposal (practice), checked against the survey, spike #87, the answered questions and the narrowing request. The request holds and is folded in, with two corrections. Where the proposal and the measured tree disagree, the measured tree wins.",
+  "selection_rationale": "The practice proposal is the core of this design. It matches the narrowing request, and the request holds up against reality. Spike #87 (2026-10-04, after a true Restart) stopped arm L at the guard with the store excluded: +375 MiB paged, +138 MiB nonpaged, growth in NtfF, FMfn and File, and no WC* rise. That settles fork O-028 as outcome C under its own pre-registered rule (i). The app change therefore cannot carry DONE (c). The request collides with no answered question: Q-183 sends B elsewhere, Q-184 and Q-185 already treat DONE (c) under C as pending a second session, and Q-004 stays because B was never reached. It also collides with no architecture rule. So it is folded into the cases and contracts.\n\nTwo parts of the request are corrected rather than taken on authority:\n1. DONE (a) is the record of the tag and its owning driver, with run logs, as the slice defines it. It is not the exclusion. It is met for wcifs.sys. The FMfn/File/NtfF growth is recorded by owner tag with its holder unattributed.\n2. O-028 is decided as C and is not reopened. Whether C's retention is reclaimable cache under memory pressure is a different question, which the fork never asked. It goes to SC-128.\n\nThe proposal itself was selected against the survey, which outranks it on what exists. The proposal says PoolWatch, ScanArm, the settle gate, drift, pressure and ContainerLayerStore are 'built' and 'left as built'. The build check and spike #87's runner both measured that none of them exists at afd021d (slice/SL-095 = uat; no src diff). So:\n- Everything in the scanner is built here.\n- The SC-128 pieces (settle gate, drift VOID, pressure, tolerance) are not built at all, rather than 'left as built'.\n- ScanArm and the L/S/P arms are not built. The stack line says ScanArm is deleted once O-003 is decided, and spike #87 decided it.\n- The store-size walk (it leaks on an untouched boot) and -Attribute (holder attribution is SC-128's) are dropped.\n\nThe proposal was missing one thing: the project's rule that a workaround for an outside defect is a per-bug setting, on by default, with in-app notices. wcifs.sys is Microsoft's driver and no fixed version exists on 25H2, so the exclusion and the refusal are such a workaround. They become one KnownWorkarounds entry with one checkbox. The machine-guard constant is set from spike #87's measured growth, so that the request's 'no guard stop on any arm' can actually be met by a real session.",
+  "components": [
+   {
+    "name": "ContainerLayerStore rule",
+    "lives_at": "src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs",
+    "responsibility": "Called once per scan with the root and the ScanOptions. If the wcifs-layer-store workaround is off, it returns None at once; this is the only place the switch is read. Otherwise it returns Refuse, Exclude(path) or None.\n\nThe store is the ProgramData known folder plus Microsoft\\Windows\\Containers\\Layers, or the internal test override.\n\nMatching:\n- A string check runs first, on the root and the store only: GetFullPath, \\\\?\\ strip, trailing-separator trim, OrdinalIgnoreCase, separator-bounded at-or-under. It needs no opens.\n- On a miss, GetFinalPathNameByHandleW(VOLUME_NAME_DOS) is called on the root handle the scanner opens anyway, and on a FILE_READ_ATTRIBUTES open of the store's PARENT. The store itself is never opened (Y5). This catches junction, subst, 8.3 and Volume{GUID} spellings (m1).\n- Exclude(path) is returned in the spelling the scanner builds popped paths in: the root as given plus relative names.\n- Popped paths are compared \\\\?\\-stripped, ordinal-ignore-case and separator-bounded, never through GetFullPath (m2). This keeps 'Layers.' and 'Layers ' siblings in the scan.\n\nThis file is the only place the store's location is spelled. It exposes StoreDisplayPath for every notice.",
+    "key_interactions": "Its opens go through SynchronousIoCancel's guarded open (PathOpensGoOnlyThroughTheGuardedOpen). GetFinalPathNameByHandleW is declared in Core's existing native interop file (InteropLivesOnlyInNative). It reads the store override and the enabled-workaround set from ScanOptions. If the parent cannot be opened, or the call fails (UNC, an odd redirector), the string verdict stands."
+   },
+   {
+    "name": "KnownWorkarounds list",
+    "lives_at": "src/FsAnalyser.Core/Workarounds/KnownWorkarounds.cs",
+    "responsibility": "One list of outside-defect workarounds. Each entry has Id, Defect, WhereItLives, Precaution, IfTurnedOff and DefaultOn = true. ScanOptions.EnabledWorkarounds defaults to every DefaultOn entry.\n\nThe first entry is 'wcifs-layer-store':\n- Defect: wcifs.sys, the Windows Container Isolation filter that Microsoft ships with Windows (10.0.26100.x on 25H2), leaks kernel pool and one System-process handle for each container-layer entry first touched after a restart. Only a Restart frees it (#646).\n- Precaution: C: scans skip the layer store and show it as 'size not counted', and a picked root at or inside the store is refused.\n- If turned off: the store is read like any folder and the leak happens.\n\nThe text is composed with ContainerLayerStore.StoreDisplayPath and never spells the path itself. The next outside defect found is a new entry, not a new mechanism.",
+    "key_interactions": "ContainerLayerStore is the only code that branches on this entry. The App renders the list generically and never names an entry."
+   },
+   {
+    "name": "Scanner refusal, descent skip and skippedStores",
+    "lives_at": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "responsibility": "On Refuse, the scan returns outcome Refused (reason ContainerLayerStore, plus the workaround id) and lists nothing. On Exclude, Run.FolderDone never pushes the store. Instead it records the store in the result's own skippedStores list ({path, reason, workaroundId}). The skip reuses the completion mechanics (0 children, parent roll-up, progress) but is never written to the unreadable list. That keeps read-denied-folders and read-window counts away from the store by construction (M5).",
+    "key_interactions": "DirectoryReader never receives the store path. ScanOptions.AfterFolder never fires at or under it, which is exactly what ContainerLayerWalkTests asserts. SizeProbe, ProbeRule and the Q-004 counting contract are untouched."
+   },
+   {
+    "name": "Open-seam guard and count",
+    "lives_at": "src/FsAnalyser.Core/Scanning/DirectoryReader.cs",
+    "responsibility": "The single call site (DirectoryReader.cs:67) passes the scan's active store rule into SynchronousIoCancel.OpenDirectory. The rule is null when the workaround is off. An open at or under an active store is refused before CreateFileW and counted in opensUnderExcludedStore (m4). The descent skip is the fast path, so the count is 0 unless something bypasses it. That makes the count an independent tripwire.",
+    "key_interactions": "src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs. The count is published in --report."
+   },
+   {
+    "name": "NotScanned kind and row",
+    "lives_at": "src/FsAnalyser.Core/Store/EntryKind.cs",
+    "responsibility": "Adds a NotScanned kind, decided in Core. UnreadableRows.Build renders it as '<path>  (size not counted: Windows container layers, skipped to avoid a leak in Windows' wcifs.sys driver; see Settings)'. The kind keeps it out of every could-not-be-opened figure. The App gives NotScanned no 'Show in Explorer' (Y6). The comments at EntryKind.cs:6 and src/FsAnalyser.Core/Scanning/EntryClassifier.cs:10 are reworded: WCI folders elsewhere are still entered, and the store is matched by path because live-layer folders carry no reparse bit."
+   },
+   {
+    "name": "App settings, confirmation and notices",
+    "lives_at": "src/FsAnalyser.App/SettingsWindow.xaml",
+    "responsibility": "A new WPF Settings window, opened from MainWindow. It lists every KnownWorkarounds entry generically: one checkbox each, ON at every launch, with the entry's defect, where it lives, the precaution and what turning it off does, in plain words.\n\nUnticking a box opens a WPF confirmation window, not a Win32 MessageBox, so the startup hook can drive it. Its question states the consequence ('...wcifs.sys will leak kernel memory and a System handle for each container-layer entry the scan touches, until you Restart Windows'). No leaves it on. The state is kept in memory for the session.\n\nOn every scan, src/FsAnalyser.App/MainWindow.xaml.cs builds ScanOptions.EnabledWorkarounds from it. On Refused, the status line gives the Q-179 message plus 'You can turn this protection off in Settings.' and the window enters no scan state.",
+    "key_interactions": "Because src/FsAnalyser.App/** is touched, validate runs WindowMutants.ps1 -Mutant All (Q-114)."
+   },
+   {
+    "name": "Report writer",
+    "lives_at": "src/FsAnalyser.App/WindowReport.cs",
+    "responsibility": "Schema 1 gains these additive fields: outcome \"refused\" with refusal \"container-layer-store\"; notScanned (a count); opensUnderExcludedStore (a count); and workarounds [{id, on}]. They are counts and ids, never paths (Q-016; WindowReport.cs:213-214). NotScanned never enters topLevel.unreadable (X1).",
+    "key_interactions": "eng/read-window.ps1 reads the new fields. PoolWatch exe arms and WindowCases assert them."
+   },
+   {
+    "name": "Scanner, repro and window tests",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ContainerLayerStoreTests.cs",
+    "responsibility": "Real stores are planted under %TEMP% through the internal override, and the tests are never skipped. They cover cases 1 to 7 of the matrix: an ancestor root over a nested store; refusal at or inside the store and through every spelling; siblings named like the store; no store at all; and the workaround off (store listed and counted, picked root scanned).\n\ntests/bugs/SL-095-ContainerLayerWalk is committed with its assembly name unchanged (InternalsVisibleTo) and keeps its message-skip when no store exists (:38-40).\n\ntests/window/WindowCases.ps1 gains:\n- a --report scan of C:\\ProgramData\\Microsoft\\Windows\\Containers: notScanned 1, opensUnderExcludedStore 0, unreadable count unchanged, workarounds on;\n- a root equal to the store: outcome refused;\n- two settings cases through a new FsaWindowHook mode that unticks the box and answers No or Yes, over a %TEMP% tree, checking the workarounds state in the report.\n\nNothing ever scans the real store with the protection off."
+   },
+   {
+    "name": "Architecture rules",
+    "lives_at": ".taad/fitness.yaml",
+    "responsibility": "Four rules, each with an xUnit twin in ArchitectureRulesTests and plants in eng/rules-harness/plants.json (one line that must fire, one correct line that must not):\n- the store is spelled in one file;\n- the workaround is switched in one place;\n- PoolWatch never elevates;\n- PoolWatch prints no verdict.\n\nPatterns start with a literal (?m) and use a scoped (?i:...) where needed, as rules-parity requires. The RuleCases pins Q-085 names (C-001 counts, C-003, C-004, C-005, C-007, C-008, SettledCountProbe) are updated in the same change."
+   },
+   {
+    "name": "PoolWatch -Prepare / -Protocol / -Rehearse",
+    "lives_at": "tests/window/PoolWatch.ps1",
+    "responsibility": "Built new and lean. It runs unelevated and uses NtQuerySystemInformation(22) plus GetPerformanceInfo through Add-Type, compatible with PowerShell 5.1 and 7.\n\n-Prepare:\n- publishes the exe through eng/dotnet.ps1 and builds the hook;\n- writes prepare.json with an Rpre reading;\n- records the environment: OS build, boot time, wcifs.sys version, Win32_SystemDriver state of wcifs/bindflt/CldFlt/WdFilter, SecurityCenter2 antivirus, whether OneDrive is running, and an optional fltmc paste. The paste counts only with the 'Filter Name ... Num Instances' header; otherwise the record says FILTERS UNDECIDED (R2-N3).\n\n-Protocol:\n- refuses to start when prepare.json, the exe or the hook is missing, or when boot age at R0 is over 30 min (X4);\n- writes a plan line listing the expected arms in order, then R0;\n- runs I0 (a 20-min raw idle window), 5 exe-full arms, 5 exe-cancel/close arms (4 cancels and 1 close, using the hook's existing triggers), then I1;\n- takes /before, /exit and /settled (+10 min) marks per arm. Each mark holds pool bytes, Available MB, per-tag allocs/frees/bytes as an array (WC*, FMwi, FMfc, FMfn, File, NtfF, Toke), the System handle count and its 0x120089 count;\n- writes each arm line with exitCode, report status, notScanned, opensUnderExcludedStore, the hook's acted line and foldersAtCancel, guardStop and guardAtStart;\n- applies a machine guard per arm: combined pool growth over that arm's /before above 2 GiB, or Available below 3 GiB, kills FsAnalyser.exe and records guardStop.\n\n-Rehearse runs the same code over a generated %TEMP% tree (about 2,000 folders and 10,000 files), with 60 s / 30 s windows and folder-count triggers, and skips the boot-age check. Every line is tagged rehearsal:true, and the scratch is deleted in finally unless -Keep is passed.\n\nThere is no settle gate, drift judgement, pressure step, tolerance, ScanArm, L/S/P arm, dir arm or store-size walk.",
+    "key_interactions": "Exe arms run the published FsAnalyser.exe --report through FsaWindowHook (DOTNET_STARTUP_HOOKS, FSA_HOOK_MODE). Real-session logs are committed under docs/design/SL-095-runs/<run-id>/. Rehearsal logs are not committed."
+   },
+   {
+    "name": "PoolWatch -Report and its cases",
+    "lives_at": "tests/window/PoolWatch.ps1",
+    "responsibility": "-Report reads the plan line and arms.jsonl. It prints 'RUN COMPLETE', or 'RUN INCOMPLETE' followed by one line per missing item, naming the arm and the reason. Then it prints a raw table for every arm and idle window: paged and nonpaged net (/before to /settled), the tag nets, System handles and the 0x120089 count. Then the environment lines. A rehearsal run is headed REHEARSAL. It exits 0 when complete and 2 when incomplete, and never prints PASS, FAIL, VOID, OUTCOME or a tolerance.\n\ntests/window/PoolWatchCases.ps1 runs -Report over hand-built JSONL fixtures for cases 11 to 14, plus one -Rehearse run for case 10. It asserts, across every fixture, that no output line carries a verdict token."
+   },
+   {
+    "name": "Design record and run logs",
+    "lives_at": "docs/design/SL-095-container-layer-store.md",
+    "responsibility": "DONE (a) table:\n- WCsc, WCfc, WCri, FMwi and FMfc belong to wcifs.sys 10.0.26100.9278 (Microsoft, #646). Live counts at the 2026-09-29 boot: WCsc 211,022 allocs / 0 frees, System 0x120089 handles 211,070.\n- After the 2026-10-04 Restart (spike #87 V1): WCsc live 1,630 and 0x120089 handles 1,661. So a Restart is measured, once, to reclaim the leak; Shut down is sourced from #646 and KB3211190, not measured.\n- FMfn (FltMgr), File (I/O manager), NtfF (NTFS) and Toke: the owner tag is known, the holder is unattributed. Spike #87's L figures are recorded.\n\nThe environment record: Kaspersky, Defender and McAfee; OneDrive running; wcifs, bindflt, CldFlt and WdFilter running; fltmc pending the person's paste.\n\nDONE (b): the app change plus the documented 'Restart, not Shut down' note.\n\nA 'Not judged here' section hands SC-128 every carried finding by ID: R3-1, R4-1, M6/N2/X5, WCIFS-UNATTRIBUTED, the N1 envelope, M3/N3/X2 cache-versus-retention, Y3, M2, M4/Y1-M4, the Q-185 second session, the slice's steps 3 to 5, the store-relative cancel trigger, and whether a ScanArm returns.\n\nIt states the excluded-bytes premise: Files may hold real pristine copies, about 500 MB, recalled and not measured (Q-180/Q-181 stand). It states that the tens-of-GB report is not claimed fixed, and it records the KnownWorkarounds entry.",
+    "key_interactions": "docs/design/SL-095-runs/ receives the .taad-scratch marks (e1..e5, tok_a/tok_b, labelled as probe-walk marks, not counter runs). It also receives spike #87's marks.jsonl, events.log and L.json, copied from C:\\WINDOWS\\TEMP\\sl095-o003-20261005-004311 if still readable; otherwise the record says they are missing, which is a gap in the risk-spike stage's record."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "ContainerLayerStore.Resolve(root, ScanOptions) -> Refuse | Exclude(path) | None",
+    "kind": "function",
+    "auth_model": "Ordinary user. Uses the scanner's own root handle plus, only when the string check misses, one FILE_READ_ATTRIBUTES open of the store's parent. Never opens the store.",
+    "error_cases": "Workaround off: None, with no work done. Store or its parent absent (Windows 10, no containers): None. GetFinalPathNameByHandleW fails (UNC, an odd redirector): the string verdict stands. Root cannot be opened: the existing RootUnreadable path.",
+    "notes": "Popped paths are compared ordinal-ignore-case and separator-bounded, never through GetFullPath. Exclude(path) is in the scanner's popped-path spelling. A loopback SMB root (\\\\localhost\\C$\\ProgramData\\...) is not matched; that gap is documented."
+   },
+   {
+    "name": "KnownWorkarounds entry and ScanOptions.EnabledWorkarounds",
+    "kind": "function",
+    "notes": "Entry: {Id, Defect, WhereItLives, Precaution, IfTurnedOff, DefaultOn}. The ScanOptions default is every DefaultOn entry. Only ContainerLayerStore branches on 'wcifs-layer-store'. Removing the id from EnabledWorkarounds restores the plain scan exactly: store listed, picked root scanned, no skippedStores, no open-seam refusals."
+   },
+   {
+    "name": "Scanner.Scan result: outcome Refused, skippedStores, opensUnderExcludedStore",
+    "kind": "function",
+    "error_cases": "Refused is an outcome, not an exception. Report mode never takes exit 70 for it. The store is never put in the unreadable list.",
+    "notes": "skippedStores carries {path, reason, workaroundId} inside the process only. The report gets counts."
+   },
+   {
+    "name": "SynchronousIoCancel.OpenDirectory with active store rule",
+    "kind": "function",
+    "error_cases": "An open at or under an active store is refused before CreateFileW, returns the skip outcome and increments opensUnderExcludedStore.",
+    "notes": "One caller: DirectoryReader.cs:67. The rule is null when the workaround is off."
+   },
+   {
+    "name": "schema-1 --report additions",
+    "kind": "cli",
+    "auth_model": "Ordinary user",
+    "error_cases": "Refused root: the report is written, exit 0, outcome \"refused\", refusal \"container-layer-store\".",
+    "notes": "Additive fields: notScanned (count), opensUnderExcludedStore (count), workarounds [{id, on}]. NotScanned is never in topLevel.unreadable. No paths. The schema stays 1."
+   },
+   {
+    "name": "Not-scanned row, refusal message and Settings window",
+    "kind": "ui",
+    "notes": "Row: '<path>  (size not counted: Windows container layers, skipped to avoid a leak in Windows' wcifs.sys driver; see Settings)'. It is not in could-not-be-opened, has no 'Show in Explorer', and its bytes fall into the coverage gap. Refusal status line: the Q-179 text plus 'You can turn this protection off in Settings.' Settings: one checkbox per KnownWorkarounds entry, ON at launch, with plain-words text. Unticking asks for confirmation with the consequence in the question; No keeps it on. The state lasts for the session only."
+   },
+   {
+    "name": "PoolWatch.ps1 -Prepare | -Protocol | -Rehearse",
+    "kind": "cli",
+    "auth_model": "Unelevated. No -Verb RunAs (fitness rule). fltmc output is pasted by the person, optionally.",
+    "error_cases": "-Protocol refuses to start when boot age at R0 is over 30 min, or when prepare.json, the published exe or the hook is missing. The machine guard (combined pool over the arm's /before above 2 GiB, or Available below 3 GiB) kills the arm and records guardStop. A later arm that starts already over the guard records guardAtStart.",
+    "notes": "Arms: I0, 5 exe-full, 4 exe-cancel, 1 exe-close, I1. Each arm has /before, /exit and /settled (+10 min) marks. JSONL with tags as an array. -Rehearse: generated %TEMP% tree, short windows, folder-count triggers, no boot-age check, never touches the layer, rehearsal:true on every line, scratch deleted in finally."
+   },
+   {
+    "name": "PoolWatch.ps1 -Report",
+    "kind": "cli",
+    "auth_model": "Unelevated",
+    "error_cases": "RUN INCOMPLETE names each of these:\n- an arm in the plan but not in arms.jsonl;\n- a /before, /exit or /settled mark missing;\n- any needed field null (m7);\n- any guardStop; arms with guardAtStart are listed as 'not measured: guard already exceeded at start (cascade from <arm>)';\n- not exactly 5 exe-full and 5 exe-cancel/close arms;\n- an exe-full with exit not 0, no report, status not Completed, or (real mode only) notScanned < 1 or opensUnderExcludedStore not 0;\n- an exe-cancel or exe-close with no '^acted ' line or no foldersAtCancel (StartupHook.cs:653 and :665 refused lines count as not acted);\n- an exe-cancel whose status is not Cancelled.",
+    "notes": "Exit 0 = RUN COMPLETE, 2 = RUN INCOMPLETE. It prints raw per-arm nets and environment lines and never prints PASS, FAIL, VOID, OUTCOME or a tolerance. The notScanned rule is real-mode only, because the exe cannot take the internal store override in a rehearsal."
+   },
+   {
+    "name": "Architecture rules (fitness.yaml + xUnit twins + plants + RuleCases pins)",
+    "kind": "function",
+    "notes": "Each pattern starts with a literal (?m). Each rule has a plant that must fire and a correct line that must not. The pin updates ship in the same change (Q-085)."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Accept the narrowing. SL-095 judges no pool tolerance. DONE (c), the five-plus-five verdict, the settle gate and the idle-drift VOID go to SC-128. DONE (a) keeps its own meaning (tag and driver with run logs). DONE (b) is the exclusion and refusal plus the documented 'Restart, not Shut down' note.",
+    "reversibility": "cheap",
+    "rationale": "Spike #87 stopped arm L at the guard with the store excluded (+375 MiB paged, +138 MiB nonpaged, no WC* rise), which is outcome C by O-028's pre-registered rule (i). So the app change cannot meet DONE (c), and the fork is not reopened. Every major in reviews 236-238 sat in -Report. No answered question collides: Q-183, Q-184 and Q-185 already route B and C elsewhere. The request's reading that 'DONE (a) is the exclusion' is corrected to the slice's own definition. Whether C's FMfn/File/NtfF retention is reclaimable cache is a separate question for SC-128 (M3/N3/X2). Spike #87's V1 measured that a true Restart reclaims the wcifs leak (WCsc 211,022 live before, 1,630 after). What would reopen this: a review defect in the scanner change, or the owner holding SL-095 for DONE (c)."
+   },
+   {
+    "decision": "The wcifs avoidance is a workaround for an outside defect. It becomes one entry, 'wcifs-layer-store', in a new Core KnownWorkarounds list. It is ON by default and has one checkbox in a new Settings window, held for the session. Its off position restores the plain scan exactly: the store is walked, and a picked root inside it is scanned as picked. Turning it off asks for confirmation, and every changed result says why.",
+    "reversibility": "cheap",
+    "rationale": "The defect lives in wcifs.sys, Microsoft's driver that ships with Windows. #646 reports no fixed wcifs.sys for 25H2, and WSL#41296 says a fix is pre-release only, so fixing it is out of this product's scope. The project rule asks for one switch per bug, on by default, with in-app notices and one list. The default honours Q-179 and Q-182 exactly. The off position is a deliberate, confirmed opt-out that Q-182 did not foresee; that is raised as an open question, not quietly settled."
+   },
+   {
+    "decision": "The store is decided once per scan, in ContainerLayerStore, and enforced twice: at descent (FolderDone) and at the open seam (DirectoryReader.cs:67 to OpenDirectory). Matching follows m1, m2 and Y5: the final path comes from the root handle, popped paths never go through GetFullPath, and the store's parent is opened but never the store.",
+    "reversibility": "cheap",
+    "rationale": "The open seam is the only independent source for opensUnderExcludedStore, and it has one call site. GetFullPath trims trailing dots and spaces, so it would wrongly skip 'Layers.' and 'Layers '. Q-182 assumed subst, junction and \\\\?\\ forms are caught, and only the final path catches them without opening the store."
+   },
+   {
+    "decision": "The skipped store goes in its own result list (skippedStores) with a NotScanned kind. The report gets counts (notScanned, opensUnderExcludedStore) and never paths. NotScanned is kept out of the unreadable list and has no 'Show in Explorer'.",
+    "reversibility": "expensive",
+    "rationale": "M5/X1 named real consumers of the unreadable list that would walk into the store. Keeping it out by construction beats every consumer having to remember to filter. Counts only, because the report never carries paths (Q-016). This is a contract with the App, the report and the window cases."
+   },
+   {
+    "decision": "A picked root at or inside the store gives a Refused scan outcome, decided in Core.",
+    "reversibility": "expensive",
+    "rationale": "Q-179 and Q-182 decided Refuse. Deciding it in Core means report mode, the tests and every future caller cannot bypass it. The refusal is a new outcome that the App status line, the report and the window cases all read."
+   },
+   {
+    "decision": "PoolWatch is built new and lean. It has marks, idle windows, 10 exe arms, a machine guard, a plan line, a completeness check and raw nets. No ScanArm, L/S/P arms, settle gate, drift VOID, tolerance, pressure step, dir arm, store-size walk or -Attribute is built.",
+    "reversibility": "cheap",
+    "rationale": "The survey and spike #87's runner both measured that none of the PoolWatch, ScanArm, settle or drift code exists at afd021d, so the proposal's 'left as built' has nothing to leave. The stack line retires ScanArm once O-003 is decided, and spike #87 decided it. Those pieces only fed verdicts the narrowing removes, and building them would recreate the three-lap loop. The store-size walk leaks about 210K entries on a boot where the layer is untouched, and Q-181 already decided the trade."
+   },
+   {
+    "decision": "-Report checks completeness against a plan line that -Protocol writes before R0, plus the request's 5+5 rules and two exe-full checks (notScanned at least 1 and opensUnderExcludedStore = 0, both real mode only). It prints raw nets and never a verdict token, and it exits 0 when complete or 2 when incomplete.",
+    "reversibility": "cheap",
+    "rationale": "M1 measured 'OUTCOME A / VERDICT PASS' from logs with F3 exit 70 and a null report, and from logs with no F/X arms at all. Checking against the plan catches an arm that never started, by construction. R2-R3-3's refused hook outcomes count as not acted. A fitness rule plus a fixture assertion stop the verdict words from coming back."
+   },
+   {
+    "decision": "The per-arm machine guard is set at 2 GiB of combined pool growth over that arm's /before, or Available MBytes below 3 GiB. It is not a 0.5 GB per-arm cap and not a cumulative cap from R0.",
+    "reversibility": "cheap",
+    "rationale": "Spike #87's 0.5 GB was a decision guard, and L alone (listing only, cut off at 3.31M entries) reached +513 MiB combined. A cap that low would make every real session INCOMPLETE under the request's 'no guard stop' rule. Spike #87's session cap measured from R0 fired partly on about 1 GiB of boot settle. The 2 GiB and 3 GiB figures are the spike driver's own machine-protection limits, applied per arm. Retuning them belongs to SC-128."
+   },
+   {
+    "decision": "Add -Protocol -Rehearse: the same -Protocol code over a generated %TEMP% tree, run unattended at validate, which must read RUN COMPLETE.",
+    "reversibility": "cheap",
+    "rationale": "Done item (2) says -Protocol writes complete logs for every arm. Without a rehearsal, the only end-to-end run is a person's Restart session, which is exactly where earlier laps found -Protocol defects too late. It adds a parameter set, not a second harness."
+   },
+   {
+    "decision": "The four rules are twinned (xUnit twins and plants), and the RuleCases pins are updated in the same change.",
+    "reversibility": "expensive",
+    "rationale": "rules-parity requires a literal leading (?m). Q-085 measured that adding twinned entries turns the RuleCases pins red with no gate running them, so the pin edits ship with the rules."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal. Kept: the narrowing; the ContainerLayerStore and Refused design (m1/m2/m4/Y5/Y6); skippedStores and NotScanned; the report counts; the -Report completeness check against a plan line; -Rehearse; the twinned rules. Corrected against the survey: its 'built / left as built' PoolWatch, ScanArm, settle, drift and pressure code does not exist at afd021d, so the scanner pieces are built here and the SC-128 pieces are not built at all. Dropped: ScanArm L --list-out and S/P (the stack line retires ScanArm once O-003 is decided), the store-size walk, -Attribute, and the store-relative hook trigger. Added: the KnownWorkarounds setting and its notices, which the project rule requires for an outside defect, and a guard constant fixed against spike #87's measured growth. Its over_engineering_flag was honoured: the harness is smaller than it proposed."
+   }
+  ],
+  "coherence_check": "One proposal, so there is no composition to check. Nothing here has survived a disagreement with another designer, and this design is the first thing a reviewer should argue with. What was checked instead is the single proposal against reality, the request, the project's rules and the answered questions. Each seam below says what was found and what was changed.\n\n1. Proposal vs survey. The proposal reuses 'built' PoolWatch, ScanArm, settle, drift and pressure code and a 'previous-lap' ContainerLayerStore. The build check and spike #87's runner measured none of them at afd021d. Changed: the scanner pieces are new work here, and the SC-128 pieces are simply not built. The request's 'the scanner code passed review' cannot rest on this tree, so validate must confirm each scanner item in the diff.\n\n2. The stack line vs the proposal's ScanArm work. The stack retires ScanArm once O-003 is decided, and spike #87 decided O-028/O-003 as C. Changed: no ScanArm and no L/S/P. SC-128 decides whether a rig comes back.\n\n3. The workaround rule vs Q-179 and Q-182. Q-182 refuses with no user override; the rule needs a per-bug switch whose off position restores the plain behaviour. Composed: the default is exactly Q-182, and the off position needs a confirmed opt-out with the consequence stated. That is left as an open question, not built both ways.\n\n4. Session-only settings vs the exe arms. Each PoolWatch exe arm is a fresh process, so the workaround is always on there. -Report's real-mode rule notScanned ≥ 1 doubles as proof that it was on, and the report records workarounds [{id, on}].\n\n5. The rehearsal vs the notScanned rule. The exe cannot take the internal store override, so a rehearsal has notScanned 0. That rule is therefore real-mode only.\n\n6. 'No guard stop on any arm' (the request) vs spike #87's measured +513 MiB for L. A 0.5 GB per-arm guard would make the rule unreachable. Changed: per-arm 2 GiB or Available below 3 GiB.\n\n7. Rule 1 (one spelling of the store) vs the notice text. KnownWorkarounds and the App compose the path from ContainerLayerStore.StoreDisplayPath, so the only exception is ContainerLayerStore.cs.\n\n8. Rule 2 vs the open-seam guard. DirectoryReader receives a rule object that is null when the workaround is off and never reads the switch, so the switch stays one guarded path.\n\n9. The never-skipped counting-rule tests vs 8.3 availability. Subst and junction are always asserted. 8.3 is asserted when GetShortPathNameW returns a distinct form, inside a test that always runs.\n\n10. Q-016 vs the new report fields. Counts and ids only.\n\n11. Q-085: the RuleCases pins change with the twinned rules.\n\n12. Q-114: App changes mean WindowMutants -Mutant All at validate.\n\nNot this slice's, but on the record: 3 pre-existing last-access test failures on this PC (LastAccessTests.cs:87, HeldOpenTreeTests.cs:68 and :96; DisableLastAccess=2) predate SL-095. Validate should report them as pre-existing, with their output. Spike #87's per-mark logs exist only on the machine (C:\\WINDOWS\\TEMP\\sl095-o003-20261005-004311). The risk-spike stage should have committed them, and the build copies them if they are still readable.",
+  "architecture_rules": [
+   {
+    "name": "the container layer store's location is spelled in one file",
+    "files": "src/**",
+    "must_not_match": [
+     "(?m)(?i:Containers[\\\\/]{1,2}Layers)",
+     "(?m)(?i:\"Layers\")"
+    ],
+    "except_files": [
+     "src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs"
+    ],
+    "because": "Q-182 requires every spelling of the store (\\\\?\\, subst, junction, 8.3, trailing separator) to be matched the same root-aware way. A second hard-coded copy, in notice text, the App or the scanner, matches by its own rules and drifts: a sibling named 'Layers.' gets skipped, or a subst spelling gets scanned and wcifs.sys leaks pool and System handles until a Restart."
+   },
+   {
+    "name": "the wcifs workaround is switched in exactly one place",
+    "files": "src/**",
+    "must_not_match": [
+     "(?m)\"wcifs-layer-store\"",
+     "(?m)KnownWorkarounds\\.WcifsLayerStore\\b"
+    ],
+    "except_files": [
+     "src/FsAnalyser.Core/Workarounds/KnownWorkarounds.cs",
+     "src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs"
+    ],
+    "because": "Turning the setting off must restore the plain scan exactly, and turning it on must guard every path. A second branch on this workaround in Scanner, DirectoryReader or the App is a condition the switch reaches separately: off could leave the store skipped on one path, or on could leave one open unguarded. The App renders the list generically and has no reason to name an entry."
+   },
+   {
+    "name": "the pool harness never elevates",
+    "files": "tests/window/PoolWatch*.ps1",
+    "must_not_match": [
+     "(?m)-Verb\\s+['\"]?RunAs\\b"
+    ],
+    "because": "The stack decides that kernel-pool measurement runs unelevated, with fltmc pasted by the person. An elevated FsAnalyser.exe opens folders an ordinary user cannot, so its logs would measure a different scan from the one the app ships (constraint: never asks for admin)."
+   },
+   {
+    "name": "PoolWatch reports completeness, never a verdict",
+    "files": "tests/window/PoolWatch.ps1",
+    "must_not_match": [
+     "(?m)[\"'][^\"'\\r\\n]*\\b(?:PASS|FAIL|VOID|OUTCOME)\\b"
+    ],
+    "because": "The narrowing moves every pool verdict to SC-128. Three review laps found a silent PASS on missing data in -Report's verdict code (M1: logs with a crashed full scan read 'OUTCOME A / VERDICT PASS'). A verdict word printed by a harness that checks only completeness reads as DONE (c) met."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "scan C: (a root above the container layer store)",
+    "shape": "the planted store holds a nested tree (<id>\\Files\\Windows\\... with files) plus Hives, Bindings and a dotnet.bcf file beside Files",
+    "why": "FolderDone must not push the store. Expected: one skippedStores entry, nothing counted under it, AfterFolder never firing at or under it, opensUnderExcludedStore 0, totals equal to the tree minus the store, and the store absent from the unreadable list (M5). This is the committed repro test's shape at planted scale.",
+    "material": true
+   },
+   {
+    "behaviour": "pick a scan root",
+    "shape": "the root is the store itself, or a folder inside it (Layers\\<id>\\Files\\Windows)",
+    "why": "The at-or-under Refuse branch: outcome Refused, zero DirectoryReader calls, and in report mode exit 0 with outcome refused (Q-179/Q-182). A miss starts a walk that leaks for every untouched entry.",
+    "material": true
+   },
+   {
+    "behaviour": "pick a scan root",
+    "shape": "the store spelled another way: a \\\\?\\ prefix, a trailing separator, different letter case",
+    "why": "The string check normalises only the root and the store (GetFullPath, \\\\?\\ strip, trim, OrdinalIgnoreCase). Any of these spellings slipping past means a store scan the user was promised would be refused.",
+    "material": true
+   },
+   {
+    "behaviour": "pick a scan root",
+    "shape": "the root reaches the store through a junction, a subst drive (DefineDosDevice, unelevated) or an 8.3 short name",
+    "why": "Only GetFinalPathNameByHandleW on the root handle catches these, and Q-182 assumed they are caught. Junction and subst are always asserted. 8.3 is asserted when GetShortPathNameW returns a distinct form.",
+    "material": true
+   },
+   {
+    "behaviour": "scan C:",
+    "shape": "siblings named 'Layers.', 'Layers ' and 'Layers2', and a 'Layers' folder elsewhere in the tree",
+    "why": "Popped paths are compared without GetFullPath, which trims trailing dots and spaces. With it, 'Layers.' and 'Layers ' would be wrongly skipped and their bytes lost. A bare-name match would skip unrelated folders.",
+    "material": true
+   },
+   {
+    "behaviour": "scan C:",
+    "shape": "no container store exists (Windows 10 or a PC without containers; the override points at an absent folder)",
+    "why": "Resolve must return None without throwing, even though the parent open for the final path fails. The scan must be unchanged with no not-scanned row, and the repro test keeps its message-skip.",
+    "material": true
+   },
+   {
+    "behaviour": "scan with the protection turned off",
+    "shape": "the wcifs-layer-store workaround is off, over a planted store and a picked root inside it",
+    "why": "Off must restore the plain behaviour exactly: the store listed and counted like any folder, the picked root scanned as picked, no not-scanned row, and no open-seam refusals. This is tested only on planted stores. Against the real store, the off position leaks pool and System handles until a Restart, so no case ever runs it there.",
+    "material": true
+   },
+   {
+    "behaviour": "show why a result is different",
+    "shape": "a C: scan whose store was skipped, and a pick that was refused",
+    "why": "The notice must sit beside the changed result. The not-scanned row names the wcifs.sys defect and Settings. The refusal line names the defect and the switch. --report records workarounds [{id, on}] and notScanned 1. NotScanned has no 'Show in Explorer' and is not in could-not-be-opened.",
+    "material": true
+   },
+   {
+    "behaviour": "turn the protection off",
+    "shape": "the user unticks the checkbox and answers No, then unticks and answers Yes",
+    "why": "Declining must leave it on. Accepting turns it off for this session only, and the next launch starts on. This is driven by a new FsaWindowHook mode over a %TEMP% tree and checked through the report's workarounds state.",
+    "material": true
+   },
+   {
+    "behaviour": "run the pool protocol end to end",
+    "shape": "PoolWatch.ps1 -Protocol -Rehearse over a generated %TEMP% tree",
+    "why": "Done item (2) needs -Protocol to write complete logs for every arm, and without this the only end-to-end run is a person's Restart session. -Report must read RUN COMPLETE with /before, /exit and /settled marks on every planned arm, and the scratch must be deleted afterwards.",
+    "material": true
+   },
+   {
+    "behaviour": "check a pool run for completeness",
+    "shape": "an exe-full arm exited 70 with a null report",
+    "why": "M1 measured these exact logs reading 'OUTCOME A / VERDICT PASS'. The exe-full field checks (exit, report present, status Completed) must name the arm as INCOMPLETE.",
+    "material": true
+   },
+   {
+    "behaviour": "check a pool run for completeness",
+    "shape": "arms.jsonl lacks arms the plan line names, including a run with no exe-full or exe-cancel/close arms at all",
+    "why": "M1: the old judge saw only the arms that happened to be present. The check against the plan, and the exactly-5+5 count, must catch an arm that never started.",
+    "material": true
+   },
+   {
+    "behaviour": "check a pool run for completeness",
+    "shape": "a cancel or close arm whose hook refused (the app shut down before the trigger, or the trigger deadline passed and the scan finished with status Completed)",
+    "why": "R2-R3-3: the refused lines at StartupHook.cs:653 and :665 never press Cancel or Close. Without an '^acted ' line, foldersAtCancel and status Cancelled, a crash or a full scan counts as a cancelled run.",
+    "material": true
+   },
+   {
+    "behaviour": "check a pool run for completeness",
+    "shape": "an arm with its /settled mark missing, or stopped by the machine guard while a later arm started already over it",
+    "why": "M1 items 3 and 4: Net returned null and the loop continued, and only L's guard was checked. Both must read INCOMPLETE, with the later arm named as a cascade. Across every fixture, no output line may contain PASS, FAIL, VOID or OUTCOME.",
+    "material": true
+   }
+  ],
+  "stack_chosen": [
+   {
+    "area": "storage",
+    "choice": "App settings (for now, the on/off state of each KnownWorkarounds entry) are held in memory for one app session and start ON at every launch. No settings file is written.",
+    "why": "The project's storage line says nothing is saved to disk, and Q-016 carved out only the opt-in --report file. Starting ON at every launch is the safe reading of 'on by default' for a protection whose off position leaks kernel memory until a Restart. A later slice that wants persisted settings has to make that storage decision explicitly."
+   },
+   {
+    "area": "ui",
+    "choice": "Every workaround for a defect outside the project is an entry in one Core list, src/FsAnalyser.Core/Workarounds/KnownWorkarounds.cs (id, defect, where it lives, precaution, what turning it off does, default on). A WPF Settings window renders the list generically as one checkbox per entry, and turning one off goes through a WPF confirmation window.",
+    "why": "The project rule asks for one list and one checkbox per known bug, and later slices only see the stack and the architecture. Declaring the list here means the next outside defect joins it instead of inventing a second mechanism."
+   },
+   {
+    "area": "testing",
+    "choice": "PoolWatch.ps1's own checks run as a PowerShell case script, tests/window/PoolWatchCases.ps1, over hand-built JSONL fixtures plus one -Rehearse run, in the WindowCases.ps1 / RuleCases.ps1 idiom. No Pester.",
+    "why": "The stack names no runner for the harness scripts. The repo already tests PowerShell tooling with case scripts (WindowCases, RuleCases, WindowMutants), and adding Pester would put a second test framework in the repo."
+   }
+  ],
+  "decidable_disagreements": [
+   {
+    "question": "Does a cold full exe C: scan on a fresh boot, with the store excluded and SizeProbe on, stay under the per-arm machine guard (2 GiB of combined pool over the arm's /before, Available at least 3 GiB)?",
+    "positions": "Practice flagged that a guard near 0.5 GB makes every real session INCOMPLETE. This design sets 2 GiB from spike #87, where L, listing only and cut off at 3.31M entries, reached +513 MiB. A full exe scan adds SizeProbe on about 2.3M+ files, which nobody has measured cold. If it is over, the first exe-full of every session reads INCOMPLETE.",
+    "would_force_resynthesis": false
+   },
+   {
+    "question": "Does the directory open that Resolve makes on a picked root reaching inside a live layer (junction or subst spelling) allocate WCsc/WCri or add a System 0x120089 handle?",
+    "positions": "#646's negative controls (via the investigation) say directory opens and FILE_READ_ATTRIBUTES opens do not leak. Spike 85 got 0 valid measurements on this. If it does leak, the cost is one entry per refused pick, which is accepted rather than redesigned.",
+    "would_force_resynthesis": false
+   },
+   {
+    "question": "Is %ProgramData%\\Microsoft\\Windows\\Containers\\Layers the only live WCI store a C: scan can reach, for example while Windows Sandbox or another container is running, not only the CmService zygote?",
+    "positions": "Spike #87's arm L, on one fresh boot with the zygote running, had no WC* rise with only Layers excluded. That covers BaseImages, ContainerStorages and C:\\Users\\All Users on that boot only. If a running Sandbox puts a live layer elsewhere, Resolve must return several stores, which changes its contract and the single-path rule.",
+    "would_force_resynthesis": true
+   }
+  ],
+  "taste_disagreements": [
+   "Settings as a separate WPF window, or an expander on MainWindow. The window was chosen so the startup hook can drive the confirmation without touching the main layout's minimum sizes.",
+   "Whether -Rehearse belongs in this slice. It was kept because done item (2) otherwise has no unattended proof.",
+   "Dropping the one-off store-size walk (Y4/M1), against gating it on live WCsc of at least 200,000. It was dropped: Q-181 already decided, and the walk leaks on an untouched boot.",
+   "The NotScanned kind name, against Excluded or SkippedByWorkaround.",
+   "-Report prints raw nets only, against also printing drift-corrected nets. Raw was chosen because the drift model is SC-128's to choose (M6/X5)."
+  ],
+  "open_questions": [
+   "Q-182 decided Refuse for a picked root at or inside the layer store and explicitly overrode 'user's choice wins'. The project's workaround rule requires a per-bug checkbox, on by default, whose off position restores the plain behaviour, which would let a user who has confirmed the consequence scan the store as picked. This design keeps Q-182 as the default and makes both the C: exclusion and the refusal follow the one switch. Should the off position lift the picked-root refusal too, or only the exclusion during C: scans?"
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Antivirus and backup products on Hyper-V / Windows container hosts",
+   "pattern": "Exclude a system-managed, filter-backed virtualization store by a path derived from a known folder. Enforce the exclusion both where the walk descends and at the open choke point. Report it as a separate 'not scanned' entry, never as an access failure.",
+   "transfer_found": true,
+   "rationale": "That industry settled on path exclusions for filter-backed placeholder trees because attribute-based detection misses live trees, and that is measured here: live-layer folders carry no reparse bit. M5/X1 add a second lesson: keep excluded stores out of 'failed' lists, or retry tooling walks straight into them. Taken in full for the scanner side.",
+   "invariants": [
+    {
+     "precondition": "The store's location comes from a known folder and is stable across boots.",
+     "status": "holds",
+     "evidence": "One layer (1f35079a) under %ProgramData%\\Microsoft\\Windows\\Containers\\Layers, backing the CmService zygote (investigation, build check)."
+    },
+    {
+     "precondition": "Store entries cannot be told apart by attribute or tag.",
+     "status": "holds",
+     "evidence": "The investigation found the live layer's Files\\Windows folders carry no ReparsePoint or Offline attributes."
+    },
+    {
+     "precondition": "A full C: walk with the exclusion reaches no live WCI entry, including through Containers' siblings and C:\\Users\\All Users.",
+     "status": "holds",
+     "evidence": "Spike #87 (2026-10-04, fresh boot): arm L, a cold C: listing with the store excluded, had no WC* rise and underStore=0. Measured on one boot with only the zygote running."
+    },
+    {
+     "precondition": "No root spelling reaches the store's contents unmatched.",
+     "status": "must-verify",
+     "evidence": "Final-path resolution covers subst, Volume{GUID}, 8.3 and junction roots, and cases 3 and 4 test them on planted stores. Loopback SMB (\\\\localhost\\C$) and any WCI store outside Layers are not covered."
+    },
+    {
+     "precondition": "Excluding the store drops no bytes the user needs counted.",
+     "status": "fails",
+     "evidence": "The Sandbox dynamic base image holds real pristine copies, about 500 MB (recalled, via review M1). The bytes are dropped knowingly, under Q-180/Q-181, and shown as 'size not counted'."
+    }
+   ]
+  },
+  "channeled_experts": [
+   "Windows filesystem minifilter engineer (wcifs/FltMgr context lifetimes)",
+   "Test-harness engineer who designs completeness checks against silent passes",
+   "Antivirus/backup engineer who maintains exclusion lists for container hosts"
+  ],
+  "prior_art": [
+   {
+    "pattern": "On 25H2, first-time path opens retain about 1 KB of pool per path in FMfn/File/NtfF, and a reboot clears it. This is the shape spike #87's arm L showed with the store excluded, and the reason DONE (c) moves to SC-128.",
+    "where": "https://learn.microsoft.com/en-nz/answers/questions/5966064/windows-11-25h2-kernel-pool-leak-fmfn-and-file-all",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2026-08-04"
+   },
+   {
+    "pattern": "Find a leak by diffing per-tag Allocs/Frees/Bytes over time. -Report prints exactly these raw per-arm nets, read from NtQuerySystemInformation(22) instead of WDK poolmon.",
+    "where": "https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/using-poolmon-to-find-a-kernel-mode-memory-leak",
+    "authority": "official",
+    "basis": "cited"
+   },
+   {
+    "pattern": "wcifs.sys leaks WCsc/WCfc/WCri/FMwi/FMfc plus one System handle on first touch of each entry in a live container layer. There is no fixed driver on 25H2, and directory and FILE_READ_ATTRIBUTES opens are negative controls.",
+    "where": "microsoft/Windows-Containers#646 (as recorded by this slice's investigation stage)",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "The Sandbox dynamic base image holds real pristine copies of mutable OS files, about 500 MB on disk, so the excluded store is not byte-free.",
+    "where": "Microsoft Learn, Windows Sandbox architecture (as quoted in review finding M1)",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "FMfn paged-pool retention lasts until NTFS stream teardown, so retention seen without memory pressure may be cache. This is why the meaning of outcome C goes to SC-128.",
+    "where": "Microsoft Q&A 5946136 (as quoted in review findings M3/N3)",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "With Fast Startup on, Shut down hibernates the kernel session, so leaked pool survives it. The workaround therefore says Restart. That a Restart reclaims the leak is measured once (spike #87 V1); that Shut down does not is only sourced.",
+    "where": "Microsoft KB3211190 (as quoted in review finding N4)",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Antivirus and backup vendors exclude virtualization store paths on container and Hyper-V hosts instead of detecting store entries by attribute.",
+    "where": "Microsoft antivirus-exclusion guidance for Hyper-V / Windows container hosts",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Canonicalise with GetFinalPathNameByHandleW(VOLUME_NAME_DOS) to collapse subst, Volume{GUID}, 8.3 and \\\\?\\ spellings.",
+    "where": "Win32 GetFinalPathNameByHandleW",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "whats_new": [
+   "ContainerLayerStore.Resolve (Refuse / Exclude / None), with final-path matching, a parent-of-store anchor and no GetFullPath on popped paths",
+   "The KnownWorkarounds list in Core, with its first entry 'wcifs-layer-store' (on by default), and ScanOptions.EnabledWorkarounds",
+   "A Refused scan outcome for a picked root at or inside the store (Q-179/Q-182)",
+   "The descent skip into a new skippedStores result list, kept out of the unreadable list",
+   "An open-seam refusal and the opensUnderExcludedStore count at DirectoryReader.cs:67 and SynchronousIoCancel.OpenDirectory",
+   "The NotScanned kind and the 'size not counted' row with its plain-words reason, with no 'Show in Explorer'",
+   "The WPF Settings window (one checkbox per entry, session-only) and a confirmation window that states the consequence",
+   "Schema-1 report fields: outcome refused, notScanned, opensUnderExcludedStore and workarounds [{id, on}]",
+   "Planted-store Core tests, WindowCases cases for C:\\...\\Containers and for a refused root, and an FsaWindowHook mode that toggles settings",
+   "tests/window/PoolWatch.ps1: -Prepare (environment record, fltmc paste check, Rpre), -Protocol (plan line, I0, 5 exe-full, 5 cancel/close, I1, per-arm machine guard), -Rehearse and -Report (completeness plus raw nets)",
+   "tests/window/PoolWatchCases.ps1, with completeness fixtures and the no-verdict-token assertion",
+   "Four twinned fitness rules with plants and RuleCases pin updates",
+   "docs/design/SL-095-container-layer-store.md (DONE (a) table, the Restart note, 'Not judged here' and the SC-128 handoff) and docs/design/SL-095-runs/"
+  ],
+  "whats_reused": [
+   "Scanner.Run and Run.FolderDone completion mechanics",
+   "DirectoryReader and SynchronousIoCancel's guarded open",
+   "Core's existing native interop file, for GetFinalPathNameByHandleW",
+   "ScanOptions and its AfterFolder seam",
+   "UnreadableRows.Build rendering and the coverage gap",
+   "src/FsAnalyser.App/WindowReport.cs schema 1 and eng/read-window.ps1",
+   "tests/window/WindowCases.ps1 and the published-exe --report path",
+   "FsaWindowHook's acted and refused log lines (StartupHook.cs:653, :665) and its existing cancel/close triggers",
+   "tests/bugs/SL-095-ContainerLayerWalk, committed as is (assembly name FsAnalyser.Core.Tests)",
+   "The .taad-scratch marks (e1..e5, tok_a/tok_b) as DONE (a) evidence",
+   "Spike #87's 2026-10-04 run folder, copied if still readable, as evidence only",
+   "eng/dotnet.ps1 build and publish",
+   "eng/rules-harness plants, eng/rules-parity.ps1 and ArchitectureRulesTests",
+   "WindowMutants.ps1 -Mutant All as the App-touching validate check (Q-114)"
+  ]
+ }
+}

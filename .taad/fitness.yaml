@@ -937,3 +937,135 @@ rules:
       the grandparent still parses S_OK (build-check probe), so SL-047's climb opened another
       folder in the target's place and called it success. Restoring the kind (for example by
       reverting to SL-047's Walk) brings that misroute back.
+
+  # settled by SL-095
+  - name: only ContainerLayerStore composes the container layer store path
+    files: src/**/*.cs
+    must_not_match:
+    - (?i)containers(\\{1,2}|/{1,2}|"\s*,\s*")layers
+    - '(?m)(?i:["\\/]Layers(?=["\\/]))'
+    because: 'A second hand-written check of the store path reproduces the no-go the spike measured:
+      a rule that is not root-aware skipped 3 of 3 subfolders when the user picked a root inside
+      the store. A copy that skips the \\?\ strip or the separator boundary either walks the
+      live layer again, leaking wcifs pool until a restart, or excludes a sibling folder the
+      user wants counted. A store path built across calls (containers + @"\Layers\") is the same
+      copy, so any Layers path segment in a literal counts.'
+    except_files:
+    - src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs
+  - name: the pool measurement never needs elevation
+    files: tests/window/**
+    must_not_match:
+    - (?im)-Verb\s+['"]?RunAs\b
+    - (?im)\bVerb\s*=\s*"runas"
+    - (?im)^\s*(&\s*)?(Start-Process\s+(-FilePath\s+)?)?['"]?(poolmon|wpr|xperf|fltmc)(\.exe)?['"]?(\s|$)
+    because: The protocol runs on a fresh boot the person had to restart for, and each layer
+      entry touched leaks until the next restart. An elevation prompt, or a tool that fails
+      unelevated, spoils that boot. That holds for every script and rig the protocol starts from tests/window,
+      not only PoolWatch.ps1. The project decided on unelevated SystemPoolTagInformation marks,
+      with fltmc output supplied separately by the person.
+
+  # settled by SL-095
+  - name: the container layer store path is composed in one place
+    files: src/**/*.cs
+    must_not_match:
+    - (?m)(?i:Containers[\\/]{1,2}Layers)
+    - (?m)(?i:"Layers")
+    because: The store must be rebased onto the scan root's final spelling (subst, \\?\Volume{GUID},
+      8.3) and compared separator-bounded without GetFullPath. A second composition anywhere
+      else is a comparison that misses those roots or folds 'Layers.' into the store. The scan
+      then walks the live layer, and wcifs.sys keeps the pool and a System handle per entry
+      until restart.
+    except_files:
+    - src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs
+  - name: every directory open goes through the guarded call in DirectoryReader
+    files: src/**/*.cs
+    must_not_match:
+    - (?m)\bSynchronousIoCancel\.OpenDirectory\s*\(
+    because: The refuse-and-count backstop and the published opensUnderExcludedStore counter
+      are evidence only if every directory open passes the rule check in DirectoryReader.Read.
+      A second call site opens a layer folder with no check and no count. The wcifs leak comes
+      back while the counter, which PoolWatch -Report's completeness check and the window
+      report read, still reads 0.
+    except_files:
+    - src/FsAnalyser.Core/Scanning/DirectoryReader.cs
+  - name: product code never switches the per-file metadata probe off
+    files: src/**/*.cs
+    must_not_match:
+    - (?m)\bProbeRule\s*=(?![=>])
+    because: SL-056 and Q-004 decided that every first-seen, non-link, non-cloud-only file is
+      sized from its own handle, because listings go stale (a 257 MiB file listed at 0 B for
+      15 s or more). The listing-only measurement arm that set it was deleted with ScanArm once
+      O-003 was decided, and nothing outside ScanOptions sets it now. A ProbeRule assignment in
+      product code brings stale sizes back into the totals.
+    except_files:
+    - src/FsAnalyser.Core/Scanning/ScanOptions.cs
+
+  # settled by SL-095
+  - name: the container layer store's location is spelled in one place
+    files: src/**/*.cs
+    must_not_match:
+    - (?m)(?i:Containers[\\/]{1,2}Layers)
+    - '(?m)(?i:"Containers"\s*,\s*"Layers")'
+    because: 'Q-182 requires the refusal and the C: exclusion to match the store the same root-aware
+      way. A second, string-only copy, such as an App pre-check or a second predicate in DirectoryReader,
+      misses subst, junction, 8.3 and volume-GUID spellings and lets a scan walk the live layer,
+      which leaks wcifs pool and a System handle per entry until a Restart.'
+    except_files:
+    - src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs
+  - name: the measurement rigs never relocate the store
+    files: tests/window/**
+    must_not_match:
+    - ContainerLayerStorePath
+    because: No rig has InternalsVisibleTo into Core now. The rule keeps any future rig, or the
+      window hook, from setting the override, which would walk the live layer on the person's
+      fresh boot and leak about 210K WC* entries and System handles until another Restart.
+      Only Core.Tests may plant a fake store.
+  - name: the App never relocates the store
+    files: src/FsAnalyser.App/**
+    must_not_match:
+    - ContainerLayerStorePath
+    because: An App-set or user-configurable store path bypasses the refusal decided in Q-179/Q-182
+      and the exclusion decided in Q-180/Q-181. No correct App code mentions the override.
+
+  # settled by SL-095
+  - name: the container layer store's location is spelled in one file
+    files: src/**
+    must_not_match:
+    - (?m)(?i:Containers[\\/]{1,2}Layers)
+    - (?m)(?i:"Layers")
+    because: 'Q-182 requires every spelling of the store (\\?\, subst, junction, 8.3, trailing
+      separator) to be matched the same root-aware way. A second hard-coded copy, in notice
+      text, the App or the scanner, matches by its own rules and drifts: a sibling named ''Layers.''
+      gets skipped, or a subst spelling gets scanned and wcifs.sys leaks pool and System handles
+      until a Restart.'
+    except_files:
+    - src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs
+  - name: the wcifs workaround is switched in exactly one place
+    files: src/**
+    must_not_match:
+    - (?m)"wcifs-layer-store"
+    - (?m)KnownWorkarounds\.WcifsLayerStore\b
+    because: 'Turning the setting off must restore the plain scan exactly, and turning it on
+      must guard every path. A second branch on this workaround in Scanner, DirectoryReader
+      or the App is a condition the switch reaches separately: off could leave the store skipped
+      on one path, or on could leave one open unguarded. The App renders the list generically
+      and has no reason to name an entry.'
+    except_files:
+    - src/FsAnalyser.Core/Workarounds/KnownWorkarounds.cs
+    - src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs
+  - name: the pool harness never elevates
+    files: tests/window/PoolWatch*.ps1
+    must_not_match:
+    - (?m)-Verb\s+['"]?RunAs\b
+    because: 'The stack decides that kernel-pool measurement runs unelevated, with fltmc pasted
+      by the person. An elevated FsAnalyser.exe opens folders an ordinary user cannot, so its
+      logs would measure a different scan from the one the app ships (constraint: never asks
+      for admin).'
+  - name: PoolWatch reports completeness, never a verdict
+    files: tests/window/PoolWatch.ps1
+    must_not_match:
+    - (?m)["'][^"'\r\n]*\b(?:PASS|FAIL|VOID|OUTCOME)\b
+    because: 'The narrowing moves every pool verdict to SC-128. Three review laps found a silent
+      PASS on missing data in -Report''s verdict code (M1: logs with a crashed full scan read
+      ''OUTCOME A / VERDICT PASS''). A verdict word printed by a harness that checks only completeness
+      reads as DONE (c) met.'
