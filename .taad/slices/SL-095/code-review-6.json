@@ -1,0 +1,86 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-095",
+ "stage": "code-review",
+ "attempt": 6,
+ "at": "2026-10-05T05:08:07.669Z",
+ "head": "c2c381d36a68f84922aeabedeb26bcbd4321e192",
+ "run_id": 2530,
+ "summary": "Build attempt 9 (b7e9c18) changes only text and test scripts; scanner behaviour is unchanged. O-110 to O-113 are each discharged in the code:\n- **O-110:** Invoke-ExeArm records `killed` only in the branch that calls Kill, and Get-Missing words the message from it.\n- **O-111:** Remove-StaleRehearsals runs at -Rehearse start, and the 10-minute timeout is stated.\n- **O-112:** the EntryKind, EntryClassifier, test-class and fitness texts are conditioned on Q-186, with no first-touch claim. A grep outside the repro and the design record's 'not settled' line finds no stale statement left.\n- **O-113:** C-011 matches only processes whose command line holds its own run folder.\n\nWhat I ran: ContainerLayerStoreTests (37 passed), PoolWatchCases P-003 and C-011 (passed), and Fitness (all 81 rules hold). I did not re-run C-052 or the full suite, to stay under the kernel-memory budget the builder measured; src changed only in comments.\n\nTwo new minor defects, both in PoolWatch code written this lap:\n1. **A guard stop is lost if the arm is then interrupted.** If the guard kills an arm and the arm is interrupted during its settle wait, -Report says 'interrupted after FsAnalyser.exe exited (exit -1)'. The guard stop and its net are dropped. I reproduced this with a fixture.\n2. **The sweep deletes kept scratch.** Remove-StaleRehearsals deletes scratch a person kept with -Keep, against the header's promise.\n\nSecond round: Second round, an adversarial pass over the code this lap changed. Nothing new beyond round one's G1 (a guard stop lost when the arm is then interrupted) and G2 (the sweep deletes -Keep scratch).\n\nWhat I walked:\n- **Remove-StaleRehearsals.** Its probes of absent run, marks, arms and tree items are silent. A partial Remove-Item does not throw; it prints 'deleted: False'. It takes no action on a live rehearsal: a live one writes a mark every 5 s, and its tree folder's time changes only while the tree is being built. The prepare step keeps that window to minutes, not an hour.\n- **Invoke-ExeArm's finally.** I checked a Kill that throws because the process exits in the race, an exe that exits on its own as Ctrl+C lands, and an exit code set in the try before an interrupt. Each gives a consistent killed/exitCode pair. Old logs with no `killed` field read 'not recorded'.\n- **C-011's process filter.** A null CommandLine, for another user's process, simply does not match. The run-folder name is hex, so the `-like` pattern carries no wildcard characters from it. In any case the marks.jsonl and arms.jsonl absence checks prove the refusal on their own.\n- **C-052's planted folders.** The stale and live plants are cleaned up in a finally. If C-052 itself is killed, the next rehearsal sweeps its plant after an hour.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "Build attempt 9 (b7e9c18) changes only text and test scripts; scanner behaviour is unchanged. O-110 to O-113 are each discharged in the code:\n- **O-110:** Invoke-ExeArm records `killed` only in the branch that calls Kill, and Get-Missing words the message from it.\n- **O-111:** Remove-StaleRehearsals runs at -Rehearse start, and the 10-minute timeout is stated.\n- **O-112:** the EntryKind, EntryClassifier, test-class and fitness texts are conditioned on Q-186, with no first-touch claim. A grep outside the repro and the design record's 'not settled' line finds no stale statement left.\n- **O-113:** C-011 matches only processes whose command line holds its own run folder.\n\nWhat I ran: ContainerLayerStoreTests (37 passed), PoolWatchCases P-003 and C-011 (passed), and Fitness (all 81 rules hold). I did not re-run C-052 or the full suite, to stay under the kernel-memory budget the builder measured; src changed only in comments.\n\nTwo new minor defects, both in PoolWatch code written this lap:\n1. **A guard stop is lost if the arm is then interrupted.** If the guard kills an arm and the arm is interrupted during its settle wait, -Report says 'interrupted after FsAnalyser.exe exited (exit -1)'. The guard stop and its net are dropped. I reproduced this with a fixture.\n2. **The sweep deletes kept scratch.** Remove-StaleRehearsals deletes scratch a person kept with -Keep, against the header's promise.\n\nSecond round: Second round, an adversarial pass over the code this lap changed. Nothing new beyond round one's G1 (a guard stop lost when the arm is then interrupted) and G2 (the sweep deletes -Keep scratch).\n\nWhat I walked:\n- **Remove-StaleRehearsals.** Its probes of absent run, marks, arms and tree items are silent. A partial Remove-Item does not throw; it prints 'deleted: False'. It takes no action on a live rehearsal: a live one writes a mark every 5 s, and its tree folder's time changes only while the tree is being built. The prepare step keeps that window to minutes, not an hour.\n- **Invoke-ExeArm's finally.** I checked a Kill that throws because the process exits in the race, an exe that exits on its own as Ctrl+C lands, and an exit code set in the try before an interrupt. Each gives a consistent killed/exitCode pair. Old logs with no `killed` field read 'not recorded'.\n- **C-011's process filter.** A null CommandLine, for another user's process, simply does not match. The run-folder name is hex, so the `-like` pattern carries no wildcard characters from it. In any case the marks.jsonl and arms.jsonl absence checks prove the refusal on their own.\n- **C-052's planted folders.** The stale and live plants are cleaned up in a finally. If C-052 itself is killed, the next rehearsal sweeps its plant after an hour.",
+  "findings": [
+   {
+    "id": "G1",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "nature": "defect",
+    "claim": "An arm the machine guard stopped, and that is then interrupted during its 10-minute settle wait, is reported as an exe that exited, with the guard stop and its net dropped.\n\nHow it happens:\n1. The guard path kills the exe and breaks out of the loop.\n2. :362 then records `exitCode = $p.ExitCode`, which is -1.\n3. If a terminating error or Ctrl+C lands in the settle sleep, the finally finds the exe already exited, so `killed` stays false, and it sets `interrupted`.\n4. Get-Missing tests `interrupted` and `continue`s before it reaches the `guardStop` branch.\n\nThe report then says 'interrupted after FsAnalyser.exe exited (exit -1), before its /settled mark'. It omits that the guard killed it, and omits the /before-to-/exit net that F2 asked to be printed for a guard-stopped arm.\n\nThis is a likely ending of a real session. The guard fires when Available is under 3 GB, which is when a person watching is most likely to press Ctrl+C, and when a CIM reading in Write-Mark is most likely to fail.\n\nI reproduced it. A run folder with arm X1 holding `guardStop`, `interrupted:true`, `killed:false` and `exitCode:-1` printed only 'MISSING arm X1: interrupted after FsAnalyser.exe exited (exit -1), before its /settled mark'. There was no 'stopped by the machine guard' line.",
+    "evidence": "tests/window/PoolWatch.ps1:\n- Invoke-ExeArm guard branch: `$line['guardStop'] = ...; try { $p.Kill() } ...; break`, then `if ($p.HasExited) { $line['exitCode'] = $p.ExitCode }` and `Start-Sleep -Seconds $Timing.SettleSec` inside the try.\n- The finally: `if (-not $line['killed'] -and $null -eq $line['exitCode']) {...}; $line['interrupted'] = $true`.\n- Get-Missing: `if ($a.interrupted) { ... continue }` comes before `if ($a.guardStop) { ... 'stopped by the machine guard' ... }`.\n\ntests/window/PoolWatchCases.ps1 Test-P003 does not feed a guard-stopped arm.",
+    "fix": "In Get-Missing, test `$a.guardStop` before `$a.interrupted`, or add ' after the machine guard stopped it (<guardStop>)' to the interrupted message when guardStop is set. Keep printing the guard's /before-to-/exit net.\n\nAdd that arm to P-003: guardStop, interrupted, killed false, exitCode -1."
+   },
+   {
+    "id": "G2",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "claim": "Remove-StaleRehearsals deletes scratch a person deliberately kept.\n\nThe script's header promises 'the scratch is deleted afterwards unless -Keep'. A `-Protocol -Rehearse -Keep` run prints 'REHEARSAL kept: <scratch>' and leaves the folder for inspection. The next rehearsal started more than an hour later deletes it as 'stale scratch'. That includes the one validate runs through PoolWatchCases C-052.\n\nThe sweep cannot tell a folder a killed run left from one -Keep kept on purpose.",
+    "evidence": "tests/window/PoolWatch.ps1:\n- :15-17 header: '-Protocol -Rehearse [-Keep] … the scratch is deleted afterwards unless -Keep'.\n- :680: `if ($Keep) { Write-Output \"REHEARSAL kept: $scratch\" }`.\n- Remove-StaleRehearsals deletes every `rehearse-*` folder whose folder, run, marks, arms and tree times are all over an hour old, with no other condition.\n- The Protocol branch calls it first thing under `if ($Rehearse)`.",
+    "fix": "In the -Keep branch of the rehearsal's finally, write a `kept` file into the scratch. Have Remove-StaleRehearsals skip any folder that holds it.\n\nAlternatively, state in the header that kept scratch is swept by the next rehearsal once it is an hour old."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-110",
+    "discharged": "yes",
+    "evidence": "tests/window/PoolWatch.ps1:\n- Invoke-ExeArm's finally sets `killed` only after `$p.Kill()`, and records the exit code when the exe had already exited.\n- Get-Missing gives three wordings: killed, exited (exit N) before /settled, or not recorded.\n\nP-003 feeds F2 (killed) and F4 (exit 0, /exit present, /settled missing); passed here. The guard-stopped variant is not covered (finding G1)."
+   },
+   {
+    "key": "O-111",
+    "discharged": "yes",
+    "evidence": "tests/window/PoolWatch.ps1:\n- Remove-StaleRehearsals, called at -Rehearse start, sweeps `fsa-poolwatch\\rehearse-*` folders with no write in the last hour.\n\ntests/window/PoolWatchCases.ps1:\n- The header and Test-C052 state the 10-minute caller timeout.\n- Test-C052 plants a 2-hour-old folder, which must be swept, and a current one, which must be kept.\n\nI read this but did not run C-052, to stay under the kernel-memory budget. The sweep also removes -Keep scratch (finding G2)."
+   },
+   {
+    "key": "O-112",
+    "discharged": "yes",
+    "evidence": "- src/FsAnalyser.Core/Store/EntryKind.cs (Folder and NotScanned), src/FsAnalyser.Core/Scanning/EntryClassifier.cs and the ContainerLayerStoreTests class summary are now conditioned on the precaution (Q-186).\n- .taad/fitness.yaml:961 drops 'single-use'.\n- A grep for first-touch, single-use, 'never scanned', 'does not lift' and 'whatever the settings' finds only the design record's folder name and its 'not settled' line, outside the repro the brief keeps unchanged."
+   },
+   {
+    "key": "O-113",
+    "discharged": "yes",
+    "evidence": "tests/window/PoolWatchCases.ps1 Test-C011 matches only `FsAnalyser.App.exe` processes whose CommandLine contains its own `$dir`, via Get-CimInstance Win32_Process. C-011 passed here."
+   }
+  ],
+  "cases": [
+   {
+    "key": "P-003",
+    "exercised": "yes",
+    "evidence": "The fixture covers three arms:\n- X3: /before mark, no arm line;\n- F2: interrupted and killed, no exit, no later marks;\n- F4: interrupted with exit 0 and an /exit mark, /settled removed, not killed.\n\nAssertions: each message, F4 never called killed, and no 'mark' lines for F2 or F4. Ran here; passed. It does not feed a guard-stopped arm that is then interrupted (finding G1)."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "-Protocol on this boot, more than 1,800 s old, refuses with no marks.jsonl and no arms.jsonl. The process check is scoped to its own run folder. Ran here; passed."
+   },
+   {
+    "key": "C-052",
+    "exercised": "yes",
+    "evidence": "Read, not run. Test-C052 plants rehearse-stale<id> with run, marks and folder times set 2 h back, and rehearse-live<id> written now. It runs the rehearsal, then asserts the first is gone and the second's marks.jsonl remains, cleaning both up in a finally. This feeds both shapes of the sweep."
+   }
+  ],
+  "drift": [
+   "The design record's step 4 (`-Protocol -Rehearse`) still says only that the scratch is deleted afterwards. It does not mention that a rehearsal now sweeps `rehearse-*` folders over an hour old as it starts, or that the caller needs a 10-minute timeout. Those are stated only in PoolWatch.ps1's comment and PoolWatchCases.ps1's header."
+  ],
+  "matches_design": true,
+  "unreviewed": [
+   ".taad/slices/SL-095/{build-slice-7,build-slice-8,code-review-5,validate-slice-2,validate-slice-3}.json and index.json: engine records, not code.",
+   ".taad-scratch/validate/{marks-v3.jsonl,seq3.ps1,seq4.ps1}: validate's own measurement scratch, not product or test code."
+  ],
+  "second_round": {
+   "run_id": 2531,
+   "filed": 0
+  }
+ }
+}

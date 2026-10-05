@@ -27,6 +27,7 @@ public sealed partial class TopLevelRowText
         TopLevelState.Unreadable when row.ListedPartway => $"{row.Name}  (could not be read in full)",
         TopLevelState.Unreadable => $"{row.Name}  (could not be opened)",
         TopLevelState.NotFollowed => $"{row.Name}  (link, not followed)",
+        TopLevelState.NotScanned => $"{row.Name}  (size not counted: Windows container layers)",
         TopLevelState.Done when row.Revised => $"{row.Name}  (revised)",
         _ => row.Name,
     };

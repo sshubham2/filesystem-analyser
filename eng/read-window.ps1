@@ -21,11 +21,18 @@
 # the `EXIT` line, and then it runs. A box the app raises holds the call that raised it, so such a run ends
 # in TIMEOUT and the box is left for a person to answer. Run it on a removable drive with no media.
 
+#
+# -Outcome (SL-095) adds one line after the report: `OUTCOME outcome=<o> refusal=<r> skippedStores=<n>
+# opensUnderExcludedStore=<n> unreadable=<n>`, read from the report's own fields ("-" for one it does not hold), so a
+# refused root (outcome=refused refusal=container-layer-store) and the container layer store left out of a scan
+# (skippedStores=1, never counted among the unreadable) can be read without parsing the JSON.
+
 param(
     [Parameter(Mandatory = $true)] [string] $Root,
     [string] $Exe = (Join-Path (Split-Path -Parent $PSScriptRoot) 'artifacts\publish\FsAnalyser.App.exe'),
     [int] $TimeoutSec = 300,
-    [switch] $DefaultErrorMode
+    [switch] $DefaultErrorMode,
+    [switch] $Outcome
 )
 
 $ErrorActionPreference = 'Stop'
@@ -168,8 +175,15 @@ else {
 }
 
 if (Test-Path -LiteralPath $report -PathType Leaf) {
-    Write-Output (Get-Content -LiteralPath $report -Raw)
+    $text = Get-Content -LiteralPath $report -Raw
+    Write-Output $text
     Remove-Item -LiteralPath $report -Force
+    if ($Outcome) {
+        $r = $text | ConvertFrom-Json
+        $field = { param($value) if ($null -eq $value) { '-' } else { "$value" } }
+        Write-Output ('OUTCOME outcome={0} refusal={1} skippedStores={2} opensUnderExcludedStore={3} unreadable={4}' -f `
+                (& $field $r.outcome), (& $field $r.refusal), (& $field $r.core.skippedStores), (& $field $r.core.opensUnderExcludedStore), (& $field $r.core.unreadable))
+    }
 }
 else {
     Write-Output 'NO REPORT'

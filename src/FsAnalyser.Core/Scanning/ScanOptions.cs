@@ -63,4 +63,18 @@ internal sealed class ScanOptions
     /// OneDrive folders the environment names (<see cref="Scanner.SyncRootsFromEnvironment"/>).
     /// </summary>
     public IReadOnlyList<string>? SyncRoots { get; init; }
+
+    /// <summary>
+    /// Core.Tests only: where the Windows container layer store is (SL-095, <see cref="ContainerLayerStore"/>), so a test can
+    /// plant a fake one in a %TEMP% tree. Null for this PC's own, under %ProgramData%; empty for a PC that has none. The
+    /// App, the measurement rigs and the window hook never set it (architecture rules).
+    /// </summary>
+    public string? ContainerLayerStorePath { get; init; }
+
+    /// <summary>
+    /// The ids of the precautions against outside defects that are on for this scan (<see cref="Workarounds.KnownWorkarounds"/>):
+    /// every one that is on by default unless the person turned it off in Settings. Only the code that acts on an entry
+    /// reads it.
+    /// </summary>
+    public IReadOnlySet<string> EnabledWorkarounds { get; init; } = Workarounds.KnownWorkarounds.DefaultEnabled;
 }

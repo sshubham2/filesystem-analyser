@@ -8,6 +8,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using FsAnalyser.Core;
 using FsAnalyser.Core.Scanning;
+using FsAnalyser.Core.Workarounds;
 
 namespace FsAnalyser.App;
 
@@ -54,11 +55,22 @@ namespace FsAnalyser.App;
 ///                 "KindsList": { "rows": number, "actualHeight": number, "inView": bool, "realizedRows": number, "fullRows": number } },
 ///     "largestFilesShown": rows bound to LargestFilesList, "largestFileOnDisk": the first row's on-disk
 ///         bytes or null, "largestFilesMs": how long ranking them took or null (SL-040),
-///     "core": { "status", "rootError", "files", "folders", "links", "bytes", "bytesOnDisk", "elapsedMs" } or null,
-///     "topLevel": { "rows", "reading", "notRead", "stoppedPartway", "unreadable", "bytes", "onDisk", "files",
+///     "core": { "status", "rootError", "files", "folders", "links", "bytes", "bytesOnDisk", "elapsedMs",
+///               "unreadable", "skippedStores", "notScanned", "opensUnderExcludedStore" } or null,
+///     "outcome": "completed" | "cancelled" | "root-unreadable" | "refused" or null, "refusal": "container-layer-store" or null,
+///     "workarounds": [ { "id", "on" } ],   (SL-095)
+///     "topLevel": { "rows", "reading", "notRead", "stoppedPartway", "unreadable", "notScanned", "bytes", "onDisk", "files",
 ///                   "final" },   (SL-039; absent when the results list shows nothing)
 ///     "kinds": [ { "id", "label", "files", "size", "onDisk" } ] }   (SL-046; absent when no kinds were computed)
 /// </code>
+/// SL-095 added, all additive: window "OutcomeNotes" (visible, lines) and "SettingsButton" (its text); "core"'s
+/// "unreadable", how many folders the scan's failed-folder record holds, "skippedStores", how many folders it left out on
+/// purpose (the Windows container layer store), kept apart from it so that nothing reading unreadable folders reaches the
+/// store, "notScanned", the same count under the name the pool protocol reads, and "opensUnderExcludedStore", how many
+/// listings under that store the scanner's backstop refused, which is 0 when the walk's own check held; "outcome" and
+/// "refusal", a refused root being "refused" with "container-layer-store"; "workarounds", each precaution against an
+/// outside defect (Core's KnownWorkarounds) by id with whether it was on; and "topLevel"'s "notScanned".
+/// Counts and ids only, never a path (Q-016).
 /// "kinds" is the files by kind that KindsList (SL-046) is written from, in its order, largest on disk first: each
 /// kind's stable id ("disk-images"), its label as the list shows it, and its files, bytes and bytes on disk as Core
 /// added them up. Its sums are the root's, so they are "core"'s files, bytes and bytesOnDisk, after a stop too. It
@@ -123,6 +135,8 @@ internal static class WindowReport
             {
                 OutcomeTitle = window.OutcomeTitle.Text,
                 OutcomeDetail = Regex.Split(window.OutcomeDetail.Text, @"\r?\n"),
+                OutcomeNotes = new { visible = window.OutcomeNotes.IsVisible, lines = Regex.Split(window.OutcomeNotes.Text, @"\r?\n") },
+                SettingsButton = window.SettingsButton.Content as string,
                 CountersText = window.CountersText.Text,
                 PickerPanel = new { actualHeight = window.PickerPanel.ActualHeight },
                 DrivePanel = new { buttons = window.DrivePanel.Children.Count },
@@ -208,7 +222,25 @@ internal static class WindowReport
                 bytes = result.Totals.Bytes,
                 bytesOnDisk = result.Totals.BytesOnDisk,
                 elapsedMs = (long)result.Elapsed.TotalMilliseconds,
+                unreadable = result.Unreadable.Count,
+                skippedStores = result.SkippedStores.Count,
+                notScanned = result.SkippedStores.Count,
+                opensUnderExcludedStore = result.OpensUnderExcludedStore,
             },
+            // SL-095: how the scan ended in one word, and why a refused one was ("container-layer-store"); null with no result.
+            ["outcome"] = result?.Status switch
+            {
+                null => null,
+                ScanStatus.Completed => "completed",
+                ScanStatus.Cancelled => "cancelled",
+                ScanStatus.RootUnreadable => "root-unreadable",
+                ScanStatus.Refused => "refused",
+                { } other => other.ToString(),
+            },
+            ["refusal"] = result?.Refusal == ScanRefusal.ContainerLayerStore ? "container-layer-store" : null,
+            // The precautions against outside defects as the window holds them, by id: on or off (SL-095). Rendered from
+            // Core's list as it is, naming no entry.
+            ["workarounds"] = KnownWorkarounds.All.Select(w => new { id = w.Id, on = window.EnabledWorkarounds.Contains(w.Id) }).ToArray(),
         };
         // The rows the results list holds, counted: never a name or a path (Q-016), only how many rows are in
         // each state and what they add up to. Absent when the list shows nothing.
@@ -222,6 +254,7 @@ internal static class WindowReport
                 notRead = rows.Count(r => r.State == TopLevelState.NotRead),
                 stoppedPartway = rows.Count(r => r.State == TopLevelState.StoppedPartway),
                 unreadable = rows.Count(r => r.State == TopLevelState.Unreadable),
+                notScanned = rows.Count(r => r.State == TopLevelState.NotScanned),
                 bytes = rows.Sum(r => r.Bytes),
                 onDisk = rows.Sum(r => r.OnDisk),
                 files = rows.Sum(r => r.Files),
