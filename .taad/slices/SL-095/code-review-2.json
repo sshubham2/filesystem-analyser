@@ -1,0 +1,97 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-095",
+ "stage": "code-review",
+ "attempt": 2,
+ "at": "2026-10-04T22:04:07.946Z",
+ "head": "1a5b2e0881cbcdbbefae9e53ee882831a9a1c5b9",
+ "run_id": 2479,
+ "summary": "Build attempt 4 changed only tests/window/PoolWatch.ps1, PoolWatchReportTests.cs and the design record; src is unchanged. I re-ran the 31 PoolWatchReportTests and they pass.\n\nWhat now holds:\n- **Exe runs (O-075):** -Report requires all ten exe runs, five full and five cancelled or closed, with their marks. A crashed or report-less full run, a cancelled run with no report, or a run whose trigger never fired now reads UNDECIDED.\n- **Fltmc paste (O-078):** a pasted 'Access is denied' reads FILTERS UNDECIDED.\n- **No-link check (O-077):** it runs through Invoke-NoLinkWalk's own flags at three levels, with a detector that sees a followed link, and -Protocol refuses to start on a false prepare.json.\n- **Settle gate (O-076):** the gate exists, but its threshold does not do what it was added for.\n\nI fed -Report hand-built run logs and found two defects.\n\n1. **Settle gate too loose (major).** The gate passes a boot once two 60-second gaps each move less than 16 MiB. The drift VOID rule fires once I0's drift is more than 3x I1's; at spike 3's idle drift of 11,000 B/s that is about 2 MiB a minute.\n   - A boot that passes the gate on two 10 MiB gaps and keeps growing 2 or 5 MiB a minute through I0 still ends 'OUTCOME VOID' (I0 45,953 or 98,381 B/s against 11,000).\n   - The 16 MiB figure was my own suggestion in round 2, so this corrects my earlier fix as well as the build.\n2. **Guard stop on S or P reads UNDECIDED (minor).** When the guard kills ScanArm S or P, it prints no summary line. -Report then says 'UNDECIDED: arm S or L's file count is missing' before its new guard-stop clause runs.\n   - That contradicts the design record ('an arm the guard stopped (L, S, P or an exe run) counts as over T').\n   - The 'probe-guard-stop' row passes only because it gives the stopped S arm a summary of 50,000 opens, which a killed process never writes.\n\nMy scratch folders are removed.\n\nSecond round: Second round on build attempt 4 found one new defect: -Report can read PASS when a cancel or close run never actually stopped.\n\n-Report decides whether one of the five cancelled or closed runs actually stopped by matching a single phrase from the window hook's log ('ended before the trigger'), stored as ranFull. The hook logs two other ways of never acting:\n- 'the app shut down before the trigger';\n- 'the trigger … was not met within N s'.\n\nBoth leave ranFull false, so the run is counted as cancelled or closed. I fed -Report hand-built run logs:\n- **X4 (close):** the app crashed before its trigger, with no report. Read A/PASS.\n- **X2 (cancel):** its deadline passed and the scan ran to Completed. Read A/PASS.\n\nSo the O-075 rule that a run whose trigger never fired is not one of the five holds for only one of the hook's three never-acted outcomes.\n\nNothing else I tried broke. That covered:\n- the new fltmc list matcher;\n- Test-Settled and Wait-Settle;\n- Test-NoLinkWalker's robocopy calls and its cleanup;\n- the -Protocol refusal;\n- the exe-run count and exit checks.\n\nMy scratch folder is removed.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "matches_design": false,
+  "summary": "Build attempt 4 changed only tests/window/PoolWatch.ps1, PoolWatchReportTests.cs and the design record; src is unchanged. I re-ran the 31 PoolWatchReportTests and they pass.\n\nWhat now holds:\n- **Exe runs (O-075):** -Report requires all ten exe runs, five full and five cancelled or closed, with their marks. A crashed or report-less full run, a cancelled run with no report, or a run whose trigger never fired now reads UNDECIDED.\n- **Fltmc paste (O-078):** a pasted 'Access is denied' reads FILTERS UNDECIDED.\n- **No-link check (O-077):** it runs through Invoke-NoLinkWalk's own flags at three levels, with a detector that sees a followed link, and -Protocol refuses to start on a false prepare.json.\n- **Settle gate (O-076):** the gate exists, but its threshold does not do what it was added for.\n\nI fed -Report hand-built run logs and found two defects.\n\n1. **Settle gate too loose (major).** The gate passes a boot once two 60-second gaps each move less than 16 MiB. The drift VOID rule fires once I0's drift is more than 3x I1's; at spike 3's idle drift of 11,000 B/s that is about 2 MiB a minute.\n   - A boot that passes the gate on two 10 MiB gaps and keeps growing 2 or 5 MiB a minute through I0 still ends 'OUTCOME VOID' (I0 45,953 or 98,381 B/s against 11,000).\n   - The 16 MiB figure was my own suggestion in round 2, so this corrects my earlier fix as well as the build.\n2. **Guard stop on S or P reads UNDECIDED (minor).** When the guard kills ScanArm S or P, it prints no summary line. -Report then says 'UNDECIDED: arm S or L's file count is missing' before its new guard-stop clause runs.\n   - That contradicts the design record ('an arm the guard stopped (L, S, P or an exe run) counts as over T').\n   - The 'probe-guard-stop' row passes only because it gives the stopped S arm a summary of 50,000 opens, which a killed process never writes.\n\nMy scratch folders are removed.\n\nSecond round: Second round on build attempt 4 found one new defect: -Report can read PASS when a cancel or close run never actually stopped.\n\n-Report decides whether one of the five cancelled or closed runs actually stopped by matching a single phrase from the window hook's log ('ended before the trigger'), stored as ranFull. The hook logs two other ways of never acting:\n- 'the app shut down before the trigger';\n- 'the trigger … was not met within N s'.\n\nBoth leave ranFull false, so the run is counted as cancelled or closed. I fed -Report hand-built run logs:\n- **X4 (close):** the app crashed before its trigger, with no report. Read A/PASS.\n- **X2 (cancel):** its deadline passed and the scan ran to Completed. Read A/PASS.\n\nSo the O-075 rule that a run whose trigger never fired is not one of the five holds for only one of the hook's three never-acted outcomes.\n\nNothing else I tried broke. That covered:\n- the new fltmc list matcher;\n- Test-Settled and Wait-Settle;\n- Test-NoLinkWalker's robocopy calls and its cleanup;\n- the -Protocol refusal;\n- the exe-run count and exit checks.\n\nMy scratch folder is removed.",
+  "findings": [
+   {
+    "id": "R3-1",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "claim": "The settle gate added for R2-N1 does not prevent the VOID it was added for.\n\nWait-Settle and Test-Settled treat the boot as settled once two consecutive 60-second settle gaps each move both pools by less than SettleStepBytes = 16 MiB, i.e. up to about 279,000 B/s. -Report then VOIDs the run when I0's drift is more than 3x I1's (`$hi -gt $Tolerance.DriftDisagree * [Math]::Max($lo, $noise)`). At spike 3's measured post-settle drift of 10,936 B/s, that VOID fires above about 33,000 B/s, roughly 1.9 MiB a minute. So any boot whose growth has slowed to between about 2 and 16 MiB a minute when the gate opens starts I0, L, S, P and the ten exe scans, and -Report VOIDs the whole ~4-hour post-Restart session at the end. That is the R2-N1 failure, only in a narrower band.\n\nSpike 3's own settle reached the gate with a last gap of 5.6 MiB. It happened to calm afterwards, to an I0 drift of 0.63 MiB a minute, but nothing in the protocol waits for that.\n\nI proposed the 16 MiB figure myself in round 2, taken from spike 3's V2 limit without checking it against the drift rule.",
+    "evidence": "tests/window/PoolWatch.ps1:81 (SettleStepBytes = 16MB), :467-477 Wait-Settle, :590-602 Test-Settled, :657-660 (drift-disagreement VOID). Measured with hand-built run logs through `PoolWatch.ps1 -Report -NoWrite`: settle marks of 10 gaps at 85 MiB then 2 gaps at 10 MiB (the gate passes), I1 at 11,000 B/s. With I0 then flat the run reads A/PASS. With I0 at 2 MiB/min it reads 'OUTCOME VOID: idle drift of pagedBytes disagrees between I0 (45,953 B/s) and I1 (11,000 B/s), over 3x'. At 5 MiB/min it reads VOID (98,381 B/s).",
+    "fix": "Make the gate as strict as the VOID rule it protects: SettleStepBytes about 2 MiB per 60-second gap, i.e. DriftDisagree x spike 3's 10,936 B/s x MarkEverySec, rounded. Keep the 30-minute cap and the early stop, which fails in minutes instead of after 4 hours. Alternatively, have -Protocol check I0's own first-half against second-half drift before starting L, and extend I0 rather than proceed when they differ by more than DriftDisagree. Add a PoolWatchReportTests row in which the gate passes on 10 MiB gaps and I0 still grows 2 MiB/min, pinning whichever behaviour is chosen. Update the tolerance row text and the R2-N1 record, which both say 16 MiB."
+   },
+   {
+    "id": "R3-2",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "A guard stop on arm S or P does not count as over T in practice. It reads UNDECIDED.\n\nScanArm prints its one JSON summary only after its loop (Program.cs Probe/Plain `Print(...)` at the end). When the guard kills it (Invoke-Arm `$p.Kill()`), stdout is empty and the arm line's `summary` is null. -Report's projection loop then returns 'UNDECIDED: arm S or L's file count is missing' (PoolWatch.ps1:765), before the new `[bool]$armBy['S'].guardStop` clause at :773 can route to B. That contradicts two statements:\n- the design record's tolerance row (docs/design/SL-095-container-layer-store.md:112, 'An arm the guard stopped (L, S, P or an exe run) counts as over T');\n- the builder's O-075 claim that OverArm covers S and P.\n\nThe 'probe-guard-stop' row in TheReportRoutesARunAsTheToleranceRowSays, and its reason in ExeRunsThatAreMissingCrashedOrStoppedByTheGuardNeverPass, are green only because the test builder gives the guard-stopped S arm a summary (`opened 50,000`) that a killed ScanArm never writes. The real shape, a null summary, is not fed.\n\nThe consequence is the safe direction (UNDECIDED, never PASS). But the session in which SizeProbe's per-file opens blow the guard, the strongest evidence for outcome B, decides nothing.",
+    "evidence": "tests/window/PoolWatch.ps1:765 (UNDECIDED when `$line.summary` is null) before :773-775 (guardStop gives sOver, then B); PoolWatch.ps1 Invoke-Arm (summary read from stdout's last JSON line, null after Kill); tests/window/ScanArm/Program.cs Probe/Plain (Print only after the loop); tests/FsAnalyser.Core.Tests/PoolWatchReportTests.cs Build(): `Arm(\"S\", \"probe\", summary: new() { [\"opened\"] = 50_000L, ... }, guardStop: scenario == \"probe-guard-stop\" ? guard : null)`. Measured: the same run with S killed by the guard and summary null reads 'OUTCOME UNDECIDED / REASON UNDECIDED: arm S or L's file count is missing'; P killed reads the same for P.",
+    "fix": "In the S/P projection loop, when the arm's guardStop is set, skip the summary and projection and mark it over T. S stopped while P projects within T, or P is also stopped, gives B (or C by the excess rule, using 'stopped' for both). Change the probe-guard-stop row to give S a null summary, as a killed ScanArm leaves it."
+   },
+   {
+    "id": "R2-R3-3",
+    "severity": "major",
+    "dimension": "error-paths",
+    "claim": "-Report counts an exe-cancel or exe-close arm as one of DONE (c)'s five cancelled runs unless `ranFull` is true. Invoke-ExeArm sets ranFull only when the hook log matches 'ended before the trigger' (PoolWatch.ps1 Invoke-ExeArm, `$line['ranFull'] = [bool](@($acted) -match 'ended before the trigger')`).\n\nThe window hook has two other outcomes in which it never presses Cancel or closes the window (tests/window/FsaWindowHook/StartupHook.cs:653 and :665):\n- 'refused mode=… reason=the app shut down before the trigger';\n- 'refused mode=… reason=the trigger … was not met within N s'.\n\nIn both, ranFull stays false and the arm passes Get-Verdict's checks (:706-720):\n- An exe-close arm needs no report, so an app that crashed before its close trigger counts as a closed run.\n- An exe-cancel arm whose deadline passed while the scan ran to the end has a report (status Completed), which is all :717 asks for.\n\nNothing compares a cancel arm's report status with 'Cancelled', and nothing requires an 'acted' line or a foldersAtCancel value. So a session in which one of the five cancel/close runs crashed, or never cancelled, can read A/PASS for DONE (c).",
+    "evidence": "Measured by feeding `PoolWatch.ps1 -Report -NoWrite` hand-built run logs that are otherwise clean, each with settle marks, ten exe runs and an armable control:\n- X4 (exe-close) with exitCode -532462766, report null, ranFull false, hookLog ['refused mode=close reason=the app shut down before the trigger'] and foldersAtCancel null gave 'OUTCOME A / VERDICT PASS'.\n- X2 (exe-cancel) with exit 0, report status Completed, ranFull false and hookLog ['refused mode=stop reason=the trigger past=C:\\Users pastfolders=1000 was not met within 3,600 s'] also gave 'OUTCOME A / VERDICT PASS'.\nCode: tests/window/PoolWatch.ps1:717 (only a null report is caught for exe-cancel; exe-close not at all) and :719-720 (only ranFull).",
+    "fix": "In Invoke-ExeArm, record `acted = [bool](@($acted) -match '^acted ')`; foldersAtCancel is already null exactly when no 'acted' line exists. In Get-Verdict's ten-run check, return UNDECIDED, naming the arm and the hook's refused line, for any of these:\n- an exe-cancel or exe-close arm that did not act;\n- an exe-cancel arm whose report.status is not 'Cancelled'.\nAdd rows 'close-app-shut-down-before-trigger' and 'cancel-trigger-deadline' to TheReportRoutesARunAsTheToleranceRowSays."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-075",
+    "discharged": "no",
+    "evidence": "The exe-run parts hold, in tests/window/PoolWatch.ps1:706-720:\n- exactly five exe-full and five exe-cancel/exe-close arms;\n- their before and settled marks;\n- a full run with exit 0, a report and status Completed, unless guard-stopped;\n- a cancelled run with a report;\n- no ranFull.\nOverArm (:690) makes an exe arm's guard stop count as over T (rows exe-guard-stop and cancel-guard-stop are realistic: report null, exit -1). The fourth requested part, guard stop counting as over T for S and P, does not hold in the real shape: a killed ScanArm has no summary, so :765 returns UNDECIDED first (R3-2)."
+   },
+   {
+    "key": "O-076",
+    "discharged": "yes",
+    "evidence": "PoolWatch.ps1:467-477 Wait-Settle runs between R0 and I0 (:984-987), stops at SettleCapSec (:82), and -Report re-checks with Test-Settled (:636-642). It implements the 16 MiB rule exactly as the obligation asked. That threshold does not keep I0 out of the drift VOID; see R3-1."
+   },
+   {
+    "key": "O-077",
+    "discharged": "yes",
+    "evidence": "Test-NoLinkWalker (PoolWatch.ps1:507-552) uses $NoLinkFlags through Invoke-NoLinkWalk:\n- a planted junction, and a directory symlink where one can be made;\n- /LEV:3;\n- a detector walk without /XJ that must see the followed link;\n- the real C:\\Users with /XD on every other child.\n-Prepare records it for smoke and real runs (:915-920), and -Protocol throws before any mark unless noLinkWalkerSkipsAllUsers is true (:968). TheNoLinkCheckCanFailAndTheProtocolRefusesWhenItDid passes (31/31). I did not re-run the builder's /XJ-removed mutation."
+   },
+   {
+    "key": "O-078",
+    "discharged": "yes",
+    "evidence": "Test-FltmcList (PoolWatch.ps1:350-355) requires the 'Filter Name  Num Instances' header and no '0x8007|Access is denied|failed'. Read-FltmcPaste feeds Get-EnvironmentRecord, and Get-FiltersLine applies the same test to fltmc.txt and to environment records. The refused-paste cases in MissingOrNullReadingsAreUndecidedAndABurstGapIsLeftOutOfDrift pass."
+   },
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "src is unchanged since my first-round run of the repro (1 passed, exit 0); the builder re-ran it this attempt, 1 passed."
+   },
+   {
+    "key": "O-002",
+    "discharged": "no",
+    "evidence": "Unchanged. docs/design/SL-095-container-layer-store.md:170-171 records the precondition as false (real bytes go uncounted), and Q-180/Q-181 accept it. Owed to validate."
+   },
+   {
+    "key": "O-049",
+    "discharged": "cannot-tell",
+    "evidence": "Unchanged. It needs the post-Restart protocol."
+   },
+   {
+    "key": "O-050",
+    "discharged": "cannot-tell",
+    "evidence": "Unchanged. It needs the post-Restart protocol."
+   }
+  ],
+  "drift": [
+   "Nothing new departed undeclared. The builder declared three departures:\n- the stop at the settle cap;\n- post-pressure judged from L/before instead of R0;\n- UNDECIDED (not FAIL) for a crashed full run, and for a cancelled or closed run whose trigger never fired.\nAll three are consistent with the design record's updated tolerance row.",
+   "Two statements now read wrong:\n- The design record's tolerance row says a guard-stopped S or P arm counts as over T; in the code it reads UNDECIDED (R3-2).\n- PoolWatch.ps1's header line for -Environment still says fltmc.txt 'is appended'. A refused paste is now recorded as 'not a filter list: …' instead.",
+   "Nothing new departed from the design in this round. R3-3 contradicts the builder's own declared departure for O-075: 'a cancelled or closed run whose hook trigger never fired … does not count as one of the 5'. The code implements that for only one of the hook's three never-fired outcomes."
+  ],
+  "unreviewed": [
+   "tests/window/PoolWatch.ps1 -Prepare body between the trigger checks and the no-link check (unchanged this attempt apart from the moved no-link block)",
+   "docs/design/SL-095-runs/** run logs (unchanged)"
+  ],
+  "second_round": {
+   "run_id": 2480,
+   "filed": 1
+  }
+ }
+}

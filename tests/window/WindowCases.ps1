@@ -92,14 +92,24 @@
 # resolved to long names (U-114). They open real Explorer windows, and close only the ones they opened on their own
 # trees. R-002 is the reveal at 161, 300 and 1000 characters, into folders this user cannot open, timed from the click,
 # and refused with nothing opened when the item's folder was deleted after the scan; -Step a,b,... runs some of its
-# steps only (see Test-R002).
+# steps only (see Test-R002). Its steps f and g (SL-089) reveal denied folders of 300 and 1000 characters from the
+# unreadable folders' panel.
+#
+# N-005, N-006, T-009 and W-001 (SL-089) read the unreadable folders' panel row by row. The schema-1 report carries no row
+# and never a path (Q-016), so the hook's rows mode writes the panel's rows to its log at shutdown (FSA_HOOK_ROWS=1,
+# RowsMode.cs) and the report adds only the engine's count of its record (core.unreadable). N-005 (-IncludeNetwork) and
+# N-006 (-IncludeCloud, a real cldflt sync root served by tests/CfProvider) press Stop while the stalled share or the hung
+# provider holds a folder's read, each beside control runs that press nothing, so that a folder's absence from the panel
+# counts only where a control put it there; -Control runs the controls alone. T-009 is a held folder's reason. W-001
+# (-Root) is a scan's whole panel against the engine's record and an independent open of each row; criterion 3 is W-001
+# on C:\, which a person runs. A case that cannot judge says INCONCLUSIVE and the run exits 3, never 0.
 
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
         'L-001', 'L-002', 'L-003', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'N-001', 'N-002', 'N-003', 'N-004',
         'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002',
-        'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'N-005', 'N-006', 'W-001')]
+        'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-001', 'X-002', 'X-003', 'X-004', 'X-005', 'X-006', 'N-005', 'N-006', 'W-001')]
     [string] $Case,
     [switch] $IncludeNetwork,
     # N-006 registers a cloud sync root (SL-089): like the network cases, it runs only when this is passed.
@@ -130,16 +140,19 @@ $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_H
     'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND', 'FSA_HOOK_MINSIZE', 'FSA_HOOK_DRIVES',
     'FSA_HOOK_WALK', 'FSA_HOOK_RECYCLE', 'FSA_HOOK_MULTIPLY', 'FSA_HOOK_SELECT', 'FSA_HOOK_RELEASE', 'FSA_HOOK_GAP', 'FSA_HOOK_HEIGHT', 'FSA_HOOK_REVEAL', 'FSA_HOOK_STATUS',
     'FSA_HOOK_MAXIMIZE', 'FSA_HOOK_BACK', 'FSA_HOOK_READABLE', 'FSA_HOOK_BEFORE', 'FSA_HOOK_AFTER', 'FSA_HOOK_RENAMED', 'FSA_HOOK_RENDER', 'FSA_HOOK_FAIL_LISTING', 'FSA_HOOK_REVEAL_GATE',
-    'FSA_HOOK_ROWS'
+    'FSA_HOOK_AT_FOLDERS', 'FSA_HOOK_PAST', 'FSA_HOOK_PAST_FOLDERS', 'FSA_HOOK_AT_SIZED', 'FSA_HOOK_TRIGGER_DEADLINE_S', 'FSA_HOOK_ANSWER', 'FSA_HOOK_ROWS'
 $HookedCases = 'C-002', 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
     'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002',
-    'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'N-005', 'N-006', 'W-001'
+    'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005', 'N-005', 'N-006', 'W-001'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004', 'N-005'
 $CloudCases = 'N-006'
 $CfProviderDll = Join-Path $Repo 'artifacts\cf-provider\CfProvider.dll'
 $RigOnlyCases = 'N-003', 'N-004'
 $KiB64 = 64KB
 $script:Failures = [System.Collections.Generic.List[string]]::new()
+# What could not be judged either way (SL-089): a precondition the run did not meet, or a negative with no control that
+# showed the signal. Never a pass: a run with any ends INCONCLUSIVE, exit 3.
+$script:Inconclusive = [System.Collections.Generic.List[string]]::new()
 
 # ---- Checks ----
 
@@ -162,6 +175,11 @@ function Check([bool] $condition, [string] $what) {
         Write-Output "  FAIL  $what"
         $script:Failures.Add($what)
     }
+}
+
+function Inconclusive([string] $what) {
+    Write-Output "  INCONCLUSIVE  $what"
+    $script:Inconclusive.Add($what)
 }
 
 function CheckEqual($expected, $actual, [string] $what) {
@@ -387,6 +405,37 @@ function Update-StallRig {
         Write-Output "FAILED: the stall rig did not build (exit $exit), so no case ran"
         exit 1
     }
+}
+
+# Builds tests/CfProvider into artifacts/cf-provider on every run that selects the cloud case (SL-089), the way
+# Update-StallRig builds the rig, and ends the run the same way when it does not build. It is framework-dependent: Get-Muxer
+# is the dotnet that runs it.
+function Update-CfProvider {
+    $mutex = [System.Threading.Mutex]::new($false, 'Local\FsAnalyser-WindowCases-CfProvider')
+    [void]$mutex.WaitOne()
+    try {
+        Write-Output 'building the cloud provider (eng/dotnet.ps1 build)'
+        $output = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'eng\dotnet.ps1') build `
+                (Join-Path $Repo 'tests\CfProvider\CfProvider.csproj') -c Release -o (Split-Path -Parent $CfProviderDll) 2>&1)
+        $exit = $LASTEXITCODE
+    }
+    finally {
+        $mutex.ReleaseMutex()
+        $mutex.Dispose()
+    }
+    $output | Select-Object -Last 3 | ForEach-Object { "  $_" }
+    if ($exit -ne 0 -or -not (Test-Path -LiteralPath $CfProviderDll -PathType Leaf)) {
+        $output | ForEach-Object { "  $_" }
+        Write-Output "FAILED: the cloud provider did not build (exit $exit), so no case ran"
+        exit 1
+    }
+}
+
+# The dotnet that eng/dotnet.ps1 builds with: the repo-local .dotnet when it is there, else the machine's.
+function Get-Muxer {
+    $local = Join-Path $Repo '.dotnet\dotnet.exe'
+    if (Test-Path -LiteralPath $local -PathType Leaf) { return $local }
+    (Get-Command dotnet -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 }
 
 # Through eng/read-window.ps1, the way validate reads the window.
@@ -4056,6 +4105,39 @@ function Check-Landing($reveal, [string] $target, [string] $what, [bool] $timed)
     if ($timed) { Check ($ms -le 1000) "$what landed within 1000 ms of the click ($ms ms)" }
 }
 
+# A reveal from a row of the unreadable folders' panel (SL-089 criterion 4), after Check-Landing's checks: the hook acted
+# on a panel row and the shell call returned S_OK; the landing came within 3 s of the click; Explorer's own window, read
+# through Shell.Application and compared by name alone, never by a path string (U-114), shows the parent, by its folder's
+# Name, with exactly one item selected, whose Name is the folder's own; and no dialog of explorer.exe or the app and no
+# elevation prompt (consent.exe) appeared from the launch until 500 ms after the landing.
+function Check-PanelLanding($reveal, [string] $target, [string] $what) {
+    Check-Landing $reveal $target $what $false
+    $row = $reveal.Row
+    if ($null -ne $row) {
+        CheckEqual 'unreadable' $row.surface "$what was revealed from the unreadable folders' panel"
+        CheckEqual 0 ([int]$row.hresult) "$what the shell's reveal returned S_OK"
+    }
+    $landed = $reveal.Watch.Landed
+    if ($null -ne $landed -and $null -ne $row -and [long]$row.revealStartQpc -gt 0) {
+        $ms = [Math]::Round(([long]$reveal.Watch.LandedQpc - [long]$row.revealStartQpc) * 1000.0 / [long]$row.qpcFrequency)
+        Check ($ms -le 3000) "$what landed within 3 s of the click ($ms ms)"
+        $parentName = [System.IO.Path]::GetFileName([System.IO.Path]::GetDirectoryName($target))
+        $leaf = [System.IO.Path]::GetFileName($target)
+        $folderName = $null
+        $selected = @()
+        try {
+            $document = $landed.Window.Document
+            $folderName = [string]$document.Folder.Self.Name
+            $selected = @(foreach ($item in @($document.SelectedItems())) { [string]$item.Name })
+        }
+        catch { }
+        CheckEqual $parentName $folderName "$what Explorer's window shows its parent, by the folder's Name"
+        Check ($selected.Count -eq 1 -and $selected[0] -ceq $leaf) "$what Explorer selects it alone, by Name ($(Show ($selected -join ' | ')))"
+    }
+    Check (@($reveal.Watch.Dialogs).Count -eq 0) "no dialog of explorer.exe or the app for $what ($(@($reveal.Watch.Dialogs).Count))"
+    Check (@($reveal.Watch.Consent).Count -eq 0) "no elevation prompt (consent.exe) for $what ($(@($reveal.Watch.Consent).Count))"
+}
+
 # One refused reveal: $between runs once the scan has ended and before the click, through FSA_HOOK_REVEAL_GATE, and
 # Explorer is compared with how it was before the launch (Compare-ExplorerState) from the launch until 2 s after the
 # app has exited, which it does only after the hook has logged the outcome.
@@ -4108,13 +4190,17 @@ function Invoke-RefusedReveal([string] $root, [string] $revealTarget, [scriptblo
 #   (d) the 1000-character file from its biggest-files row, within 1000 ms, into an Explorer already on its parent with
 #       the sibling selected: the landing must have the file as the only selected item;
 #   (e) gone\ deleted after the scan, then victim.bin revealed from its tree row: Failed, NoLongerExists, the refusal on
-#       the status line, and no Explorer window new, moved, re-selected or newly visible from the launch until 2 s after.
+#       the status line, and no Explorer window new, moved, re-selected or newly visible from the launch until 2 s after;
+#   (f) the 300-character deny-all folder from its row in the unreadable folders' panel (SL-089 criterion 4), with (a)'s
+#       watch, landing within 3 s (Check-PanelLanding);
+#   (g) the same from the panel row of a folder of exactly 1000 characters, an ordinary, neither hidden nor system, folder
+#       at the end of a chain of ordinary folders, denied to this user for listing alone (SL-089's spike's recipe).
 # -Step runs some of them only, in that order. Cleanup closes only this case's own windows, takes the denies away and
 # deletes the tree; a fixture an earlier run left behind is cleared the same way first.
 function Test-R002 {
     Initialize-RevealWin32
     Clear-StaleR002
-    $steps = @('b', 'a', 'c', 'd', 'e' | Where-Object { $R002Steps.Count -eq 0 -or $_ -in $R002Steps })
+    $steps = @('b', 'a', 'c', 'd', 'e', 'f', 'g' | Where-Object { $R002Steps.Count -eq 0 -or $_ -in $R002Steps })
     $case = New-CaseFolder
     try {
         $marker = Join-Path $case $R002Marker
@@ -4142,11 +4228,22 @@ function Test-R002 {
         $victim = Join-Path $root 'gone\victim.bin'
         New-File $victim (2 * 1MB)
 
+        $deny1000 = Get-ExactPath (Join-Path $root 'cden1000') 1000 'denylist1000_'
+        [void][System.IO.Directory]::CreateDirectory($deny1000)
+        New-File (Join-Path ([System.IO.Path]::GetDirectoryName($deny1000)) 'sibling.bin') $KiB64
+        CheckEqual 1000 $deny1000.Length "the 1000-character denied folder's path length"
+
         foreach ($folder in $shortDeny, $deny300) {
             [System.IO.File]::AppendAllLines($marker, [string[]]@($folder))
             Deny-All $folder
             Check (-not (Test-Listable $folder)) "the deny-all ACE took before the scan: listing $(Show $folder) is refused"
         }
+        [System.IO.File]::AppendAllLines($marker, [string[]]@($deny1000))
+        Set-DenyRule $deny1000 'ListDirectory' $true
+        Check (-not (Test-Listable $deny1000)) 'the deny-list ACE took before the scan: listing the 1000-character folder is refused'
+        Check (Test-Listable ([System.IO.Path]::GetDirectoryName($deny1000))) 'its parent can be listed'
+        $plainAttributes = [System.IO.File]::GetAttributes('\\?\' + $deny1000) -band ([System.IO.FileAttributes]::Hidden -bor [System.IO.FileAttributes]::System)
+        CheckEqual 0 ([int]$plainAttributes) 'the 1000-character denied folder is neither hidden nor system'
 
         $isolate = {
             $left = @(Close-CaseWindows @($case))
@@ -4217,6 +4314,18 @@ function Test-R002 {
                         CheckEqual "'victim.bin' no longer exists where the scan found it, so Explorer was not opened. Rescan to refresh." $row.status 'the refusal on the status line'
                     }
                     Check ($r.Watch.Changes.Count -eq 0) "no Explorer window opened, moved, changed its selection or showed for victim.bin ($($r.Watch.Changes -join '; '))"
+                }
+                'f' {
+                    & $isolate
+                    Write-Output '  (f) the 300-character deny-all folder from its unreadable-folders row'
+                    $r = Invoke-WatchedReveal $root "unreadable:$([System.IO.Path]::GetFileName($deny300))" $deny300 -WatchDialogs
+                    Check-PanelLanding $r $deny300 'the 300-character deny-all folder''s panel row'
+                }
+                'g' {
+                    & $isolate
+                    Write-Output '  (g) the 1000-character denied folder from its unreadable-folders row'
+                    $r = Invoke-WatchedReveal $root "unreadable:$([System.IO.Path]::GetFileName($deny1000))" $deny1000 -WatchDialogs
+                    Check-PanelLanding $r $deny1000 'the 1000-character denied folder''s panel row'
                 }
             }
         }
@@ -4643,9 +4752,1202 @@ function Test-S009 {
     }
 }
 
+# ---- The Windows container layer store (SL-095) ----
+#
+# Both read this PC's real store, %ProgramData%\Microsoft\Windows\Containers\Layers, through the published exe and
+# eng/read-window.ps1, and neither opens anything in it: X-001's root is refused by the string check alone, and X-002's
+# scan stops at the store when it pops it. On a PC with no store they fail saying SKIPPED, never pass: a green run
+# there would hide that the guard was never exercised (C-024). Not in All, like T-005: they need this PC's store.
+
+$StoreRoot = Join-Path $env:ProgramData 'Microsoft\Windows\Containers\Layers'
+
+function Test-StorePresent {
+    if (Test-Path -LiteralPath $StoreRoot -PathType Container) { return $true }
+    Check $false "SKIPPED: this PC has no Windows container layer store at $StoreRoot, so the guard was not exercised"
+    $false
+}
+
+# A local path as this PC's own administrative share of its drive names it: C:\a through localhost is \\localhost\C$\a.
+function Get-LoopbackPath([string] $path) { '\\localhost\' + $path.Substring(0, 1) + '$' + $path.Substring(2) }
+
+# X-001 (C-039, C-050, O-084): a root at the store, in four spellings (the last through this PC's own administrative
+# share), is refused: the report says outcome refused and refusal container-layer-store, exits 0, nothing was counted,
+# and the window says why beside the result: the defect, where it lives (wcifs.sys), and that the refusal holds while
+# the Settings checkbox is ticked and can be turned off there (Q-186). The precaution was on.
+function Test-X001 {
+    if (-not (Test-StorePresent)) { return }
+    foreach ($root in @($StoreRoot, ($StoreRoot + '\'), $StoreRoot.ToLowerInvariant(), (Get-LoopbackPath $StoreRoot))) {
+        $lines = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $Reader -Root $root -Exe $Exe -TimeoutSec 120 -Outcome)
+        CheckEqual 'EXIT 0' $lines[0] "exit code for $root"
+        $outcome = @($lines | Where-Object { $_ -like 'OUTCOME *' })
+        CheckEqual 1 $outcome.Count "read-window -Outcome printed its line for $root"
+        if ($outcome.Count -ne 1) { continue }
+        Check ($outcome[0] -like 'OUTCOME outcome=refused refusal=container-layer-store skippedStores=0 opensUnderExcludedStore=0 *') "the outcome line for $root ($(Show $outcome[0]))"
+        $report = ($lines | Select-Object -Skip 1 | Where-Object { $_ -notlike 'OUTCOME *' }) -join "`n" | ConvertFrom-Json
+        CheckEqual 'Refused' $report.core.status "core.status for $root"
+        CheckEqual 0 $report.core.files "core.files for ${root}: nothing was read"
+        CheckEqual 0 $report.core.folders "core.folders for $root"
+        Check ($report.window.OutcomeTitle -like 'Not scanned: *') "OutcomeTitle says not scanned ($(Show $report.window.OutcomeTitle))"
+        $detail = $report.window.OutcomeDetail -join ' '
+        Check ($detail -like "*can't be scanned safely*Where it lives: wcifs.sys*While the Settings checkbox*is ticked*is not scanned*turn this protection off in Settings*") "OutcomeDetail names the defect, wcifs.sys and the Settings checkbox that lifts the refusal ($(Show $detail))"
+        CheckEqual $true @($report.workarounds | Where-Object { $_.id -eq 'wcifs-layer-store' })[0].on 'workarounds: the precaution was on'
+        CheckEqual 'Settings...' $report.window.SettingsButton 'SettingsButton: none off'
+    }
+}
+
+# X-002 (C-010, C-025, C-050, O-084, review M5, X1): the store's parent, ...\Containers, scanned to the end, as a local
+# path and through this PC's own administrative share. The store is one folder left out on purpose: skippedStores and
+# notScanned 1, never in the unreadable count; the backstop refused nothing; the window says so beside the totals,
+# naming the defect in wcifs.sys and the Settings checkbox that left it out, and in its own row, under a tab whose
+# header counts it apart from unreadable folders. The precaution was on.
+function Test-X002 {
+    if (-not (Test-StorePresent)) { return }
+    $local = Split-Path -Parent $StoreRoot
+    foreach ($root in $local, (Get-LoopbackPath $local)) {
+        Write-Output "    $root"
+        Test-X002Root $root
+    }
+}
+
+function Test-X002Root([string] $root) {
+    $store = $root + '\' + (Split-Path -Leaf $StoreRoot)
+    $lines = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $Reader -Root $root -Exe $Exe -TimeoutSec 120 -Outcome)
+    CheckEqual 'EXIT 0' $lines[0] 'exit code'
+    $outcome = @($lines | Where-Object { $_ -like 'OUTCOME *' })
+    CheckEqual 1 $outcome.Count 'read-window -Outcome printed its line'
+    if ($outcome.Count -ne 1) { return }
+    Check ($outcome[0] -like 'OUTCOME outcome=completed refusal=- skippedStores=1 opensUnderExcludedStore=0 unreadable=*') "the outcome line ($(Show $outcome[0]))"
+    $report = ($lines | Select-Object -Skip 1 | Where-Object { $_ -notlike 'OUTCOME *' }) -join "`n" | ConvertFrom-Json
+    CheckEqual 'Completed' $report.core.status 'core.status'
+    CheckEqual 1 $report.core.skippedStores 'core.skippedStores: the store, once'
+    CheckEqual 0 $report.core.opensUnderExcludedStore 'core.opensUnderExcludedStore'
+    $unreadable = [int]$report.core.unreadable
+    $expectedHeader = if ($unreadable -eq 0) { 'Not scanned (1)' } else { "Unreadable folders ($unreadable), not scanned (1)" }
+    CheckEqual $expectedHeader $report.window.UnreadableTab.header 'UnreadableTab.header counts the store apart from the unreadable folders'
+    $note = @($report.window.OutcomeNotes.lines | Where-Object { $_.StartsWith("Not scanned, size not counted: $store (Windows container layers)", [StringComparison]::OrdinalIgnoreCase) })
+    Check ($note.Count -eq 1) "OutcomeNotes names the store ($(Show ($report.window.OutcomeNotes.lines -join ' | ')))"
+    Check ($note.Count -eq 1 -and $note[0] -like '*Skipped to avoid a leak in wcifs.sys*Settings checkbox*turned off in Settings*') "the note says why beside the totals: the defect in wcifs.sys and the Settings checkbox ($(Show ($note -join ' | ')))"
+    Check ($report.window.OutcomeNotes.visible) 'OutcomeNotes is on screen'
+    CheckEqual 1 $report.core.notScanned 'core.notScanned'
+    CheckEqual $true @($report.workarounds | Where-Object { $_.id -eq 'wcifs-layer-store' })[0].on 'workarounds: the precaution was on'
+}
+
+# X-004 (C-025, C-010, reviews M5, X1): a report that holds the store left out and unreadable folders as well, from
+# the store's grandparent, ...\Microsoft\Windows, where this user is refused some folders. The two are counted apart:
+# core.unreadable counts only the failed folders, core.skippedStores the store, and the tab header names both. Not in
+# All, like X-001 and X-002: it needs this PC's store.
+function Test-X004 {
+    if (-not (Test-StorePresent)) { return }
+    $root = Split-Path -Parent (Split-Path -Parent $StoreRoot)
+    $lines = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $Reader -Root $root -Exe $Exe -TimeoutSec 300 -Outcome)
+    CheckEqual 'EXIT 0' $lines[0] 'exit code'
+    $outcome = @($lines | Where-Object { $_ -like 'OUTCOME *' })
+    CheckEqual 1 $outcome.Count 'read-window -Outcome printed its line'
+    if ($outcome.Count -ne 1) { return }
+    Write-Output "        $($outcome[0])"
+    $report = ($lines | Select-Object -Skip 1 | Where-Object { $_ -notlike 'OUTCOME *' }) -join "`n" | ConvertFrom-Json
+    CheckEqual 'Completed' $report.core.status 'core.status'
+    CheckEqual 1 $report.core.skippedStores 'core.skippedStores: the store, once'
+    CheckEqual 0 $report.core.opensUnderExcludedStore 'core.opensUnderExcludedStore'
+    $unreadable = [int]$report.core.unreadable
+    Check ($unreadable -gt 0) "the scan met unreadable folders as well, the shape this case is about ($unreadable)"
+    CheckEqual "Unreadable folders ($unreadable), not scanned (1)" $report.window.UnreadableTab.header 'UnreadableTab.header counts the two apart'
+    Check (@($report.window.OutcomeNotes.lines | Where-Object { $_ -like "Not scanned, size not counted: $StoreRoot (Windows container layers)*" }).Count -eq 1) 'OutcomeNotes names the store beside the totals'
+}
+
+# X-005 (C-051, SL-095): the Settings checkbox of the precaution against wcifs.sys's leak, turned off as a person would
+# through the hook's settings mode, before the scan of a small %TEMP% tree that is nowhere near a store. Answering No to
+# the question the app asks leaves it on; answering Yes turns it off, and the report the scan's ending writes says so;
+# the next launch, with no hook, starts with it on again: nothing is kept on disk. The question states the consequence.
+function Test-X005 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'tree'
+        $null = New-SmallTree $root
+        $report = Join-Path $case 'report.json'
+        foreach ($answer in 'no', 'yes') {
+            Write-Output "    answer $answer"
+            $run = Invoke-HookedRun 'settings' $root $report @{ FSA_HOOK_ANSWER = $answer }
+            $before = $script:Failures.Count
+            CheckActed $run 'settings'
+            if ($script:Failures.Count -gt $before) { continue }
+            $on = $answer -eq 'no'
+            $box = @($run.Log | Where-Object { $_.StartsWith('settings box=') })
+            Check ($box.Count -eq 1 -and (Field $box[0] 'id') -eq 'wcifs-layer-store' -and (Field $box[0] 'checked') -eq 'True') "the checkbox was the precaution's, ticked as the app started ($(Show ($box -join ' | ')))"
+            $question = @($run.Log | Where-Object { $_.StartsWith('settings question=') })
+            Check ($question.Count -eq 1 -and $question[0] -like '*scanned as picked*kernel memory*System handle*each store entry*until you restart Windows*') "the question states the consequence: a folder inside the store scanned as picked, and the leak per entry until a restart ($(Show ($question -join ' | ')))"
+            $answered = @($run.Log | Where-Object { $_.StartsWith('settings answered=') })
+            Check ($answered.Count -eq 1 -and (Field $answered[0] 'checked') -eq "$on") "after answering $answer the box is ticked: $on ($(Show ($answered -join ' | ')))"
+            CheckEqual '0' $run.Exit 'exit code'
+            Check ($null -ne $run.Report) 'a report was written'
+            if ($null -eq $run.Report) { continue }
+            CheckEqual 'Completed' $run.Report.core.status 'the scan ran after Settings closed'
+            CheckEqual $on @($run.Report.workarounds | Where-Object { $_.id -eq 'wcifs-layer-store' })[0].on 'workarounds: the precaution as the answer left it'
+            CheckEqual $(if ($on) { 'Settings...' } else { 'Settings (1 off)...' }) $run.Report.window.SettingsButton 'SettingsButton says how many are off'
+            Remove-Item -LiteralPath $report -ErrorAction SilentlyContinue
+        }
+        Write-Output '    the next launch'
+        $exit = Wait-App (Start-App "`"$root`" --report `"$report`"") 60
+        CheckEqual '0' $exit 'exit code'
+        $next = if (Test-Path -LiteralPath $report) { Get-Content -LiteralPath $report -Raw | ConvertFrom-Json } else { $null }
+        Check ($null -ne $next) 'a report was written'
+        if ($null -ne $next) {
+            CheckEqual $true @($next.workarounds | Where-Object { $_.id -eq 'wcifs-layer-store' })[0].on 'workarounds: on again at the next launch'
+            CheckEqual 'Settings...' $next.window.SettingsButton 'SettingsButton: none off'
+        }
+    }
+    finally { Remove-CaseFolder $case }
+}
+
+# X-006 (C-050, SL-095): why a result is different, beside the result: a pick that was refused (X-001's checks) and a
+# scan whose store was skipped (X-002's), each naming the defect in wcifs.sys and the Settings checkbox, with the report
+# recording workarounds [{id, on}] and notScanned 1, and the store counted apart from the folders that could not be
+# opened. Not in All: it needs this PC's store.
+function Test-X006 {
+    Test-X001
+    Test-X002
+}
+
+# X-003 (C-026, reviews m6, N5): the hook's progress triggers, which PoolWatch -Protocol's cancelled and closed runs
+# depend on, fire on the published exe, on a %TEMP% tree that outlasts many 250 ms ticks (New-LargeTree, 30,150
+# folders). A dead trigger found on the fresh boot would spend the only cold state there is, so each is proved here:
+# stop at a folder count presses Cancel at or past it; stop past a folder logs where the walk passed it and presses
+# Cancel the set number of folders after; close at a folder count closes the window mid-scan, which writes no report
+# (exit 70, WindowReport), so its hook log is the run's record. Touches no store: nothing here is near one.
+function Test-X003 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'large'
+        $null = New-LargeTree $root
+        $report = Join-Path $case 'report.json'
+
+        $stop = Invoke-HookedRun 'stop' $root $report @{ FSA_HOOK_AT_FOLDERS = '3000' }
+        CheckActed $stop 'stop'
+        CheckEqual '0' $stop.Exit 'stop at 3,000 folders: exit code'
+        $acted = @($stop.Log | Where-Object { $_.StartsWith('acted mode=stop ') })
+        if ($acted.Count -eq 1) {
+            Check ([long](Field $acted[0] 'folders') -ge 3000) "Cancel was pressed at or past 3,000 folders ($(Field $acted[0] 'folders'))"
+        }
+        CheckEqual 'cancelled' $stop.Report.outcome 'stop at 3,000 folders: the report says cancelled'
+        Remove-Item -LiteralPath $report -ErrorAction SilentlyContinue
+
+        $past = Join-Path $root 'n1'
+        $passed = Invoke-HookedRun 'stop' $root $report @{ FSA_HOOK_PAST = $past; FSA_HOOK_PAST_FOLDERS = '500' }
+        CheckActed $passed 'stop'
+        $passedLine = @($passed.Log | Where-Object { $_.StartsWith('passed folders=') })
+        CheckEqual 1 $passedLine.Count "the hook logged once where the walk passed $past"
+        $acted = @($passed.Log | Where-Object { $_.StartsWith('acted mode=stop ') })
+        if ($passedLine.Count -eq 1 -and $acted.Count -eq 1) {
+            $at = [long](Field $passedLine[0] 'folders')
+            Check ([long](Field $acted[0] 'folders') -ge $at + 500) "Cancel came 500 folders or more after the walk passed n1 (passed at $at, pressed at $(Field $acted[0] 'folders'))"
+            Check ((Field $passedLine[0] 'current') -notlike "$past\*" -and (Field $passedLine[0] 'current') -ne $past) "the folder being listed when it passed was not n1 or under it ($(Field $passedLine[0] 'current'))"
+        }
+        CheckEqual 'cancelled' $passed.Report.outcome 'stop past n1: the report says cancelled'
+        Remove-Item -LiteralPath $report -ErrorAction SilentlyContinue
+
+        $close = Invoke-HookedRun 'close' $root $report @{ FSA_HOOK_AT_FOLDERS = '3000' }
+        CheckActed $close 'close'
+        CheckEqual '70' $close.Exit 'close at 3,000 folders: exit 70, a window closed before its ending'
+        Check ($null -eq $close.Report) 'close at 3,000 folders: no report, so the hook log is the record'
+        Check (@($close.Log | Where-Object { $_.StartsWith('closed ') }).Count -eq 1) 'the hook saw the window close'
+    }
+    finally { Remove-CaseFolder $case }
+}
+
+# ---- The seams of SC-116 (SL-089) ----
+
+# What the SL-089 cases ask of a folder and of the machine, none of it acting on a window: the scanner's two opens of a
+# folder, a folder held open as another program holds one, a folder's attributes and its creation and change times
+# read through an open that lists nothing, and the kernel's pool. Loaded by those cases only.
+function Initialize-SeamWin32 {
+    if ('FsaWindowCases.Seam' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+namespace FsaWindowCases
+{
+    public sealed class FolderProbe
+    {
+        public int Error;
+        public bool TimesRead;
+        public DateTime CreationUtc;
+        public DateTime ChangeUtc;
+    }
+
+    public static class Seam
+    {
+        // The scanner's two opens of a folder, copied from src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs (Open and
+        // TryOpenKeepingLastAccess) and not read from it (SC-134): FILE_LIST_DIRECTORY with every share mode, OPEN_EXISTING
+        // and FILE_FLAG_BACKUP_SEMANTICS, and the keep-last-access open adds FILE_WRITE_ATTRIBUTES.
+        public const uint PlainOpen = 0x0001;
+        public const uint KeepOpen = 0x0001 | 0x0100;
+        private const uint ReadAttributes = 0x0080;
+        private const uint ShareAll = 0x7;
+        private const uint ShareWriteDelete = 0x2 | 0x4;
+        private const uint OpenExisting = 3;
+        private const uint BackupSemantics = 0x02000000;
+
+        [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+
+        [DllImport("kernel32.dll", EntryPoint = "GetFileAttributesW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern uint GetFileAttributes(string name);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileBasicInfo
+        {
+            public long CreationTime;
+            public long LastAccessTime;
+            public long LastWriteTime;
+            public long ChangeTime;
+            public uint FileAttributes;
+            public uint Padding;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetFileInformationByHandleEx(SafeFileHandle file, int infoClass, out FileBasicInfo info, uint size);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PerformanceInformation
+        {
+            public uint Size;
+            public UIntPtr CommitTotal, CommitLimit, CommitPeak, PhysicalTotal, PhysicalAvailable, SystemCache, KernelTotal,
+                KernelPaged, KernelNonpaged, PageSize;
+            public uint HandleCount, ProcessCount, ThreadCount;
+        }
+
+        [DllImport("psapi.dll", SetLastError = true)]
+        private static extern bool GetPerformanceInfo(out PerformanceInformation info, uint size);
+
+        private static string Extended(string path)
+        {
+            if (path.StartsWith(@"\\?\", StringComparison.Ordinal))
+                return path;
+            return path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path.Substring(2) : @"\\?\" + path;
+        }
+
+        // The error an open of the folder with this access gets, 0 when it opens; closed at once, nothing listed.
+        public static int OpenError(string folder, uint access)
+        {
+            using (SafeFileHandle opened = CreateFile(Extended(folder), access, ShareAll, IntPtr.Zero, OpenExisting, BackupSemantics, IntPtr.Zero))
+                return opened.IsInvalid ? Marshal.GetLastWin32Error() : 0;
+        }
+
+        // The folder held as another program can hold one (SL-085): able to list it, sharing write and delete but not
+        // read, so an open that asks to list it meets a sharing violation once its access check has passed.
+        public static SafeFileHandle HoldSharingNoRead(string folder)
+        {
+            SafeFileHandle held = CreateFile(Extended(folder), PlainOpen, ShareWriteDelete, IntPtr.Zero, OpenExisting, BackupSemantics, IntPtr.Zero);
+            if (held.IsInvalid)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "could not hold " + folder + " open");
+            return held;
+        }
+
+        // The path's attributes, or -1 when it has none to read (gone, or refused even that).
+        public static long Attributes(string path)
+        {
+            uint attributes = GetFileAttributes(Extended(path));
+            return attributes == 0xFFFFFFFF ? -1 : attributes;
+        }
+
+        // One open with the scanner's plain mask, which lists nothing: its error, and when it opened, the folder's creation
+        // and change times, read through a second open that asks to read attributes only.
+        public static FolderProbe Probe(string folder)
+        {
+            var probe = new FolderProbe { Error = OpenError(folder, PlainOpen) };
+            if (probe.Error != 0)
+                return probe;
+            using (SafeFileHandle opened = CreateFile(Extended(folder), ReadAttributes, ShareAll, IntPtr.Zero, OpenExisting, BackupSemantics, IntPtr.Zero))
+            {
+                FileBasicInfo info;
+                if (opened.IsInvalid || !GetFileInformationByHandleEx(opened, 0, out info, (uint)Marshal.SizeOf(typeof(FileBasicInfo))))
+                    return probe;
+                probe.TimesRead = true;
+                probe.CreationUtc = DateTime.FromFileTimeUtc(info.CreationTime);
+                probe.ChangeUtc = DateTime.FromFileTimeUtc(info.ChangeTime);
+            }
+            return probe;
+        }
+
+        // The kernel's paged and nonpaged pool in bytes, the whole machine's (GetPerformanceInfo).
+        public static long[] KernelPool()
+        {
+            PerformanceInformation info;
+            if (!GetPerformanceInfo(out info, (uint)Marshal.SizeOf(typeof(PerformanceInformation))))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            long page = (long)info.PageSize.ToUInt64();
+            return new[] { (long)info.KernelPaged.ToUInt64() * page, (long)info.KernelNonpaged.ToUInt64() * page };
+        }
+    }
+}
+'@
+}
+
+# A deny ACE for this user with $rights on $folder alone, added or taken away again, through the \\?\ path as Deny-All.
+function Set-DenyRule([string] $folder, [System.Security.AccessControl.FileSystemRights] $rights, [bool] $add) {
+    if (-not $add -and -not [System.IO.Directory]::Exists('\\?\' + $folder)) { return }
+    $info = [System.IO.DirectoryInfo]::new('\\?\' + $folder)
+    $acl = [System.IO.FileSystemAclExtensions]::GetAccessControl($info)
+    $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, $rights, 'None', 'None', 'Deny')
+    if ($add) { $acl.AddAccessRule($rule) } else { [void]$acl.RemoveAccessRule($rule) }
+    [System.IO.FileSystemAclExtensions]::SetAccessControl($info, $acl)
+}
+
+# A UTC time from a log line, or one ConvertFrom-Json has already made a DateTime (pwsh 7 does, for an ISO stamp): a
+# DateTime is taken as it is, never through a string, which would drop its kind and its fraction of a second.
+function ConvertFrom-Utc($value) {
+    if ($value -is [DateTime]) { return $value.ToUniversalTime() }
+    [DateTime]::Parse([string]$value, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+}
+
+function Test-Elevated {
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    try { [System.Security.Principal.WindowsPrincipal]::new($identity).IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator) }
+    finally { $identity.Dispose() }
+}
+
+# The unreadable folders' panel as FsaWindowHook's rows mode wrote it at shutdown (FSA_HOOK_ROWS=1, RowsMode.cs): its
+# rows, the folders not scanned SL-095 lists beside them, and the closing line, null when the hook wrote none.
+function Read-RowsDump($log) {
+    $json = @(Read-HookJson $log)
+    [pscustomobject]@{
+        Rows       = @($json | Where-Object { $_.event -ceq 'row' })
+        NotScanned = @($json | Where-Object { $_.event -ceq 'notScanned' })
+        Closing    = @($json | Where-Object { $_.event -ceq 'rows' })[0]
+    }
+}
+
+# How many failed folders the unreadable folders' tab header counts ('Unreadable folders (N)', with SL-095's ', not
+# scanned (M)' after it): the panel's distinct rows as the window counts them, and 0 when the tab is not shown.
+function Get-HeaderCount($report) {
+    $tab = $report.window.UnreadableTab
+    if ($tab.visible -and ([string]$tab.header) -cmatch '^Unreadable folders \(([\d,]+)\)') { [int]($Matches[1] -replace ',', '') } else { 0 }
+}
+
+# The panel's rows by their folder's own name, each name to every row that has it.
+function Get-RowsByLeaf($dump) {
+    $byLeaf = @{}
+    foreach ($row in $dump.Rows) {
+        $leaf = [System.IO.Path]::GetFileName(([string]$row.path).TrimEnd('\'))
+        if (-not $byLeaf.ContainsKey($leaf)) { $byLeaf[$leaf] = [System.Collections.Generic.List[object]]::new() }
+        $byLeaf[$leaf].Add($row)
+    }
+    $byLeaf
+}
+
+function Get-LeafRows($byLeaf, [string] $leaf) { if ($byLeaf.ContainsKey($leaf)) { @($byLeaf[$leaf]) } else { @() } }
+
+# What every case that reads the panel asks first (SL-089): the hook read it and wrote its rows, as an ordinary user, and
+# the panel's rows, the header's N (distinct rows) and core.unreadable (the engine's record, raw, so a folder recorded
+# twice shows) are one number, with no folder a row twice and none without a reason. $expected is that number, or -1.
+function CheckPanelAgrees($report, $dump, [string] $what, [int] $expected = -1) {
+    $closing = $dump.Closing
+    Check ($null -ne $closing) "${what}: the hook wrote the panel's rows at shutdown (no closing 'rows' line: no dump)"
+    if ($null -eq $closing) { return }
+    Check ($null -eq $closing.error) "${what}: the hook read the panel ($(Show $closing.error))"
+    if ($null -ne $closing.error) { return }
+    CheckEqual ([int]$closing.count) $dump.Rows.Count "${what}: the dump holds every row its closing line counts"
+    CheckEqual $false $closing.elevated "${what}: the app ran as an ordinary user"
+    $header = Get-HeaderCount $report
+    $core = if ($null -ne $report.core) { [int]$report.core.unreadable } else { -1 }
+    Check ($dump.Rows.Count -eq $header -and $header -eq $core) "${what}: the panel's rows ($($dump.Rows.Count)), the header's N ($header) and the engine's record (core.unreadable $core) are one number"
+    if ($expected -ge 0) { CheckEqual $expected $dump.Rows.Count "${what}: the panel's rows" }
+    $twice = @($dump.Rows | Group-Object -Property path -CaseSensitive | Where-Object Count -gt 1)
+    Check ($twice.Count -eq 0) "${what}: no folder is a row twice ($($twice.Count) are)"
+    $blank = @($dump.Rows | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.reason) })
+    Check ($blank.Count -eq 0) "${what}: every row has a reason ($($blank.Count) have none)"
+}
+
+# One row of the panel as the person reads it: there once, of $kind with $code and $reason, and drawn with both, 'could
+# not be opened' or 'only partly read' and then the reason. Drawn text is required: criterion 2 is what the panel says.
+function CheckSeamRow($byLeaf, [string] $leaf, [string] $kind, [int] $code, [string] $reason, [string] $what) {
+    $rows = @(Get-LeafRows $byLeaf $leaf)
+    Check ($rows.Count -eq 1) "${what}: $leaf is a row once ($($rows.Count))"
+    if ($rows.Count -ne 1) { return }
+    $row = $rows[0]
+    Check ($row.kind -ceq $kind -and [int]$row.code -eq $code -and $row.reason -ceq $reason) "${what}: $leaf is $kind, code $code, '$reason' ($($row.kind), $($row.code), $(Show $row.reason))"
+    $kindText = if ($kind -ceq 'ListedPartway') { 'only partly read' } else { 'could not be opened' }
+    $shown = if ($null -eq $row.shown) { @() } else { @($row.shown) }
+    Check ($null -ne $row.shown -and @($shown | Where-Object { ([string]$_).EndsWith("${kindText}: $reason", [System.StringComparison]::Ordinal) }).Count -eq 1) "${what}: $leaf's row is drawn '${kindText}: $reason' ($(if ($null -eq $row.shown) { 'never drawn' } else { Show ($shown -join ' | ') }))"
+}
+
+# ---- N-005: a stopped scan on the stalled SMB share ----
+
+# The SMB rig's --log (StallRig --seam): '<utc> create <name> <status>' and '<utc> hold <name>', one object a line, read
+# while the rig may still be writing it.
+function Read-RigLog([string] $file) {
+    if (-not [System.IO.File]::Exists($file)) { return }
+    $text = ''
+    try {
+        $stream = [System.IO.FileStream]::new($file, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try { $text = [System.IO.StreamReader]::new($stream).ReadToEnd() } finally { $stream.Dispose() }
+    }
+    catch [System.IO.IOException] { }
+    foreach ($line in ($text -split "`r?`n")) {
+        if ($line -cmatch '^(\S+) (create|hold) (\S+)(?: (\S+))?$') {
+            $m = $Matches
+            [pscustomobject]@{ Utc = (ConvertFrom-Utc $m[1]); Event = $m[2]; Name = $m[3]; Status = $m[4] }
+        }
+    }
+}
+
+# The stall rig on the stop-seam tree (StallRig --seam --deny a --log), retried while its mapping fails with Windows error
+# 53, which the SMB client gives for about 30 s after a server on 127.0.0.1 was killed, for up to 75 s (review M5). The
+# rig with its Root, or null when it never served: the run is then inconclusive.
+function Start-SeamRig([string] $folder) {
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    for ($attempt = 1; $attempt -le 8; $attempt++) {
+        $at = Join-Path $folder "rig$attempt"
+        $log = Join-Path $at 'rig.log'
+        $rig = Start-StallRig $at 150 @('--seam', '--deny', 'a', '--log', $log)
+        $rig | Add-Member -NotePropertyName Log -NotePropertyValue $log
+        if ($rig.RootLine.Wait(200000) -and $rig.RootLine.Result) {
+            $rig.Root = $rig.RootLine.Result
+            Write-Host "        rig: serving $($rig.Root) (attempt $attempt)"
+            return $rig
+        }
+        $said = if ($rig.Process.WaitForExit(5000)) { $rig.Errors.Result.Trim() } else { 'still running' }
+        if (-not $rig.Process.HasExited) { Kill-StallRig $rig }
+        Write-Host "        rig: attempt $attempt served nothing ($said)"
+        if ($said -notmatch '\b53\b' -or $clock.Elapsed.TotalSeconds -ge 75) { return $null }
+        Start-Sleep -Seconds 10
+    }
+    $null
+}
+
+# Removes, under the rig's lock, the rig mappings a killed run left behind (StallRig --sweep; review M5).
+function Remove-RigMappingsLeft {
+    foreach ($line in @(& $RigExe --sweep --wait-sec 60 2>&1)) { Write-Host "        rig: $line" }
+}
+
+# The milliseconds from the logged hold of s to the share's teardown or the provider's release, in the main run and its
+# control alike (O-004).
+$SeamReleaseMs = 8000
+
+# One N-005 run on a fresh rig: the app under stop mode, Cancel 2 s after the hold, or for the control under rows mode,
+# which presses nothing; both with the rows dump and b's listing failpoint, b|3|59. The rig is killed 8 s after its
+# logged hold, so the share's teardown ends the held listing; then the app has 90 s to reach an ending; then the rig
+# mappings the kill left are removed. Null when the rig never served.
+function Invoke-SmbSeamRun([string] $case, [bool] $stop) {
+    $name = if ($stop) { 'main' } else { 'control' }
+    $rig = Start-SeamRig (Join-Path $case $name)
+    if ($null -eq $rig) { return $null }
+    $report = Join-Path $case "$name.json"
+    $mode = if ($stop) { 'stop' } else { 'rows' }
+    $variables = @{ FSA_HOOK_ROWS = '1'; FSA_HOOK_FAIL_LISTING = 'b|3|59' }
+    if ($stop) {
+        $variables.FSA_HOOK_ARMED = $rig.Marker
+        $variables.FSA_HOOK_CANCEL_DELAY_MS = '2000'
+    }
+    try {
+        $run = Invoke-WithHook $mode $HookDll {
+            $process = Start-App "`"$($rig.Root)`" --report `"$report`""
+            $clock = [System.Diagnostics.Stopwatch]::StartNew()
+            $hold = $null
+            $killUtc = $null
+            while (-not $process.HasExited -and $clock.Elapsed.TotalSeconds -lt 120) {
+                if ($null -eq $hold) { $hold = @(Read-RigLog $rig.Log | Where-Object { $_.Event -ceq 'hold' })[0] }
+                if ($null -ne $hold -and $null -eq $killUtc -and [DateTime]::UtcNow -ge $hold.Utc.AddMilliseconds($SeamReleaseMs)) {
+                    Kill-StallRig $rig
+                    $killUtc = [DateTime]::UtcNow
+                }
+                Start-Sleep -Milliseconds 25
+            }
+            if ($null -eq $killUtc) {
+                Kill-StallRig $rig
+                $killUtc = [DateTime]::UtcNow
+            }
+            [pscustomobject]@{ Exit = (Wait-App $process 90); Hold = $hold; KillUtc = $killUtc }
+        } $variables
+    }
+    finally {
+        if (-not $rig.Process.HasExited) { Kill-StallRig $rig }
+        Stop-StallRig $rig | Out-Host
+        Remove-RigMappingsLeft # the kill's own leftover, before anything looks (review M5)
+    }
+    $text = if (Test-Path -LiteralPath $report -PathType Leaf) { Get-Content -LiteralPath $report -Raw } else { $null }
+    [pscustomobject]@{
+        Exit    = $run.Result.Exit
+        Hold    = $run.Result.Hold
+        KillUtc = $run.Result.KillUtc
+        Report  = if ($null -eq $text) { $null } else { $text | ConvertFrom-Json }
+        Log     = $run.Log
+        Dump    = Read-RowsDump $run.Log
+        Opens   = @(Read-RigLog $rig.Log | Where-Object Event -ceq 'create')
+    }
+}
+
+# A control run's checks, the SMB rig's and the cloud rig's alike: the same fixture and failpoint with nothing pressed
+# reaches its own ending and writes its report, with a refused at its open and b read partway, each once; and which of
+# s, t and u it put in the list, which is what makes their absence after Stop mean anything. Returns nothing.
+function CheckSeamControl($run, [string] $what) {
+    foreach ($line in @($run.Log | Where-Object { $_ -and -not $_.StartsWith('{') })) { Write-Output "        hook: $line" }
+    CheckEqual '0' $run.Exit "${what}: exit code"
+    Check ($null -ne $run.Report) "${what}: the app reached an ending and wrote its report"
+    if ($null -eq $run.Report) { return }
+    CheckEqual 'Completed' $run.Report.core.status "${what}: core.status, nothing having pressed Stop"
+    Check (@($run.Log | Where-Object { $_ -ceq 'fail-listing fired b page 3' }).Count -ge 1) "${what}: b's listing failed at its third page, a full one (review m5)"
+    CheckPanelAgrees $run.Report $run.Dump $what
+    $byLeaf = Get-RowsByLeaf $run.Dump
+    CheckSeamRow $byLeaf 'a' 'NothingListed' 5 'access denied' $what
+    CheckSeamRow $byLeaf 'b' 'ListedPartway' 59 'network or share error' $what
+    foreach ($leaf in 's', 't', 'u') {
+        $rows = @(Get-LeafRows $byLeaf $leaf)
+        if ($rows.Count -gt 0) { Write-Output "        ${what}: $leaf is a row: $($rows[0].kind), code $($rows[0].code), $(Show $rows[0].reason)" }
+        else { Write-Output "        ${what}: $leaf is no row" }
+    }
+    Write-Output "        ${what}: core files $($run.Report.core.files), folders $($run.Report.core.folders), bytes $($run.Report.core.bytes)"
+}
+
+# Which of s, t and u a control run put in the list: a leaf to its row.
+function Get-LitFolders($run) {
+    $lit = @{}
+    if ($null -eq $run -or $null -eq $run.Report) { return $lit }
+    $byLeaf = Get-RowsByLeaf $run.Dump
+    foreach ($leaf in 's', 't', 'u') {
+        $rows = @(Get-LeafRows $byLeaf $leaf)
+        if ($rows.Count -gt 0) { $lit[$leaf] = $rows[0] }
+    }
+    $lit
+}
+
+# A main run's checks, the SMB rig's and the cloud rig's alike (criterion 1): Stop pressed while s was held ends the
+# scan Stopped, and the panel holds a and b once each and nothing else. No row for s, and none for t or u when their
+# first open or fetch came after the Stop or never; each such absence holds only beside a control that put that folder
+# in the list, is the platform's limit where $platformLimit names the folder (Q-177, the cloud rig), and is inconclusive
+# otherwise. $firstSeen is each of t and u to when the rig or provider first saw it, or null; $stopUtc is when the hook
+# pressed Stop; $platformLimit is a folder's name to the line that says so.
+function CheckSeamMain($run, [string] $what, $lit, $firstSeen, $stopUtc, $platformLimit) {
+    CheckEqual '0' $run.Exit "${what}: exit code"
+    Check ($null -ne $run.Report) "${what}: the app reached an ending and wrote its report (none: no stopped state)"
+    if ($null -eq $run.Report) { return }
+    CheckEqual 'Cancelled' $run.Report.core.status "${what}: core.status"
+    $title = [string]$run.Report.window.OutcomeTitle
+    Check ($title.StartsWith('Stopped: ')) "${what}: OutcomeTitle is the Stopped ending ($(Show $title))"
+    CheckPanelAgrees $run.Report $run.Dump $what 2
+    $byLeaf = Get-RowsByLeaf $run.Dump
+    CheckSeamRow $byLeaf 'a' 'NothingListed' 5 'access denied' $what
+    CheckSeamRow $byLeaf 'b' 'ListedPartway' 59 'network or share error' $what
+    $s = @(Get-LeafRows $byLeaf 's')
+    Check ($s.Count -eq 0) "${what}: s, whose read Stop cut short, is no row ($(Show (@($s | ForEach-Object { "$($_.kind) $($_.code)" }) -join ', ')))"
+    if ($s.Count -eq 0) {
+        if ($lit.ContainsKey('s')) { Write-Output "        held: s is no row, and its control put it in the list as $($lit['s'].kind), code $($lit['s'].code)" }
+        elseif ($platformLimit.ContainsKey('s')) { Write-Output "        $($platformLimit['s'])" }
+        else { Inconclusive "${what}: s: no control (the run without Stop did not put s in the list), so its absence here says nothing" }
+    }
+    foreach ($leaf in 't', 'u') {
+        $seen = $firstSeen[$leaf]
+        $rows = @(Get-LeafRows $byLeaf $leaf)
+        if ($null -ne $seen -and $seen -lt $stopUtc) {
+            Write-Output "        $leaf was first opened $([Math]::Round(($stopUtc - $seen).TotalMilliseconds)) ms before the Stop: read like any folder"
+            Check ($rows.Count -eq 0) "${what}: $leaf, a readable folder opened before the Stop, is no row"
+            continue
+        }
+        Check ($rows.Count -eq 0) "${what}: $leaf, first opened after the Stop or never ($(if ($null -eq $seen) { 'never' } else { "$([Math]::Round(($seen - $stopUtc).TotalMilliseconds)) ms after" })), is no row"
+        if ($rows.Count -eq 0) {
+            if ($lit.ContainsKey($leaf)) { Write-Output "        held: $leaf is no row, and its control put it in the list as $($lit[$leaf].kind), code $($lit[$leaf].code)" }
+            elseif ($platformLimit.ContainsKey($leaf)) { Write-Output "        $($platformLimit[$leaf])" }
+            else { Inconclusive "${what}: ${leaf}: no control (the run without Stop did not put $leaf in the list)" }
+        }
+    }
+}
+
+# N-005 (-IncludeNetwork, SL-089 criteria 1 and 2): Stop on the stalled SMB share. The rig serves the stop-seam tree: a,
+# refused at its open by the server; b, 1,200 files whose listing Core's failpoint fails at its third page with 59
+# (FSA_HOOK_FAIL_LISTING=b|3|59: SMBLibrary pages a listing from memory after one store call, so the server cannot fail
+# one partway, U-103; the paging over SMB, the kind from the child count and the drawn reason are real, the code is
+# injected); s, whose listing the server holds; t and u, plain. The control runs first, with the same rig, failpoint and
+# teardown, and nothing pressed: it must reach its ending once the rig is killed 8 s after the hold, and shows which of
+# s, t and u the teardown puts in the list. Then the main run: Stop 2 s after the hold, the rig killed 8 s after it, so
+# the held listing ends in the share's teardown. Its panel holds a ('could not be opened: access denied', 5) and b
+# ('only partly read: network or share error', 59) once each, and nothing for s or for t and u when the rig logged their
+# first open after the Stop or never. It is inconclusive unless a's refused open, b's failure and s's hold all came before
+# the Stop, and unless the two runs' teardowns came at the same offset from the hold. After each run no SMB mapping to
+# 127.0.0.1 may be left (Q-176).
+function Test-N005 {
+    $case = New-CaseFolder
+    try {
+        Write-Output '  control: the same rig, failpoint and teardown, and no Stop'
+        $controlRun = Invoke-SmbSeamRun $case $false
+        $left = @(Get-RigMappings)
+        Check ($left.Count -eq 0) "control: no SMB mapping to 127.0.0.1 is left after the run (Q-176) ($(Show ($left -join ', ')))"
+        if ($null -eq $controlRun) { Inconclusive 'control: the rig never served its share' }
+        else {
+            CheckSeamControl $controlRun 'control'
+            Check ($null -ne $controlRun.Hold) 'control: the rig held the listing of s'
+        }
+        $lit = Get-LitFolders $controlRun
+        if ($lit.ContainsKey('s')) {
+            CheckEqual 'network or share error' $lit['s'].reason "control: s, its listing ended by the share's teardown, is a row with a network code ($($lit['s'].code))"
+        }
+        if ($Control) { return }
+
+        Write-Output '  main: Stop 2 s after the hold, the share torn down 8 s after it'
+        $main = Invoke-SmbSeamRun $case $true
+        $left = @(Get-RigMappings)
+        Check ($left.Count -eq 0) "main: no SMB mapping to 127.0.0.1 is left after the run (Q-176) ($(Show ($left -join ', ')))"
+        if ($null -eq $main) {
+            Inconclusive 'main: the rig never served its share'
+            return
+        }
+        CheckActed ([pscustomobject]@{ Log = @($main.Log | Where-Object { $_ -and -not $_.StartsWith('{') }) }) 'stop'
+        $closing = $main.Dump.Closing
+        $stopUtc = if ($null -ne $closing -and $closing.stopUtc) { ConvertFrom-Utc $closing.stopUtc } else { $null }
+        Check ($null -ne $stopUtc) 'main: the hook recorded when it pressed Stop'
+        if ($null -eq $stopUtc) { return }
+        $refused = @($main.Opens | Where-Object { $_.Name -ceq 'a' -and $_.Status -ceq 'STATUS_ACCESS_DENIED' })[0]
+        if ($null -eq $refused -or $refused.Utc -ge $stopUtc) { Inconclusive "main: the server did not refuse a's open before the Stop" }
+        if ($null -eq $main.Hold -or $main.Hold.Utc -ge $stopUtc) { Inconclusive "main: the server did not hold s's listing before the Stop" }
+        $log = @($main.Log)
+        $fired = [array]::IndexOf($log, 'fail-listing fired b page 3')
+        $acted = [array]::IndexOf($log, @($log | Where-Object { $_.StartsWith('acted mode=stop ') })[0])
+        if ($fired -lt 0 -or $fired -gt $acted) { Inconclusive "main: b's listing did not fail before the Stop" }
+        if ($null -ne $controlRun -and $null -ne $controlRun.Hold -and $null -ne $main.Hold) {
+            $offsets = @(($controlRun.KillUtc - $controlRun.Hold.Utc).TotalMilliseconds, ($main.KillUtc - $main.Hold.Utc).TotalMilliseconds)
+            Write-Output ('        teardown {0:F0} ms after the hold in the control, {1:F0} ms in the main run' -f $offsets[0], $offsets[1])
+            if ([Math]::Abs($offsets[0] - $offsets[1]) -gt 1000) { Inconclusive 'main: the control''s teardown came at another offset from the hold (O-004)' }
+        }
+        $firstSeen = @{}
+        foreach ($leaf in 't', 'u') { $firstSeen[$leaf] = @($main.Opens | Where-Object Name -ceq $leaf | ForEach-Object Utc)[0] }
+        CheckSeamMain $main 'main' $lit $firstSeen $stopUtc @{}
+    }
+    finally {
+        Remove-RigMappingsLeft
+        Remove-CaseFolder $case
+    }
+}
+
+# ---- N-006: a stopped scan on the hung cloud rig ----
+
+# Where N-006 makes its sync roots (review M6): %TEMP%, unless that is under the Windows folder, as C:\WINDOWS\TEMP is in
+# the engine's own shells, where the spikes could not delete what they made; then this user's own Local\Temp.
+function Get-CloudCaseBase {
+    $temp = [System.IO.Path]::GetTempPath()
+    $windows = [Environment]::GetFolderPath('Windows').TrimEnd('\') + '\'
+    if ($temp.StartsWith($windows, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $temp = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Temp'
+    }
+    Join-Path $temp 'fsa-window-cloud'
+}
+
+# tests/CfProvider as its own process, through Get-Muxer: the process and its stdout lines as they come (Receive-Provider).
+function Start-CfProvider([string] $scenario, [string] $root) {
+    $start = [System.Diagnostics.ProcessStartInfo]::new((Get-Muxer))
+    foreach ($arg in 'exec', $CfProviderDll, $scenario, $root) { $start.ArgumentList.Add($arg) }
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardInput = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::Start($start)
+    [pscustomobject]@{
+        Process = $process
+        Lines   = [System.Collections.Generic.List[string]]::new()
+        Next    = $process.StandardOutput.ReadLineAsync()
+        Errors  = $process.StandardError.ReadToEndAsync()
+        Ended   = $false
+    }
+}
+
+# Takes every stdout line the provider has written so far, without waiting.
+function Receive-Provider($provider) {
+    while (-not $provider.Ended -and $provider.Next.IsCompleted) {
+        $line = $provider.Next.Result
+        if ($null -eq $line) { $provider.Ended = $true; break }
+        $provider.Lines.Add($line)
+        $provider.Next = $provider.Process.StandardOutput.ReadLineAsync()
+    }
+}
+
+# The provider's 'FETCH <name> pid=<n> utc=<time> held|failed ...' lines, one object each (CfProvider stop-seam).
+function Get-Fetches($lines) {
+    foreach ($line in @($lines)) {
+        if ($line -cmatch '^FETCH (\S+) pid=(\d+) utc=(\S+) (held|failed.*)$') {
+            $m = $Matches
+            [pscustomobject]@{ Name = $m[1]; Pid = [int]$m[2]; Utc = (ConvertFrom-Utc $m[3]); Outcome = $m[4] }
+        }
+    }
+}
+
+# One of CfProvider's teardown commands on $root (unregister, probe, delete) as a process of its own: what it printed.
+function Invoke-CfTeardown([string] $what, [string] $root) {
+    @(& (Get-Muxer) exec $CfProviderDll $what $root 2>&1 | ForEach-Object { [string]$_ })
+}
+
+# Unregisters and deletes $root (review M6), the placeholders the filter will no longer list or delete included, and
+# says whether it is still registered and whether its folder is still there.
+function Remove-CloudRoot([string] $root) {
+    $said = @(Invoke-CfTeardown 'unregister' $root)
+    $probe = @(Invoke-CfTeardown 'probe' $root)
+    $said += $probe
+    if ([System.IO.Directory]::Exists($root)) { $said += @(Invoke-CfTeardown 'delete' $root) }
+    foreach ($line in $said) { Write-Host "        provider: $line" }
+    [pscustomobject]@{ Registered = (@($probe | Where-Object { $_ -ceq 'REGISTERED' }).Count -gt 0); Left = [System.IO.Directory]::Exists($root) }
+}
+
+# A sync root an earlier run left under the base: unregistered and deleted before this run makes its own.
+function Clear-StaleCloudRoots {
+    $base = Get-CloudCaseBase
+    if (-not [System.IO.Directory]::Exists($base)) { return }
+    foreach ($root in [System.IO.Directory]::GetDirectories($base, 'fsa-cf-*')) {
+        Write-Host "  removing a stale N-006 sync root: $root"
+        Undo-DenyListing (Join-Path $root 'a')
+        # Not through Remove-CloudRoot: this is what clears a root that one left, so it must not share its steps.
+        foreach ($what in 'unregister', 'delete') { foreach ($line in @(Invoke-CfTeardown $what $root)) { Write-Host "        provider: $line" } }
+    }
+}
+
+# One N-006 run on a fresh sync root served by CfProvider stop-seam: a and b populated placeholders, a then denied to the
+# scan by an NTFS ACE, b with 1,200 children of 46-character names so its third listing page is a full one (review m5);
+# s, t and u unpopulated, so listing one asks the provider, which holds every fetch. The hold is the provider's logged
+# fetch of s from the app's own process. $ending ends it, 8 s after that hold unless it says otherwise:
+#   release   the provider fails the held fetch, and every later one, with STATUS_CLOUD_FILE_UNSUCCESSFUL (CfExecute)
+#   kill      the provider is killed
+#   timeout   the provider stays silent until the filter gives up on s (the app's next fetch is of another folder,
+#             about 121 s in, as the cloud-hang spike measured), and then fails every fetch, as release does
+# With $stop the app runs under stop mode, armed by a marker the case writes at the hold, Cancel 2 s later; without, under
+# rows mode. Both dump the panel and arm b|3|59. The root is unregistered and deleted however the run ends.
+function Invoke-CloudSeamRun([string] $case, [string] $ending, [bool] $stop) {
+    $name = if ($stop) { "main-$ending" } else { "control-$ending" }
+    $root = Join-Path (Get-CloudCaseBase) ('fsa-cf-{0}' -f [guid]::NewGuid().ToString('N'))
+    $result = [pscustomobject]@{
+        Name = $name; Ending = $ending; Ready = $false; Exit = $null; Report = $null; Log = @(); Dump = $null; Lines = @()
+        HoldUtc = $null; EndingUtc = $null; AppPid = 0; Registered = $true; Left = $true
+    }
+    $provider = $null
+    try {
+        [void][System.IO.Directory]::CreateDirectory($root)
+        $provider = Start-CfProvider 'stop-seam' $root
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($clock.Elapsed.TotalSeconds -lt 30 -and -not $provider.Ended -and -not ($provider.Lines -contains 'READY') -and @($provider.Lines | Where-Object { $_.StartsWith('ERR ') }).Count -eq 0) {
+            Receive-Provider $provider
+            Start-Sleep -Milliseconds 25
+        }
+        if (-not ($provider.Lines -contains 'READY')) {
+            Write-Host "        provider: not ready ($(($provider.Lines | Select-Object -Last 3) -join ' | '))"
+            return $result
+        }
+        $denied = Join-Path $root 'a'
+        Deny-Listing $denied
+        if (Test-Listable $denied) {
+            Write-Host '        the deny on a did not take'
+            return $result
+        }
+        $result.Ready = $true
+        $marker = Join-Path $case "$name.armed"
+        $report = Join-Path $case "$name.json"
+        $mode = if ($stop) { 'stop' } else { 'rows' }
+        $variables = @{ FSA_HOOK_ROWS = '1'; FSA_HOOK_FAIL_LISTING = 'b|3|59' }
+        if ($stop) {
+            $variables.FSA_HOOK_ARMED = $marker
+            $variables.FSA_HOOK_CANCEL_DELAY_MS = '2000'
+        }
+        $run = Invoke-WithHook $mode $HookDll {
+            $process = Start-App "`"$root`" --report `"$report`""
+            $clock = [System.Diagnostics.Stopwatch]::StartNew()
+            $hold = $null
+            $ended = $null
+            while ($clock.Elapsed.TotalSeconds -lt 300) {
+                Receive-Provider $provider
+                $fetches = @(Get-Fetches $provider.Lines | Where-Object Pid -eq $process.Id)
+                if ($null -eq $hold) {
+                    $hold = @($fetches | Where-Object { $_.Name -ceq 's' -and $_.Outcome -ceq 'held' })[0]
+                    if ($null -ne $hold -and $stop) { [System.IO.File]::WriteAllText($marker, '') }
+                }
+                if ($null -ne $hold -and $null -eq $ended) {
+                    $due = [DateTime]::UtcNow -ge $hold.Utc.AddMilliseconds($SeamReleaseMs)
+                    if ($ending -ceq 'timeout') {
+                        # s's wait is over once the app asks for another folder: from then on every fetch fails at once.
+                        if (@($fetches | Where-Object { $_.Name -cne 's' }).Count -gt 0 -or ($process.HasExited -and $due)) {
+                            $provider.Process.StandardInput.WriteLine('release')
+                            $provider.Process.StandardInput.Flush()
+                            $ended = [DateTime]::UtcNow
+                        }
+                    }
+                    elseif ($due) {
+                        if ($ending -ceq 'kill') { $provider.Process.Kill() }
+                        else {
+                            $provider.Process.StandardInput.WriteLine('release')
+                            $provider.Process.StandardInput.Flush()
+                        }
+                        $ended = [DateTime]::UtcNow
+                    }
+                }
+                if ($process.HasExited -and ($null -eq $hold -or $null -ne $ended)) { break }
+                Start-Sleep -Milliseconds 25
+            }
+            Receive-Provider $provider
+            [pscustomobject]@{ Exit = (Wait-App $process 30); Hold = $hold; Ended = $ended; Pid = $process.Id }
+        } $variables
+        $result.Exit = $run.Result.Exit
+        $result.HoldUtc = if ($null -ne $run.Result.Hold) { $run.Result.Hold.Utc } else { $null }
+        $result.EndingUtc = $run.Result.Ended
+        $result.AppPid = $run.Result.Pid
+        $result.Log = $run.Log
+        $result.Dump = Read-RowsDump $run.Log
+        if (Test-Path -LiteralPath $report -PathType Leaf) { $result.Report = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json }
+        $result
+    }
+    finally {
+        if ($null -ne $provider) {
+            if (-not $provider.Process.HasExited) {
+                try { $provider.Process.StandardInput.Close() } catch { }
+                if (-not $provider.Process.WaitForExit(5000)) { $provider.Process.Kill(); $provider.Process.WaitForExit() }
+            }
+            Receive-Provider $provider
+            $result.Lines = $provider.Lines.ToArray()
+            foreach ($line in @($result.Lines | Where-Object { $_ -cmatch '^(FETCH |RELEASE |ERR )' })) { Write-Host "        provider: $line" }
+            if ($provider.Errors.Wait(5000)) {
+                foreach ($line in ($provider.Errors.Result -split "`r?`n" | Where-Object { $_ })) { Write-Host "        provider: $line" }
+            }
+        }
+        Undo-DenyListing (Join-Path $root 'a')
+        $gone = Remove-CloudRoot $root
+        $result.Registered = $gone.Registered
+        $result.Left = $gone.Left
+    }
+}
+
+# N-006 (-IncludeCloud, SL-089 criterion 1): Stop on the hung cloud rig, the project's first cloud window case, on
+# CfProvider's stop-seam root (Invoke-CloudSeamRun). Three controls first, one per way the held fetch of s can end, with
+# nothing pressed: the provider failing it (release), the provider killed (kill), and the filter's own timeout
+# (timeout). The cloud-hang spike measured the last two ending in success with an empty listing, so the platform gives
+# the reader no failed read, and Q-177 decided what that means: each control must reach its ending with no row for s,
+# and the run prints what each listed. A row for s there would fail the case, which is how a later Windows that reports
+# an error gets noticed; under release it is the positive control instead, the ordinary check. Then the main run: Stop 2
+# s after the hold, the release 8 s after it, as in its control. Its panel holds a and b once each and nothing for s, or
+# for t and u when the provider logged their first fetch by the app after the Stop or never. A folder no control put in
+# the list (s, and t and u too, whose fetches the provider fails the same way) has its absence recorded as the platform
+# limit Q-177 decided, never as a positive check and never as a failure of the app. Measured at SL-089's build: no
+# ending lit any of the three (docs/design/SL-089-seams.md). After each run its sync root must be unregistered and its
+# folder gone (Q-176).
+function Test-N006 {
+    Clear-StaleCloudRoots
+    $case = New-CaseFolder
+    try {
+        $controls = @{}
+        foreach ($ending in 'release', 'kill', 'timeout') {
+            Write-Output "  control, $($ending): the same root and failpoint, the held fetch of s ended by $ending, and no Stop"
+            $run = Invoke-CloudSeamRun $case $ending $false
+            Check (-not $run.Registered) "control $($ending): its sync root is no longer registered (Q-176)"
+            Check (-not $run.Left) "control $($ending): its sync root's folder is gone (Q-176)"
+            if (-not $run.Ready) {
+                Inconclusive "control $($ending): the provider did not serve its root, or the deny on a did not take"
+                continue
+            }
+            if ($null -eq $run.HoldUtc) {
+                Inconclusive "control $($ending): the provider never held a fetch of s by the app"
+                continue
+            }
+            CheckSeamControl $run "control $ending"
+            if ($null -ne $run.EndingUtc) { Write-Output ('        {0}: the hold ended {1:F0} ms after it began' -f $ending, ($run.EndingUtc - $run.HoldUtc).TotalMilliseconds) }
+            $controls[$ending] = $run
+            $s = @(Get-LeafRows (Get-RowsByLeaf $run.Dump) 's')
+            if ($ending -cne 'release') {
+                # Q-177: the platform gives the reader a success here. A row would be a Windows that now reports the failure.
+                Check ($s.Count -eq 0) "control $($ending): the scan finished with no row for s: the filter answered the reader with success ($(Show (@($s | ForEach-Object { "$($_.kind) $($_.code)" }) -join ', ')))"
+            }
+        }
+        if ($Control) { return }
+
+        Write-Output '  main: Stop 2 s after the hold, the release 8 s after it'
+        $main = Invoke-CloudSeamRun $case 'release' $true
+        Check (-not $main.Registered) 'main: its sync root is no longer registered (Q-176)'
+        Check (-not $main.Left) 'main: its sync root''s folder is gone (Q-176)'
+        if (-not $main.Ready) {
+            Inconclusive 'main: the provider did not serve its root, or the deny on a did not take'
+            return
+        }
+        CheckActed ([pscustomobject]@{ Log = @($main.Log | Where-Object { $_ -and -not $_.StartsWith('{') }) }) 'stop'
+        $closing = $main.Dump.Closing
+        $stopUtc = if ($null -ne $closing -and $closing.stopUtc) { ConvertFrom-Utc $closing.stopUtc } else { $null }
+        Check ($null -ne $stopUtc) 'main: the hook recorded when it pressed Stop'
+        if ($null -eq $stopUtc) { return }
+        if ($null -eq $main.HoldUtc -or $main.HoldUtc -ge $stopUtc) { Inconclusive 'main: the provider did not hold the app''s fetch of s before the Stop' }
+        $log = @($main.Log)
+        $fired = [array]::IndexOf($log, 'fail-listing fired b page 3')
+        $acted = [array]::IndexOf($log, @($log | Where-Object { $_.StartsWith('acted mode=stop ') })[0])
+        if ($fired -lt 0 -or $fired -gt $acted) { Inconclusive "main: b's listing did not fail before the Stop" }
+        $release = $controls['release']
+        if ($null -ne $release -and $null -ne $release.EndingUtc -and $null -ne $main.EndingUtc) {
+            $offsets = @(($release.EndingUtc - $release.HoldUtc).TotalMilliseconds, ($main.EndingUtc - $main.HoldUtc).TotalMilliseconds)
+            Write-Output ('        release {0:F0} ms after the hold in the control, {1:F0} ms in the main run' -f $offsets[0], $offsets[1])
+            if ([Math]::Abs($offsets[0] - $offsets[1]) -gt 1000) { Inconclusive 'main: the control''s release came at another offset from the hold (O-004)' }
+        }
+        $lit = Get-LitFolders $release
+        $firstSeen = @{}
+        $fetches = @(Get-Fetches $main.Lines | Where-Object Pid -eq $main.AppPid)
+        foreach ($leaf in 't', 'u') { $firstSeen[$leaf] = @($fetches | Where-Object Name -ceq $leaf | ForEach-Object Utc)[0] }
+        # Q-177: where none of the three endings put a folder in the list without Stop, the platform gave the reader no
+        # failed read for it, and its absence after Stop is that limit, recorded as such, never a positive check. The
+        # provider failing t's and u's fetches too is the same ending as s's, so it covers them as it covers s (O-002).
+        $platformLimit = @{}
+        if ($controls.Count -eq 3) {
+            foreach ($leaf in 's', 't', 'u') {
+                if (@($controls.Values | Where-Object { (Get-LitFolders $_).ContainsKey($leaf) }).Count -eq 0) {
+                    $platformLimit[$leaf] = "held: platform gives no failed read (Q-177): no ending of its fetch, failed, killed or timed out, put $leaf in the list without Stop, so its absence here is the platform's limit, not a positive check"
+                }
+            }
+        }
+        CheckSeamMain $main 'main' $lit $firstSeen $stopUtc $platformLimit
+    }
+    finally {
+        Clear-StaleCloudRoots
+        $base = Get-CloudCaseBase
+        if ([System.IO.Directory]::Exists($base) -and @([System.IO.Directory]::EnumerateFileSystemEntries($base)).Count -eq 0) { [System.IO.Directory]::Delete($base) }
+        Remove-CaseFolder $case
+    }
+}
+
+# ---- T-009: a held folder shows its own reason ----
+
+# T-009 (SL-089 criterion 2): a folder that refused the scan's last-access open and was then held without read sharing
+# shows 'in use by another program', never 'access denied'. Three folders of one file each, h, c and p. This process
+# first holds h open the way another program can (FILE_LIST_DIRECTORY, sharing write and delete but not read), and only
+# then denies itself FILE_WRITE_ATTRIBUTES on h and c, the order SL-085 measured to give a row at 32 (the other order
+# gives none). Before the scan both opens of each folder are probed with the scanner's masks: the keep-last-access open
+# must get 5 on h and c, the plain one 32 on h and nothing on c, and p neither, or the case is inconclusive. The app
+# then scans the three under rows mode, which presses nothing, and the panel must hold h alone, once, as 'could not be
+# opened: in use by another program' with code 32, drawn so, with 'access denied' nowhere in it; c, refused the same open
+# and held by nobody, is listed in full and is no row (the refused-then-listed class); the record holds one entry.
+function Test-T009 {
+    Initialize-SeamWin32
+    $case = New-CaseFolder
+    $holder = $null
+    $denied = [System.Collections.Generic.List[string]]::new()
+    try {
+        $root = Join-Path $case 'held'
+        foreach ($leaf in 'h', 'c', 'p') { New-File (Join-Path $root "$leaf\one.bin") $KiB64 }
+        $h = Join-Path $root 'h'
+        $c = Join-Path $root 'c'
+        $p = Join-Path $root 'p'
+        $holder = [FsaWindowCases.Seam]::HoldSharingNoRead($h)
+        foreach ($folder in $h, $c) {
+            $denied.Add($folder)
+            Set-DenyRule $folder 'WriteAttributes' $true
+        }
+        $probes = foreach ($folder in $h, $c, $p) {
+            '{0}/{1}' -f [FsaWindowCases.Seam]::OpenError($folder, [FsaWindowCases.Seam]::KeepOpen), [FsaWindowCases.Seam]::OpenError($folder, [FsaWindowCases.Seam]::PlainOpen)
+        }
+        Write-Output "        keep-last-access/plain opens before the scan: h $($probes[0]), c $($probes[1]), p $($probes[2])"
+        if (($probes -join ' ') -cne '5/32 5/0 0/0') {
+            Inconclusive "the fixture is not h 5/32, c 5/0, p 0/0 ($($probes -join ' ')): the scan would not meet a held folder that refused its last-access open"
+            return
+        }
+        $report = Join-Path $case 'report.json'
+        $run = Invoke-HookedRun 'rows' $root $report @{ FSA_HOOK_ROWS = '1' } 60
+        foreach ($line in $run.Log) { Write-Output "        hook: $line" }
+        CheckEqual '0' $run.Exit 'exit code'
+        Check ($null -ne $run.Report) 'a report was written'
+        if ($null -eq $run.Report) { return }
+        CheckEqual 'Completed' $run.Report.core.status 'core.status'
+        $dump = Read-RowsDump $run.Log
+        CheckPanelAgrees $run.Report $dump 'T-009' 1
+        $byLeaf = Get-RowsByLeaf $dump
+        CheckSeamRow $byLeaf 'h' 'NothingListed' 32 'in use by another program' 'T-009'
+        $said = @($dump.Rows | ForEach-Object { [string]$_.reason; if ($null -ne $_.shown) { @($_.shown) } })
+        Check (@($said | Where-Object { $_ -match 'access denied' }).Count -eq 0) "nothing on the panel says 'access denied' ($(Show ($said -join ' | ')))"
+        Check (@(Get-LeafRows $byLeaf 'c').Count -eq 0) 'c, refused the last-access open and held by nobody, is listed in full and is no row'
+        Check (@(Get-LeafRows $byLeaf 'p').Count -eq 0) 'p, refused nothing, is no row'
+        CheckEqual 1 ([int]$run.Report.core.unreadable) 'core.unreadable: the record holds h alone, never the refused open it fell back from'
+    }
+    finally {
+        if ($null -ne $holder) { $holder.Dispose() }
+        foreach ($folder in $denied) { Set-DenyRule $folder 'WriteAttributes' $false }
+        Remove-CaseFolder $case
+    }
+}
+
+# ---- W-001: a whole drive's panel against the engine's record ----
+
+# W-001's oracle for one panel row (SL-089 criterion 3): the class the row falls in, opening its folder only when the
+# row has the shape a refused keep-last-access open would leave, could the engine record one: a folder that could not
+# be opened at all, with code 5 (review m3), the one code that open's refusal gives. Every other row is tallied and
+# never opened: a folder only partly read was opened by definition; 363 is the CfProvider rig's leftover that criterion
+# 3 expects; any other code (32 or 33 from a holder, 2 or 3 from a folder that went, a network code) is a cause that may
+# have ended since the scan, which an open now could not tell from a leak. A code-5 row's folder that is a reparse point
+# is the rig's leftover again. Otherwise it is opened once with the scanner's plain mask, never listed (an open moves no
+# last-access time): gone since is tallied; still refused is what the engine said; opened is a leak, unless the folder
+# was made or changed after the scan began (recreated, or its ACL reset, as a concurrent case's cleanup does), which the
+# folder the engine recorded cannot have been. Corpus: tests/window/W001OracleCorpus.json (W001OracleTests).
+function Get-OracleRow($row, [DateTime] $scanStartUtc) {
+    if ($row.kind -ceq 'ListedPartway') { return 'partway' }
+    if ($row.kind -cne 'NothingListed') { return 'unknown-kind' }
+    if ([int]$row.code -eq 363) { return 'leftover-363' }
+    if ([int]$row.code -ne 5) { return 'other-code' }
+    $attributes = [FsaWindowCases.Seam]::Attributes([string]$row.path)
+    if ($attributes -ne -1 -and ($attributes -band 0x400) -ne 0) { return 'leftover-reparse' }
+    $probe = [FsaWindowCases.Seam]::Probe([string]$row.path)
+    if ($probe.Error -in 2, 3) { return 'gone-since-scan' }
+    if ($probe.Error -ne 0) { return 'refused' }
+    if ($probe.TimesRead -and ($probe.CreationUtc -gt $scanStartUtc -or $probe.ChangeUtc -gt $scanStartUtc)) { return 'changed-since-scan' }
+    'leak'
+}
+
+# The checker's own controls (review M9), in the same run: it opens a folder anyone can list, is refused (5) on a
+# folder this user denied itself listing, and opens a folder that refuses only the keep-last-access open. If any of the
+# three does not behave, a run with no leak says nothing. Plants its two folders in $case and returns them with the three.
+function Get-CheckerControls([string] $case) {
+    $denied = Join-Path $case 'control-denied'
+    $keep = Join-Path $case 'control-refused-keep'
+    [void][System.IO.Directory]::CreateDirectory($denied)
+    [void][System.IO.Directory]::CreateDirectory($keep)
+    Set-DenyRule $denied 'ListDirectory' $true
+    Set-DenyRule $keep 'WriteAttributes' $true
+    $plain = [FsaWindowCases.Seam]::PlainOpen
+    [pscustomobject]@{
+        Openable          = [FsaWindowCases.Seam]::OpenError([Environment]::GetFolderPath('Windows'), $plain) -eq 0
+        Denied            = [FsaWindowCases.Seam]::OpenError($denied, $plain) -eq 5
+        RefusedThenListed = [FsaWindowCases.Seam]::OpenError($keep, [FsaWindowCases.Seam]::KeepOpen) -eq 5 -and [FsaWindowCases.Seam]::OpenError($keep, $plain) -eq 0
+        Folders           = @($denied, $keep)
+    }
+}
+
+# W-001's verdict: failed on any failed check or any leak, and otherwise held only when the checker's three controls
+# behaved (review M9): a checker that could open nothing would find no leak in any run.
+function Get-W001Verdict($controls, [int] $leaks, [int] $failures) {
+    if ($failures -gt 0 -or $leaks -gt 0) { return 'failed' }
+    if (-not ($controls.Openable -and $controls.Denied -and $controls.RefusedThenListed)) { return 'inconclusive' }
+    'held'
+}
+
+# Writes W-001's record as JSON: integers, booleans, fixed names, the commit, and reasons from the panel's own table.
+# Any other string is a writer bug, and the write is refused: a path must never reach a committed file (Q-016).
+function Write-W001Record([string] $file, $record, [string[]] $reasons) {
+    $allowed = @('held', 'failed', 'inconclusive', 'whole-drive', 'folder', 'Completed', 'Cancelled', 'RootUnreadable', 'Refused')
+    $strays = [System.Collections.Generic.List[string]]::new()
+    $walk = {
+        param($value)
+        if ($value -is [string]) {
+            if ($value -notin $allowed -and $value -cnotmatch '^[0-9a-f]{40}$' -and ($value -cnotin $reasons -or $value -match '[\\/]')) { $strays.Add($value) }
+        }
+        elseif ($value -is [System.Collections.IDictionary]) { foreach ($v in $value.Values) { & $walk $v } }
+        elseif ($value -is [System.Collections.IEnumerable]) { foreach ($v in $value) { & $walk $v } }
+    }
+    & $walk $record
+    if ($strays.Count -gt 0) { throw "W-001's record holds $($strays.Count) strings that are not counts, codes or reasons; nothing was written" }
+    [void][System.IO.Directory]::CreateDirectory((Split-Path -Parent $file))
+    [System.IO.File]::WriteAllText($file, ($record | ConvertTo-Json -Depth 6) + "`n")
+}
+
+# W-001 (-Root, SL-089 criterion 3): the panel of a scan of -Root against the engine's record, as an ordinary user, with
+# no hook pressing anything (rows mode) and no deadline but the 1,200 s the wait allows. The dump's rows, the header's N
+# and core.unreadable are one number, with no folder twice and no row without a reason; every NothingListed row with
+# code 5 is put to the oracle (Get-OracleRow), with the checker's own controls beside it, and none may open. The kernel's
+# pool is read before and after, the record is printed, and for a whole drive it is written to
+# .taad/slices/SL-089/c-drive-run.json (counts, codes and reasons only), else to artifacts/w001-run.json. Criterion 3 is a
+# whole C:\ scan: a person runs it (review M8), since a cold scan of C: has measured about 537 MB of kernel pool, past the
+# engine's 0.5 GB per-run guard, even with the container layer store left out (SL-095). Refuses to run elevated, and for a
+# whole drive requires the wcifs-layer-store precaution on.
+function Test-W001 {
+    if (-not $Root) { throw 'W-001 needs -Root, the drive or folder it scans: C:\ for criterion 3, a whole-drive scan a person runs' }
+    if (-not [System.IO.Directory]::Exists($Root)) { throw "W-001: $Root is not a folder" }
+    Initialize-SeamWin32
+    if (Test-Elevated) {
+        Inconclusive 'W-001 refuses to run elevated: an elevated token opens folders an ordinary user cannot'
+        return
+    }
+    $wholeDrive = [System.IO.Path]::GetPathRoot($Root).TrimEnd('\') -ieq $Root.TrimEnd('\')
+    $case = New-CaseFolder
+    $controls = $null
+    $before = $script:Failures.Count
+    try {
+        $controls = Get-CheckerControls $case
+        Write-Output "        checker controls: openable $($controls.Openable), denied $($controls.Denied), refused-then-listed $($controls.RefusedThenListed)"
+        $poolBefore = [FsaWindowCases.Seam]::KernelPool()
+        $scanStart = [DateTime]::UtcNow
+        $report = Join-Path $case 'report.json'
+        $run = Invoke-HookedRun 'rows' $Root $report @{ FSA_HOOK_ROWS = '1' } 1200
+        $poolAfter = [FsaWindowCases.Seam]::KernelPool()
+        foreach ($line in @($run.Log | Where-Object { $_ -and -not $_.StartsWith('{') })) { Write-Output "        hook: $line" }
+        Write-Output ('        kernel pool: paged {0:N0} -> {1:N0} MB, nonpaged {2:N0} -> {3:N0} MB' -f ($poolBefore[0] / 1MB), ($poolAfter[0] / 1MB), ($poolBefore[1] / 1MB), ($poolAfter[1] / 1MB))
+        CheckEqual '0' $run.Exit 'exit code'
+        Check ($null -ne $run.Report) 'a report was written'
+        if ($null -eq $run.Report) { return }
+        CheckEqual 'Completed' $run.Report.core.status 'core.status'
+        if ($wholeDrive) {
+            $guard = @($run.Report.workarounds | Where-Object id -ceq 'wcifs-layer-store')
+            Check ($guard.Count -eq 1 -and $guard[0].on -eq $true) 'the wcifs-layer-store precaution was on: a whole drive is scanned only with the container layer store left out (review M8)'
+        }
+        $dump = Read-RowsDump $run.Log
+        CheckPanelAgrees $run.Report $dump 'W-001'
+        $rows = @($dump.Rows)
+        $nothing = @($rows | Where-Object kind -ceq 'NothingListed')
+        $partway = @($rows | Where-Object kind -ceq 'ListedPartway')
+        CheckEqual $rows.Count ($nothing.Count + $partway.Count) 'every row is NothingListed or ListedPartway (review M2)'
+
+        $classes = @{}
+        foreach ($row in $rows) {
+            $class = Get-OracleRow $row $scanStart
+            $classes[$class] = 1 + [int]$classes[$class]
+            if ($class -ceq 'leak') { Write-Output "        LEAK: a row with code 5 that opens: $($row.path)" }
+        }
+        $opened = [int]$classes['refused'] + [int]$classes['leak'] + [int]$classes['changed-since-scan'] + [int]$classes['gone-since-scan']
+        $tallied = [int]$classes['leftover-363'] + [int]$classes['leftover-reparse'] + [int]$classes['other-code']
+        CheckEqual $nothing.Count ($opened + $tallied) 'every NothingListed row was opened by the oracle or tallied by code, none skipped (review M2)'
+        $codeFive = @($nothing | Where-Object { [int]$_.code -eq 5 }).Count
+        CheckEqual $codeFive ($opened + [int]$classes['leftover-reparse']) 'the oracle took every code-5 row it was given'
+        $leaks = [int]$classes['leak']
+        Check ($leaks -eq 0) "no row is a folder that opens: none was listed in full ($leaks open)"
+
+        $byCode = @($rows | Group-Object -Property code | Sort-Object { [int]$_.Name } | ForEach-Object {
+                [ordered]@{ code = [int]$_.Name; count = $_.Count; reason = [string]$_.Group[0].reason }
+            })
+        $other = @($nothing | Where-Object { [int]$_.code -notin 5, 363 } | Group-Object -Property code | Sort-Object { [int]$_.Name } | ForEach-Object {
+                [ordered]@{ code = [int]$_.Name; count = $_.Count }
+            })
+        $verdict = Get-W001Verdict $controls $leaks ($script:Failures.Count - $before)
+        $commit = (& git -C $Repo rev-parse HEAD 2>$null | Select-Object -First 1)
+        $record = [ordered]@{
+            commit                 = [string]$commit
+            scope                  = if ($wholeDrive) { 'whole-drive' } else { 'folder' }
+            elevated               = [bool]$dump.Closing.elevated
+            checkerElevated        = [bool](Test-Elevated)
+            status                 = [string]$run.Report.core.status
+            elapsedMs              = [long]$run.Report.core.elapsedMs
+            folders                = [long]$run.Report.core.folders
+            files                  = [long]$run.Report.core.files
+            header                 = Get-HeaderCount $run.Report
+            coreUnreadable         = [int]$run.Report.core.unreadable
+            rows                   = $rows.Count
+            realized               = @($rows | Where-Object { $null -ne $_.shown }).Count
+            notScanned             = $dump.NotScanned.Count
+            duplicates             = @($rows | Group-Object -Property path -CaseSensitive | Where-Object Count -gt 1).Count
+            emptyReasons           = @($rows | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.reason) }).Count
+            byKind                 = [ordered]@{ nothingListed = $nothing.Count; listedPartway = $partway.Count }
+            byCode                 = $byCode
+            oracle                 = [ordered]@{
+                opened                  = $opened
+                stillRefused            = [int]$classes['refused']
+                openRefusedButOpenable  = $leaks
+                changedSinceScanStart   = [int]$classes['changed-since-scan']
+                goneSinceScanStart      = [int]$classes['gone-since-scan']
+                leftoverRows            = [ordered]@{ code363 = [int]$classes['leftover-363']; reparse = [int]$classes['leftover-reparse'] }
+                notARefusedKeepShape    = $other
+            }
+            checkerControls        = [ordered]@{ openable = $controls.Openable; denied = $controls.Denied; refusedThenListed = $controls.RefusedThenListed }
+            kernelPoolBytes        = [ordered]@{ pagedBefore = $poolBefore[0]; pagedAfter = $poolAfter[0]; nonpagedBefore = $poolBefore[1]; nonpagedAfter = $poolAfter[1] }
+            verdict                = $verdict
+        }
+        $file = if ($wholeDrive -and $Root.StartsWith('C:', [System.StringComparison]::OrdinalIgnoreCase)) { Join-Path $Repo '.taad\slices\SL-089\c-drive-run.json' } else { Join-Path $Repo 'artifacts\w001-run.json' }
+        Write-W001Record $file $record @($rows | ForEach-Object { [string]$_.reason } | Sort-Object -Unique)
+        Write-Output "        record: $file"
+        ($record | ConvertTo-Json -Depth 6) -split "`r?`n" | ForEach-Object { "        $_" }
+        if ($verdict -ceq 'inconclusive') { Inconclusive 'W-001: the checker''s controls did not all behave, so a run with no leak says nothing (review M9)' }
+    }
+    finally {
+        if ($null -ne $controls) { foreach ($folder in $controls.Folders) { Set-DenyRule $folder 'ListDirectory' $false; Set-DenyRule $folder 'WriteAttributes' $false } }
+        Remove-CaseFolder $case
+    }
+}
+
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'T-009', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009') + $NetworkCases + $CloudCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'T-009', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005') + $NetworkCases + $CloudCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })

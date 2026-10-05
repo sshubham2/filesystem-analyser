@@ -1,0 +1,144 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-095",
+ "stage": "build-slice",
+ "attempt": 4,
+ "at": "2026-10-04T21:46:30.439Z",
+ "head": "1a5b2e0881cbcdbbefae9e53ee882831a9a1c5b9",
+ "run_id": 2475,
+ "summary": "This attempt fixes the four findings sent back (O-075 to O-078), all in tests/window/PoolWatch.ps1 and its tests. src is untouched.\n- O-075 (exe runs): -Report now requires all ten exe runs: five full and five cancelled or closed, each with before and settled marks. A missing run, a missing settled mark, a full run without exit 0 and a Completed report, a cancelled run with no report, or a cancelled run whose trigger never fired gives UNDECIDED. Before, each of these read PASS. A guard stop counts as over T on every arm: L, S, P and the exe runs.\n- O-076 (settle): -Protocol now takes a settle/NN mark every minute after R0 until two gaps in a row each move both pools by less than 16 MiB, with a 30-minute cap. Only then does I0 start. -Report rechecks the settle from the marks.\n- O-077 (no-link check): the check now runs through Invoke-NoLinkWalk's shared flags, on a planted junction and symlink and on the real C:\\Users\\All Users, plus a positive control without /XJ. With /XJ removed from a scratch copy, the check reported skips=false. -Protocol refuses to start unless prepare.json records the walker as safe.\n- O-078 (fltmc): a fltmc.txt paste counts as recorded only when it holds fltmc's header line and no refusal. A pasted 'Access is denied' now reads FILTERS UNDECIDED.\nResults: the 31 PoolWatchReportTests pass, the rules harness gives 84 AS-RECORDED, and -Prepare -Smoke followed by -Protocol -Smoke ran end to end. The smoke log shows R0, settle/00 to settle/02, then I0.",
+ "payload": {
+  "status": "complete",
+  "summary": "This attempt fixes the four findings sent back (O-075 to O-078), all in tests/window/PoolWatch.ps1 and its tests. src is untouched.\n- O-075 (exe runs): -Report now requires all ten exe runs: five full and five cancelled or closed, each with before and settled marks. A missing run, a missing settled mark, a full run without exit 0 and a Completed report, a cancelled run with no report, or a cancelled run whose trigger never fired gives UNDECIDED. Before, each of these read PASS. A guard stop counts as over T on every arm: L, S, P and the exe runs.\n- O-076 (settle): -Protocol now takes a settle/NN mark every minute after R0 until two gaps in a row each move both pools by less than 16 MiB, with a 30-minute cap. Only then does I0 start. -Report rechecks the settle from the marks.\n- O-077 (no-link check): the check now runs through Invoke-NoLinkWalk's shared flags, on a planted junction and symlink and on the real C:\\Users\\All Users, plus a positive control without /XJ. With /XJ removed from a scratch copy, the check reported skips=false. -Protocol refuses to start unless prepare.json records the walker as safe.\n- O-078 (fltmc): a fltmc.txt paste counts as recorded only when it holds fltmc's header line and no refusal. A pasted 'Access is denied' now reads FILTERS UNDECIDED.\nResults: the 31 PoolWatchReportTests pass, the rules harness gives 84 AS-RECORDED, and -Prepare -Smoke followed by -Protocol -Smoke ran end to end. The smoke log shows R0, settle/00 to settle/02, then I0.",
+  "files": [
+   {
+    "path": "tests/window/PoolWatch.ps1",
+    "change": "modified",
+    "why": "Four fixes in this one script:\n- O-075 (Get-Verdict): the ten exe runs must all be there, with their marks; a full run that crashed, or a cancelled run with no report, gives UNDECIDED; a stop trigger that never fired is not counted as a cancelled run; new OverArm/ArmName make a guard stop count as over T on L, S, P and every exe run.\n- O-076: SettleStepBytes and SettleCapSec in the tolerance row; Wait-Settle runs between R0 and I0, and -Protocol stops when the boot does not settle within the cap; -Report judges the settle again through Test-Settled; post-pressure is now judged from L/before, not R0.\n- O-077: a shared $NoLinkFlags list used by Invoke-NoLinkWalk and the session-2 walk; Test-NoLinkWalker plus a -NoLinkCheck mode; -Prepare records noLinkCheck and noLinkWalkerSkipsAllUsers in both smoke and real runs; -Protocol refuses unless that value is true.\n- O-078: Test-FltmcList and Read-FltmcPaste, used by Get-EnvironmentRecord and Get-FiltersLine."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/PoolWatchReportTests.cs",
+    "change": "modified",
+    "why": "Twelve new routing rows: full-run-crashed, exe-runs-missing, exe-settled-missing, exe-guard-stop, cancel-guard-stop, probe-guard-stop, cancel-ran-full, boot-settles-before-i0, boot-settles-then-listing-reclaimed, boot-never-settled and settle-marks-missing. Three new Facts check the reasons:\n- ExeRunsThatAreMissingCrashedOrStoppedByTheGuardNeverPass;\n- TheBootSettlesBeforeI0OrTheRunDecidesNothing;\n- TheNoLinkCheckCanFailAndTheProtocolRefusesWhenItDid.\nThe O-078 refused-paste cases (fltmc.txt, and an environment record) are added to MissingOrNullReadingsAreUndecidedAndABurstGapIsLeftOutOfDrift. The run builder writes settle marks and can set exit codes and guard stops. A shared PoolWatch() runner replaces the -Report-only helper."
+   },
+   {
+    "path": "docs/design/SL-095-container-layer-store.md",
+    "change": "modified",
+    "why": "The tolerance row's text now covers: the settle phase and its 30-minute stop; R0 kept as the boot-age and guard reference, with L/before as the pre-scan baseline; a guard stop counting as over T on every arm; and the ten exe runs PASS requires, with the new UNDECIDED and VOID conditions in the routing table. The protocol steps now describe the no-link check and the -Protocol refusal. The FILTERS paragraph now describes the refused-paste rule."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-075",
+    "done": true,
+    "how": "Get-Verdict now checks the exe runs before judging them. It returns UNDECIDED, naming the problem, when:\n- the exe-full arms or the exe-cancel/exe-close arms are not exactly five each;\n- any of those arms lacks its before or settled mark;\n- a full run has exit != 0, no report, or report.status != Completed (unless the guard stopped it);\n- a cancelled run has no report;\n- a cancelled or closed run ranFull, because its trigger never fired.\nOverArm makes a guard stop count as over T on L, S, P and every exe run. The rows full-run-crashed, exe-runs-missing and exe-guard-stop are in TheReportRoutesARunAsTheToleranceRowSays, with exe-settled-missing, cancel-guard-stop, probe-guard-stop and cancel-ran-full. The reviewer's measured case (F3 exit 70, no report) now gives 'UNDECIDED: full run F3 did not complete: exit 70, no report'; before, it read A/PASS. All 31 PoolWatchReportTests pass."
+   },
+   {
+    "key": "O-076",
+    "done": true,
+    "how": "-Protocol now writes R0, then settle/NN marks every MarkEverySec until two gaps in a row each move both pools by less than 16 MiB (Tolerance.SettleStepBytes, spike 3's V2 rule), with a 30-minute cap (SettleCapSec). Only then does I0 start, in both sessions. If the boot never settles, it stops with a warning. R0 stays the boot-age and guard reference. -Report recomputes the settle from the marks: no settle marks gives UNDECIDED; not settled gives VOID with the last gap's MiB. Post-pressure is now judged from L/before, because R0 now comes before the boot's settle. The tolerance row text says all of this. Evidence:\n- rows boot-settles-before-i0 (1 GiB of settle over 12 gaps reads A, I0 drift about 0), boot-settles-then-listing-reclaimed (A), boot-never-settled (VOID) and settle-marks-missing (UNDECIDED);\n- -Protocol -Smoke wrote R0, settle/00, settle/01, settle/02, then I0/00."
+   },
+   {
+    "key": "O-077",
+    "done": true,
+    "how": "The check no longer runs its own robocopy line with /LEV:2. Test-NoLinkWalker runs through Invoke-NoLinkWalk and the shared $NoLinkFlags, which the session-2 walk now uses too. It covers:\n- a planted 'All Users' junction, plus a directory symlink where one can be made: the walker must count only the root's own 10 bytes and list no 'All Users\\Microsoft' at /LEV:3;\n- a positive control without /XJ, which must see through the link;\n- the real C:\\Users at /LEV:3, with every other child excluded by /XD, so no profile is listed: no 'All Users\\Microsoft'.\nMeasured: pwsh and 5.1 both give skips=true, though 5.1 cannot make the symlink. A scratch copy with /XJ removed gives plantedBytes 2010, usersAllUsersSkipped false, skips false, so the check can fail. -Prepare records noLinkCheck and noLinkWalkerSkipsAllUsers in smoke and real runs. -Protocol refuses to start, before taking any mark, unless that value is true. Pinned by TheNoLinkCheckCanFailAndTheProtocolRefusesWhenItDid."
+   },
+   {
+    "key": "O-078",
+    "done": true,
+    "how": "Test-FltmcList counts a paste as the filter list only when it has fltmc's '^\\s*Filter Name\\s+Num Instances' header and nothing matching '0x8007|Access is denied|failed'. Get-FiltersLine applies it to fltmc.txt (in the run folder and in prepare) and to environment records. A refused paste prints 'FILTERS UNDECIDED: fltmc.txt holds no filter list (<first line>)'. Get-EnvironmentRecord, via Read-FltmcPaste, keeps the lines only when they are the list; otherwise it stores 'not a filter list: <first line>'. Two cases were added to MissingOrNullReadingsAreUndecidedAndABurstGapIsLeftOutOfDrift: the 0x80070005 paste in fltmc.txt, and the same lines in an environment record. Both read UNDECIDED, never recorded."
+   }
+  ],
+  "cases": [],
+  "architecture": [
+   {
+    "block": "C-002",
+    "find": "It records every folder it could not open instead of dropping it silently.",
+    "replace": "It records every folder it could not open instead of dropping it silently. It never opens the Windows container layer store (%ProgramData%\\Microsoft\\Windows\\Containers\\Layers), which it matches by path once per scan. A scan above the store records it as one folder not scanned, its size not counted and kept apart from the unreadable folders. A root at or inside the store is refused with nothing read. This holds while the precaution against wcifs.sys's leak (microsoft/Windows-Containers#646) is on, as it is unless the person turns it off.",
+    "why": "src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs Resolve; Scanner.Run.Execute (the pop-time IsExcludedStore check and StoreSkipped; Finish(ScanStatus.Refused)); ScanResult.SkippedStores/Refusal; DirectoryReader.Read's InsideExcludedStore backstop; Workarounds.ContainerLayerStore. src is unchanged this attempt. The repro test passes against this PC's real store again (1 passed)."
+   },
+   {
+    "block": "C-004",
+    "find": "a panel for unreadable folders and the coverage gap,",
+    "replace": "a panel for unreadable folders, the folders left out on purpose (the container layer store, which offers no 'open in Explorer') and the coverage gap, a Precautions window listing each workaround for a defect outside the app with its own switch (on by default, kept for the session; turning one off asks first), a status line when a picked root is refused,",
+    "why": "src/FsAnalyser.App/PrecautionsWindow.cs; MainWindow.xaml PrecautionsButton; MainWindow.xaml.cs ShowEnding (the Refused branch, OutcomeNotes, NotScanned rows, tab header) and PathOf (empty for NotScanned rows); UnreadableRows.NotScanned. Unchanged this attempt. WindowCases X-002 passed on the real ...\\Containers last attempt."
+   },
+   {
+    "block": "C-005",
+    "find": "StallStacks.ps1 and dotnet-trace capture.",
+    "replace": "StallStacks.ps1 and dotnet-trace capture, and SL-095's kernel-pool protocol: tests/window/PoolWatch.ps1 (unelevated pool-tag marks, the environment record, the check that its no-link walker skips directory links, and the tolerance judge) and the ScanArm rig, to which Core grants InternalsVisibleTo until O-003 is recorded.",
+    "why": "tests/window/PoolWatch.ps1 (-Mark/-Environment/-Attribute/-Prepare/-Protocol/-Report/-NoLinkCheck, Get-Verdict, Test-NoLinkWalker, Wait-Settle/Test-Settled, Get-FiltersLine), tests/window/ScanArm/Program.cs, InternalsVisibleTo ScanArm in src/FsAnalyser.Core/FsAnalyser.Core.csproj. PoolWatchReportTests pins -Report and -NoLinkCheck (31 tests passing). -Prepare -Smoke and -Protocol -Smoke ran end to end this attempt."
+   }
+  ],
+  "deviations": [
+   "O-076: the fix leaves open what happens when the 30-minute settle cap is reached. -Protocol stops there with a warning instead of starting I0, and -Report gives VOID with the last gap's size. This follows spike 3, where a failed V2 settle meant NOT DECIDED. Running the remaining ~4 h would produce a run that decides nothing, so stopping gives the person their machine back sooner. Also, because R0 now comes before the boot's settle, the post-pressure figure is judged from L/before (the pre-scan baseline DONE (c) names) instead of R0. Otherwise up to about 1 GiB of boot settle would count against the app; row boot-settles-then-listing-reclaimed pins this.",
+   "O-075: besides the four checks asked for, a cancelled or closed run whose hook trigger never fired (ranFull) now makes the verdict UNDECIDED. The design's FsaWindowHook contract says such a run 'does not count as one of the 5 cancelled runs'. Without this check, a session with fewer than five real cancellations could still read PASS. The fix asked for 'UNDECIDED (or FAIL)' for a crashed full run; UNDECIDED was chosen, because a crash leaves no pool figure to judge.",
+   "O-077: the real C:\\Users walk excludes every child except All Users with /XD. A three-level walk of C:\\Users would otherwise list folder names inside the person's own profile, which this engine's rules keep out of reach. A dry run listed 1 of 10 directories (C:\\Users itself; 8 excluded by /XD, All Users by /XJ)."
+  ],
+  "not_built": [
+   "The person-run protocol that DONE (c) needs: -Prepare on the pre-Restart boot, then Start > Restart, then -Protocol within 30 min, plus a second session only if L is over T (Q-184, Q-185). A Restart is the person's action. This attempt ran only the -Smoke passes; their -Report reads VOID, correctly, because this boot is 9,926 s old.",
+   "fltmc filters output. It needs an administrator and is a person's paste. -Report says FILTERS UNDECIDED until a real filter list is pasted.",
+   "-Prepare's pressure positive control and its WinSxS trigger and size-pass checks were not run here, as the earlier send-back required. Only -Smoke ran."
+  ],
+  "follow_ups": [
+   "Leftovers in C:\\WINDOWS\\TEMP that this shell was denied deleting: sl095-smoke-a4 (this attempt's -Prepare/-Protocol smoke run: marks, arm logs, reports) and a small sl095-judge-* copy of two run logs. Earlier attempts' sl095-smoke-tree, sl095-smoke and fsa-rules-* scratch folders also remain.",
+   "Smoke windows last seconds, but the drift test's quiet threshold is fixed at 1 MiB per 1,200 s. A smoke log therefore cannot get past 'idle drift disagrees' to the exe checks (seen when re-judging this attempt's smoke log with its boot age patched). Smoke proves the machinery only, as documented. If a smoke -Report is ever meant to reach the exe judgement, -Protocol would need to write its window length into the log for -Report to read.",
+   "On a small smoke tree, X3 and X5 (the size-pass triggers) run to the end. On a real session the new rule makes that UNDECIDED. Before restarting, the person should check that -Prepare's real size-pass trigger check (FSA_HOOK_AT_SIZED on WinSxS) acted.",
+   "The person runs `pwsh -NoProfile -ExecutionPolicy Bypass -File tests\\window\\PoolWatch.ps1 -Prepare`, checks that prepare.json has noLinkWalkerSkipsAllUsers true, pressureEffective true and acted trigger checks, then does Start > Restart and runs -Protocol within 30 min.",
+   "Delete tests/window/ScanArm and the InternalsVisibleTo ScanArm line once O-003's outcome is recorded (stack decision).",
+   "The 3 failures that predate this slice need their own slice: LastAccessTests.AFolderThatRefusesWriteAttributesIsListedPlainlyAndCountedInFull, HeldOpenTreeTests.TheScanChangesNoEntrysMetadata and APlainListingOfTheControlFolderMovesItsLastAccessTime (DisableLastAccess=2)."
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~PoolWatchReportTests\"",
+    "outcome": "passed",
+    "note": "31 passed: 27 routing rows (12 new for O-075 and O-076) and 4 Facts. The Facts include ExeRunsThatAreMissingCrashedOrStoppedByTheGuardNeverPass, TheBootSettlesBeforeI0OrTheRunDecidesNothing, TheNoLinkCheckCanFailAndTheProtocolRefusesWhenItDid, and the O-078 refused-paste cases."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatch.ps1 -NoLinkCheck (and the same under powershell.exe 5.1)",
+    "outcome": "passed",
+    "note": "pwsh: plantedBytes 10, links skipped, symlink made, detector sees a followed link, real C:\\Users\\All Users skipped, skips true. 5.1: the same, except the symlink cannot be made. No nolink-check folders were left in artifacts/sl095."
+   },
+   {
+    "command": "scratch copy of PoolWatch.ps1 with '/XJ' removed from $NoLinkFlags, then -NoLinkCheck",
+    "outcome": "passed",
+    "note": "Mutation check: plantedBytes 2010 (both links followed), plantedLinksSkipped false, usersAllUsersSkipped false, skips false. The check fails when the walker follows links, which the old /LEV:2 check never could."
+   },
+   {
+    "command": "robocopy C:\\Users <nonexistent> /L /E /XJ /R:0 /W:0 /NP /BYTES /NJH /NFL /LEV:3 /XD <every child but All Users> (counts only)",
+    "outcome": "passed",
+    "note": "Run before trusting the real C:\\Users part of the check. Dirs 10 total, 1 listed (C:\\Users itself), 9 skipped; 0 lines with 'All Users\\Microsoft'. No profile folder was listed."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatch.ps1 -Prepare -Smoke -Root %TEMP%\\sl095-smoke-tree -RunDir %TEMP%\\sl095-smoke-a4",
+    "outcome": "passed",
+    "note": "Exit 0 in 17 s. Built ScanArm, the hook and the fixed app, and took Rpre. prepare.json records noLinkWalkerSkipsAllUsers true with the full noLinkCheck. Stop trigger acted at 3,950 folders (report written). Close trigger acted at 3,150 (exit 70, no report)."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatch.ps1 -Protocol -Smoke -Root %TEMP%\\sl095-smoke-tree -RunDir %TEMP%\\sl095-smoke-a4",
+    "outcome": "passed",
+    "note": "The real entry point, 95 s, exit 0. Marks run R0, settle/00, settle/01, settle/02 (settled after two quiet gaps), then I0/00 onward: 69 marks in all. Arms: L, S, P, F1-F5 (Completed, exit 0), X1/X2 Cancelled, X3 and X5 ran full (the size pass is too short on a small tree), X4 closed with exit 70, then C. -Report: OUTCOME VOID ('boot 9926 s old at R0'), FILTERS UNDECIDED. WCsc stayed at 3,585 throughout."
+   },
+   {
+    "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatch.ps1 -Report -NoWrite -RunDir %TEMP%\\sl095-smoke-a4",
+    "outcome": "passed",
+    "note": "Windows PowerShell 5.1 parses the new code and gives the same verdict as pwsh, exit 0."
+   },
+   {
+    "command": "%APPDATA%\\taad3\\venv\\Scripts\\python.exe eng/rules-harness/harness.py --engine-root C:\\Users\\sshub\\projets\\taad_v3\\backend --scenario all",
+    "outcome": "passed",
+    "note": "84 rows AS-RECORDED, 0 stray hits, clean baseline with 0 hits (77 rules, 181 files), rules-parity AGREE, exit 0. The one import rule is NOT RUN on the scratch copy, as always."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-095-ContainerLayerWalk/SL-095-ContainerLayerWalk.Tests.csproj",
+    "outcome": "passed",
+    "note": "The acceptance repro against this PC's live layer: 1 passed."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx",
+    "outcome": "failed",
+    "note": "563 passed, 3 failed. The 3 are the last-access back-dating tests that failed before this slice (LastAccessTests x1, HeldOpenTreeTests x2; DisableLastAccess=2). Nothing this slice added fails."
+   }
+  ]
+ }
+}

@@ -29,6 +29,12 @@ public enum TopLevelState
 
     /// <summary>A junction or symbolic link: recorded, never entered, charged 0 bytes.</summary>
     NotFollowed,
+
+    /// <summary>
+    /// A folder left out on purpose and never opened, its size not counted: the Windows container layer store (SL-095,
+    /// <see cref="ScanResult.SkippedStores"/>). Not unreadable: nothing refused it.
+    /// </summary>
+    NotScanned,
 }
 
 /// <summary>

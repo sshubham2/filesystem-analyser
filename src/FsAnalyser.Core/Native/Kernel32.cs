@@ -59,6 +59,7 @@ internal static unsafe partial class Kernel32
     public const int ERROR_ACCESS_DENIED = 5;
     public const int ERROR_INVALID_FUNCTION = 1;
     public const int ERROR_NO_MORE_FILES = 18;
+    public const int ERROR_INSUFFICIENT_BUFFER = 122;
     public const int ERROR_NOT_SUPPORTED = 50;
     public const int ERROR_INVALID_PARAMETER = 87;
     public const int ERROR_DIRECTORY = 267;
@@ -133,6 +134,18 @@ internal static unsafe partial class Kernel32
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool SetFileInformationByHandle(SafeFileHandle file, int infoClass, void* buffer, uint bufferSize);
+
+    /// <summary>
+    /// Only SynchronousIoCancel calls this, for the container layer store's resolution by handle (SL-095): the path the
+    /// handle's file is reached by once subst drives, junctions, 8.3 names and volume GUIDs are resolved, in \\?\ form.
+    /// </summary>
+    /// <returns>The length written, without the terminating null; more than <paramref name="pathLength"/> when the
+    /// buffer is too small (the length needed); 0 on failure.</returns>
+    [LibraryImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW", SetLastError = true)]
+    public static partial uint GetFinalPathNameByHandle(SafeFileHandle file, char* path, uint pathLength, uint flags);
+
+    /// <summary>GetFinalPathNameByHandleW's flags for a normalized name with its drive letter: FILE_NAME_NORMALIZED | VOLUME_NAME_DOS.</summary>
+    public const uint FinalPathNormalizedDos = 0;
 
     [LibraryImport("kernel32.dll", EntryPoint = "GetVolumeInformationByHandleW", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

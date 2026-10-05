@@ -1,0 +1,206 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-095",
+ "stage": "code-review",
+ "attempt": 5,
+ "at": "2026-10-05T02:16:02.763Z",
+ "head": "bab35f35b8df46e87024448b2c3187ad0c9a3c77",
+ "run_id": 2517,
+ "summary": "Build attempt 7 (c2c381d) does what Q-186 and the send-back asked:\n- **Q-186.** ContainerLayerStore.Resolve returns None at once when 'wcifs-layer-store' is off, lifting the refusal and the exclusion together.\n- **Loopback shares.** \\\\<this PC>\\X$ roots are compared as the drive path, in both the string step and the final-path step, and Exclude comes back in the root's own spelling.\n- **Text.** Notice and confirmation wording now follows Q-186 and drops the first-touch claim.\n- **PoolWatch.** O-105 to O-109 are fixed.\n\nI checked the loopback mapping against a planted %TEMP% store by calling Core's Resolve through reflection. Every one of these was Refused, or Excluded in the root's own spelling:\n- the long spelling;\n- the 8.3 spelling;\n- the extended \\\\?\\UNC\\localhost\\C$ spelling, including CONTAI~1, which only the final-path step can relate.\n\nHosts with the '.local', hex, decimal and IPv4-mapped spellings do not reach this PC over SMB.\n\nWhat I ran:\n- Full Core suite: 537 passed. The 3 failures are the known pre-existing last-access tests.\n- PoolWatchCases C-011, C-027, C-052 (the full rehearsal), C-053 to C-056 and P-001 to P-003: all passed.\n- WindowCases X-005: passed.\n- Fitness: all 81 rules hold.\n\nI did not re-run X-001/X-006 against the real store.\n\nThree minor findings:\n1. -Report says FsAnalyser.exe 'was killed' for any interrupted arm. The most likely interruption, during the 10-minute settle wait, comes after the exe has already exited.\n2. A rehearsal killed by its caller (for example by a 2-minute command timeout) leaves its 30,150-folder scratch behind. Four such folders sit in C:\\WINDOWS\\TEMP\\fsa-poolwatch now, none of them from this review.\n3. Statements that Q-186 or the retracted first-touch cap made false remain in EntryKind, EntryClassifier, the test class summary and one fitness because-text.\n\nSecond round: Second round, an adversarial pass over the parsers, boundaries and error paths in this diff. It found one new defect, in the C-011 case script: the case can fail falsely on a machine where another FsAnalyser.App is running, and this machine runs concurrent sessions that start the app.\n\nChecked and sound:\n- **ThroughLoopbackShare.** It gave the right answer or left the path unchanged for every degenerate spelling I tried: a bare `\\\\?\\UNC\\`, an empty host or share, a lower-case `c$`, the bare share root `\\\\localhost\\C$` (which NormalizeRoot turns into `\\\\?\\UNC\\localhost\\C$\\`, and which maps to `\\\\?\\C:\\`), and the 8.3 and extended forms I probed in round one. None of them throws.\n- **IsThisPc.** It never looks anything up. A failure there surfaces as a scan failure that MainWindow already handles.\n- **Read-Jsonl.** BOM, NUL, CRLF and lone CR are handled through ReadAllLines plus the trim.\n- **Get-FiltersLine.** An empty paste and a UTF-16 paste with BOM both give the honest result.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "Build attempt 7 (c2c381d) does what Q-186 and the send-back asked:\n- **Q-186.** ContainerLayerStore.Resolve returns None at once when 'wcifs-layer-store' is off, lifting the refusal and the exclusion together.\n- **Loopback shares.** \\\\<this PC>\\X$ roots are compared as the drive path, in both the string step and the final-path step, and Exclude comes back in the root's own spelling.\n- **Text.** Notice and confirmation wording now follows Q-186 and drops the first-touch claim.\n- **PoolWatch.** O-105 to O-109 are fixed.\n\nI checked the loopback mapping against a planted %TEMP% store by calling Core's Resolve through reflection. Every one of these was Refused, or Excluded in the root's own spelling:\n- the long spelling;\n- the 8.3 spelling;\n- the extended \\\\?\\UNC\\localhost\\C$ spelling, including CONTAI~1, which only the final-path step can relate.\n\nHosts with the '.local', hex, decimal and IPv4-mapped spellings do not reach this PC over SMB.\n\nWhat I ran:\n- Full Core suite: 537 passed. The 3 failures are the known pre-existing last-access tests.\n- PoolWatchCases C-011, C-027, C-052 (the full rehearsal), C-053 to C-056 and P-001 to P-003: all passed.\n- WindowCases X-005: passed.\n- Fitness: all 81 rules hold.\n\nI did not re-run X-001/X-006 against the real store.\n\nThree minor findings:\n1. -Report says FsAnalyser.exe 'was killed' for any interrupted arm. The most likely interruption, during the 10-minute settle wait, comes after the exe has already exited.\n2. A rehearsal killed by its caller (for example by a 2-minute command timeout) leaves its 30,150-folder scratch behind. Four such folders sit in C:\\WINDOWS\\TEMP\\fsa-poolwatch now, none of them from this review.\n3. Statements that Q-186 or the retracted first-touch cap made false remain in EntryKind, EntryClassifier, the test class summary and one fitness because-text.\n\nSecond round: Second round, an adversarial pass over the parsers, boundaries and error paths in this diff. It found one new defect, in the C-011 case script: the case can fail falsely on a machine where another FsAnalyser.App is running, and this machine runs concurrent sessions that start the app.\n\nChecked and sound:\n- **ThroughLoopbackShare.** It gave the right answer or left the path unchanged for every degenerate spelling I tried: a bare `\\\\?\\UNC\\`, an empty host or share, a lower-case `c$`, the bare share root `\\\\localhost\\C$` (which NormalizeRoot turns into `\\\\?\\UNC\\localhost\\C$\\`, and which maps to `\\\\?\\C:\\`), and the 8.3 and extended forms I probed in round one. None of them throws.\n- **IsThisPc.** It never looks anything up. A failure there surfaces as a scan failure that MainWindow already handles.\n- **Read-Jsonl.** BOM, NUL, CRLF and lone CR are handled through ReadAllLines plus the trim.\n- **Get-FiltersLine.** An empty paste and a UTF-16 paste with BOM both give the honest result.",
+  "findings": [
+   {
+    "id": "C1",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "claim": "When an arm is interrupted, -Report always says 'interrupted: -Protocol stopped while it ran, and FsAnalyser.exe was killed', whether or not anything was killed.\n\nThe arm's finally sets `interrupted` whenever the arm line was not yet written. It calls Kill only if the exe has not exited. After the exe exits, the try still waits SettleSec (600 s) before writing the line, and that wait is most of each arm's wall time.\n\nA terminating error or Ctrl+C in that window, the most likely moment to stop a run, writes a line that:\n- has exitCode 0 and an /exit mark;\n- has a report.json on disk;\n- is described by -Report as an exe that was killed.\n\nThis misstates what happened to an arm on a single-use boot, which is the consequence R2-n2 was accepted to stop. P-003 feeds only the shape with no exit code and no later marks.",
+    "evidence": "tests/window/PoolWatch.ps1:\n- :364 `Start-Sleep -Seconds $Timing.SettleSec`, inside the try, after `$line['exitCode']` and the /exit mark (:362-363).\n- :387-389: `if (-not $p.HasExited) { ...Kill()... }` then `$line['interrupted'] = $true` unconditionally.\n- :454: `\"arm ${name}: interrupted: -Protocol stopped while it ran, and FsAnalyser.exe was killed\"`.\n\ntests/window/PoolWatchCases.ps1, Test-P003, sets F2.exitCode = $null and removes F2/exit.",
+    "fix": "In the finally, set `$line['killed'] = $true` only in the branch that calls `$p.Kill()`.\n\nAt :454, word the message from it:\n- killed: 'interrupted while FsAnalyser.exe ran; it was killed';\n- otherwise: 'interrupted after FsAnalyser.exe exited (exit N), before its /settled mark'.\n\nAdd that second shape to P-003: an exitCode, an /exit mark and no /settled mark."
+   },
+   {
+    "id": "C2",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "claim": "A `-Protocol -Rehearse` run killed by its caller leaves its whole scratch behind: the generated 30,150-folder tree plus the run folder. A killed process runs no finally, so the Remove-Item never happens.\n\nC-052 takes about five minutes, and nothing in PoolWatchCases or PoolWatch says the caller needs a longer timeout. An unattended validate or build run with a default 2-minute command timeout therefore leaves one of these trees in the person's TEMP every time, and reads as a failure.\n\nFour exist on this machine now: rehearse-ae0787a0db65 (05:26), e97cfcfb885b (05:56), f7af17f9ecbc (06:36) and 42bbf4d82f1b (07:42). None is from this review; mine each printed 'REHEARSAL scratch deleted: True'.\n\nEach holds a plan line plus F1 to F3 in arms.jsonl, with marks ending at F4/before or F4/exit about 1 min 50 s after the folder was created. That is the shape of a 2-minute kill. The builder listed them as a follow-up without a cause.",
+    "evidence": "- tests/window/PoolWatch.ps1:626 creates `fsa-poolwatch\\rehearse-<12hex>`.\n- The only deletion is :652 `Remove-Item -LiteralPath $scratch -Recurse -Force` in the rehearsal's finally.\n- tests/window/PoolWatchCases.ps1:5-6 says 'about five minutes' but nothing about the caller's timeout.\n- On disk, C:\\WINDOWS\\TEMP\\fsa-poolwatch\\rehearse-*\\run\\arms.jsonl has 4 lines and marks.jsonl ends at F4/* in all four folders.\n\nI did not delete them, because this review did not create them.",
+    "fix": "At -Rehearse start, before creating the new scratch, remove any `fsa-poolwatch\\rehearse-*` folder whose run\\marks.jsonl, or the folder itself, was last written more than an hour ago. A live rehearsal writes a mark every 5 s, so such a folder has no writer.\n\nAlso state in PoolWatchCases' header and in Test-C052 that the caller's command timeout must be at least 10 minutes."
+   },
+   {
+    "id": "C3",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "claim": "Some statements are now false after Q-186 (off lifts both the exclusion and the refusal) and after the first-touch cap was retracted. The send-back asked to remove the first-touch claim 'and anything derived from them'.\n- EntryKind.Folder's summary says 'The one folder never entered is the Windows container layer store … It stays a Folder with nothing listed and is flagged NotScanned', with no condition. With the precaution off, the store is entered and listed like any folder.\n- EntryClassifier's remarks say 'The Windows container layer store is not [entered]', also with no condition.\n- The ContainerLayerStoreTests class summary says 'a root at or inside it is refused' (now only while the precaution is on) and 'whose live layer leaks wcifs pool on first touch'.\n- The because-text of the fitness rule 'the pool measurement never needs elevation' says 'first touch of the layer is single-use'. Validate's marks show repeat walks adding +5 WCsc and +5 System handles each. The design record (:116) now says the cap is 'not settled, and the app's text no longer says so'.\n\nThe repro's first-touch comments (tests/bugs/SL-095-ContainerLayerWalk/ContainerLayerWalkTests.cs:15, :26, :116) are left out of this finding, because the brief fixes that project as committed unchanged.",
+    "evidence": "- src/FsAnalyser.Core/Store/EntryKind.cs:7-10\n- src/FsAnalyser.Core/Scanning/EntryClassifier.cs:13-15\n- tests/FsAnalyser.Core.Tests/ContainerLayerStoreTests.cs:10-12\n- .taad/fitness.yaml:961\n- On the other side: ContainerLayerStore.cs:97-100 (Resolve returns None when off) and docs/design/SL-095-container-layer-store.md:116-124.",
+    "fix": "Add 'while the precaution is on (Q-186)' to the EntryKind, EntryClassifier and test-class summaries. Reword the two first-touch lines to 'each layer entry touched, until a restart' (test summary :12, fitness.yaml:961). These are text changes only; no pattern changes, so no plant or pin is affected."
+   },
+   {
+    "id": "R2-D1",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "claim": "C-011 can fail falsely.\n\nIts last check counts every FsAnalyser.App process on the machine that started in the last 2 minutes. It does not look only at one this -Protocol call could have started. Any concurrently running app makes the check fail, although -Protocol refused and wrote nothing. That includes:\n- another session's window case or rehearsal;\n- a person's own copy of the app.\n\nThis machine runs such sessions: four other rehearsals ran in C:\\WINDOWS\\TEMP\\fsa-poolwatch today, one at 07:42 during this review.\n\nA spurious validate failure costs a lap. The check also adds nothing to what C-011 already proves: no marks.jsonl and no arms.jsonl means no arm, and no arm means no Start-Exe.",
+    "evidence": "tests/window/PoolWatchCases.ps1:251: `Check (@(Get-Process FsAnalyser.App -ErrorAction SilentlyContinue | Where-Object { $_.StartTime -gt (Get-Date).AddMinutes(-2) }).Count -eq 0) 'it started no FsAnalyser.App'`.\n\nPoolWatch.ps1 starts the app only from Invoke-ExeArm, with `--report <RunDir>\\<arm>.report.json` on its command line.",
+    "fix": "Match only an app this run could have started: `@(Get-CimInstance Win32_Process -Filter \"Name='FsAnalyser.App.exe'\" | Where-Object { $_.CommandLine -like \"*$dir*\" }).Count -eq 0`.\n\nAlternatively, drop the check and rely on the arms.jsonl and marks.jsonl absence checks above it."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-002",
+    "discharged": "no",
+    "evidence": "The precondition is false, as validate recorded: dotnet.bcf alone is 557,268 B. Q-180/Q-181 accept the labelled 'size not counted' shortfall (docs/design/SL-095-container-layer-store.md, 'The excluded store's size'). Nothing in code can make it true. It is owed to validate."
+   },
+   {
+    "key": "O-049",
+    "discharged": "cannot-tell",
+    "evidence": "Other WCI stores (a running Windows Sandbox's storage, ProgramData\\Docker\\windowsfilter) are still neither matched nor looked for. They are documented in ContainerLayerStore.cs's remarks (:60-64) and the design record. This needs validate or a person-run session."
+   },
+   {
+    "key": "O-084",
+    "discharged": "cannot-tell",
+    "evidence": "Improved and verified here. ContainerLayerStore.ThroughLoopbackShare and IsThisPc map \\\\?\\UNC\\<this PC>\\X$ to X:, in Decide's string step and on both final paths. I called Resolve by reflection against a planted store:\n- loopback long and 8.3 spellings, inside: Refuse;\n- \\\\?\\UNC\\localhost\\C$\\...\\CONTAI~1\\Layers\\L1, which only the final-path step relates: Refuse;\n- the above-store root: Exclude in the root's own spelling.\n\nStill not matched:\n- a share a person created over the store or an ancestor (documented);\n- a hosts-file or DNS alias of this PC, which IsThisPc cannot know without a lookup (not documented).\n\nThe '.local', hex, decimal and IPv4-mapped host spellings do not reach this PC over SMB. So 'no spelling' is not literally true, and validate decides."
+   },
+   {
+    "key": "O-100",
+    "discharged": "no",
+    "evidence": "F1's discharge ('Refused stays unconditional: Resolve turns only an Exclude into None') no longer describes the code. ContainerLayerStore.cs:97-100 now returns None for both verdicts when the precaution is off, because the person's later Q-186 answer overrides F1. This is correct per Q-186, and not a defect. O-100 should be marked superseded by Q-186 rather than read as discharged."
+   },
+   {
+    "key": "O-092",
+    "discharged": "yes",
+    "evidence": "ContainerLayerStoreTests:\n- WithThePrecautionOffTheStoreIsListedAndCountedLikeAnyFolder: off, the store is listed and counted, with win.ini an entry, no NotScanned and no backstop refusals.\n- WithThePrecautionOffARootAtOrInsideTheStoreIsScannedAsPicked, rows '', \\L1 and \\L1\\Files\\Windows: on gives Refused with an empty store; off gives Completed with 5/5/2 files and 1400/1400/1050 B; Resolve with Off() returns None on a cancelled token.\n\nBoth are in the 537 that passed here."
+   },
+   {
+    "key": "O-105",
+    "discharged": "yes",
+    "evidence": "tests/window/PoolWatch.ps1:\n- Get-FiltersLine reads <RunDir>\\fltmc.txt, then prepare\\fltmc.txt, then the prepare.json record, and names the file it used.\n- The header (:21-24) and -Prepare's message are fixed.\n- The fresh-run-folder branch copies both pastes.\n\nP-001 passed here."
+   },
+   {
+    "key": "O-106",
+    "discharged": "yes",
+    "evidence": "PoolWatchCases P-001 covers five shapes: the list and the refusal in prepare.json, a list in the run folder, a list in the prepare folder, and a refusal in the run folder. Passed here."
+   },
+   {
+    "key": "O-107",
+    "discharged": "yes",
+    "evidence": "The three because-texts are rewritten in .taad/fitness.yaml at :984-988, :994-999 and :1019-1022 and no longer mention ScanArm or a verdict. Fitness holds. A different rule's text at :961 is still stale (finding C3)."
+   },
+   {
+    "key": "O-108",
+    "discharged": "yes",
+    "evidence": "PoolWatch.ps1 Read-Jsonl parses line by line after trimming NUL and BOM. Bad line numbers are added to $missing in Write-RunReport, and the prepare.json parse is guarded. P-002 (a torn marks line, a 64-byte NUL tail, a torn prepare.json) passed here."
+   },
+   {
+    "key": "O-109",
+    "discharged": "yes",
+    "evidence": "PoolWatch.ps1:384-391: the finally kills FsAnalyser.exe if it is still running and writes the arm line marked interrupted. :449-451 says 'started … but its arm line was never written' when the /before mark exists. P-003 passed here. The interrupted wording overstates a kill when the exe had already exited (finding C1)."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "PoolWatchCases C-011 passed here. It checks uptime before running -Protocol, -Protocol refuses on this boot with the 'over 1800 s' message, and it writes no marks or arms and starts no app. The boot-age check is now first in -Protocol (PoolWatch.ps1, Protocol branch)."
+   },
+   {
+    "key": "O-041",
+    "discharged": "yes",
+    "evidence": "C-027 passed here. It names the missing F2/exit and the null system120089, says FILTERS UNDECIDED, and prints the I0 burst raw (2,053.0 MiB)."
+   },
+   {
+    "key": "O-063",
+    "discharged": "no",
+    "evidence": "Not built and cannot be fed: design 10 removed the closing control and the VOID verdict. It needs voiding by the engine or a person, as the builder says."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-049",
+    "exercised": "yes",
+    "evidence": "WithThePrecautionOffTheStoreIsListedAndCountedLikeAnyFolder covers a scan above the planted store with Off(). WithThePrecautionOffARootAtOrInsideTheStoreIsScannedAsPicked runs roots at the store, at L1 and at L1\\Files\\Windows with the precaution on (Refused) and off (Completed, counted). Both feed Q-186's two positions on a planted store only."
+   },
+   {
+    "key": "C-046",
+    "exercised": "yes",
+    "evidence": "Unchanged: junction, subst and 8.3. ARootThroughThisPcsAdminShareIsDecidedAsTheDrivePathItNames adds 7 host spellings plus negative rows, string-only. AScanThroughThisPcsAdminShareRefusesInsideTheStoreAndSkipsItFromAbove runs real SMB scans and directory symlinks to the share; its share-dependent rows run on this PC (\\\\localhost\\C$ answers)."
+   },
+   {
+    "key": "C-050",
+    "exercised": "yes",
+    "evidence": "WindowCases X-001 adds the \\\\localhost\\C$ spelling of the store and checks the new 'While the Settings checkbox … is ticked … turn this protection off in Settings' detail. X-002 also scans Containers through the loopback share. I read both and did not run them, because they need the real store."
+   },
+   {
+    "key": "C-051",
+    "exercised": "yes",
+    "evidence": "WindowCases X-005 ran here and passed. The logged question reads '…a folder picked at or inside it is scanned as picked. wcifs.sys then leaks … for each store entry the scan touches…'. No then Yes, and the next launch is on again."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "PoolWatchCases C-011 ran here and passed. On a boot more than 1,920 s old it runs -Protocol, which refuses having written no marks or arms and started no app. It fails rather than run on a young boot."
+   },
+   {
+    "key": "C-027",
+    "exercised": "yes",
+    "evidence": "The fixture removes F2/exit, nulls F3/settled system120089, sets no fltmc paste, and inserts a 2 GiB I0 gap. Ran here; passed."
+   },
+   {
+    "key": "C-041",
+    "exercised": "no",
+    "evidence": "Not built. The closing layer control and its VOID verdict were removed by design 10. O-063 needs voiding."
+   },
+   {
+    "key": "C-052",
+    "exercised": "yes",
+    "evidence": "-Protocol -Rehearse ran end to end here through the new try/finally arm code: RUN COMPLETE, 12 raw rows, scratch deleted."
+   },
+   {
+    "key": "C-053",
+    "exercised": "yes",
+    "evidence": "Ran here; passed (F3 exit 70, no report)."
+   },
+   {
+    "key": "C-054",
+    "exercised": "yes",
+    "evidence": "Ran here; passed. The fixture now also drops the removed arms' marks, so the 'never started' wording applies."
+   },
+   {
+    "key": "C-055",
+    "exercised": "yes",
+    "evidence": "Ran here; passed."
+   },
+   {
+    "key": "C-056",
+    "exercised": "yes",
+    "evidence": "Ran here; passed."
+   },
+   {
+    "key": "P-001",
+    "exercised": "yes",
+    "evidence": "Five fltmc paste shapes across prepare.json, the run folder and the prepare folder. Ran here; passed."
+   },
+   {
+    "key": "P-002",
+    "exercised": "yes",
+    "evidence": "A torn marks line appended after a newline, a 64-byte NUL tail on arms.jsonl, and a torn prepare.json. Ran here; passed."
+   },
+   {
+    "key": "P-003",
+    "exercised": "yes",
+    "evidence": "X3 has a /before mark and no line; F2 is interrupted with no exit and no later marks. Ran here; passed. It does not feed an arm interrupted after its exe exited (finding C1)."
+   }
+  ],
+  "drift": [
+   "F1's accepted disposition and O-100's recorded discharge both say 'Refused stays unconditional'. The code now lifts the refusal when the precaution is off (ContainerLayerStore.cs:97-100), because the person's later Q-186 answer overrides F1. That follows a decision rather than departing from one. But the engine still holds O-100 as discharged by code that no longer exists, and should mark it superseded by Q-186.",
+   "Loopback matching recognises only the host names IsThisPc can know without a lookup: localhost, 127.x, ::1, MachineName, the DNS host name and full name, and the PC's own interface addresses. A hosts-file or DNS alias of this PC (\\\\alias\\C$) is not matched, and ContainerLayerStore's remarks (:60-64) list only person-created shares and other WCI stores as not covered. I found no alias spelling that reaches this PC over SMB ('.local', hex, decimal and IPv4-mapped all fail), so this is a note for O-084, not a finding."
+  ],
+  "matches_design": true,
+  "unreviewed": [
+   ".taad/slices/SL-095/{build-slice-6,code-review-4,validate-slice-1,validate-slice-2}.json and index.json: engine records. Only the build-7 send-back reason and validate's Q-186 passage were read.",
+   ".taad-scratch/validate/* and docs/design/SL-095-runs/{validate-2026-10-05,build-2026-10-05}/*.jsonl: validate's and the builder's mark data, cited in the design record. The numbers were not re-derived."
+  ],
+  "second_round": {
+   "run_id": 2518,
+   "filed": 1
+  }
+ }
+}

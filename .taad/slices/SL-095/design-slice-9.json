@@ -1,0 +1,424 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-095",
+ "stage": "design-slice",
+ "attempt": 9,
+ "at": "2026-10-04T17:01:19.132Z",
+ "head": "",
+ "run_id": 2451,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "reason": "Attempt 3. There was one proposal (practice). It is selected as the core, with three seam corrections. The O-003/O-028 fork sent attempts 1 and 2 back. It is now closed as an outcome this slice's validation records, not left open as a design fork: Q-183 was answered after attempt 2 and puts any SizeProbe replacement into a new design.",
+  "selection_rationale": "There was one proposal, so selection means checking it against what the survey, the investigation and the spikes measured.\n\nIt fits how the code is already built:\n- Scanner.Run.FolderDone already pushes every Folder-kind child, so one equality check there is the smallest change that stops the walk (repro locus Scanner.cs).\n- ScanOptions already carries internal seams such as ProbeRule and AfterFolder, so a store-path override follows the same pattern.\n- EntryKind is decided in Core and the App only maps it to words (TheAppNeverDecidesAFailedFolderKind).\n- The schema-1 report already takes additive fields.\n\nIt rests on measurement, not argument:\n- The investigation measured the wcifs.sys signature of microsoft/Windows-Containers#646 on this boot: WCsc 210,816 allocations with 0 freed, and 211,070 System handles at 0x120089.\n- The investigation measured the app's own Scanner.Scan leaking +5 WCsc and +5 System handles on an untouched layer subtree.\n- Spike 85 measured 0 opens under Layers in 3 scans with the path rule in place.\n- Live-layer folders carry no ReparsePoint or Offline attribute, so a path rule is the only reliable discriminator. A tag or attribute rule would walk straight in.\n\nIt is the simplest thing that works. The alternative fix, FILE_FLAG_OPEN_REPARSE_POINT, has 0 valid measurements (spike 85 was void in both arms). Narrowing the exclusion later from the whole store to Layers\\<id>\\Files is a one-predicate change.\n\nIt obeys every answered question:\n- Q-179/Q-182: refuse a picked root at or inside the store.\n- Q-180/Q-181: exclude the whole store and show it as a 'size not counted' row.\n- Q-183: no SizeProbe replacement is built.\n- Q-004: the probe-every-file rule stays.\n\nIt closes the fork that took back attempts 1 and 2. Q-183 now makes outcome B a new design, so the same code ships under A, B and C. Both spike laps are spent, and spike attempt 3 could not run without a Restart. The measurement therefore becomes the person's one post-build Restart protocol, which DONE (c) needs in every case.\n\nThe cross-domain designer reported a transfer it found (path exclusion of filter-backed virtualization stores, as antivirus and backup products do). Its key precondition is the measured one: entries cannot be told apart by attribute.",
+  "components": [
+   {
+    "name": "ContainerLayerStore rule",
+    "lives_at": "src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs (new)",
+    "responsibility": "Called once per scan, before anything is listed. It returns one of three answers:\n- Refuse: the root is at or inside the store.\n- Exclude(path): the store lies below the root. The path is spelled the way the walk will spell it.\n- None.\n\nThe store is Environment.GetFolderPath(CommonApplicationData) + \\Microsoft\\Windows\\Containers\\Layers.\n\nStep 1 is a string check that makes no opens. It compares root and store after GetFullPath, stripping \\\\?\\ and trimming trailing separators, using OrdinalIgnoreCase.\n\nStep 2 runs only when step 1 finds neither Refuse nor Exclude. It opens the root and %ProgramData% once each (FILE_READ_ATTRIBUTES, backup semantics, no OPEN_REPARSE_POINT) and calls GetFinalPathNameByHandleW. This catches subst, junction, 8.3 and volume-GUID spellings, and maps the store's final path back into the root's own spelling.\n\nThis is the only file in src that spells the store's location.",
+    "key_interactions": "Its opens go through the guarded open in src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs (PathOpensGoOnlyThroughTheGuardedOpen). GetFinalPathNameByHandleW is declared beside Core's existing Kernel32 interop (InteropLivesOnlyInNative), so this file has no DllImport. In Core.Tests the store path comes from the internal ScanOptions.ContainerLayerStorePath override."
+   },
+   {
+    "name": "Scanner descent exclusion and refusal",
+    "lives_at": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "responsibility": "Scan calls the rule first.\n- On Refuse it returns a result with the new outcome Refused (reason ContainerLayerStore). It lists nothing and probes nothing.\n- On Exclude, Run.FolderDone checks each Folder-kind child named 'Layers' for equality with the one excluded path. Nothing below the store can be reached without passing through it, because links are never followed. A match is recorded as a NotScanned folder with 0 bytes and is not pushed onto the pending stack.",
+    "key_interactions": "DirectoryReader.Read never receives the store path. SizeProbe never sees an entry below it. ScanOptions.AfterFolder never fires inside it, which is what ContainerLayerWalkTests asserts. A Cancelled result still carries the NotScanned row if the walk had reached the store."
+   },
+   {
+    "name": "Store-path test seam",
+    "lives_at": "src/FsAnalyser.Core/Scanning/ScanOptions.cs",
+    "responsibility": "An internal ContainerLayerStorePath override. Null means the real known-folder path. It lets Core.Tests plant a fake store in a %TEMP% NTFS tree. It is not public, the App never sets it, the measurement rigs never set it, and there is no user-configurable exclusion list."
+   },
+   {
+    "name": "Not-scanned folder kind",
+    "lives_at": "src/FsAnalyser.Core/Store/EntryKind.cs",
+    "responsibility": "A Core-decided kind meaning 'not scanned on purpose: Windows container layer store'. UnreadableRows.Build shows it as a 'size not counted' row with its own phrase and keeps it out of the 'N folders could not be opened' count. Its bytes fall into the existing coverage gap.\n\nThe comments at EntryKind.cs:6 and src/FsAnalyser.Core/Scanning/EntryClassifier.cs:10 are reworded to say:\n- WCI reparse folders elsewhere are still entered.\n- The store is excluded by path, because live-layer folders carry no ReparsePoint or Offline attribute (measured).",
+    "key_interactions": "The App only maps the kind to words. The shape of the scan-store totals is unchanged."
+   },
+   {
+    "name": "App refusal and report fields",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "responsibility": "On outcome Refused the App shows a status line: 'Windows container layers can't be scanned safely: the wcifs filter leaks kernel memory and a System handle for each entry read, until a full restart.' It enters no scanning state and opens no dialog.\n\nIn report mode the schema-1 report gains outcome \"refused\" and refusal \"container-layer-store\". The fields are additive and the schema stays 1. The exe exits 0.",
+    "key_interactions": "eng/read-window.ps1 gains a reader for the two fields. Validate runs the published exe with the real store path as the root. That is safe, because the string check decides it with zero opens."
+   },
+   {
+    "name": "Counting-rule tests for the exclusion",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ContainerLayerStoreTests.cs (new)",
+    "responsibility": "Real temp NTFS trees with a planted fake store through the override. Never skipped. They exercise every material shape in `cases` except the exe report and the live-layer repro:\n- root above the store;\n- a hardlink with a second name inside the store;\n- Layers and Layers2 decoys;\n- \\\\?\\ and subst spellings of a root above the store;\n- cancelled after the store was reached;\n- root equal to or inside the store;\n- odd spellings;\n- a junction or subst into the store;\n- store absent;\n- root unopenable.\n\nThe existing hardlink, link, on-disk size, long-path and unreadable-folder tests stay green."
+   },
+   {
+    "name": "Repro test, committed",
+    "lives_at": "tests/bugs/SL-095-ContainerLayerWalk/ContainerLayerWalkTests.cs",
+    "responsibility": "Committed as it stands. It is kept outside FsAnalyser.slnx because it builds an assembly named FsAnalyser.Core.Tests. Acceptance is `pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-095-ContainerLayerWalk/SL-095-ContainerLayerWalk.Tests.csproj` exiting 0 on this PC, against the real live layer 1f35079a."
+   },
+   {
+    "name": "PoolWatch.ps1",
+    "lives_at": "tests/window/PoolWatch.ps1 (port of the .taad-scratch harness)",
+    "responsibility": "Runs unelevated under Windows PowerShell 5.1 and pwsh 7.\n\nA reading records:\n- Pool Paged and Nonpaged Bytes, and Available MBytes;\n- per-tag allocs, frees and bytes (NtQuerySystemInformation 22) for every WC* tag, FMwi, FMfc, FMfn, File, NtfF and Toke;\n- the System (PID 4) handle count and its 0x120089 count;\n- LastBootUpTime, the layer IDs present and the CmService start time.\n\nModes:\n- -Mark: one reading.\n- -Environment: driver state for wcifs, CldFlt, WdFilter and bindflt; the minifilter Instances\\Altitude listing from the registry; SecurityCenter2 antivirus; OneDrive; the wcifs.sys version; HiberbootEnabled. Person-pasted `fltmc filters` output is appended.\n- -Prepare, run BEFORE the Restart: builds ScanArm, publishes the exe and takes R0. It also picks 1-3 layer subtrees of 10-60 entries for the closing control from the current, already-touched boot, and writes the root list for any dir control as the siblings along the path to the store, never an ancestor of it.\n- -Protocol.\n- -Report: applies the tolerance row and routes to A, B, C, FAIL-cancel or VOID.\n\nOutput is JSONL with tags as an array, under docs/design/SL-095-runs/.\n\nGuard: it kills the current arm and records guard-stop, which counts as over T, if Available MBytes falls below 4096 or combined pool rises more than 4 GiB above R0."
+   },
+   {
+    "name": "ScanArm",
+    "lives_at": "tests/window/ScanArm",
+    "responsibility": "The scratch rig, ported without its RigHooks, Scanner and DirectoryReader patches, because the product now carries the exclusion. It never sets ContainerLayerStorePath.\n\nModes:\n- listing: the Scanner with the internal ProbeRule set to listing-only; writes the file list.\n- probe <list>: the app's SizeProbe.Probe.\n- plain <list>: a non-app FILE_READ_ATTRIBUTES open and close.\n\nIt is built through eng/dotnet.ps1 into gitignored artifacts/scan-arm, outside FsAnalyser.slnx, with an InternalsVisibleTo line in src/FsAnalyser.Core/FsAnalyser.Core.csproj. The rig and that line are deleted once O-003 is recorded (stack decision)."
+   },
+   {
+    "name": "Cancelled-run driver",
+    "lives_at": "tests/window/FsaWindowHook",
+    "responsibility": "Drives the 5 cancelled exe runs with the existing FSA_HOOK_MODE=stop (Cancel button) and =close (window close), at phase-relative points:\n- Cancel during listing, twice;\n- Cancel during the size-probe pass, once;\n- close during listing, once;\n- close during the size-probe pass, once.\n\nEvery Cancel is followed by a window close, so an after-exit reading exists. If the hook has no phase trigger, the build adds a delay variable, calibrated from the listing time measured in the 5 full runs, which go first. The app is not changed for this."
+   },
+   {
+    "name": "Design record and run logs",
+    "lives_at": "docs/design/SL-095-container-layer-store.md and docs/design/SL-095-runs/",
+    "responsibility": "Records:\n- the tag table (see key decisions);\n- the tolerance row and its routing, written before any run;\n- the Restart workaround;\n- the excluded store's unmeasured size, with `dir /a /s` given as a reference upper bound only, run once, never added to a total;\n- the condition for lifting the refusal (Q-179);\n- the person-pasted `fltmc filters`;\n- the -Environment record;\n- the protocol JSONL.\n\nThe current boot's PoolWatch -Mark and the repro's e1..e5 and tok_b marks are committed as the first-touch evidence for DONE (a)."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "ContainerLayerStore.Resolve(root, storeOverride?) -> Refuse | Exclude(spelledPath) | None",
+    "kind": "function",
+    "auth_model": "Ordinary user, no elevation. At most two FILE_READ_ATTRIBUTES opens (the root and %ProgramData%), made only when the string check finds neither Refuse nor Exclude.",
+    "error_cases": "- The root cannot be opened, or GetFinalPathNameByHandleW fails (UNC, an odd redirector): the string-only verdict stands, and the scan goes on to its usual RootUnreadable handling. No exception.\n- The store is absent: None.\n- %ProgramData% cannot be resolved: None.",
+    "notes": "Internal to Core. The per-folder cost in the walk is one OrdinalIgnoreCase compare, and only when the child's name is 'Layers'."
+   },
+   {
+    "name": "Scanner.Scan outcome Refused",
+    "kind": "function",
+    "auth_model": "n/a (in-process)",
+    "error_cases": "A result value, not an exception, so report mode never takes the exit-70 crash path. Nothing is listed or probed. The only possible opens are the two resolution opens.",
+    "notes": "A new value beside Completed and Cancelled, with reason ContainerLayerStore. Its consumers are the App status line, the report writer and the window cases."
+   },
+   {
+    "name": "Not-scanned store row",
+    "kind": "ui",
+    "error_cases": "None. It is still shown when the scan is cancelled after the walk reached the store.",
+    "notes": "Reads '<path>  (size not counted: Windows container layers)'. It is not counted in 'N folders could not be opened'. Its bytes appear only in the coverage gap."
+   },
+   {
+    "name": "Refusal message",
+    "kind": "ui",
+    "notes": "Status-line text per Q-179/Q-182. No dialog and no scanning state. Picking C:\\ or C:\\ProgramData still scans, and the store shows as the not-scanned row."
+   },
+   {
+    "name": "--report refusal fields",
+    "kind": "cli",
+    "auth_model": "Ordinary user",
+    "error_cases": "A refused root writes the report with outcome \"refused\" and refusal \"container-layer-store\", and exits 0.",
+    "notes": "Schema stays 1 and the fields are additive. read-window.ps1 reads them."
+   },
+   {
+    "name": "tests/window/PoolWatch.ps1 -Mark|-Environment|-Prepare|-Protocol|-Report",
+    "kind": "cli",
+    "auth_model": "Unelevated. `fltmc filters` is pasted in by the person if they choose to run it elevated. The registry minifilter listing is the unelevated record.",
+    "error_cases": "- A guard-stop is recorded and counts as over T for that arm.\n- The run is VOID if: the boot is more than 30 min old at R0; idle drift on I0 and I1 differs by more than 3x; the closing layer control leaks 0 WC*; or an arm's process fails to exit.\n- A VOID run is never reported as A, B or C.",
+    "notes": "One JSONL line per reading. -Report writes A, B, C, FAIL-cancel or VOID, and PASS, FAIL or OS-recorded, into the design record's tolerance row. Any dir control is issued per sibling root from the -Prepare list and never on an ancestor of the store."
+   },
+   {
+    "name": "tests/window/ScanArm listing|probe|plain",
+    "kind": "cli",
+    "auth_model": "Unelevated",
+    "error_cases": "A per-file probe or open failure is counted, not fatal. The exit code is nonzero only on a rig fault.",
+    "notes": "Each arm runs in its own process, which exits before the after-reading. Halves A and B come from a deterministic hash of the path."
+   },
+   {
+    "name": "FsaWindowHook phase-relative stop/close",
+    "kind": "cli",
+    "auth_model": "Unelevated, through DOTNET_STARTUP_HOOKS as today",
+    "error_cases": "If the hook cannot reach the chosen phase before the scan ends, the run is logged as a full run and does not count as one of the 5 cancelled runs.",
+    "notes": "FSA_HOOK_MODE=stop|close is extended with a phase (listing or size-probe) and an offset, or with a delay variable calibrated from the full runs."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Exclude the whole %ProgramData%\\Microsoft\\Windows\\Containers\\Layers store when the walk reaches it. Match it by path, not by reparse tag or attribute.",
+    "reversibility": "cheap",
+    "rationale": "- Q-180/Q-181 decided on the whole store.\n- The investigation measured that live-layer Files\\Windows folders carry no ReparsePoint or Offline attribute, so a tag rule would walk straight in.\n- Excluding the store root also covers any layer created after this measurement (only ID 1f35079a was seen).\n- Narrowing to Layers\\<id>\\Files is a one-predicate change once a post-Restart run shows the siblings are safe."
+   },
+   {
+    "decision": "Match the root by string first, with zero opens. Only if that settles nothing, match it once by handle (FILE_READ_ATTRIBUTES + GetFinalPathNameByHandleW). Compute one excluded path per scan, in the root's own spelling.",
+    "reversibility": "cheap",
+    "rationale": "- Q-182 assumes subst, junction and \\\\?\\ forms are caught, and only a handle resolves subst and 8.3 names.\n- The string check covers the picker, the drive buttons and argv without touching the store.\n- The handle open rests on #646's negative control: single FILE_READ_ATTRIBUTES opens do not leak. If that is wrong, the worst case is one entry, about 1.3 KB and one System handle."
+   },
+   {
+    "decision": "Refuse picked roots at or inside the store through a new Refused scan outcome decided in Core, not a pre-check in the App.",
+    "reversibility": "expensive",
+    "rationale": "Q-179/Q-182 decided to refuse, which overrides the earlier 'user's choice wins' wording. Deciding it in Core means report mode, tests and ScanArm cannot bypass it. The new outcome value is a contract with the App status line, the report writer and the window cases."
+   },
+   {
+    "decision": "Show the excluded store as a distinct, Core-decided NotScanned folder kind with 0 bytes, rendered as 'size not counted' and kept out of the could-not-be-opened count.",
+    "reversibility": "expensive",
+    "rationale": "Q-180 treats it as an honest shortfall, like an unreadable folder. But the store is skipped on purpose, not refused by the OS, so folding it into the error count would misstate both. Adding a kind touches the store, the rows and the App's rendering."
+   },
+   {
+    "decision": "Do not add FILE_FLAG_OPEN_REPARSE_POINT to the scanner's opens. Leave SizeProbe (SC-011), the last-access suppression (SC-070/074), the reparse re-open (SC-067) and the CancelSynchronousIo path (SC-017) unchanged.",
+    "reversibility": "cheap",
+    "rationale": "- OPEN_REPARSE_POINT has 0 valid measurements (spike 85 was void).\n- Q-183 keeps Q-004's probe-every-file rule.\n- The investigation tied the leak to which paths are walked, and ruled out FsAnalyser's own handles: the leaked handles sit in PID 4, and File grows by about +4 per run whatever the tree size.\n- Brief step 3's leads are tested by the protocol instead: arm S against arm P separates SizeProbe from a plain open, and the cancelled and closed runs test the cancel path."
+   },
+   {
+    "decision": "Treat O-003/O-028 as the recorded outcome of this slice's validation, not a design fork. The same code ships under A, B and C.\n- A: DONE (c) PASS.\n- B: the tolerance row records FAIL, and Q-183's new design opens with the run's data. Nothing here changes.\n- C: DONE (c) is met only if Q-178's three conditions hold (applied here by assumption). Otherwise it records FAIL, with the Restart workaround documented.",
+    "reversibility": "cheap",
+    "rationale": "Q-183 was answered after attempt 2. It says any replacement for the probe rule is chosen in a NEW design, using the run's data, with nothing built toward it now. So no answer moves a boundary, contract or data model in SL-095. Both spike laps are spent, and spike attempt 3 could not run without a person's Restart."
+   },
+   {
+    "decision": "Write the tolerance row now, before any run.\n\nPer pool (Paged and Nonpaged), T = max(64 MiB, 3 x |idle drift| over a window of the same length). Each reading is taken 10 min after the process exits, net of idle drift.\n\nPASS (outcome A) needs all of:\n- each of the 10 exe runs <= T;\n- the 10 runs cumulatively <= T;\n- the cold projection L_net + s*N_full <= T;\n- WC* allocations and System 0x120089 handles <= the ambient rate from I0 and I1;\n- the closing layer control leaks >= 1 WC*.\n\nOtherwise the run routes as the spike set it:\n- L over T: C.\n- S over while P is within: B.\n- Both over: C if S's excess over P projects to <= max(T/2, 2 x noise), otherwise B.\n\nAdded: a cancelled or closed run over T while the full runs are within gives FAIL-cancel (cancel path implicated, follow-up slice).\n\nVOID conditions are as listed in the PoolWatch contract.",
+    "reversibility": "cheap",
+    "rationale": "The spike demanded the row exist before any arm runs, and the survey found none anywhere. The cumulative clause is what tests the reporter's 'built up scan after scan'. The closing control removes the VOID that sank spike 85. The FAIL-cancel route covers the brief's completed-versus-cancelled split, which A/B/C did not."
+   },
+   {
+    "decision": "Run one Restart-and-idle protocol of about 4 h, entirely from binaries built in -Prepare, so nothing is built after boot.\n\nOrder:\n1. R0, then I0: 20 min idle.\n2. Arm L: the app's listing walk of all of C:, store excluded.\n3. Arm S: SizeProbe on half A.\n4. Arm P: a plain open of half B.\n5. 5 full exe scans.\n6. 5 cancelled exe scans: Cancel during listing x2, Cancel during the size-probe pass x1, close during listing x1, close during the size-probe pass x1.\n7. I1: 20 min idle.\n8. `cmd /c dir /a /s /b` on the subtrees picked in -Prepare, as the non-app wcifs control.\n\nIf L is over T, Q-178 condition (2) needs a dir of C: from a second Restart. It is issued per sibling root and never on an ancestor of the store.",
+    "reversibility": "cheap",
+    "rationale": "Running the attribution arms first gets the B/C routing on the same boot. The cited 25H2 report (about 1 KB per first-time path) and run 2428 (+0.50 GB before the guard stopped it) make an over-T cold cost likely. A literal `dir /s C:\\` would walk the live layer and leak about 210K WC* entries, so the control itself would be the bug. Control subtrees are chosen before the Restart, because finding them afterwards means listing layer folders, which spends their first touch."
+   },
+   {
+    "decision": "DONE (a)'s record is a tag table:\n- WCsc, WCfc, WCri, FMwi and FMfc -> wcifs.sys 10.0.26100.9278 (Microsoft, microsoft/Windows-Containers#646), measured on this boot and in the repro's marks.\n- FMfn (fltmgr.sys), File (I/O manager), NtfF (ntfs.sys) and Toke (tokens) -> owner recalled from pooltag.txt, since no WDK is on the machine. These are marked not attributed to the app until the protocol attributes them.\n\nThe record states that the wcifs group is about 0.33 GB of 8.3 GB on this boot.",
+    "reversibility": "cheap",
+    "rationale": "The survey measured the wcifs group at about 290-334 MB, while FMfn (1.17 GB), File (1.0 GB), Toke (789 MB) and NtfF (433 MB) are unattributed. Stating that wcifs alone does not explain the reported ~30 GB is the honest DONE (a). The protocol is what attributes the rest."
+   },
+   {
+    "decision": "The documented workaround:\n- Start > Restart reclaims the leaked pool; Shut down with Fast Startup does not.\n- Do not browse Layers in Explorer or in the folder picker.\n\nNo in-app memory warning.",
+    "reversibility": "cheap",
+    "rationale": "There is no fixed wcifs.sys for 25H2 (#646; the WSL#41296 fix has not shipped, per the investigation). The picker and Explorer list folders before the app can refuse, so only a document reaches that path. The claim that Fast Startup keeps the pool is from a #646 comment and is unmeasured here (spike 85's restart experiment was blocked), so the record says so."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal, selected as the core. Seam corrections made here:\n- The cancelled-run split was reconciled: the proposal said 3 Cancel + 2 close in one place and 4 Cancel + 1 close in another.\n- Q-178's dir control is issued per sibling root, so it never walks the live layer.\n- The closing-control subtrees are chosen in -Prepare, before the Restart.\n- A FAIL-cancel route was added to the tolerance row."
+   }
+  ],
+  "coherence_check": "One proposal, so there is no composition to check. Nothing here has survived a disagreement with another designer, and the reviewer is the first to argue with it. These were checked instead, against the survey, the spikes and the answered questions:\n\n1. The fork that sent attempts 1 and 2 back (O-003/O-028). Q-183 was answered after attempt 2. It keeps Q-004, and any replacement is chosen in a NEW design from the run's data. So outcome B no longer moves anything in SL-095: A, B and C ship identical code and differ only in the verdict the tolerance row records. It is recorded as a decidable disagreement with would_force_resynthesis=false. Spike attempt 3 measured nothing (it needs a Restart), so no measured verdict is contradicted.\n\n2. Q-179/Q-182 (refuse) override the earlier design's 'user's choice wins' wording. Only the refusal is built.\n\n3. A contradiction inside the proposal: its protocol decision says 3 Cancel + 2 close, its hook component says 2+2 Cancel + 1 close. Redesigned as Cancel during listing x2, Cancel during the size-probe pass x1, close during listing x1 and close during the size-probe pass x1. Every Cancel is followed by a close, so an after-exit reading exists. The delays are calibrated from the full runs, which go first.\n\n4. Q-178 is worded for SL-094 and its runs folder. This design applies it to SL-095 by assumption (open question). Its condition (2) asks for a dir /s from a fresh boot. A literal `dir /s C:\\` reaches the live layer and would itself leak about 210K WC* entries, so the control is issued per sibling root along the path to the store.\n\n5. The closing layer control's subtrees are chosen in -Prepare, on the current boot where they are already touched. Choosing them after the Restart would mean listing layer folders, which spends their first touch and voids the control.\n\n6. The investigation says two things that disagree: layer entries are Offline placeholders the app already classifies as CloudOnly, AND live-layer Files\\Windows folders carry no ReparsePoint or Offline attribute. The path rule does not depend on which is true. The reworded EntryKind/EntryClassifier comments state only the measured fact about folders.\n\n7. The resolution open rests on #646's negative control. Its worst case is one entry, recorded as a non-material case.\n\n8. The environment the build will meet:\n- The full suite already has 3 failures that this slice does not touch (LastAccessTests and HeldOpenTreeTests, with DisableLastAccess=2). The build must neither fix nor hide them.\n- The repro project stays outside FsAnalyser.slnx, because it builds an assembly named FsAnalyser.Core.Tests.\n- The survey found no 'Containers' match in src, so the new spelling rule is green at the baseline.\n\n9. Rules:\n- Existing rules already govern the new file: PathOpensGoOnlyThroughTheGuardedOpen, InteropLivesOnlyInNative, TheAppNeverDecidesAFailedFolderKind and TheScannerListsDirectoriesOnlyThroughDirectoryReader.\n- Three rules are added, for what this design settles: one spelling of the store, the rig never relocates it, the App never relocates it.\n- Nothing is added to stack_chosen: PoolWatch, ScanArm and the JSONL logs were already in the stack block.",
+  "architecture_rules": [
+   {
+    "name": "the container layer store's location is spelled in one place",
+    "files": "src/**/*.cs",
+    "must_not_match": [
+     "Containers[\\\\/]{1,2}Layers",
+     "\"Containers\"\\s*,\\s*\"Layers\""
+    ],
+    "except_files": [
+     "src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs"
+    ],
+    "because": "Q-182 requires the refusal and the C: exclusion to match the store the same root-aware way. A second, string-only copy, such as an App pre-check or a second predicate in DirectoryReader, misses subst, junction, 8.3 and volume-GUID spellings and lets a scan walk the live layer, which leaks wcifs pool and a System handle per entry until a Restart."
+   },
+   {
+    "name": "the measurement rigs never relocate the store",
+    "files": "tests/window/**",
+    "must_not_match": [
+     "ContainerLayerStorePath"
+    ],
+    "because": "ScanArm has InternalsVisibleTo into Core. A rig that sets the override walks the live layer on the person's fresh boot. That leaks about 210K WC* entries and System handles until another Restart, and voids the protocol's WC* clause. Only Core.Tests may plant a fake store."
+   },
+   {
+    "name": "the App never relocates the store",
+    "files": "src/FsAnalyser.App/**",
+    "must_not_match": [
+     "ContainerLayerStorePath"
+    ],
+    "because": "An App-set or user-configurable store path bypasses the refusal decided in Q-179/Q-182 and the exclusion decided in Q-180/Q-181. No correct App code mentions the override."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "scan a folder that contains the container layer store",
+    "shape": "the root is above the store (C:\\, or a %TEMP% tree with a planted fake store)",
+    "why": "FolderDone must stop at the store: a NotScanned row with 0 bytes, nothing listed or probed below it, and totals equal to the tree minus the store. The repro's failure is this branch missing."
+   },
+   {
+    "behaviour": "scan a folder that contains the container layer store",
+    "shape": "a file outside the store has a second hardlink name inside the store",
+    "why": "The hardlink-once rule chooses the paying name from the names it sees. With the store's name never seen, the file must be charged exactly once to its outside folder, not zero times. Q-113 says the real layer holds hardlinked entries."
+   },
+   {
+    "behaviour": "scan a folder that contains the container layer store",
+    "shape": "a folder named Layers elsewhere in the tree, and a sibling of the store named Layers2",
+    "why": "The descent check is gated on the child's name and compares one path. A name-only or prefix match would silently drop real bytes."
+   },
+   {
+    "behaviour": "scan a folder that contains the container layer store",
+    "shape": "the root above the store is spelled \\\\?\\ or reached through a subst drive letter",
+    "why": "The excluded path must be in the walk's own spelling, mapped back from GetFinalPathNameByHandleW. A spelling mismatch makes the equality test miss, and the walk enters the store."
+   },
+   {
+    "behaviour": "scan a folder that contains the container layer store",
+    "shape": "the scan is cancelled after the walk has passed the store",
+    "why": "The Cancelled result builds its rows from what was reached. The store row must still show as 'size not counted' and stay out of the could-not-be-opened count."
+   },
+   {
+    "behaviour": "refuse a picked root",
+    "shape": "the root is the store itself or a folder inside it",
+    "why": "Q-179/Q-182: the outcome is Refused, with zero listings and zero probes. Not RootUnreadable and not an exception."
+   },
+   {
+    "behaviour": "refuse a picked root",
+    "shape": "the root is spelled with \\\\?\\, a trailing separator or different letter case",
+    "why": "The zero-open string check must normalise these. Otherwise it falls through to the handle open, which opens an entry of the store."
+   },
+   {
+    "behaviour": "refuse a picked root",
+    "shape": "the root is a junction or subst drive whose target is inside the store",
+    "why": "Only the handle resolution catches this (the Q-182 assumption). A string-only check would scan the store as picked."
+   },
+   {
+    "behaviour": "resolve the store for a scan",
+    "shape": "the store does not exist (no containers feature, or the override points at a missing path)",
+    "why": "Resolve must return None, and the scan must be identical to today's. Otherwise every PC without containers changes behaviour."
+   },
+   {
+    "behaviour": "resolve the store for a scan",
+    "shape": "the root cannot be opened, or GetFinalPathNameByHandleW fails (missing path, UNC share)",
+    "why": "The string verdict must stand, and the scan must go on to the existing RootUnreadable handling. A throw here would take report mode's exit-70 path."
+   },
+   {
+    "behaviour": "report a refused root through the published exe",
+    "shape": "--report with the real store path as the root",
+    "why": "The schema-1 report must carry outcome refused and refusal container-layer-store, exit 0, and make zero opens under the store. read-window.ps1 must read the fields."
+   },
+   {
+    "behaviour": "scan the real container store's parent on this PC",
+    "shape": "a live layer (1f35079a) under Layers, with ContainerStorages beside it",
+    "why": "This is the acceptance test: the repro exits 0. It is the only direct evidence of the defect, and it shows the store's siblings are still listed."
+   },
+   {
+    "behaviour": "decide a PoolWatch protocol run",
+    "shape": "the closing layer control leaks 0 WC*",
+    "why": "Spike 85 was void for exactly this reason: 0 WC* in the arms only counts if the layer was still armable. -Report must mark the run VOID, never A."
+   },
+   {
+    "behaviour": "resolve a root inside the real store by handle",
+    "shape": "a subst or junction root pointing at an untouched entry of the live layer",
+    "why": "Judged not worth a test. The worst case is one first-touch entry (about 1.3 KB plus one System handle) until a Restart, and #646's negative control says single FILE_READ_ATTRIBUTES opens do not leak. Testing it on the real store spends first-touch state the protocol needs, and the branch is already covered on a fake store by the junction/subst refusal case.",
+    "material": false
+   }
+  ],
+  "decidable_disagreements": [
+   {
+    "question": "O-003/O-028: with the store excluded, does a cold full C: scan break the tolerance through the SL-056 SizeProbe while a listing-only walk does not (outcome B), or do the listing and a plain open both break it (outcome C), or neither (outcome A)?",
+    "positions": "- Unmeasured. Spike 86's fresh-tree substitute failed V1, run 2428 was guard-stopped at +0.50 GB, and spike attempt 3 needs a person's Restart.\n- The cited 25H2 report (about 1 KB per first-time path open, FMfn and File) makes C or B likelier than A.\n- Spike 86's warm-repeat arm was a go: repeat scans add less than idle noise.",
+    "would_force_resynthesis": false
+   },
+   {
+    "question": "Does listing the store's parent and siblings (Containers, ContainerStorages) allocate WC* when the layer can still leak?",
+    "positions": "Spike 85 saw 0 opens under Layers and 0 WC* in 3 scans with the path rule, but the session was VOID, because its control also leaked 0. If the siblings do leak, the exclusion widens to Containers. That is a predicate and a row label plus an extension of Q-180/Q-181, not a boundary or contract change. The protocol's WC* clause measures it.",
+    "would_force_resynthesis": false
+   },
+   {
+    "question": "Does enumeration with FILE_FLAG_OPEN_REPARSE_POINT avoid wcifs's WcProcessWciReparsePointOpen on an untouched live-layer subtree?",
+    "positions": "#646's negative controls say yes. This project has 0 valid measurements (spike 85 was void in both arms). If yes, Q-179 says the refusal can be lifted in a later slice. Nothing in SL-095 changes.",
+    "would_force_resynthesis": false
+   }
+  ],
+  "open_questions": [
+   "Q-178 was decided for SL-094's DONE (c) and names docs/design/SL-094-runs/. This design applies its three conditions to SL-095's DONE (c) under outcome C, with logs under docs/design/SL-095-runs/. If the person does not accept that, outcome C records DONE (c) as FAIL, and nothing more can be built in this app to meet it.",
+   "If arm L is over T (likely, given the cited ~1 KB per first-time path and run 2428's +0.50 GB), Q-178's condition (2) needs a dir of C: from a second fresh Restart. The dir is issued per sibling root, so it never enters the store. Is a second Restart-and-idle session acceptable? The alternative is for the first session to run dir on a deterministic half of C: before arm L, accepting a per-entry comparison between halves of different composition."
+  ],
+  "stack_chosen": [],
+  "taste_disagreements": [
+   "A refused root makes the report exit 0 with outcome \"refused\". A distinct nonzero exit code would also be defensible.",
+   "A new NotScanned EntryKind, rather than reusing Unreadable with a reason field.",
+   "The refusal is decided in Core's Scanner.Scan, rather than in an App pre-check that shares ContainerLayerStore. Q-182 only requires the same matching.",
+   "The refusal is a status line rather than a dialog.",
+   "The exclusion check sits in Scanner.Run.FolderDone. The spike's scratch rig also hooked DirectoryReader.Open."
+  ],
+  "whats_new": [
+   "src/FsAnalyser.Core/Scanning/ContainerLayerStore.cs: Resolve -> Refuse | Exclude | None, string check first and handle check second",
+   "Scanner.Scan outcome Refused, and the FolderDone exclusion of the one store path",
+   "An internal ScanOptions.ContainerLayerStorePath test seam",
+   "EntryKind NotScanned and its 'size not counted' row in UnreadableRows.Build",
+   "The App refusal status line, the schema-1 report fields outcome \"refused\" and refusal \"container-layer-store\", and the read-window.ps1 reader",
+   "GetFinalPathNameByHandleW declared beside Core's Kernel32 interop",
+   "tests/FsAnalyser.Core.Tests/ContainerLayerStoreTests.cs on real temp NTFS trees",
+   "tests/window/PoolWatch.ps1 ported into the repo with -Mark, -Environment, -Prepare, -Protocol and -Report, and the VOID and guard logic",
+   "tests/window/ScanArm ported into the repo without the scratch hooks, plus the temporary InternalsVisibleTo line",
+   "A phase-relative stop/close trigger in FsaWindowHook",
+   "docs/design/SL-095-container-layer-store.md with the tag table, the tolerance row written before any run, the Restart workaround and the refusal-lift condition",
+   "docs/design/SL-095-runs/ JSONL, including the current boot's mark and the repro's e1..e5 and tok_b marks",
+   "Three new architecture rules: one spelling of the store, the rigs never relocate it, the App never relocates it"
+  ],
+  "whats_reused": [
+   "Scanner.Run.Execute/FolderDone depth-first walk (src/FsAnalyser.Core/Scanning/Scanner.cs)",
+   "DirectoryReader.Read and SynchronousIoCancel's guarded open, unchanged",
+   "ScanOptions internal seams (ProbeRule, AfterFolder), used by ScanArm and the repro",
+   "SizeProbe and the Q-004 probe-every-file rule, unchanged",
+   "UnreadableRows.Build and the coverage-gap figure",
+   "The schema-1 --report path and eng/read-window.ps1",
+   "FsaWindowHook FSA_HOOK_MODE=stop|close",
+   "eng/dotnet.ps1 builds into gitignored artifacts/",
+   "The repro test tests/bugs/SL-095-ContainerLayerWalk, committed as it stands",
+   "The repro stage's .taad-scratch harness (tagdelta.ps1, scanprobe, marks) as the source of the PoolWatch and ScanArm ports",
+   "The decided measurement stack: unelevated NtQuerySystemInformation(22), JSONL under docs/design/<slice>-runs/, fltmc pasted by the person"
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Antivirus and backup products on Hyper-V and Windows container hosts",
+   "pattern": "Exclude a system-managed, filter-backed virtualization store by a path derived from a known location. Apply the exclusion where the walk descends, and report the store as excluded, rather than trying to recognise its entries by attribute or tag.",
+   "transfer_found": true,
+   "rationale": "That industry met the same class of problem: placeholder trees, backed by a filter, that misbehave when walked (Docker windowsfilter, Hyper-V stores). Path exclusions against known locations are what survived. They avoid the failure of attribute-based detection that misses live trees, and that failure is measured here: live-layer folders carry no reparse or Offline bit.",
+   "invariants": [
+    {
+     "precondition": "The store's location comes from a known folder and is stable across boots.",
+     "status": "holds",
+     "evidence": "Investigation: one layer at %ProgramData%\\Microsoft\\Windows\\Containers\\Layers\\1f35079a, backing the CmService zygote. Excluding the store root covers any later layer IDs."
+    },
+    {
+     "precondition": "Store entries cannot be told apart by attribute or tag, so the path is the only reliable discriminator.",
+     "status": "holds",
+     "evidence": "Investigation: the live layer's Files\\Windows folders carry no ReparsePoint or Offline attributes. #646 gives that as the sign of a live layer."
+    },
+    {
+     "precondition": "No other path in a scan reaches the store's contents.",
+     "status": "must-verify",
+     "evidence": "Junctions and symlinks are never followed (project constraint), and the root-aware mapping handles subst, \\\\?\\ and volume-GUID roots. Loopback SMB (\\\\localhost\\C$) and other WCI stores (for example ProgramData\\Docker\\windowsfilter) are not covered and were not looked for."
+    },
+    {
+     "precondition": "Listing the store's parent and siblings (Containers, ContainerStorages) does not itself trigger the wcifs leak.",
+     "status": "must-verify",
+     "evidence": "Spike 85 (layer-store-exclusion-no-wc-allocs): 0 opens under Layers and 0 WC* allocations in 3 scans, but the session was VOID because its control leaked 0. The protocol's WC* clause and closing control measure it."
+    },
+    {
+     "precondition": "Leaving the store out loses only bytes the counting rule allows to be left out, if they are labelled.",
+     "status": "holds",
+     "evidence": "Q-180/Q-181 decided that the whole store shown as a 'size not counted' row is an honest shortfall and counts no byte twice."
+    }
+   ]
+  },
+  "prior_art": [
+   {
+    "pattern": "wcifs.sys leaks WCsc/WCfc/WCri/FMwi/FMfc and one System FILE_GENERIC_READ handle on first touch of each live-layer entry. The workaround is to avoid walking the layer store. OPEN_REPARSE_POINT and single FILE_READ_ATTRIBUTES opens are its negative controls.",
+    "where": "https://github.com/microsoft/Windows-Containers/issues/646 (fetched by the investigation stage; its fingerprint was measured on this PC)",
+    "authority": "community",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Find the leaking pool tag from per-tag allocs/frees/diff (PoolMon), then map the tag to its owner.",
+    "where": "https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/using-poolmon-to-find-a-kernel-mode-memory-leak",
+    "authority": "official",
+    "basis": "cited"
+   },
+   {
+    "pattern": "pooltag.txt maps a pool tag to the component that allocates it. Used for the FMfn/File/NtfF/Toke owners in the tag table, read without a WDK installed.",
+    "where": "https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/poolmon",
+    "authority": "official",
+    "basis": "cited"
+   },
+   {
+    "pattern": "On Windows 11 25H2, cold file-name operations retain FMfn/File/NtfF pool, about 1 KB per first-time path open, until a reboot. This supports outcome C and the expected over-T cold cost.",
+    "where": "https://learn.microsoft.com/en-nz/answers/questions/5966064/windows-11-25h2-kernel-pool-leak-fmfn-and-file-all",
+    "authority": "community",
+    "source_date": "2026-08-04",
+    "basis": "cited"
+   },
+   {
+    "pattern": "The CmService zygote leaks through the same wcifs path whatever the app does (Windows-Sandbox#126). A fix is pre-release and not shipped (microsoft/WSL#41296, 'fixinbound').",
+    "where": "Named in the investigation record without URLs",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Antivirus and backup products exclude container and Hyper-V virtualization stores by known path rather than by attribute.",
+    "where": "Cross-domain designer's recall",
+    "authority": "community",
+    "basis": "recalled"
+   }
+  ],
+  "channeled_experts": []
+ }
+}

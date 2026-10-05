@@ -29,9 +29,12 @@ using System.Windows.Media;
 /// At Dispatcher.ShutdownStarted, which comes after the report is written, the kept rows are written, one line each,
 /// then a closing line:
 /// <code>
+///   {"event":"notScanned","i":n,"path":text,"shown":[text]|null}
 ///   {"event":"row","i":n,"path":text,"kind":"NothingListed"|"ListedPartway","code":n,"reason":text,"shown":[text]|null}
-///   {"event":"rows","count":n,"selected":bool,"elevated":bool,"stopUtc":time|null,"atUtc":time}
+///   {"event":"rows","count":n,"notScanned":n,"selected":bool,"elevated":bool,"stopUtc":time|null,"atUtc":time}
 /// </code>
+/// A notScanned line is a folder SL-095 left out on purpose (the Windows container layer store), which the same list
+/// shows ahead of the failed folders: it is never a row and never in count.
 /// selected is whether the tab was selected when the rows were read; elevated is this process's token in the
 /// Administrators role; stopUtc is when stop mode pressed Cancel, null when nothing was pressed. When the panel cannot be
 /// read (no UnreadableList, an UnreadableRow member renamed, no ending before shutdown) the closing line is
@@ -48,6 +51,7 @@ internal static class RowsMode
     private static string? _error;
     private static bool _selected;
     private static readonly List<Dictionary<string, object?>> Rows = [];
+    private static readonly List<Dictionary<string, object?>> NotScanned = [];
 
     /// <summary>When stop mode pressed Cancel, round-trip UTC; null until it does.</summary>
     internal static string? StopUtc;
@@ -103,6 +107,25 @@ internal static class RowsMode
             for (int i = 0; i < list.Items.Count; i++)
             {
                 object item = list.Items[i];
+                List<string>? drawn = null;
+                if (list.ItemContainerGenerator.ContainerFromIndex(i) is DependencyObject drawnBy)
+                {
+                    drawn = [];
+                    Texts(drawnBy, drawn);
+                }
+                // SL-095 puts the folders left out on purpose in the same list, ahead of the failed ones. They are not
+                // failed folders: each is written as a line of its own kind and never counted among the rows.
+                if (item.GetType().Name == "NotScannedRow")
+                {
+                    NotScanned.Add(new Dictionary<string, object?>
+                    {
+                        ["event"] = "notScanned",
+                        ["i"] = i,
+                        ["path"] = item.GetType().GetProperty("Path")?.GetValue(item) as string,
+                        ["shown"] = drawn,
+                    });
+                    continue;
+                }
                 var values = new object?[Members.Length];
                 for (int m = 0; m < Members.Length; m++)
                 {
@@ -111,17 +134,13 @@ internal static class RowsMode
                     {
                         _error = $"the panel's row type {item.GetType().Name} has no {Members[m]}";
                         Rows.Clear();
+                        NotScanned.Clear();
                         return;
                     }
                     values[m] = property.GetValue(item);
                 }
-                List<string>? texts = null;
-                if (list.ItemContainerGenerator.ContainerFromIndex(i) is DependencyObject container)
-                {
-                    texts = [];
-                    Texts(container, texts);
+                if (drawn is not null)
                     realized++;
-                }
                 Rows.Add(new Dictionary<string, object?>
                 {
                     ["event"] = "row",
@@ -130,16 +149,17 @@ internal static class RowsMode
                     ["kind"] = values[1]?.ToString(),
                     ["code"] = values[2] is int code ? code : null,
                     ["reason"] = values[3] as string,
-                    ["shown"] = texts,
+                    ["shown"] = drawn,
                 });
             }
-            StartupHook.Log($"rows read count={Rows.Count} realized={realized} selected={_selected} ms={StartupHook.Clock.ElapsedMilliseconds}");
+            StartupHook.Log($"rows read count={Rows.Count} notScanned={NotScanned.Count} realized={realized} selected={_selected} ms={StartupHook.Clock.ElapsedMilliseconds}");
         }
         catch (Exception e)
         {
             // Never onto the dispatcher: the app would take it for its own fault and exit 70.
             _error = $"{e.GetType().Name}: {e.Message}";
             Rows.Clear();
+            NotScanned.Clear();
         }
     }
 
@@ -161,6 +181,8 @@ internal static class RowsMode
                 StartupHook.Log(JsonSerializer.Serialize(new Dictionary<string, object?> { ["event"] = "rows", ["error"] = error }));
                 return;
             }
+            foreach (Dictionary<string, object?> row in NotScanned)
+                StartupHook.Log(JsonSerializer.Serialize(row));
             foreach (Dictionary<string, object?> row in Rows)
                 StartupHook.Log(JsonSerializer.Serialize(row));
             bool elevated;
@@ -170,6 +192,7 @@ internal static class RowsMode
             {
                 ["event"] = "rows",
                 ["count"] = Rows.Count,
+                ["notScanned"] = NotScanned.Count,
                 ["selected"] = _selected,
                 ["elevated"] = elevated,
                 ["stopUtc"] = StopUtc,
