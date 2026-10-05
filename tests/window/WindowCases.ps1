@@ -4648,12 +4648,16 @@ function Test-StorePresent {
     $false
 }
 
-# X-001 (C-039, C-050): a root at the store, in three spellings, is refused: the report says outcome refused and refusal
-# container-layer-store, exits 0, nothing was counted, and the window says why beside the result: the defect, where it
-# lives (wcifs.sys), and that the Settings checkbox does not lift a refusal (review F1). The precaution was on.
+# A local path as this PC's own administrative share of its drive names it: C:\a through localhost is \\localhost\C$\a.
+function Get-LoopbackPath([string] $path) { '\\localhost\' + $path.Substring(0, 1) + '$' + $path.Substring(2) }
+
+# X-001 (C-039, C-050, O-084): a root at the store, in four spellings (the last through this PC's own administrative
+# share), is refused: the report says outcome refused and refusal container-layer-store, exits 0, nothing was counted,
+# and the window says why beside the result: the defect, where it lives (wcifs.sys), and that the refusal holds while
+# the Settings checkbox is ticked and can be turned off there (Q-186). The precaution was on.
 function Test-X001 {
     if (-not (Test-StorePresent)) { return }
-    foreach ($root in @($StoreRoot, ($StoreRoot + '\'), $StoreRoot.ToLowerInvariant())) {
+    foreach ($root in @($StoreRoot, ($StoreRoot + '\'), $StoreRoot.ToLowerInvariant(), (Get-LoopbackPath $StoreRoot))) {
         $lines = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $Reader -Root $root -Exe $Exe -TimeoutSec 120 -Outcome)
         CheckEqual 'EXIT 0' $lines[0] "exit code for $root"
         $outcome = @($lines | Where-Object { $_ -like 'OUTCOME *' })
@@ -4666,19 +4670,28 @@ function Test-X001 {
         CheckEqual 0 $report.core.folders "core.folders for $root"
         Check ($report.window.OutcomeTitle -like 'Not scanned: *') "OutcomeTitle says not scanned ($(Show $report.window.OutcomeTitle))"
         $detail = $report.window.OutcomeDetail -join ' '
-        Check ($detail -like "*can't be scanned safely*Where it lives: wcifs.sys*never scanned*Settings checkbox*") "OutcomeDetail names the defect, wcifs.sys and the Settings checkbox, which does not lift the refusal ($(Show $detail))"
+        Check ($detail -like "*can't be scanned safely*Where it lives: wcifs.sys*While the Settings checkbox*is ticked*is not scanned*turn this protection off in Settings*") "OutcomeDetail names the defect, wcifs.sys and the Settings checkbox that lifts the refusal ($(Show $detail))"
         CheckEqual $true @($report.workarounds | Where-Object { $_.id -eq 'wcifs-layer-store' })[0].on 'workarounds: the precaution was on'
         CheckEqual 'Settings...' $report.window.SettingsButton 'SettingsButton: none off'
     }
 }
 
-# X-002 (C-010, C-025, C-050, review M5, X1): the store's parent, ...\Containers, scanned to the end. The store is one
-# folder left out on purpose: skippedStores and notScanned 1, never in the unreadable count; the backstop refused
-# nothing; the window says so beside the totals, naming the defect in wcifs.sys and the Settings checkbox that left it
-# out, and in its own row, under a tab whose header counts it apart from unreadable folders. The precaution was on.
+# X-002 (C-010, C-025, C-050, O-084, review M5, X1): the store's parent, ...\Containers, scanned to the end, as a local
+# path and through this PC's own administrative share. The store is one folder left out on purpose: skippedStores and
+# notScanned 1, never in the unreadable count; the backstop refused nothing; the window says so beside the totals,
+# naming the defect in wcifs.sys and the Settings checkbox that left it out, and in its own row, under a tab whose
+# header counts it apart from unreadable folders. The precaution was on.
 function Test-X002 {
     if (-not (Test-StorePresent)) { return }
-    $root = Split-Path -Parent $StoreRoot
+    $local = Split-Path -Parent $StoreRoot
+    foreach ($root in $local, (Get-LoopbackPath $local)) {
+        Write-Output "    $root"
+        Test-X002Root $root
+    }
+}
+
+function Test-X002Root([string] $root) {
+    $store = $root + '\' + (Split-Path -Leaf $StoreRoot)
     $lines = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $Reader -Root $root -Exe $Exe -TimeoutSec 120 -Outcome)
     CheckEqual 'EXIT 0' $lines[0] 'exit code'
     $outcome = @($lines | Where-Object { $_ -like 'OUTCOME *' })
@@ -4692,7 +4705,7 @@ function Test-X002 {
     $unreadable = [int]$report.core.unreadable
     $expectedHeader = if ($unreadable -eq 0) { 'Not scanned (1)' } else { "Unreadable folders ($unreadable), not scanned (1)" }
     CheckEqual $expectedHeader $report.window.UnreadableTab.header 'UnreadableTab.header counts the store apart from the unreadable folders'
-    $note = @($report.window.OutcomeNotes.lines | Where-Object { $_ -like "Not scanned, size not counted: $StoreRoot (Windows container layers)*" })
+    $note = @($report.window.OutcomeNotes.lines | Where-Object { $_.StartsWith("Not scanned, size not counted: $store (Windows container layers)", [StringComparison]::OrdinalIgnoreCase) })
     Check ($note.Count -eq 1) "OutcomeNotes names the store ($(Show ($report.window.OutcomeNotes.lines -join ' | ')))"
     Check ($note.Count -eq 1 -and $note[0] -like '*Skipped to avoid a leak in wcifs.sys*Settings checkbox*turned off in Settings*') "the note says why beside the totals: the defect in wcifs.sys and the Settings checkbox ($(Show ($note -join ' | ')))"
     Check ($report.window.OutcomeNotes.visible) 'OutcomeNotes is on screen'
@@ -4743,7 +4756,7 @@ function Test-X005 {
             $box = @($run.Log | Where-Object { $_.StartsWith('settings box=') })
             Check ($box.Count -eq 1 -and (Field $box[0] 'id') -eq 'wcifs-layer-store' -and (Field $box[0] 'checked') -eq 'True') "the checkbox was the precaution's, ticked as the app started ($(Show ($box -join ' | ')))"
             $question = @($run.Log | Where-Object { $_.StartsWith('settings question=') })
-            Check ($question.Count -eq 1 -and $question[0] -like '*kernel memory*System handle*until you restart Windows*') "the question states the consequence ($(Show ($question -join ' | ')))"
+            Check ($question.Count -eq 1 -and $question[0] -like '*scanned as picked*kernel memory*System handle*each store entry*until you restart Windows*') "the question states the consequence: a folder inside the store scanned as picked, and the leak per entry until a restart ($(Show ($question -join ' | ')))"
             $answered = @($run.Log | Where-Object { $_.StartsWith('settings answered=') })
             Check ($answered.Count -eq 1 -and (Field $answered[0] 'checked') -eq "$on") "after answering $answer the box is ticked: $on ($(Show ($answered -join ' | ')))"
             CheckEqual '0' $run.Exit 'exit code'

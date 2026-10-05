@@ -32,12 +32,13 @@ namespace FsAnalyser.Core.Scanning;
 /// <para>For a scan of a whole drive, the volume's used space is read as the scan starts, on a thread of
 /// its own (<see cref="VolumeSpace"/>), and lands in <see cref="ScanStore.VolumeUsed"/>. The scan never waits
 /// for it: it ends, completed or cancelled, whether or not the volume has answered.</para>
-/// <para>The Windows container layer store is never opened by a scan that starts at or inside it (SL-095,
-/// <see cref="ContainerLayerStore"/>): such a root is Refused, with nothing listed or probed (Q-179, Q-182). While the
-/// precaution against wcifs.sys's leak is on in <see cref="ScanOptions.EnabledWorkarounds"/>, as it is unless a person
-/// turns it off, a scan that reaches the store below its root records it in <see cref="ScanResult.SkippedStores"/>, a
-/// folder with nothing listed whose size is not counted, never in <see cref="ScanResult.Unreadable"/>. With it off the
-/// walk is exactly as it was before SL-095; only <see cref="ContainerLayerStore"/> reads the switch.</para>
+/// <para>While the precaution against wcifs.sys's leak is on in <see cref="ScanOptions.EnabledWorkarounds"/>, as it is
+/// unless a person turns it off, the Windows container layer store is never opened (SL-095,
+/// <see cref="ContainerLayerStore"/>): a scan that starts at or inside it is Refused, with nothing listed or probed
+/// (Q-179, Q-182), and a scan that reaches the store below its root records it in <see cref="ScanResult.SkippedStores"/>,
+/// a folder with nothing listed whose size is not counted, never in <see cref="ScanResult.Unreadable"/>. With it off
+/// both are lifted and the walk is exactly as it was before SL-095 (Q-186); only <see cref="ContainerLayerStore"/>
+/// reads the switch.</para>
 /// </remarks>
 public static class Scanner
 {

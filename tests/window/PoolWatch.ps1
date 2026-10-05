@@ -19,8 +19,9 @@
 #                                                raw nets and the environment; exit 0 when complete, 2 when not
 #
 # Nothing here elevates or asks for elevation (architecture rule). `fltmc filters` needs an administrator: a person who
-# chooses to may run it in an elevated window of their own and paste what it prints into <RunDir>\fltmc.txt (or the
-# prepare folder's); the environment record keeps it only when it is the filter list.
+# chooses to may run it in an elevated window of their own and paste what it prints into <RunDir>\fltmc.txt, before or
+# after -Protocol. -Report reads that file (or <RunDir>\prepare\fltmc.txt) each time it runs, and counts it only when it
+# is the filter list; -Prepare also copies a paste it finds in the prepare folder into the environment record.
 #
 # Nothing here lists or opens anything under the container layer store: the only walker it starts is the app itself,
 # which leaves the store out. The machine guard is per arm: combined pool growth over the arm's own /before mark above
@@ -322,7 +323,8 @@ function Invoke-ExeArm([string] $name, [string] $type, [string] $root, [hashtabl
     $reportFile = Join-Path $RunDir "$name.report.json"
     $hookLog = Join-Path $RunDir "$name.hook.log"
     $line = [ordered]@{ kind = 'arm'; arm = $name; type = $type; root = $root; hook = $hook; exitCode = $null; report = $null; hookLog = @();
-        acted = $false; foldersAtCancel = $null; ranFull = $false; guardStop = $null; guardAtStart = $false; cascadeFrom = $null; rehearsal = [bool]$script:Rehearsing }
+        acted = $false; foldersAtCancel = $null; ranFull = $false; guardStop = $null; guardAtStart = $false; cascadeFrom = $null; interrupted = $false
+        rehearsal = [bool]$script:Rehearsing }
     $before = Write-Mark "$name/before"
     if ($before.availableMB -lt $Guard.AvailableMB) {
         # Not started: the guard is already exceeded, so it would be stopped at its first poll and say nothing of its own.
@@ -340,46 +342,95 @@ function Invoke-ExeArm([string] $name, [string] $type, [string] $root, [hashtabl
         foreach ($k in $hook.Keys) { $vars[$k] = "$($hook[$k])" }
     }
     $p = Start-Exe $AppExe @($root, '--report', $reportFile) $vars
-    $start = [long]$before.pagedBytes + [long]$before.nonpagedBytes
-    $every = [Math]::Max(1, $Timing.MarkEverySec)
-    $next = (Get-Date).AddSeconds($every); $n = 0
-    while (-not $p.WaitForExit(2000)) {
-        $pool = Get-Pool
-        $growth = $pool.Paged + $pool.Nonpaged - $start
-        if ($pool.AvailableMB -lt $Guard.AvailableMB -or $growth -gt $Guard.PoolBytes) {
-            $line['guardStop'] = "available $($pool.AvailableMB) MB, pool +$([Math]::Round($growth / 1MB)) MiB over $name/before"
-            $script:LastGuardStop = $name
-            try { $p.Kill() } catch { }
-            $p.WaitForExit()
-            break
+    $written = $false
+    try {
+        $start = [long]$before.pagedBytes + [long]$before.nonpagedBytes
+        $every = [Math]::Max(1, $Timing.MarkEverySec)
+        $next = (Get-Date).AddSeconds($every); $n = 0
+        while (-not $p.WaitForExit(2000)) {
+            $pool = Get-Pool
+            $growth = $pool.Paged + $pool.Nonpaged - $start
+            if ($pool.AvailableMB -lt $Guard.AvailableMB -or $growth -gt $Guard.PoolBytes) {
+                $line['guardStop'] = "available $($pool.AvailableMB) MB, pool +$([Math]::Round($growth / 1MB)) MiB over $name/before"
+                $script:LastGuardStop = $name
+                try { $p.Kill() } catch { }
+                $p.WaitForExit()
+                break
+            }
+            if ((Get-Date) -ge $next) { $n++; $null = Write-Mark ('{0}/t{1:D3}' -f $name, $n); $next = (Get-Date).AddSeconds($every) }
         }
-        if ((Get-Date) -ge $next) { $n++; $null = Write-Mark ('{0}/t{1:D3}' -f $name, $n); $next = (Get-Date).AddSeconds($every) }
+        if ($p.HasExited) { $line['exitCode'] = $p.ExitCode }
+        $null = Write-Mark "$name/exit"
+        Start-Sleep -Seconds $Timing.SettleSec
+        $null = Write-Mark "$name/settled"
+        if (Test-Path -LiteralPath $reportFile) {
+            $r = Get-Content -LiteralPath $reportFile -Raw | ConvertFrom-Json
+            $line['report'] = [ordered]@{ status = $r.core.status; outcome = $r.outcome; files = $r.core.files; folders = $r.core.folders;
+                notScanned = $r.core.notScanned; skippedStores = $r.core.skippedStores; opensUnderExcludedStore = $r.core.opensUnderExcludedStore; elapsedMs = $r.core.elapsedMs }
+        }
+        if (Test-Path -LiteralPath $hookLog) {
+            $logged = @(Read-Lines $hookLog | Where-Object { $_ -match '^(acted|refused|passed) ' })
+            $line['hookLog'] = $logged
+            # Whether the hook pressed Cancel or closed the window at all. It refuses without acting when the scan ends
+            # first (ranFull), when the app shuts down before the trigger, and when the trigger's deadline passes (review
+            # R2-R3-3).
+            $line['acted'] = [bool](@($logged) -match '^acted ')
+            $line['ranFull'] = [bool](@($logged) -match 'ended before the trigger')
+            foreach ($l in $logged) { if ($l -match '^acted .* folders=(\d+)') { $line['foldersAtCancel'] = [long]$Matches[1] } }
+        }
+        Add-Line (Join-Path $RunDir 'arms.jsonl') $line
+        $written = $true
     }
-    if ($p.HasExited) { $line['exitCode'] = $p.ExitCode }
-    $null = Write-Mark "$name/exit"
-    Start-Sleep -Seconds $Timing.SettleSec
-    $null = Write-Mark "$name/settled"
-    if (Test-Path -LiteralPath $reportFile) {
-        $r = Get-Content -LiteralPath $reportFile -Raw | ConvertFrom-Json
-        $line['report'] = [ordered]@{ status = $r.core.status; outcome = $r.outcome; files = $r.core.files; folders = $r.core.folders;
-            notScanned = $r.core.notScanned; skippedStores = $r.core.skippedStores; opensUnderExcludedStore = $r.core.opensUnderExcludedStore; elapsedMs = $r.core.elapsedMs }
+    finally {
+        # A terminating error (a CIM reading Windows would not give) or Ctrl+C while the arm runs: FsAnalyser.exe is not
+        # left scanning C: with no guard polling it, and the arm still has its line, marked interrupted (review R2-n2).
+        if (-not $written) {
+            if (-not $p.HasExited) { try { $p.Kill() } catch { }; try { $null = $p.WaitForExit(30000) } catch { } }
+            $line['interrupted'] = $true
+            try { Add-Line (Join-Path $RunDir 'arms.jsonl') $line } catch { }
+        }
     }
-    if (Test-Path -LiteralPath $hookLog) {
-        $logged = @(Read-Lines $hookLog | Where-Object { $_ -match '^(acted|refused|passed) ' })
-        $line['hookLog'] = $logged
-        # Whether the hook pressed Cancel or closed the window at all. It refuses without acting when the scan ends first
-        # (ranFull), when the app shuts down before the trigger, and when the trigger's deadline passes (review R2-R3-3).
-        $line['acted'] = [bool](@($logged) -match '^acted ')
-        $line['ranFull'] = [bool](@($logged) -match 'ended before the trigger')
-        foreach ($l in $logged) { if ($l -match '^acted .* folders=(\d+)') { $line['foldersAtCancel'] = [long]$Matches[1] } }
-    }
-    Add-Line (Join-Path $RunDir 'arms.jsonl') $line
     $line
 }
 
 # ---- -Report: completeness and raw nets, never a judgement ----
 
-function Read-Jsonl([string] $file) { if (Test-Path -LiteralPath $file) { @(Get-Content -LiteralPath $file | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json }) } else { @() } }
+# Each line of a JSONL log parsed on its own. A torn last line (a kill or a closed console mid-write) and a NUL-filled tail
+# (a bugcheck before the data was flushed) are the likely endings of a kernel-pool session: they come back as the numbers
+# of the lines that are not JSON, never as an error that stops -Report (review R2-n1).
+function Read-Jsonl([string] $file) {
+    $items = New-Object System.Collections.Generic.List[object]
+    $bad = New-Object System.Collections.Generic.List[int]
+    if (Test-Path -LiteralPath $file) {
+        $n = 0
+        foreach ($raw in @(Read-Lines $file)) {
+            $n++
+            if (-not $raw.Trim()) { continue }
+            $text = $raw.Trim([char]0, [char]0xFEFF, ' ', "`t")
+            if (-not $text) { $bad.Add($n); continue }
+            try { $items.Add(($text | ConvertFrom-Json)) } catch { $bad.Add($n) }
+        }
+    }
+    [pscustomobject]@{ Items = $items.ToArray(); Bad = $bad.ToArray() }
+}
+
+# The fltmc paste, wherever and whenever the person put it: <RunDir>\fltmc.txt, then <RunDir>\prepare\fltmc.txt, read now;
+# then the record -Prepare froze into prepare.json. Recorded only when one of them is the filter list (reviews m1, R2-N3).
+function Get-FiltersLine([string] $dir, $environment) {
+    $first = $null
+    foreach ($paste in (Join-Path $dir 'fltmc.txt'), (Join-Path $dir 'prepare\fltmc.txt')) {
+        if (-not (Test-Path -LiteralPath $paste)) { continue }
+        $t = Test-FltmcList @(Read-Lines $paste)
+        if ($t.isList) { return "FILTERS recorded: $paste" }
+        if ($null -eq $first) { $first = "$paste holds no filter list ($(if ($t.first) { $t.first } else { 'it is empty' }))" }
+    }
+    if ($null -ne $environment) {
+        $t = Test-FltmcList @($environment.fltmcFilters)
+        if ($t.isList) { return "FILTERS recorded: $(Join-Path $dir 'prepare\prepare.json')" }
+        if ($null -eq $first) { $first = $(if ($t.first) { $t.first } else { 'no fltmc paste was recorded' }) }
+    }
+    "FILTERS UNDECIDED: $(if ($first) { $first } else { 'no fltmc paste was recorded' })"
+}
 
 # What makes the run incomplete, one line each, against the plan line -Protocol wrote before R0.
 function Get-Missing($plan, $marks, $arms) {
@@ -394,8 +445,13 @@ function Get-Missing($plan, $marks, $arms) {
     }
     foreach ($name in @($plan.arms)) {
         $a = $byArm[$name]
-        if ($null -eq $a) { $missing.Add("arm ${name}: in the plan but not in arms.jsonl, so it never started"); continue }
+        if ($null -eq $a) {
+            if ($byLabel.ContainsKey("$name/before")) { $missing.Add("arm ${name}: started (its /before mark is in marks.jsonl) but its arm line was never written") }
+            else { $missing.Add("arm ${name}: in the plan but not in arms.jsonl, so it never started") }
+            continue
+        }
         if ($a.guardAtStart) { $missing.Add("arm ${name}: not measured: guard already exceeded at start (cascade from $(if ($a.cascadeFrom) { $a.cascadeFrom } else { 'an earlier arm' }))"); continue }
+        if ($a.interrupted) { $missing.Add("arm ${name}: interrupted: -Protocol stopped while it ran, and FsAnalyser.exe was killed"); continue }
         foreach ($need in "$name/before", "$name/exit", "$name/settled") {
             if (-not $byLabel.ContainsKey($need)) { $missing.Add("arm ${name}: mark $need is missing"); continue }
             $m = $byLabel[$need]
@@ -461,12 +517,16 @@ function Format-Net([string] $name, [string] $type, [string] $exit, [string] $st
 }
 
 function Write-RunReport([string] $dir) {
-    $marks = Read-Jsonl (Join-Path $dir 'marks.jsonl')
-    $lines = Read-Jsonl (Join-Path $dir 'arms.jsonl')
+    $markLog = Read-Jsonl (Join-Path $dir 'marks.jsonl')
+    $armLog = Read-Jsonl (Join-Path $dir 'arms.jsonl')
+    $marks = $markLog.Items
+    $lines = $armLog.Items
     $plan = @($lines | Where-Object { $_.kind -eq 'plan' }) | Select-Object -Last 1
     $arms = @($lines | Where-Object { $_.kind -eq 'arm' })
     $byLabel = @{}; foreach ($m in $marks) { $byLabel[$m.label] = $m }
     $missing = Get-Missing $plan $marks $arms
+    foreach ($n in $markLog.Bad) { $missing.Add("marks.jsonl line $n is not JSON (a torn or unflushed write)") }
+    foreach ($n in $armLog.Bad) { $missing.Add("arms.jsonl line $n is not JSON (a torn or unflushed write)") }
     $out = New-Object System.Collections.Generic.List[string]
     if ($plan -and $plan.rehearsal) { $out.Add('REHEARSAL: a generated %TEMP% tree with short windows, not a measurement of C:') }
     if ($missing.Count -eq 0) { $out.Add('RUN COMPLETE') }
@@ -489,13 +549,15 @@ function Write-RunReport([string] $dir) {
     }
     $out.Add('')
     $prepare = Join-Path $dir 'prepare\prepare.json'
-    if (Test-Path -LiteralPath $prepare) {
-        $e = (Get-Content -LiteralPath $prepare -Raw | ConvertFrom-Json).environment
-        $out.Add("ENVIRONMENT $($e.os); wcifs.sys $($e.wcifsVersion); drivers $(@($e.drivers | ForEach-Object { "$($_.name) $($_.state)" }) -join ', '); antivirus $(@($e.antivirus | ForEach-Object name) -join ', '); OneDrive running $($e.oneDriveRunning)")
-        $t = Test-FltmcList @($e.fltmcFilters)
-        $out.Add($(if ($t.isList) { "FILTERS recorded: $prepare" } else { "FILTERS UNDECIDED: $(@($e.fltmcFilters)[0])" }))
+    $e = $null
+    if (-not (Test-Path -LiteralPath $prepare)) { $out.Add("ENVIRONMENT not recorded: $prepare is missing") }
+    else {
+        $text = ([IO.File]::ReadAllText((Convert-Path -LiteralPath $prepare))).Trim([char]0, [char]0xFEFF, ' ', "`t", "`r", "`n")
+        try { $e = ($text | ConvertFrom-Json).environment } catch { $e = $null }
+        if ($null -eq $e) { $out.Add("ENVIRONMENT not readable: $prepare is not JSON with an environment record (a torn or unflushed write)") }
+        else { $out.Add("ENVIRONMENT $($e.os); wcifs.sys $($e.wcifsVersion); drivers $(@($e.drivers | ForEach-Object { "$($_.name) $($_.state)" }) -join ', '); antivirus $(@($e.antivirus | ForEach-Object name) -join ', '); OneDrive running $($e.oneDriveRunning)") }
     }
-    else { $out.Add("ENVIRONMENT not recorded: $prepare is missing") }
+    $out.Add((Get-FiltersLine $dir $e))
     [pscustomobject]@{ Lines = $out; Complete = ($missing.Count -eq 0) }
 }
 
@@ -554,6 +616,7 @@ switch ($PSCmdlet.ParameterSetName) {
         $written = Invoke-Prepare $RunDir
         Write-Host "Prepared: $written. Now restart with Start > Restart (not Shut down), sign in, open nothing but one PowerShell window, and within 30 minutes run:"
         Write-Host '  powershell -NoProfile -ExecutionPolicy Bypass -File tests\window\PoolWatch.ps1 -Protocol'
+        Write-Host "If you choose to run 'fltmc filters' in an elevated window of your own, paste what it prints into $(Join-Path $RunDir 'fltmc.txt'), at any time: -Report reads it each time it runs."
     }
     'Protocol' {
         $flags = [Convert]::ToUInt32('80000001', 16) # ES_CONTINUOUS | ES_SYSTEM_REQUIRED: no sleep while it runs
@@ -592,15 +655,22 @@ switch ($PSCmdlet.ParameterSetName) {
             }
             exit $code
         }
+        # The boot's age first: on a boot that has already walked the layer, every run would be the vacuous kind that voided
+        # the earlier spikes, so nothing is started and nothing is written (review X4, case C-011).
+        $boot = Get-Boot
+        if ($boot.UptimeSec -gt $Timing.BootAgeMaxSec) { throw "PoolWatch -Protocol: this boot is $($boot.UptimeSec) s old, over $($Timing.BootAgeMaxSec) s. Restart (Start > Restart) and run it within 30 min (review X4)." }
         $prepFile = Join-Path $RunDir 'prepare\prepare.json'
         if (-not (Test-Path -LiteralPath $prepFile)) { throw "PoolWatch -Protocol: run -Prepare before the Restart first ($prepFile is missing)" }
         foreach ($built in $AppExe, $HookDll) { if (-not (Test-Path -LiteralPath $built)) { throw "PoolWatch -Protocol: $built is missing; run -Prepare before the Restart" } }
-        $boot = Get-Boot
-        if ($boot.UptimeSec -gt $Timing.BootAgeMaxSec) { throw "PoolWatch -Protocol: this boot is $($boot.UptimeSec) s old, over $($Timing.BootAgeMaxSec) s. Restart (Start > Restart) and run it within 30 min (review X4)." }
         if (Test-Path -LiteralPath (Join-Path $RunDir 'marks.jsonl')) {
             $fresh = Join-Path $RunDir ('protocol-{0:yyyyMMdd-HHmmss}' -f (Get-Date))
             New-Item -ItemType Directory -Force -Path (Join-Path $fresh 'prepare') | Out-Null
             Copy-Item -LiteralPath $prepFile -Destination (Join-Path $fresh 'prepare\prepare.json')
+            # A pasted fltmc list goes along, so -Report over the fresh folder still finds it (review m1).
+            foreach ($paste in 'fltmc.txt', 'prepare\fltmc.txt') {
+                $from = Join-Path $RunDir $paste
+                if (Test-Path -LiteralPath $from) { Copy-Item -LiteralPath $from -Destination (Join-Path $fresh $paste) }
+            }
             $RunDir = $fresh
             Write-Host "Writing to $RunDir"
         }

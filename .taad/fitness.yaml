@@ -984,7 +984,8 @@ rules:
     because: The refuse-and-count backstop and the published opensUnderExcludedStore counter
       are evidence only if every directory open passes the rule check in DirectoryReader.Read.
       A second call site opens a layer folder with no check and no count. The wcifs leak comes
-      back while the counter, and the tolerance verdict judged by it, still reads 0.
+      back while the counter, which PoolWatch -Report's completeness check and the window
+      report read, still reads 0.
     except_files:
     - src/FsAnalyser.Core/Scanning/DirectoryReader.cs
   - name: product code never switches the per-file metadata probe off
@@ -993,9 +994,9 @@ rules:
     - (?m)\bProbeRule\s*=(?![=>])
     because: SL-056 and Q-004 decided that every first-seen, non-link, non-cloud-only file is
       sized from its own handle, because listings go stale (a 257 MiB file listed at 0 B for
-      15 s or more). The listing-only arm is a measurement rig that lives in tests/window/ScanArm
-      and is deleted whatever the O-003 outcome. A ProbeRule assignment in product code brings
-      stale sizes back into the totals.
+      15 s or more). The listing-only measurement arm that set it was deleted with ScanArm once
+      O-003 was decided, and nothing outside ScanOptions sets it now. A ProbeRule assignment in
+      product code brings stale sizes back into the totals.
     except_files:
     - src/FsAnalyser.Core/Scanning/ScanOptions.cs
 
@@ -1015,10 +1016,10 @@ rules:
     files: tests/window/**
     must_not_match:
     - ContainerLayerStorePath
-    because: ScanArm has InternalsVisibleTo into Core. A rig that sets the override walks the
-      live layer on the person's fresh boot. That leaks about 210K WC* entries and System handles
-      until another Restart, and voids the protocol's WC* clause. Only Core.Tests may plant
-      a fake store.
+    because: No rig has InternalsVisibleTo into Core now. The rule keeps any future rig, or the
+      window hook, from setting the override, which would walk the live layer on the person's
+      fresh boot and leak about 210K WC* entries and System handles until another Restart.
+      Only Core.Tests may plant a fake store.
   - name: the App never relocates the store
     files: src/FsAnalyser.App/**
     must_not_match:

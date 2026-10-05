@@ -664,21 +664,18 @@ public class ContainerLayerStoreTests
     // ---- The precaution off ----
 
     /// <summary>
-    /// C-049 (review F1): both positions of the 'wcifs-layer-store' checkbox, on a planted store only (off against the
-    /// real store would leak until a Restart, so nothing ever runs it there). On is the default for every scan. Off
-    /// restores the plain walk exactly: the store is listed and counted like any folder, there is no not-scanned record
-    /// and the reader has no rule to refuse with. A root picked inside the store is still Refused with it off: Q-182
-    /// decided refusal with no user override, and the switch governs only the exclusion.
+    /// C-049 (Q-186): both positions of the 'wcifs-layer-store' checkbox over a scan above the store, on a planted store
+    /// only (off against the real store leaks until a Restart, so nothing ever runs it there). On is the default for every
+    /// scan. Off restores the plain walk exactly: the store is listed and counted like any folder, there is no not-scanned
+    /// record and the reader has no rule to refuse with.
     /// </summary>
     [Fact]
-    public void WithThePrecautionOffTheStoreIsCountedAndARootInsideItIsStillRefused()
+    public void WithThePrecautionOffTheStoreIsListedAndCountedLikeAnyFolder()
     {
         using TempTree tree = PlantedTree();
 
         ScanResult on = Scans.Run(tree.Root, Planted(tree));
-        ScanResult off = Scans.Run(tree.Root, new ScanOptions { ContainerLayerStorePath = tree.PathOf(Store), EnabledWorkarounds = Off() });
-        ScanResult insideOff = Scanner.Scan(tree.PathOf($@"{Store}\L1"), new ScanProgress(), CancellationToken.None,
-            new ScanOptions { ContainerLayerStorePath = tree.PathOf(Store), EnabledWorkarounds = Off() });
+        ScanResult off = Scans.Run(tree.Root, PlantedOff(tree));
 
         Assert.Equal(OutsideBytes, on.Totals.Bytes);
         Assert.Single(on.SkippedStores);
@@ -688,14 +685,136 @@ public class ContainerLayerStoreTests
         Assert.Equal(0, off.OpensUnderExcludedStore);
         Assert.True((off.Store.Flags(Scans.Find(off, tree.PathOf(Store))) & EntryFlags.NotScanned) == 0);
         Assert.Contains(Scans.ByPath(off.Store).Keys, path => path == tree.PathOf($@"{Store}\L1\Files\Windows\win.ini"));
-        Assert.Equal(ScanStatus.Refused, insideOff.Status);
-        Assert.Equal(0, insideOff.Store.Count);
 
         Assert.Contains(KnownWorkarounds.WcifsLayerStore, KnownWorkarounds.All);
         Assert.True(KnownWorkarounds.WcifsLayerStore.DefaultOn);
         Assert.Contains(KnownWorkarounds.WcifsLayerStore.Id, ScanOptions.Default.EnabledWorkarounds);
         Assert.Contains(KnownWorkarounds.WcifsLayerStore.Id, new ScanOptions().EnabledWorkarounds);
     }
+
+    /// <summary>
+    /// C-049 (Q-186): a root picked at or inside the store, both positions of the checkbox, on a planted store only. On,
+    /// it is Refused with nothing listed. Off lifts the refusal with the exclusion: the root is scanned as picked, every
+    /// entry under it listed and counted, with no refusal, no not-scanned record and no backstop refusal. Off decides
+    /// with nothing compared or opened: the store itself as the root, on a cancelled token, is None.
+    /// </summary>
+    [Theory]
+    [InlineData("", 5, StoreBytes)]
+    [InlineData(@"\L1", 5, StoreBytes)]
+    [InlineData(@"\L1\Files\Windows", 2, 1000 + 50)]
+    public void WithThePrecautionOffARootAtOrInsideTheStoreIsScannedAsPicked(string below, long files, long bytes)
+    {
+        using TempTree tree = PlantedTree();
+        string root = tree.PathOf(Store) + below;
+
+        ScanResult on = Scanner.Scan(root, new ScanProgress(), CancellationToken.None, Planted(tree));
+        ScanResult off = Scanner.Scan(root, new ScanProgress(), CancellationToken.None, PlantedOff(tree));
+
+        Assert.Equal(ScanStatus.Refused, on.Status);
+        Assert.Equal(0, on.Store.Count);
+        Assert.Equal(ScanStatus.Completed, off.Status);
+        Assert.Equal(ScanRefusal.None, off.Refusal);
+        Assert.Null(off.RefusalWorkaroundId);
+        Assert.Equal(files, off.Totals.Files);
+        Assert.Equal(bytes, off.Totals.Bytes);
+        Assert.Contains(Scans.ByPath(off.Store).Keys, path => path == tree.PathOf($@"{Store}\L1\Files\Windows\win.ini"));
+        Assert.Empty(off.SkippedStores);
+        Assert.Empty(off.Unreadable);
+        Assert.Equal(0, off.OpensUnderExcludedStore);
+
+        string storeWin32 = LongPath.ToExtended(tree.PathOf(Store));
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        Assert.Equal(StoreVerdictKind.Refuse, ContainerLayerStore.Resolve(storeWin32, tree.PathOf(Store), cancelled.Token).Kind);
+        Assert.Equal(StoreVerdictKind.None, ContainerLayerStore.Resolve(storeWin32, tree.PathOf(Store), cancelled.Token, Off()).Kind);
+    }
+
+    // ---- A root through this PC's own administrative share ----
+
+    /// <summary>
+    /// The planted store spelled through this PC's administrative share of its drive, \\host\C$\..., for every host name
+    /// that is this PC. Comparing strings settles it with no open: a root inside the store is Refused and a root above
+    /// it Excludes the store in the root's own spelling. Every spelling of another host, another share, or a drive
+    /// share of another letter leaves the path as it was.
+    /// </summary>
+    [Fact]
+    public void ARootThroughThisPcsAdminShareIsDecidedAsTheDrivePathItNames()
+    {
+        using TempTree tree = PlantedTree();
+        string store = tree.PathOf(Store);
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        string[] hosts = ["localhost", "LOCALHOST", "127.0.0.1", "127.1.2.3", "0--1.ipv6-literal.net", Environment.MachineName,
+            System.Net.Dns.GetHostName()];
+        foreach (string host in hosts)
+        {
+            string inside = LongPath.NormalizeRoot(Loopback(store + @"\L1\Files", host)).Win32;
+            string above = LongPath.NormalizeRoot(Loopback(tree.Root, host)).Win32;
+            Assert.Equal(@"\\?\" + store + @"\L1\Files", ContainerLayerStore.ThroughLoopbackShare(inside), StringComparer.OrdinalIgnoreCase);
+
+            Assert.Equal(StoreVerdictKind.Refuse, ContainerLayerStore.Resolve(inside, store, cancelled.Token).Kind);
+            StoreVerdict verdict = ContainerLayerStore.Resolve(above, store, cancelled.Token);
+            Assert.Equal(StoreVerdictKind.Exclude, verdict.Kind);
+            Assert.Equal(above + @"\x\Containers\Layers", verdict.Excluded);
+            Assert.Equal(StoreVerdictKind.None, ContainerLayerStore.Resolve(inside, store, cancelled.Token, Off()).Kind);
+        }
+
+        string drive = store[..1];
+        foreach (string other in new[] { $@"\\?\UNC\fsa-not-this-pc\{drive}$\x", $@"\\?\UNC\localhost\share\x", @"\\?\UNC\localhost\" + drive + @"$$\x",
+            @"\\?\UNC\localhost", @"\\?\" + store, @"\\?\UNC\127.0.0.1x\" + drive + @"$\x" })
+            Assert.Same(other, ContainerLayerStore.ThroughLoopbackShare(other));
+    }
+
+    /// <summary>
+    /// O-084 (validate attempt 2's \\localhost\C$ finding): the scan itself through this PC's administrative share,
+    /// listed over SMB. A root inside the planted store is Refused with nothing listed; a root above it skips the store
+    /// as one not-scanned folder in the share's spelling, counting everything else; a directory symbolic link to the share
+    /// relates to the store only by its final path, which comes back as a share and is mapped the same way. Only the
+    /// share's answering is conditional, since a PC can turn administrative shares off: the comparison itself is
+    /// asserted with no share by the test above. On this PC they answer, so every row runs.
+    /// </summary>
+    [Fact]
+    public void AScanThroughThisPcsAdminShareRefusesInsideTheStoreAndSkipsItFromAbove()
+    {
+        using TempTree tree = PlantedTree();
+        foreach (string host in new[] { "localhost", "127.0.0.1" })
+        {
+            string share = Loopback(tree.Root, host);
+            if (!Directory.Exists(share))
+                continue; // administrative shares are off on this PC: the comparison is still asserted, shareless, above
+
+            SynchronousIoCancel? scanGuard = null;
+            ScanResult inside = Scans.WithGuard(guard => scanGuard = guard,
+                () => Scanner.Scan(Loopback(tree.PathOf($@"{Store}\L1\Files"), host), new ScanProgress(), CancellationToken.None, Planted(tree)));
+            Assert.Equal(ScanStatus.Refused, inside.Status);
+            Assert.Equal(ScanRefusal.ContainerLayerStore, inside.Refusal);
+            Assert.Equal(0, scanGuard!.Calls);
+            Assert.Equal(0, inside.Store.Count);
+
+            var progress = new ScanProgress();
+            var listed = new List<string>();
+            ScanResult above = Scanner.Scan(share, progress, CancellationToken.None, Planted(tree, _ => listed.Add(progress.CurrentFolder!)));
+            Assert.Equal(ScanStatus.Completed, above.Status);
+            Assert.Equal(OutsideBytes, above.Totals.Bytes);
+            Assert.Equal(share + @"\x\Containers\Layers", above.Store.GetPath(Assert.Single(above.SkippedStores).Entry), StringComparer.OrdinalIgnoreCase);
+            Assert.Equal(0, above.OpensUnderExcludedStore);
+            Assert.DoesNotContain(listed, path => path.Contains(@"\Containers\Layers", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(listed, path => path.EndsWith(@"\Containers\ContainerStorages", StringComparison.OrdinalIgnoreCase));
+
+            string link = tree.DirectorySymlink($"to-{host}", Loopback(tree.PathOf("x"), host));
+            ScanResult throughLink = Scans.Run(link, Planted(tree));
+            Assert.Equal(ScanStatus.Completed, throughLink.Status);
+            Assert.Equal(5 + 10, throughLink.Totals.Bytes);
+            Assert.Equal(link + @"\Containers\Layers", throughLink.Store.GetPath(Assert.Single(throughLink.SkippedStores).Entry));
+            string linkInside = tree.DirectorySymlink($"into-{host}", Loopback(tree.PathOf($@"{Store}\L1"), host));
+            Assert.Equal(ScanStatus.Refused, Scanner.Scan(linkInside, new ScanProgress(), CancellationToken.None, Planted(tree)).Status);
+        }
+    }
+
+    // A local path as this PC's administrative share of its drive names it: C:\a\b through host is \\host\C$\a\b.
+    private static string Loopback(string localPath, string host) => $@"\\{host}\{localPath[0]}$\{localPath[3..]}";
+
+    private static ScanOptions PlantedOff(TempTree tree) => new() { ContainerLayerStorePath = tree.PathOf(Store), EnabledWorkarounds = Off() };
 
     private static IReadOnlySet<string> Off() =>
         KnownWorkarounds.DefaultEnabled.Where(id => id != KnownWorkarounds.WcifsLayerStore.Id).ToHashSet(StringComparer.Ordinal);

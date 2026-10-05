@@ -28,7 +28,8 @@ public enum ScanRefusal
 
     /// <summary>
     /// The root is the Windows container layer store or a folder inside it, which wcifs.sys leaks kernel memory and a
-    /// System handle for, entry by entry, until a restart (SL-095, Q-179, Q-182). Refused whatever the Settings say.
+    /// System handle for, entry by entry, until a restart (SL-095, Q-179, Q-182). Refused while the Settings precaution
+    /// against that leak is on, as it is at every launch; with it off the root is scanned as picked (Q-186).
     /// </summary>
     ContainerLayerStore,
 }

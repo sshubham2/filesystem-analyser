@@ -2,9 +2,11 @@
 
 A scan of C: walked into the live Windows container layer under
 `%ProgramData%\Microsoft\Windows\Containers\Layers\<id>\Files`, and wcifs.sys, Microsoft's container isolation
-minifilter, keeps kernel pool and a System-process handle for every layer entry opened for the first time since a
-restart (microsoft/Windows-Containers#646). The app now never opens that store: a root at or inside it is refused, and
-a scan above it leaves it out while the precaution against that defect is on, as it is unless a person turns it off.
+minifilter, keeps kernel pool and a System-process handle for each layer entry a program opens, until a full restart,
+and opening the same entries again was measured keeping more (microsoft/Windows-Containers#646; *DONE (a)* below).
+While the precaution against that defect is on, as it is at every launch, the app never opens that store: a root at or
+inside it is refused, and a scan above it leaves it out. A person who turns the precaution off in Settings, after a
+confirmation that states the cost, lifts both for that session (Q-186).
 
 The slice was narrowed (design 10, 5 Oct 2026): it judges no pool tolerance. **The tens-of-GB report is not claimed
 fixed.** Spike #87 (4 Oct 2026, after a true Restart, store excluded) stopped arm L at its guard with +375 MiB paged and
@@ -20,16 +22,24 @@ file and the design disagree, this file is right.
   through the guarded open, the root and the store's anchor (`%ProgramData%`, or the planted store's parent under the
   test override; never the store itself), each asked for its final path (`GetFinalPathNameByHandleW`). That catches a
   subst drive, a junction or symbolic link, an 8.3 name and a `\\?\Volume{GUID}\` root, and maps the store back into the
-  root's own spelling. A root that cannot be opened, or a final path Windows will not give (a share), leaves the string
-  verdict standing (None) and the scan goes on to its usual RootUnreadable. An empty or relative known folder is no
-  store, never every path.
-- **A root at or inside the store is refused, always** (Q-179, Q-182): `ScanStatus.Refused`,
+  root's own spelling. A root through this PC's own administrative share of a drive (`\\localhost\C$\...`,
+  `\\127.0.0.1\C$\...`, the `::1` form `0--1.ipv6-literal.net`, this PC's name, DNS name, full name or one of its own
+  addresses) is compared as the drive path it names, in both steps, and so is a final path that comes back as such a
+  share (a drive letter mapped to it, a symbolic link to it); the excluded path goes back into the root's own spelling
+  (validate attempt 2 scanned `\\localhost\C$\...\Layers\<id>\Files\Windows\Media` as picked; O-084). Nothing is looked
+  up on the network to decide it. Through the published exe on this PC's store, with the precaution on: that Media root
+  is now refused, and WindowCases X-006 refuses `\\localhost\C$\...\Layers` and skips the store from
+  `\\localhost\C$\...\Containers` (skippedStores 1); WCsc stayed at 3,608 and System handles at 0x120089 at 3,658 across
+  all of it (`build-2026-10-05/loopback-media-marks.jsonl`, `x006-loopback-marks.jsonl`). A root that cannot be opened, or a final path Windows will not give, leaves the
+  string verdict standing (None) and the scan goes on to its usual RootUnreadable. An empty or relative known folder is
+  no store, never every path.
+- **A root at or inside the store is refused while the precaution is on** (Q-179, Q-182, Q-186): `ScanStatus.Refused`,
   `ScanRefusal.ContainerLayerStore` and the precaution's id, a result and never an exception, with nothing listed or
   probed. The window shows `Not scanned: <root>`, says why in the precaution's own words (the defect, and where it lives:
-  wcifs.sys), and says that a folder at or inside the store is never scanned and the Settings checkbox only decides
-  whether scans above it leave it out. No dialog, no scanning state. The report writes `outcome: "refused"`,
-  `refusal: "container-layer-store"`, and exits 0. Q-182 decided refusal with no user override, so the checkbox does not
-  lift it (review F1); whether its off position should is the design's open question, left with the person.
+  wcifs.sys), that a folder at or inside the store is not scanned while the Settings checkbox is ticked, and that the
+  protection can be turned off in Settings. No dialog, no scanning state. The report writes `outcome: "refused"`,
+  `refusal: "container-layer-store"`, and exits 0. Q-186 answered design 10's open question: the checkbox's off position
+  lifts the refusal as well as the exclusion, for the session, after its confirmation.
 - **A scan above the store stops at it, while the precaution is on.** The walk compares each folder it pops with the
   one excluded path, for equality, without case, as listed (never through GetFullPath, which would fold `Layers.` or
   `Layers ` onto it). The store completes as a folder with nothing listed, flagged `EntryFlags.NotScanned`, recorded in
@@ -45,15 +55,18 @@ file and the design disagree, this file is right.
 - **One list of precautions against outside defects** (`src/FsAnalyser.Core/Workarounds/KnownWorkarounds.cs`), its first
   entry `wcifs-layer-store`: the defect, where it lives (wcifs.sys, shipped by Microsoft, no fixed version on 25H2), what
   the app does, what turning it off does, on by default. A scan takes the ids that are on
-  (`ScanOptions.EnabledWorkarounds`); only `ContainerLayerStore` reads this one, and it decides only the exclusion (and
-  with it the backstop's rule): off restores the plain walk exactly, the store listed and counted like any folder, no
-  not-scanned record, no refusals at the backstop; a root inside the store is still refused
-  (`WithThePrecautionOffTheStoreIsCountedAndARootInsideItIsStillRefused`, on a planted store only: off against the real
-  store leaks until a Restart, so nothing runs it there).
+  (`ScanOptions.EnabledWorkarounds`); only `ContainerLayerStore` reads this one. Off, `Resolve` answers None at once,
+  with nothing compared or opened, which restores the plain walk exactly (Q-186): a scan above the store lists and
+  counts it like any folder, with no not-scanned record and no refusals at the backstop
+  (`WithThePrecautionOffTheStoreIsListedAndCountedLikeAnyFolder`), and a root at or inside it is scanned as picked,
+  every entry counted (`WithThePrecautionOffARootAtOrInsideTheStoreIsScannedAsPicked`, which also shows the same root
+  Refused with it on). Both run on a planted store only: off against the real store leaks until a Restart, so nothing
+  runs it there.
 - **Settings.** The window's **Settings...** button opens a window that lists every entry of that list as it is, one
   checkbox each with its plain-words text, naming no entry itself. Unticking one asks first in a confirmation window whose
-  question states the consequence (kernel memory and a System handle per layer entry read, until you restart Windows; a
-  folder at or inside the store still not scanned); No leaves it ticked. The app saves nothing to disk (stack decision),
+  question states the consequence (the store read like any folder, a folder picked inside it scanned as picked, and
+  wcifs.sys leaking kernel memory and a System handle for each store entry the scan touches, until you restart Windows,
+  with every later scan of it able to add more); No leaves it ticked. The app saves nothing to disk (stack decision),
   so it is on again at the next start. WindowCases X-005 drives both answers through the hook's settings mode and reads
   the state from the report, and the next launch's.
 - **The app says so beside the result.** A scan that left the store out adds an outcome note, `Not scanned, size not
@@ -76,7 +89,9 @@ Unchanged on purpose: FILE_FLAG_OPEN_REPARSE_POINT is not added (0 valid measure
 It is not written in this repository and has no Q-number. It is a standing rule of the TAAD engine's build stage, given
 in the build instructions of every slice: a workaround for a defect outside the project is a setting, one checkbox per
 known bug, on by default, with an in-app notice beside every result it changes, and one list of entries. Design 10 took
-it from there. It does not override Q-182: the checkbox governs the exclusion only, and the refusal stays unconditional.
+it from there. Q-186 then decided how it meets Q-182: the checkbox governs the exclusion and the refusal together. On,
+Q-182 stands as decided; off, after the confirmation, a picked root inside the store is scanned as picked, because the
+refusal exists only because of the outside defect and a scan of C: walks the store anyway once the exclusion is off.
 
 ## DONE (a): the growing tags and who owns them
 
@@ -98,9 +113,15 @@ probe-walk marks, not counter runs).
 | Toke | tokens, ntoskrnl (recalled; findstr ambiguous, 488 files) | 53.6M / 53.3M | 828 MB | holder unattributed |
 
 The wcifs group is about 0.33 GB of the 8.3 GB pool on that boot, plus one System handle per WCsc (211,070 at access
-0x120089). It is capped by first touch: repeat walks of the same entries add 0 WC* (`deltas.txt`: e2_1 to e2_5, e4_21 to
-e4_26, e5_31a to e5_37b all WCsc 0/0; e3_11 to e3_15, an untouched subtree, WCsc +5/0). So wcifs alone does not explain
-pool that "built up scan after scan" to 30 GB.
+0x120089). Whether it is capped by first touch is **not settled, and the app's text no longer says so**. The repro
+stage's marks on the 29 Sep boot show repeat walks adding 0 WC* (`deltas.txt`: e2_1 to e2_5, e4_21 to e4_26, e5_31a to
+e5_37b all WCsc 0/0; e3_11 to e3_15, an untouched subtree, WCsc +5/0). But validate's marks on the 5 Oct boot
+(`validate-2026-10-05/marks.jsonl`, copied from validate's scratch) show four walks of the same layer subtree,
+`Files\Windows\Globalization`, with the precaution off, each adding 5 WCsc, 5 WCri and 5 System handles at 0x120089
+(L0 to L1 to L2, N0 to N1 to N2: 3,638, 3,643, 3,648, 3,653, 3,658), against 0 over both idle stretches beside them.
+So the precaution's text says each entry touched, until a restart, and that later scans can add more. Even at first
+touch only, the group is about 0.33 GB a boot, which alone does not explain pool that "built up scan after scan" to
+30 GB.
 
 **A Restart reclaims the wcifs leak, measured.** Spike #87's V1 after the 4 Oct 2026 Restart: WCsc 1,630 live and 1,661
 System handles at 0x120089, against 211,022 and 211,087 before it. The build's full boot of 5 Oct 2026 read the same
@@ -132,8 +153,9 @@ followed (links never are). Spike #87's `marks.jsonl` and `events.log` are no lo
 above are quoted from its account.
 
 Not measured: the tail of C: after the cutoff, and any other WCI store. Nobody looked for a running Windows Sandbox's
-live storage, `ProgramData\Docker\windowsfilter` or another container runtime's layers, and a loopback share
-(`\\localhost\C$`) is not matched (O-049, O-084). **What reopens it:** a raw WC* rise in a person-run exe-full arm that
+live storage, `ProgramData\Docker\windowsfilter` or another container runtime's layers (O-049). Roots through this PC's
+own administrative shares are matched now (above, O-084); a share a person created over the store or one of its
+ancestors (`\\localhost\ProgramData`) is not. **What reopens it:** a raw WC* rise in a person-run exe-full arm that
 reports notScanned at least 1 and opensUnderExcludedStore 0; `-Report` prints each arm's raw WC* nets, so nothing new is
 needed to see it. That evidence goes to a follow-up slice widening `Resolve` to several stores, not back into SL-095.
 
@@ -143,8 +165,11 @@ needed to see it. That evidence goes to a follow-up slice widening `Resolve` to 
 WdFilter, bindflt running; antivirus Kaspersky (three entries), Windows Defender and McAfee; OneDrive running. `-Prepare`
 records the same into `prepare.json` (OS build, boot time, wcifs.sys version, those four drivers' state, antivirus,
 OneDrive). `fltmc filters` needs an administrator and is not here: a person who chooses to runs it in an elevated
-window of their own and pastes it into `fltmc.txt` in the prepare folder. It counts only when it is the list itself
-(`Filter Name  Num Instances` and no refusal); otherwise `-Report` says `FILTERS UNDECIDED` (review R2-N3).
+window of their own and pastes it into `fltmc.txt` in the run folder, at any time (review m1). `-Report` reads that file,
+then `prepare\fltmc.txt`, each time it runs, then the record `-Prepare` froze, and names the one it used; `-Protocol`
+carries a paste along when it starts a fresh run folder. It counts only when it is the list itself (`Filter Name  Num
+Instances` and no refusal); otherwise `-Report` says `FILTERS UNDECIDED` (review R2-N3). PoolWatchCases P-001 feeds
+each place a list and a refusal (review m2).
 
 ## The pool protocol (person-run): complete logs, no verdict
 
@@ -167,9 +192,14 @@ window of their own and pastes it into `fltmc.txt` in the prepare folder. It cou
    exceeded, named as the cascade of the arm that stopped (review R4-2); not exactly 5 full and 5 cancelled or closed
    runs; a full run without exit 0, a report, status Completed, notScanned at least 1 and opensUnderExcludedStore 0; a
    cancel or close whose hook never acted (its refused line quoted: the scan ended first, the app shut down first, or
-   the trigger's deadline passed; review R2-R3-3); a cancel whose report does not say Cancelled. Then the raw nets of
-   every arm and idle window, the environment, and the FILTERS line. It exits 0 complete, 2 incomplete, and prints no
-   judgement word (fitness rule; `tests/window/PoolWatchCases.ps1` asserts it on every fixture).
+   the trigger's deadline passed; review R2-R3-3); a cancel whose report does not say Cancelled; an arm whose /before
+   mark is written but whose arm line is not, and an arm marked interrupted (review R2-n2: a terminating error or
+   Ctrl+C while an arm runs kills FsAnalyser.exe in the arm's `finally` and still writes its line); and each line of
+   marks.jsonl or arms.jsonl that is not JSON, a torn last line or a NUL-filled tail, read line by line so that such a
+   line never stops `-Report` (review R2-n1). Then the raw nets of every arm and idle window, the environment, and the
+   FILTERS line. It exits 0 complete, 2 incomplete, and prints no judgement word (fitness rule;
+   `tests/window/PoolWatchCases.ps1` asserts it on every fixture: C-053 to C-056, C-027 for a missing mark, a null
+   field and a burst printed raw, P-001 to P-003; C-011 shows `-Protocol` refusing this old boot having written nothing).
 4. `-Protocol -Rehearse` runs the same code over a generated %TEMP% tree of 30,150 folders, which the app takes many
    250 ms window ticks to list, so the folder-count triggers (10% to 25% of the folders, a 120 s trigger deadline) act
    mid-scan (review F5); windows of 30 s, marks every 5 s, /settled 15 s after exit; no boot-age check; every line says
@@ -200,18 +230,19 @@ deleted once O-003 is decided; spike #87 decided it).
 
 ## The excluded store's size
 
-Unmeasured. Q-180 and Q-181 decided that leaving the whole store out, shown as a 'size not counted' row, is an honest
-shortfall under the counting rule. That covers `Layers\<id>\Files` as well as Hives, Bindings, Specialization and
-dotnet.bcf: the Files tree is not only placeholders of host files (the earlier precondition, O-002), since Microsoft
+Not measured as a whole. Q-180 and Q-181 decided that leaving the whole store out, shown as a 'size not counted' row,
+is an honest shortfall under the counting rule. That covers `Layers\<id>\Files` as well as Hives, Bindings,
+Specialization and dotnet.bcf: the store is not only placeholders of host files (the earlier precondition, O-002, is
+false). Validate read `dotnet.bcf` alone at 557,268 B (quoted from its account, not re-read here), and Microsoft
 describes the dynamic base image as holding real pristine copies of the mutable OS files, about 500 MB (recalled, not
 measured), so real bytes go uncounted. No walk measures it: on a boot whose layer is untouched, walking the store leaks
 about 210,000 entries, and Q-181 already decided the trade.
 
 ## When the precautions change
 
-- **When the refusal can be lifted** (Q-179): a valid pool run showing that enumeration with FILE_FLAG_OPEN_REPARSE_POINT
-  causes no wcifs growth on an untouched layer subtree; or the person answers design 10's open question that the
-  checkbox's off position should lift it.
+- **When the refusal can be lifted for everyone** (Q-179): a valid pool run showing that enumeration with
+  FILE_FLAG_OPEN_REPARSE_POINT causes no wcifs growth on an untouched layer subtree. Until then a person lifts it, for
+  one session, only by turning the precaution off (Q-186).
 - **When the exclusion can narrow** to `Layers\<id>\Files` (Q-180, Q-181): a post-Restart run showing that listing
   Hives, Bindings, Specialization and dotnet.bcf adds no WC* and no System handles. Each is a one-predicate change in
   `ContainerLayerStore`.

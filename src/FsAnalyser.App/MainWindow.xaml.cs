@@ -493,15 +493,15 @@ public partial class MainWindow : Window
         }
         if (result.Status == ScanStatus.Refused)
         {
-            // Decided in Core, before anything was opened (Q-179, Q-182), whatever the Settings say (review F1): the line
-            // says why, in the words of the precaution the result names, and what its checkbox does and does not change.
+            // Decided in Core, before anything was opened (Q-179, Q-182), because the Settings precaution the result
+            // names is on (Q-186): the line says why, in that precaution's words, and that its checkbox lifts it.
             KnownWorkaround? why = KnownWorkarounds.Find(result.RefusalWorkaroundId);
             ShowProblem($"Not scanned: {result.Root}",
                 "Windows container layers can't be scanned safely: the wcifs filter leaks kernel memory and a System handle " +
                 "for each entry read, until a full restart. This folder is in the Windows container layer store, so nothing " +
                 "in it was read." + (why is null ? "" :
-                $"\n{why.Defect}\nWhere it lives: {why.WhereItLives}\nA folder at or inside the store is never scanned; the " +
-                $"Settings checkbox '{why.Title}' only decides whether scans of the folders above it leave it out."));
+                $"\n{why.Defect}\nWhere it lives: {why.WhereItLives}\nWhile the Settings checkbox '{why.Title}' is ticked, as " +
+                "it is at every start, a folder at or inside the store is not scanned. You can turn this protection off in Settings."));
             return;
         }
 

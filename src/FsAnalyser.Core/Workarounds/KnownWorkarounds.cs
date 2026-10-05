@@ -26,26 +26,26 @@ public sealed record KnownWorkaround(string Id, string Title, string Defect, str
 public static class KnownWorkarounds
 {
     /// <summary>
-    /// wcifs.sys keeps kernel memory and a System handle for every live container layer entry read for the first time
-    /// since a restart (microsoft/Windows-Containers#646, measured on this PC): scans of a folder above the layer store
-    /// leave the store out. Only <see cref="ContainerLayerStore"/> acts on it. A root at or inside the store is refused
-    /// whatever this says (Q-182, review F1), so turning it off never lets a scan start inside the store.
+    /// wcifs.sys keeps kernel memory and a System handle for each live container layer entry a scan touches, until a full
+    /// restart, and touching the same entries again was measured adding more (microsoft/Windows-Containers#646, measured
+    /// on this PC). With it on, a root at or inside the layer store is refused and scans of a folder above the store leave
+    /// the store out; with it off, both are lifted (Q-186). Only <see cref="ContainerLayerStore"/> acts on it.
     /// </summary>
     public static KnownWorkaround WcifsLayerStore { get; } = new(
         Id: "wcifs-layer-store",
         Title: "Skip Windows container layers in scans",
-        Defect: "Windows keeps a little kernel memory and a handle in the System process for every entry of a live Windows "
-            + "container layer that is read for the first time since the PC was restarted, and gives them back only at a full "
-            + "restart (Start > Restart). One layer holds about 210,000 entries. This is a defect in Windows 11 25H2, not in "
+        Defect: "Windows keeps a little kernel memory and a handle in the System process for each entry of a live Windows "
+            + "container layer that a program reads, and gives them back only at a full restart (Start > Restart). One layer "
+            + "holds about 210,000 entries, and reading them again can keep more. This is a defect in Windows 11 25H2, not in "
             + "this app (microsoft/Windows-Containers#646).",
         WhereItLives: "wcifs.sys, the Windows Container Isolation filter driver that Microsoft ships with Windows (10.0.26100.x "
             + "on Windows 11 25H2). No fixed version has shipped.",
         Precaution: "A scan of a folder that holds the Windows container layer store, " + ContainerLayerStore.StoreDisplayPath
-            + ", leaves the store out: it is shown as one folder whose size is not counted, and nothing in it is opened.",
-        IfTurnedOff: "A scan of a folder that holds the store reads it like any other folder, and Windows then keeps kernel "
-            + "memory (about 1.5 KB) and a System handle for every layer entry read for the first time since the last restart, "
-            + "until you restart Windows. A folder picked at or inside the store is still not scanned: that does not depend "
-            + "on this setting.",
+            + ", leaves the store out: it is shown as one folder whose size is not counted, and nothing in it is opened. A "
+            + "folder picked at or inside the store is not scanned.",
+        IfTurnedOff: "The store is read like any other folder: a scan of a folder that holds it counts it, and a folder picked "
+            + "at or inside it is scanned as picked. wcifs.sys then leaks kernel memory (about 1.5 KB) and a System handle for "
+            + "each store entry the scan touches, until you restart Windows, and every later scan of it can add more.",
         DefaultOn: true);
 
     /// <summary>All of them, in the order the Settings window lists them.</summary>
