@@ -264,6 +264,28 @@ rules:
     including_comments: true
     because: 'The window report takes only the count from the scan''s failed-folder record (SL-089, declared by its design and twinned by its build). The record holds each failed folder''s entry, one step from its path, and Q-016 bars names and paths from the schema-1 report, which every window case reads and keeps as evidence: an element, an indexer, a foreach or a LINQ projection over the record is how a path would get in. The pattern names the record and allows it only followed by .Count, so it holds on one line: the record alone at the end of a line, the first line of the two-line fluent layout this file writes its LINQ in, fails the xUnit twin as it fails here (review M4). TopLevelState.Unreadable, a row state the report counts, is not the record. A tripwire on one route: another route to a path (the store, a list''s rows) is not fenced here (SC-133). Comments are matched too.'
 
+  - name: 'OnlyShellRevealReadsOrOverridesExplorersViewSettings (*.cs)'
+    files: 'src/**/*.cs'
+    except_files:
+      - 'src/FsAnalyser.Core/Native/ShellReveal.cs'
+    must_not_match:
+      - '(?m)\bSHGetSetSettings\b'
+      - '(?m)\bOverrideExplorerView\b'
+    including_comments: true
+    because: 'Only ShellReveal.cs reads Explorer''s view settings or sets the test override of them (SL-091, declared by its design and twinned by its build, review m4). Walk''s visibility verdict, its precedence and the hook''s hide-only AND are all applied there. A second reader elsewhere in src would decide on its own what Explorer shows, outside the override, and could report a landing Walk would refuse: the false success SL-091 removes. Comments are matched too, so a comment in src outside ShellReveal.cs must not name either.'
+
+  - name: 'TheAppNeverWritesExplorersSettings (*.cs)'
+    files: 'src/**/*.cs'
+    must_not_match:
+      - '(?m)\bSHGetSetSettings\b[^;\r\n]*\btrue\b'
+      - '(?m)(?i)\.SetValue[ \t]*\([ \t]*@?"(Hidden|ShowSuperHidden)"'
+      - '(?m)(?i)\bOpenSubKey[ \t]*\([^;\r\n]*Explorer\\{1,2}Advanced[^;\r\n]*\b(true|ReadWriteSubTree)\b'
+      - '(?m)\b(RegSetValue|RegSetKeyValue|SHSetValue|SHRegSetUSValue)\w*'
+      - '(?m)(?i)\bRegistry\.SetValue[ \t]*\([^;\r\n]*Explorer\\{1,2}Advanced'
+      - '(?m)(?i)\bCreateSubKey[ \t]*\([^;\r\n]*Explorer\\{1,2}Advanced'
+    including_comments: true
+    because: 'The app never writes Explorer''s settings (SL-091, Q-169, Q-175; declared by its design and twinned by its build, review m4). It reads Explorer''s view to decide a reveal and never changes it: a reveal that switched Hidden or ShowSuperHidden to make itself land would change how the person''s Explorer shows every folder, behind their back. Each pattern holds on one line ([^;\r\n], [ \t]), so the xUnit twin, which matches a line at a time, fires where Fitness does (SL-087). They name the write spellings an ordinary C# producer reaches for, closed as a class (review n2) in tests/FsAnalyser.Core.Tests/ExplorerSettingsWriteCorpus.json, which ExplorerSettingsWriteRuleTests feeds to these patterns: the shell call with its set flag true, a key''s SetValue of Hidden or ShowSuperHidden in any case, a writable OpenSubKey and any CreateSubKey of Explorer\Advanced, the static Registry.SetValue of that key, and the Win32 and shlwapi registry writes. A tripwire on names: a key path or value name held in a variable, or a call laid over two lines, passes it, as the corpus records. Comments are matched too, so no comment in src may put the shell call and the word true on one line.'
+
   # settled by SL-023
   - name: the window report reads the window, never rebuilds it from Core
     files: src/FsAnalyser.App/WindowReport.cs
@@ -1084,3 +1106,24 @@ rules:
   # xUnit twin fails the two-line fluent layout WindowReport.cs already uses (review M4). 'The shipped app never dumps
   # panel rows; only the test hook does' is dropped (review M3, m1): a twinned entry cannot hold must_not_import, and
   # SL-033's settled 'the shipped app carries no test seam' already forbids FSA_HOOK_ and FsaWindowHook across src/**.
+
+  # settled by SL-091
+  # Its design declared three rules. 'Only ShellReveal.cs reads or overrides Explorer's view settings' and 'the app never
+  # writes Explorer's settings' are twinned instead, above the first marker, as
+  # OnlyShellRevealReadsOrOverridesExplorersViewSettings (*.cs) and TheAppNeverWritesExplorersSettings (*.cs) (review
+  # m4, n1), with their plants. The block attempt 1 left here, whose write patterns spanned lines in Fitness and not in
+  # xUnit, is gone (review n1). This one holds over the window scripts and the hook; its patterns are written by hand
+  # and single-quoted, and ExplorerSettingsWriteRuleTests reads them from here.
+  - name: no window case or hook changes Explorer's view settings
+    files: tests/window/**
+    must_not_match:
+    - '(?m)(?i)(Set|New|Remove|Clear)-ItemProperty[^\r\n]*Explorer\\{1,2}Advanced'
+    - '(?m)(?i)(Set|New|Remove|Clear)-ItemProperty\b[^\r\n]*-Name[ \t]+[''"]?(Hidden|ShowSuperHidden)\b'
+    - '(?m)(?i)\breg(\.exe)?[ \t]+(add|delete)\b[^\r\n]*Explorer\\{1,2}Advanced'
+    - '(?m)(?i)\bSHGetSetSettings\b[^;\r\n]*\btrue\b'
+    - '(?m)(?i)\.SetValue[ \t]*\([ \t]*@?[''"](Hidden|ShowSuperHidden)[''"]'
+    - '(?m)(?i)::SetValue[ \t]*\([^\r\n]*(Explorer\\{1,2}Advanced|[''"](Hidden|ShowSuperHidden)[''"])'
+    - '(?m)(?i)\bOpenSubKey[ \t]*\([^\r\n]*Explorer\\{1,2}Advanced[^\r\n]*\b(true|ReadWriteSubTree)\b'
+    - '(?m)(?i)\bCreateSubKey[ \t]*\([^\r\n]*Explorer\\{1,2}Advanced'
+    - '(?m)\b(RegSetValue|RegSetKeyValue|SHSetValue|SHRegSetUSValue)\w*'
+    because: 'Only a person may change Explorer''s Hidden setting (SL-091). R-003 asserts refusals through the hook''s hide-only injection precisely so that nothing unattended needs the real setting changed; a case that set Hidden=2 itself would change the owner''s desktop, and if killed mid-run would leave it changed. The patterns name the write spellings a window script or the hook reaches for, closed as a class (review n2) in tests/FsAnalyser.Core.Tests/ExplorerSettingsWriteCorpus.json, whose test reads these patterns from this entry: an ItemProperty cmdlet on Explorer\Advanced, or one naming Hidden or ShowSuperHidden with -Name wherever the path is held, reg.exe add and delete, a key''s SetValue of either value in either quote, the static ::SetValue, a writable OpenSubKey and any CreateSubKey of Explorer\Advanced, the shell call with its set flag true, and the Win32 and shlwapi registry writes. Settled rather than twinned: it guards test tooling that validate''s Fitness check reads, and the hook is outside FsAnalyser.slnx. Fitness blanks # comments in .ps1 and // and /* */ in .cs (review m5), so a commented example cannot trip it. A positional -Name, or a key path held in a variable with no value name on the same line, passes it, as the corpus records.'

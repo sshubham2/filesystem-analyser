@@ -852,20 +852,34 @@ public partial class MainWindow : Window
     }
 
     // A reveal lands or is refused (SL-088): a refusal says so on the status line and that nothing was opened, since no
-    // other folder is shown in the item's place.
+    // other folder is shown in the item's place. A landing says nothing: Exact means Explorer lists the item and selects
+    // it. An item Explorer's own view settings hide (SL-091) is refused with the option that hides it, named as the
+    // Folder Options dialog names it; the outcome and the item come first, because the line is cut at its end.
     private static string FormatRevealStatus(RevealOutcome outcome)
     {
         return outcome.Kind switch
         {
-            RevealKind.Exact when outcome.Hidden =>
-                $"'{GetLeafName(outcome.Requested)}' is hidden, so Explorer only highlights it if it is set to show hidden files (and protected operating system files, for system items).",
             RevealKind.Exact =>
                 string.Empty,
+            _ when outcome.Reason == RevealReason.HiddenByExplorerSettings =>
+                $"Nothing was opened: Explorer hides '{GetLeafName(outcome.Requested)}' ({HidingOptions(outcome.HiddenBy)}).",
             _ when outcome.Reason == RevealReason.NoLongerExists =>
                 $"'{GetLeafName(outcome.Requested)}' no longer exists where the scan found it, so Explorer was not opened. Rescan to refresh.",
             _ =>
                 $"Couldn't show '{GetLeafName(outcome.Requested)}' in Explorer ({RevealFailure(outcome)}). Nothing was opened."
         };
+    }
+
+    // The Folder Options settings that hide an item, as that dialog's View tab words them on Windows 11 (read on this
+    // PC from shell32's own strings; the second ends there in '(Recommended)'), hidden files first.
+    private static string HidingOptions(ExplorerHides hides)
+    {
+        var options = new List<string>(2);
+        if (hides.HasFlag(ExplorerHides.HiddenFiles))
+            options.Add("Don't show hidden files, folders, or drives");
+        if (hides.HasFlag(ExplorerHides.ProtectedFiles))
+            options.Add("Hide protected operating system files");
+        return string.Join("; ", options);
     }
 
     // Windows' message for a FACILITY_WIN32 HRESULT, and the HRESULT itself for any other.

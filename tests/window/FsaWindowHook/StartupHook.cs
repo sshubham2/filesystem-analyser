@@ -31,6 +31,8 @@ using System.Windows.Threading;
 ///   [FSA_HOOK_RENDER=software]  (SL-080: WPF draws the process in software, set before Main; tree mode's facts line says so)
 ///   [FSA_HOOK_FAIL_LISTING=&lt;folder name&gt;|&lt;page&gt;|&lt;Win32 error&gt;]  (SL-082, any mode: Core's listing failpoint, armed
 ///   before Main; see ArmFailListing)
+///   [FSA_HOOK_EXPLORER_VIEW=&lt;hidden&gt;|&lt;protected&gt;]  (SL-091, any mode: the Explorer view reveals are decided under,
+///   ANDed with the real one, armed before Main; see ArmExplorerView)
 ///   [FSA_HOOK_ROWS=1]  (SL-089, rows and stop only: the unreadable-folders panel's rows, written at shutdown; RowsMode.cs)
 /// </code>
 /// tree (SL-044) reads and drives the folder tree a completed scan shows, and logs JSON lines; TreeMode.cs has
@@ -41,7 +43,8 @@ using System.Windows.Threading;
 /// The runtime calls <see cref="Initialize"/> before the app's Main, in every .NET process that inherits the
 /// variable: pwsh 7, dotnet.exe and MSBuild nodes too. So it does nothing unless FSA_HOOK_MODE is set and the
 /// process is FsAnalyser.App.exe, and nothing it does can end the host but one thing it does on purpose: an
-/// FSA_HOOK_FAIL_LISTING it cannot arm is thrown out of Initialize, and the app ends before its Main (SL-082).
+/// FSA_HOOK_FAIL_LISTING (SL-082) or FSA_HOOK_EXPLORER_VIEW (SL-091) it cannot arm is thrown out of Initialize, and the
+/// app ends before its Main.
 ///
 /// Without FSA_HOOK_ARMED every mode waits for the same thing: the window's CancelButton pressable
 /// (<see cref="Pressable"/>), which is only while a scan is running. It reads that and acts in one dispatcher
@@ -126,7 +129,9 @@ using System.Windows.Threading;
 /// The hold logs "drives in ms=n held=n added=n buttons=n windowWidth=px windowHeight=px state=WindowState" (the size
 /// the ending was laid out at, SL-065). FSA_HOOK_STATUS=text (SL-047) also puts that text in the
 /// window's reveal status line as the drives come in, ahead of the report, and adds "status=b statusHeight=px" to
-/// that line: whether the line is visible and how tall it was laid out.
+/// that line: whether the line is visible and how tall it was laid out; and "statusTextWidth=px statusWidth=px
+/// statusFits=n statusChars=n" (SL-091): the text's untrimmed width against the line's, and how many of its characters
+/// show before the ellipsis.
 ///
 /// FSA_HOOK_LOG gets one ASCII line per event: "loaded mode=m pid=n", "waiting found=b enabled=b visible=b"
 /// when that changes, "armed ms=n" when the marker appeared, "acted mode=m enabled=True visible=True ms=n"
@@ -223,7 +228,7 @@ internal class StartupHook
             // dispatcher that has to be in place before the app's Main makes the window (SL-080 code review M3).
             if (mode == "tree")
                 TreeMode.BeforeMain();
-            unarmed = ArmFailListing();
+            unarmed = ArmFailListing() ?? ArmExplorerView();
             if (unarmed is null)
                 new Thread(() => Run(mode)) { IsBackground = true, Name = "FsaWindowHook" }.Start();
         }
@@ -273,6 +278,49 @@ internal class StartupHook
             Exception cause = e is TargetInvocationException { InnerException: { } inner } ? inner : e;
             Log($"fail-listing refused reason={cause.GetType().Name}: {cause.Message}");
             return new InvalidOperationException($"FsaWindowHook: FSA_HOOK_FAIL_LISTING was not armed: {cause.Message}", cause);
+        }
+    }
+
+    private const string ExplorerViewType = "FsAnalyser.Core.Native.ExplorerView, FsAnalyser.Core";
+    private const string RevealType = "FsAnalyser.Core.Native.ShellReveal, FsAnalyser.Core";
+    private const string OverrideMethod = "OverrideExplorerView";
+
+    // FSA_HOOK_EXPLORER_VIEW=<hidden>|<protected> (SL-091), each 0 or 1, with any mode: the Explorer view the app's
+    // reveals are decided under, set through Core's ShellReveal.OverrideExplorerView (internal, reached by name) here,
+    // before the app's Main. Core ANDs it with the real view, so it can only hide: 0|0 is Windows' defaults on any PC,
+    // and no value makes a reveal land that the real settings refuse. A case can then assert the refusals of the
+    // defaults with no Explorer window opened and without touching the person's settings. It logs
+    // "explorer-view-injected injected=<hidden>|<protected>". A value that is not two parts of 0 or 1 (reason=format), the
+    // view's type missing or not built (reason=type), the member missing (reason=member) or the call failing
+    // (reason=invoke) logs "explorer-view refused reason=<that> <message>" and returns what Initialize throws: the app
+    // ends before its Main, so no reveal is ever clicked under the real view in place of the injected one.
+    private static Exception? ArmExplorerView()
+    {
+        if (Environment.GetEnvironmentVariable("FSA_HOOK_EXPLORER_VIEW") is not { Length: > 0 } value)
+            return null;
+        string reason = "format";
+        try
+        {
+            string[] parts = value.Split('|');
+            if (parts.Length != 2 || parts.Any(p => p is not ("0" or "1")))
+                throw new FormatException($"'{value}' is not <hidden>|<protected>, each 0 or 1");
+            reason = "type";
+            Type view = Type.GetType(ExplorerViewType) ?? throw new TypeLoadException($"the app has no {ExplorerViewType}");
+            object mask = Activator.CreateInstance(view, parts[0] == "1", parts[1] == "1")
+                ?? throw new TypeLoadException($"{ExplorerViewType} was not built");
+            reason = "member";
+            MethodInfo set = Type.GetType(RevealType)?.GetMethod(OverrideMethod, BindingFlags.Static | BindingFlags.NonPublic, [view])
+                ?? throw new MissingMethodException($"the app has no {OverrideMethod}({view.Name}) on {RevealType}");
+            reason = "invoke";
+            set.Invoke(null, [mask]);
+            Log($"explorer-view-injected injected={parts[0]}|{parts[1]}");
+            return null;
+        }
+        catch (Exception e)
+        {
+            Exception cause = e is TargetInvocationException { InnerException: { } inner } ? inner : e;
+            Log($"explorer-view refused reason={reason} {cause.GetType().Name}: {cause.Message}");
+            return new InvalidOperationException($"FsaWindowHook: FSA_HOOK_EXPLORER_VIEW was not armed: {cause.Message}", cause);
         }
     }
 
@@ -774,6 +822,31 @@ internal class StartupHook
         return true;
     }
 
+    // How much of the status line's text shows (SL-091, review n4): the text's own width, untrimmed, measured as the line
+    // draws it, and how many of its characters come before the ellipsis in the width the line was given. Its DesiredSize
+    // says neither: WPF clips it to the room given, and a trimmed line measures its trimmed text.
+    private static (double TextWidth, int Fits) StatusFit(TextBlock line)
+    {
+        var typeface = new Typeface(line.FontFamily, line.FontStyle, line.FontWeight, line.FontStretch);
+        double pixelsPerDip = VisualTreeHelper.GetDpi(line).PixelsPerDip;
+        double Width(string text) => new FormattedText(text, CultureInfo.CurrentUICulture, line.FlowDirection, typeface, line.FontSize,
+            Brushes.Black, pixelsPerDip).WidthIncludingTrailingWhitespace;
+        string all = line.Text;
+        double full = Width(all);
+        if (full <= line.ActualWidth)
+            return (full, all.Length);
+        int low = 0, high = all.Length;
+        while (low < high)
+        {
+            int n = (low + high + 1) / 2;
+            if (Width(all[..n] + "…") <= line.ActualWidth)
+                low = n;
+            else
+                high = n - 1;
+        }
+        return (full, low);
+    }
+
     // As HoldUntilEnded: an item of Render priority kept queued holds the report, at Loaded, while the drives'
     // continuation, at Normal, and the layout, at Render, still run.
     private static void HoldForDrives(Application app, string mode, TextBlock status, string loading, Panel drives, int extra, Stopwatch since)
@@ -788,7 +861,9 @@ internal class StartupHook
                 revealTb.Text = hookStatus;
                 revealTb.Visibility = Visibility.Visible;
                 revealTb.UpdateLayout();
-                statusInfo = string.Create(CultureInfo.InvariantCulture, $" status={revealTb.Visibility == Visibility.Visible} statusHeight={revealTb.ActualHeight:F2}");
+                (double textWidth, int fits) = StatusFit(revealTb);
+                statusInfo = string.Create(CultureInfo.InvariantCulture,
+                    $" status={revealTb.Visibility == Visibility.Visible} statusHeight={revealTb.ActualHeight:F2} statusTextWidth={textWidth:F2} statusWidth={revealTb.ActualWidth:F2} statusFits={fits} statusChars={hookStatus.Length}");
             }
             Window window = app.MainWindow!;
             string laidOut = string.Create(CultureInfo.InvariantCulture,

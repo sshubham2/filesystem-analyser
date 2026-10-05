@@ -16,7 +16,44 @@ public enum RevealReason
     None,
     NameUnaddressable,
     NoLongerExists,
-    ParsedAsAnotherItem
+    ParsedAsAnotherItem,
+    HiddenByExplorerSettings
+}
+
+/// <summary>Which of Explorer's view settings hide an item: what a refusal names (SL-091).</summary>
+[Flags]
+public enum ExplorerHides
+{
+    None = 0,
+    /// <summary>The item is Hidden and Explorer is set not to show hidden files, folders, or drives.</summary>
+    HiddenFiles = 1,
+    /// <summary>The item is Hidden and System and Explorer is set to hide protected operating system files.</summary>
+    ProtectedFiles = 2
+}
+
+/// <summary>
+/// What Explorer's view lists (SL-091): hidden items when ShowsHidden, and of those the ones that are also System when
+/// ShowsProtected too. Only an item's own attributes decide it: an item under a hidden folder is listed like any other
+/// (measured at Windows' defaults, +H and +H+S folders above the item, 18 of 18 each).
+/// </summary>
+public sealed record ExplorerView(bool ShowsHidden, bool ShowsProtected)
+{
+    /// <summary>Whether Explorer lists, and so can select, an item with these attributes.</summary>
+    public bool Shows(bool hidden, bool system) => !hidden || (ShowsHidden && (!system || ShowsProtected));
+
+    /// <summary>The settings that keep an item with these attributes from being listed; None exactly when Shows.</summary>
+    public ExplorerHides Hides(bool hidden, bool system) =>
+        (hidden && !ShowsHidden ? ExplorerHides.HiddenFiles : ExplorerHides.None) |
+        (hidden && system && !ShowsProtected ? ExplorerHides.ProtectedFiles : ExplorerHides.None);
+
+    /// <summary>
+    /// The first DWORD of the SHELLSTATE the shell fills in: fShowAllObjects is bit 0 and fShowSuperHidden bit 15. Every
+    /// other bit is another setting (fShowSysFiles is bit 3) and is left alone.
+    /// </summary>
+    internal static ExplorerView FromShellState(uint state) => new((state & 0x1) != 0, (state & 0x8000) != 0);
+
+    /// <summary>Field by field AND: what is shown only where both views show it.</summary>
+    internal ExplorerView And(ExplorerView mask) => new(ShowsHidden && mask.ShowsHidden, ShowsProtected && mask.ShowsProtected);
 }
 
 /// <summary>
@@ -26,6 +63,12 @@ public enum RevealReason
 /// </summary>
 public sealed record RevealPlan(string? Target, string? UnaddressableName, string Requested = "");
 
+/// <summary>
+/// How a reveal ended. Hidden and System are the item's own attributes, read before the open. HiddenBy is set on a
+/// HiddenByExplorerSettings refusal, and View is the Explorer view the reveal was decided under: null when none was read
+/// (an item that is not Hidden, a volume root, or a reveal refused before the attributes were read), so 'not read' is
+/// never taken for 'nothing shown'.
+/// </summary>
 public sealed record RevealOutcome(
     RevealKind Kind,
     string Requested,
@@ -34,13 +77,16 @@ public sealed record RevealOutcome(
     string? UnaddressableName,
     bool Hidden,
     bool System,
-    int HResult);
+    int HResult,
+    ExplorerHides HiddenBy = ExplorerHides.None,
+    ExplorerView? View = null);
 
 /// <summary>
 /// Reveals an item in Windows Explorer by opening its parent with the item selected. The reveal lands on the item or
 /// is refused: an item that no longer exists, a name the shell cannot address, a parse that stands for another item,
-/// or a shell call that fails opens no window at all, and never another folder in the item's place (SL-088, reversing
-/// SL-047's nearest-ancestor fallback).
+/// an item Explorer's own view settings keep it from listing (SL-091), or a shell call that fails opens no window at all,
+/// and never another folder in the item's place (SL-088, reversing SL-047's nearest-ancestor fallback). Explorer's
+/// settings are read, never changed.
 /// </summary>
 public static partial class ShellReveal
 {
@@ -77,7 +123,20 @@ public static partial class ShellReveal
     [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16)]
     private static partial uint GetLongPathNameW(string lpszShortPath, [Out] char[] lpszLongPath, uint cchBuffer);
 
+    // Reads (the last argument false) or writes the shell's view state. Only ever called here, to read.
+    [LibraryImport("shell32.dll")]
+    private static partial void SHGetSetSettings([Out] byte[] lpss, uint dwMask, [MarshalAs(UnmanagedType.Bool)] bool bSet);
+
+    private const uint SSF_SHOWALLOBJECTS = 0x00000001;
+    private const uint SSF_SHOWSUPERHIDDEN = 0x00040000;
+
+    // At least the size of SHELLSTATE, zeroed, so bits the shell leaves alone read 0.
+    private const int ShellStateBytes = 64;
+
     private const int MaxLongPath = 32767;
+
+    // A test's view (FSA_HOOK_EXPLORER_VIEW): set once before the app's Main and read on the reveal's STA thread.
+    private static ExplorerView? _viewMask;
 
     /// <summary>
     /// Pure planner: turns a path into the one target a reveal asks the shell for, and detects unaddressable names.
@@ -200,15 +259,21 @@ public static partial class ShellReveal
     }
 
     /// <summary>
-    /// Reveals the plan's target once: parse it, check the ID list stands for the target itself, open its parent with it
-    /// selected, free the ID list. The parse's HRESULT is the existence check. A target that does not parse, whose ID list
-    /// resolves to another path (as 'dup.' parses to 'dup'), or whose open fails is refused, and no other folder is
-    /// tried; 0x80070002 and 0x80070003 say it no longer exists. Exact needs the ID list to resolve back to the target and
-    /// the open to return S_OK: whether Explorer's window then shows the item selected is for the window cases to see
-    /// (SL-088, criterion 4).
+    /// Reveals the plan's target once: parse it, check the ID list stands for the target itself, check Explorer's view
+    /// lists it, open its parent with it selected, free the ID list. The parse's HRESULT is the existence check. A target
+    /// that does not parse, whose ID list resolves to another path (as 'dup.' parses to 'dup'), that Explorer's view
+    /// settings hide, or whose open fails is refused, and no other folder is tried; 0x80070002 and 0x80070003 say it no
+    /// longer exists. Exact needs the ID list to resolve back to the target, Explorer's view to list it and the open to
+    /// return S_OK: whether Explorer's window then shows the item selected is for the window cases to see (SL-088,
+    /// criterion 4).
+    /// The view is asked of <paramref name="explorer"/> at most once, and only for a Hidden target that is not a volume
+    /// root: the open returns S_OK for an item Explorer hides and selects nothing (SL-091, 0 of 13 at Windows' defaults),
+    /// so such a target is refused before the open, with HiddenByExplorerSettings and the settings that hide it. Only the
+    /// target's own attributes decide; the folders above it are never read.
     /// Unit-testable without calling Explorer, through the shell calls it is given.
     /// </summary>
-    internal static RevealOutcome Walk(RevealPlan plan, string? requested, ParseName parse, Func<IntPtr, string?> pathOf, Func<IntPtr, int> open, Action<IntPtr> free)
+    internal static RevealOutcome Walk(RevealPlan plan, string? requested, ParseName parse, Func<IntPtr, string?> pathOf, Func<IntPtr, int> open,
+        Action<IntPtr> free, Func<ExplorerView> explorer)
     {
         string requestedPath = !string.IsNullOrEmpty(requested)
             ? requested
@@ -218,6 +283,9 @@ public static partial class ShellReveal
             return Refused(requestedPath, RevealReason.NameUnaddressable, plan.UnaddressableName, ERROR_INVALID_NAME_HR);
 
         IntPtr pidl = IntPtr.Zero;
+        bool isHidden = false;
+        bool isSystem = false;
+        ExplorerView? view = null;
         try
         {
             int hr = parse(plan.Target, out pidl);
@@ -230,9 +298,34 @@ public static partial class ShellReveal
             if (!SamePath(pathOf(pidl), plan.Target))
                 return Refused(requestedPath, RevealReason.ParsedAsAnotherItem, null, ERROR_INVALID_NAME_HR);
 
+            // A volume root carries Hidden and System, and Explorer shows it all the same. An item this user cannot open
+            // has its attributes read through its parent's listing; a read that fails all the same counts as not hidden.
+            if (!IsRoot(plan.Target))
+            {
+                try
+                {
+                    FileAttributes attrs = File.GetAttributes(LongPath.ToExtended(requestedPath));
+                    isHidden = (attrs & FileAttributes.Hidden) != 0;
+                    isSystem = (attrs & FileAttributes.System) != 0;
+                }
+                catch
+                {
+                    isHidden = false;
+                    isSystem = false;
+                }
+            }
+
+            if (isHidden)
+            {
+                view = explorer();
+                if (!view.Shows(isHidden, isSystem))
+                    return new RevealOutcome(RevealKind.Failed, requestedPath, null, RevealReason.HiddenByExplorerSettings, null, isHidden, isSystem, 0,
+                        view.Hides(isHidden, isSystem), view);
+            }
+
             hr = open(pidl);
             if (hr != 0)
-                return Refused(requestedPath, RevealReason.None, null, hr);
+                return new RevealOutcome(RevealKind.Failed, requestedPath, null, RevealReason.None, null, isHidden, isSystem, hr, ExplorerHides.None, view);
         }
         finally
         {
@@ -240,29 +333,34 @@ public static partial class ShellReveal
                 free(pidl);
         }
 
-        bool isHidden = false;
-        bool isSystem = false;
-        // A volume root carries Hidden and System, and Explorer shows it all the same.
-        if (!IsRoot(plan.Target))
-        {
-            try
-            {
-                FileAttributes attrs = File.GetAttributes(LongPath.ToExtended(requestedPath));
-                isHidden = (attrs & FileAttributes.Hidden) != 0;
-                isSystem = (attrs & FileAttributes.System) != 0;
-            }
-            catch
-            {
-                isHidden = false;
-                isSystem = false;
-            }
-        }
-
-        return new RevealOutcome(RevealKind.Exact, requestedPath, plan.Target, RevealReason.None, null, isHidden, isSystem, 0);
+        return new RevealOutcome(RevealKind.Exact, requestedPath, plan.Target, RevealReason.None, null, isHidden, isSystem, 0, ExplorerHides.None, view);
     }
 
     private static RevealOutcome Refused(string requested, RevealReason reason, string? unaddressableName, int hr) =>
         new(RevealKind.Failed, requested, null, reason, unaddressableName, false, false, hr);
+
+    /// <summary>
+    /// Explorer's view as the shell holds it for this user, read fresh: the state is asked for, never written. The shell
+    /// gives no error back, so a read that failed reads as nothing shown, which refuses rather than lands.
+    /// </summary>
+    internal static ExplorerView ReadExplorerView()
+    {
+        var state = new byte[ShellStateBytes];
+        SHGetSetSettings(state, SSF_SHOWALLOBJECTS | SSF_SHOWSUPERHIDDEN, false);
+        return ExplorerView.FromShellState(BitConverter.ToUInt32(state, 0));
+    }
+
+    /// <summary>
+    /// A test's view, set before the app's Main by the window cases' hook (FSA_HOOK_EXPLORER_VIEW), or null to clear it.
+    /// It can only hide: the view a reveal is decided under is the real one ANDed with it, so no value set here turns a
+    /// refusal under the real settings into a landing.
+    /// </summary>
+    internal static void OverrideExplorerView(ExplorerView? mask) => Volatile.Write(ref _viewMask, mask);
+
+    /// <summary>The view a reveal is decided under: the real one, ANDed with a test's when one is set.</summary>
+    internal static ExplorerView EffectiveExplorerView() => Effective(ReadExplorerView(), Volatile.Read(ref _viewMask));
+
+    internal static ExplorerView Effective(ExplorerView real, ExplorerView? mask) => mask is null ? real : real.And(mask);
 
     private static bool IsRoot(string target) =>
         string.Equals(Path.GetPathRoot(target)?.TrimEnd('\\'), target.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
@@ -335,7 +433,7 @@ public static partial class ShellReveal
                     return;
                 }
 
-                RevealOutcome outcome = Walk(plan, path, ParseDisplayName, PathOfIdList, OpenFolderAndSelect, FreeIdList);
+                RevealOutcome outcome = Walk(plan, path, ParseDisplayName, PathOfIdList, OpenFolderAndSelect, FreeIdList, EffectiveExplorerView);
                 tcs.SetResult(outcome);
             }
             catch (Exception ex)
