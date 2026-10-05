@@ -54,7 +54,7 @@ namespace FsAnalyser.App;
 ///                 "KindsList": { "rows": number, "actualHeight": number, "inView": bool, "realizedRows": number, "fullRows": number } },
 ///     "largestFilesShown": rows bound to LargestFilesList, "largestFileOnDisk": the first row's on-disk
 ///         bytes or null, "largestFilesMs": how long ranking them took or null (SL-040),
-///     "core": { "status", "rootError", "files", "folders", "links", "bytes", "bytesOnDisk", "elapsedMs" } or null,
+///     "core": { "status", "rootError", "files", "folders", "links", "bytes", "bytesOnDisk", "elapsedMs", "unreadable" } or null,
 ///     "topLevel": { "rows", "reading", "notRead", "stoppedPartway", "unreadable", "bytes", "onDisk", "files",
 ///                   "final" },   (SL-039; absent when the results list shows nothing)
 ///     "kinds": [ { "id", "label", "files", "size", "onDisk" } ] }   (SL-046; absent when no kinds were computed)
@@ -95,7 +95,9 @@ namespace FsAnalyser.App;
 /// compares with the tree it built. The largestFiles* keys are read from the list's own rows and from the
 /// window's timing of the one call that ranked them; they never hold a name or a path. "core" is the
 /// ScanResult behind the ending, straight from the same process: it only says which side is wrong when the
-/// window and the tree disagree, and is null when the ending came before any result. The last line of
+/// window and the tree disagree, and is null when the ending came before any result. Its "unreadable" (SL-089) is how many
+/// entries the scan's failed-folder record holds, counted and never listed (Q-016): beside the unreadable folders' header,
+/// which counts the rows built from it, it shows a record that holds a folder twice. The last line of
 /// OutcomeDetail is the elapsed time and differs on every run.
 ///
 /// Nothing here formats a number or builds text from the result: a wrong or blank control must show up
@@ -208,6 +210,7 @@ internal static class WindowReport
                 bytes = result.Totals.Bytes,
                 bytesOnDisk = result.Totals.BytesOnDisk,
                 elapsedMs = (long)result.Elapsed.TotalMilliseconds,
+                unreadable = result.Unreadable.Count,
             },
         };
         // The rows the results list holds, counted: never a name or a path (Q-016), only how many rows are in

@@ -98,17 +98,25 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
         'L-001', 'L-002', 'L-003', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'N-001', 'N-002', 'N-003', 'N-004',
-        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002',
-        'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009')]
+        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002',
+        'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'N-005', 'N-006', 'W-001')]
     [string] $Case,
     [switch] $IncludeNetwork,
-    # R-002's steps to run, of a to e, comma-separated (all of them when left out).
-    [ValidatePattern('^[a-e](,[a-e])*$')]
+    # N-006 registers a cloud sync root (SL-089): like the network cases, it runs only when this is passed.
+    [switch] $IncludeCloud,
+    # N-005 and N-006 run their control alone, with no Stop (SL-089).
+    [switch] $Control,
+    # W-001's root: the drive or folder it scans (SL-089).
+    [string] $Root,
+    # R-002's steps to run, of a to g, comma-separated (all of them when left out).
+    [ValidatePattern('^[a-g](,[a-g])*$')]
     [string] $Step
 )
 
 $ErrorActionPreference = 'Stop'
 if ($Step -and $Case -ne 'R-002') { throw '-Step names steps of R-002 and is for -Case R-002 only' }
+if ($Control -and $Case -notin 'N-005', 'N-006') { throw '-Control is for -Case N-005 or N-006 only' }
+if ($Root -and $Case -ne 'W-001') { throw '-Root is for -Case W-001 only' }
 $R002Steps = if ($Step) { $Step -split ',' } else { @() }
 
 $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -121,11 +129,14 @@ $RigExe = Join-Path $Repo 'artifacts\stall-rig\StallRig.exe'
 $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_HOOK_ARMED', 'FSA_HOOK_CANCEL_DELAY_MS', 'FSA_HOOK_CLOSE_DELAY_MS',
     'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND', 'FSA_HOOK_MINSIZE', 'FSA_HOOK_DRIVES',
     'FSA_HOOK_WALK', 'FSA_HOOK_RECYCLE', 'FSA_HOOK_MULTIPLY', 'FSA_HOOK_SELECT', 'FSA_HOOK_RELEASE', 'FSA_HOOK_GAP', 'FSA_HOOK_HEIGHT', 'FSA_HOOK_REVEAL', 'FSA_HOOK_STATUS',
-    'FSA_HOOK_MAXIMIZE', 'FSA_HOOK_BACK', 'FSA_HOOK_READABLE', 'FSA_HOOK_BEFORE', 'FSA_HOOK_AFTER', 'FSA_HOOK_RENAMED', 'FSA_HOOK_RENDER', 'FSA_HOOK_FAIL_LISTING', 'FSA_HOOK_REVEAL_GATE'
+    'FSA_HOOK_MAXIMIZE', 'FSA_HOOK_BACK', 'FSA_HOOK_READABLE', 'FSA_HOOK_BEFORE', 'FSA_HOOK_AFTER', 'FSA_HOOK_RENAMED', 'FSA_HOOK_RENDER', 'FSA_HOOK_FAIL_LISTING', 'FSA_HOOK_REVEAL_GATE',
+    'FSA_HOOK_ROWS'
 $HookedCases = 'C-002', 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
-    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002',
-    'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009'
-$NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004'
+    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002',
+    'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'N-005', 'N-006', 'W-001'
+$NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004', 'N-005'
+$CloudCases = 'N-006'
+$CfProviderDll = Join-Path $Repo 'artifacts\cf-provider\CfProvider.dll'
 $RigOnlyCases = 'N-003', 'N-004'
 $KiB64 = 64KB
 $script:Failures = [System.Collections.Generic.List[string]]::new()
@@ -605,11 +616,11 @@ function CheckCloseEscape($log, [string] $exit, $exitUtc, [bool] $cancelledFirst
 # Starts tests/window/StallRig with its marker and tree in $folder and returns at once: the process, a
 # task for the UNC root it prints once its mapping is made (after any other rig run has ended), and a task
 # for its stderr. Wait-RigRoot waits for the root.
-function Start-StallRig([string] $folder, [int] $waitSec = 150) {
+function Start-StallRig([string] $folder, [int] $waitSec = 150, [string[]] $extra = @()) {
     [void][System.IO.Directory]::CreateDirectory($folder)
     $marker = Join-Path $folder 'armed.txt'
     $start = [System.Diagnostics.ProcessStartInfo]::new($RigExe)
-    foreach ($arg in '--marker', $marker, '--wait-sec', [string]$waitSec) { $start.ArgumentList.Add($arg) }
+    foreach ($arg in @('--marker', $marker, '--wait-sec', [string]$waitSec) + $extra) { $start.ArgumentList.Add($arg) }
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
     $start.RedirectStandardInput = $true
@@ -4634,17 +4645,24 @@ function Test-S009 {
 
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009') + $NetworkCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'T-009', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009') + $NetworkCases + $CloudCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })
     $cases = @($cases | Where-Object { $_ -notin $NetworkCases })
+}
+if (-not $IncludeCloud) {
+    $notRun += @($cases | Where-Object { $_ -in $CloudCases })
+    $cases = @($cases | Where-Object { $_ -notin $CloudCases })
 }
 if (@($cases | Where-Object { $_ -in $HookedCases }).Count -gt 0) {
     Update-Hook
 }
 if (@($cases | Where-Object { $_ -in $NetworkCases }).Count -gt 0) {
     Update-StallRig
+}
+if (@($cases | Where-Object { $_ -in $CloudCases }).Count -gt 0) {
+    Update-CfProvider
 }
 if (@($cases | Where-Object { $_ -notin $RigOnlyCases }).Count -gt 0) {
     Update-App
@@ -4666,14 +4684,19 @@ foreach ($key in $cases) {
 }
 
 if ($notRun.Count -gt 0) {
-    Write-Output "NOT RUN: $($notRun -join ', ') (they change this machine's SMB mappings; pass -IncludeNetwork to run them)"
+    Write-Output "NOT RUN: $($notRun -join ', ') (the network cases change this machine's SMB mappings, pass -IncludeNetwork to run them; N-006 registers a cloud sync root, pass -IncludeCloud)"
 }
 if ($failed.Count -gt 0) {
     Write-Output "FAILED: $($failed -join ', ')"
     exit 1
 }
 if ($cases.Count -eq 0) {
-    exit 2 # a network case named without -IncludeNetwork: nothing ran, so nothing passed
+    exit 2 # a network or cloud case named without its switch: nothing ran, so nothing passed
+}
+if ($script:Inconclusive.Count -gt 0) {
+    # Never a pass (SL-089): a precondition not met or a negative with no lit control says nothing either way.
+    Write-Output "INCONCLUSIVE: $($cases -join ', ') ($($script:Inconclusive.Count) checks could not be judged)"
+    exit 3
 }
 Write-Output "PASSED: $($cases -join ', ')"
 exit 0
