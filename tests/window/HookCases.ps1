@@ -40,7 +40,7 @@ $script:Failures = [System.Collections.Generic.List[string]]::new()
 # ---- WindowCases.ps1's helpers and settings, by name ----
 
 $Helpers = 'Show', 'Check', 'CheckEqual', 'New-CaseFolder', 'New-File', 'New-SmallTree', 'New-LargeTree', 'Remove-CaseFolder',
-    'Update-App', 'Update-Hook', 'Start-App', 'Wait-App', 'Invoke-WithHook', 'Invoke-HookedRun', 'Show-Exit', 'Field', 'Read-Stopping', 'CheckCloseEscape'
+    'Update-App', 'Update-Hook', 'Format-AppArgument', 'Start-App', 'Wait-App', 'Invoke-WithHook', 'Invoke-HookedRun', 'Show-Exit', 'Field', 'Read-Stopping', 'CheckCloseEscape'
 $Settings = 'Exe', 'HookProject', 'HookDll', 'HookVariables', 'KiB64'
 $parseErrors = $null
 $source = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'WindowCases.ps1'), [ref]$null, [ref]$parseErrors)
@@ -102,7 +102,7 @@ function Test-H001 {
         [void](New-LargeTree $root)
         $marker = Join-Path $case 'armed.txt'
         $run = Invoke-WithHook 'close' $HookDll {
-            $process = Start-App "`"$root`""
+            $process = Start-App (Format-AppArgument $root)
             Write-Marker $process $marker
             $exit = Wait-App $process 60
             [pscustomobject]@{ Exit = $exit; ExitUtc = if ($exit -ne 'TIMEOUT') { $process.ExitTime.ToUniversalTime() } }
@@ -124,7 +124,7 @@ function Test-H001 {
         [void](New-LargeTree $root)
         $marker = Join-Path $case 'armed.txt'
         $run = Invoke-WithHook 'close' $HookDll {
-            $process = Start-App "`"$root`""
+            $process = Start-App (Format-AppArgument $root)
             try {
                 Write-Marker $process $marker
                 $settled = Wait-HookLine $process '^(refused|closed) ' 30
@@ -173,7 +173,7 @@ function Test-H002 {
             if ($shape.Cancel) { $armed.FSA_HOOK_CANCEL_DELAY_MS = $shape.Cancel }
             $run = Invoke-WithHook $shape.Mode $HookDll {
                 $clock = [System.Diagnostics.Stopwatch]::StartNew()
-                $process = Start-App "`"$root`""
+                $process = Start-App (Format-AppArgument $root)
                 try {
                     $said = Wait-HookLine $process '^(refused|acted) ' $shape.Within
                     [pscustomobject]@{ Said = $said; Seconds = $clock.Elapsed.TotalSeconds; StillOpen = -not $process.HasExited }

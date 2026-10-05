@@ -1,0 +1,298 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-089",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-10-05T19:00:22.874Z",
+ "head": "94f22bc1bf2c2291f25d519bb0f652c5bda39f1c",
+ "run_id": 2579,
+ "summary": "I reviewed SL-089's own change against uat (af82e28..HEAD, 16 files, no src changes): RowsMode.cs, the StartupHook changes, the WindowCases.ps1 additions (N-005, N-006, T-009, W-001, R-002 steps f and g, the oracle, the checker controls, the record writer), StallRig/SmbRig, the CfProvider stop-seam scenario and teardown, the four Core.Tests files, the fitness.yaml twin and plants.json.\n\nWhat I ran:\n- **Build:** 0 warnings, 0 errors.\n- **Slice's filtered tests:** 98/98 green.\n- **Full suite:** 556/559. The 3 failures are the pre-existing LastAccess/HeldOpenTree ones (Q-190).\n- **rules-parity:** AGREE 16/20/40 in pwsh 7 and in Windows PowerShell 5.1. RuleCases C-001 holds.\n- **Fitness:** all 82 rules hold.\n- **T-009:** passed. Probes 5/32, 5/0, 0/0; one row at code 32, drawn 'could not be opened: in use by another program'; core.unreadable 1.\n- **W-001 on C:\\ProgramData\\Microsoft\\Windows:** a root that holds SL-095's excluded store, so the dump's notScanned branch and the header's ', not scanned (M)' suffix ran for the first time. 457 rows = header 457 = core.unreadable 457, notScanned 1, all 457 code-5 rows still refused, checker controls all true, verdict held, kernel pool +2 MB.\n\nI did not run N-005, N-006 or R-002: Q-176 grants those to build and validate. My read of them comes from the code.\n\nOne defect in what was written. W-001 hands -Root to the app without doubling a trailing backslash; eng/read-window.ps1:52 does double it. So the owner's documented criterion-3 command, `-Root C:\\`, reaches the app as the single argument `C:\" --report <file>`. That is not report mode: no report is written, and W-001 holds a window open for its full 1200 s before killing it. I confirmed this with CommandLineToArgvW and with a 20 s launch of the published exe: `C:\\Windows\\Logs` exits 0 with a report, `C:\\Windows\\Logs\\` never exits and writes nothing.\n\nThere is also one minor contradiction between docs/design/SL-089-seams.md and Test-N006 about what happens if a later Windows lets a row appear under the release ending.\n\nThe case matrix is fed as designed. The hidden/system case was deferred by the design, and that reason still holds: step g asserts its folder is neither hidden nor system. There is no build loop: three build attempts, the first two engine halts.\n\nSecond round: This second pass found nothing new beyond round 1, so it files no findings. Round 1's M1 still needs fixing (W-001 hands a root ending in a backslash, such as the documented `C:\\`, to the app without doubling it, so report mode never starts), and so does m1 (the seams record misstates what N-006 does under the release ending). This pass neither changes nor adds to them.\n\nWhat I attacked:\n- **Readers and patterns:**\n  - Read-RigLog's line regex: CRLF splitting, and partial lines read while the rig is still appending.\n  - Get-Fetches and the provider's stdout reader.\n  - Get-HeaderCount, including the `, not scanned (M)` suffix, which my W-001 run exercised for real.\n  - Read-RowsDump's single closing line.\n  - The twinned rule's pattern against fluent, null-conditional, comment, indexer, foreach and `Count(...)` forms. The only divergence is xUnit firing where Fitness is quiet, which fails closed.\n  - Write-W001Record's string allow-list against the real reason table: Windows' messages for 2, 363 and 1920 carry no slash.\n  - ConvertFrom-Utc against pwsh 7.6's ConvertFrom-Json dates. I ran it: a Utc kind round-trips.\n  - System.Text.Json on a path with a lone surrogate. I ran it: it writes U+FFFD and does not throw.\n- **Boundaries:**\n  - Every Start-App and Start-Process root besides W-001's. N-005 and N-006 roots never end in a backslash, so M1's family has no other member.\n  - Pipeline output leaking into the returned run objects in Invoke-SmbSeamRun, Start-CloudSeamRun and Remove-CloudRoot: none does.\n  - The Kill, WaitForExit and closed-pipe paths in Step-CloudSeamRun and Complete-CloudSeamRun.\n  - StallRig's argument grammar.\n  - The CfExecute operation-info and parameter struct layouts.\n  - The FILE_BASIC_INFO size used by the oracle's probe.\n  - RowsMode's ordering against App.xaml.cs's EndingShown handler: the report handler yields first, so the rows are read before the report.\n- **Partial-failure paths:** a provider that never reaches READY, a deny that does not take, an app that never exits, no hold ever logged, a rig whose mapping fails with error 53, and a hook dump with no closing line. Each one ends as INCONCLUSIVE or a failed check, never a pass.\n\nThings I looked at and chose not to file, because they are rare enough to be noise:\n- The oracle reads any non-zero open error other than 2 or 3 (32 included) as \"still refused\".\n- A lone-surrogate path is rewritten in the dump.\n- A header in a locale that does not group digits with commas would not be parsed, but only past 999 rows.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "I reviewed SL-089's own change against uat (af82e28..HEAD, 16 files, no src changes): RowsMode.cs, the StartupHook changes, the WindowCases.ps1 additions (N-005, N-006, T-009, W-001, R-002 steps f and g, the oracle, the checker controls, the record writer), StallRig/SmbRig, the CfProvider stop-seam scenario and teardown, the four Core.Tests files, the fitness.yaml twin and plants.json.\n\nWhat I ran:\n- **Build:** 0 warnings, 0 errors.\n- **Slice's filtered tests:** 98/98 green.\n- **Full suite:** 556/559. The 3 failures are the pre-existing LastAccess/HeldOpenTree ones (Q-190).\n- **rules-parity:** AGREE 16/20/40 in pwsh 7 and in Windows PowerShell 5.1. RuleCases C-001 holds.\n- **Fitness:** all 82 rules hold.\n- **T-009:** passed. Probes 5/32, 5/0, 0/0; one row at code 32, drawn 'could not be opened: in use by another program'; core.unreadable 1.\n- **W-001 on C:\\ProgramData\\Microsoft\\Windows:** a root that holds SL-095's excluded store, so the dump's notScanned branch and the header's ', not scanned (M)' suffix ran for the first time. 457 rows = header 457 = core.unreadable 457, notScanned 1, all 457 code-5 rows still refused, checker controls all true, verdict held, kernel pool +2 MB.\n\nI did not run N-005, N-006 or R-002: Q-176 grants those to build and validate. My read of them comes from the code.\n\nOne defect in what was written. W-001 hands -Root to the app without doubling a trailing backslash; eng/read-window.ps1:52 does double it. So the owner's documented criterion-3 command, `-Root C:\\`, reaches the app as the single argument `C:\" --report <file>`. That is not report mode: no report is written, and W-001 holds a window open for its full 1200 s before killing it. I confirmed this with CommandLineToArgvW and with a 20 s launch of the published exe: `C:\\Windows\\Logs` exits 0 with a report, `C:\\Windows\\Logs\\` never exits and writes nothing.\n\nThere is also one minor contradiction between docs/design/SL-089-seams.md and Test-N006 about what happens if a later Windows lets a row appear under the release ending.\n\nThe case matrix is fed as designed. The hidden/system case was deferred by the design, and that reason still holds: step g asserts its folder is neither hidden nor system. There is no build loop: three build attempts, the first two engine halts.\n\nSecond round: This second pass found nothing new beyond round 1, so it files no findings. Round 1's M1 still needs fixing (W-001 hands a root ending in a backslash, such as the documented `C:\\`, to the app without doubling it, so report mode never starts), and so does m1 (the seams record misstates what N-006 does under the release ending). This pass neither changes nor adds to them.\n\nWhat I attacked:\n- **Readers and patterns:**\n  - Read-RigLog's line regex: CRLF splitting, and partial lines read while the rig is still appending.\n  - Get-Fetches and the provider's stdout reader.\n  - Get-HeaderCount, including the `, not scanned (M)` suffix, which my W-001 run exercised for real.\n  - Read-RowsDump's single closing line.\n  - The twinned rule's pattern against fluent, null-conditional, comment, indexer, foreach and `Count(...)` forms. The only divergence is xUnit firing where Fitness is quiet, which fails closed.\n  - Write-W001Record's string allow-list against the real reason table: Windows' messages for 2, 363 and 1920 carry no slash.\n  - ConvertFrom-Utc against pwsh 7.6's ConvertFrom-Json dates. I ran it: a Utc kind round-trips.\n  - System.Text.Json on a path with a lone surrogate. I ran it: it writes U+FFFD and does not throw.\n- **Boundaries:**\n  - Every Start-App and Start-Process root besides W-001's. N-005 and N-006 roots never end in a backslash, so M1's family has no other member.\n  - Pipeline output leaking into the returned run objects in Invoke-SmbSeamRun, Start-CloudSeamRun and Remove-CloudRoot: none does.\n  - The Kill, WaitForExit and closed-pipe paths in Step-CloudSeamRun and Complete-CloudSeamRun.\n  - StallRig's argument grammar.\n  - The CfExecute operation-info and parameter struct layouts.\n  - The FILE_BASIC_INFO size used by the oracle's probe.\n  - RowsMode's ordering against App.xaml.cs's EndingShown handler: the report handler yields first, so the rows are read before the report.\n- **Partial-failure paths:** a provider that never reaches READY, a deny that does not take, an app that never exits, no hold ever logged, a rig whose mapping fails with error 53, and a hook dump with no closing line. Each one ends as INCONCLUSIVE or a failed check, never a pass.\n\nThings I looked at and chose not to file, because they are rare enough to be noise:\n- The oracle reads any non-zero open error other than 2 or 3 (32 included) as \"still refused\".\n- A lone-surrogate path is rewritten in the dump.\n- A header in a locale that does not group digits with commas would not be parsed, but only past 999 rows.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "nature": "defect",
+    "claim": "W-001 passes -Root to the app through Invoke-HookedRun and Start-App, which quote it without doubling a trailing backslash. With the root the design, the record and the case's own error text name for criterion 3 (`-Root C:\\`), the command line becomes `\"C:\\\" --report \"<file>\"`. Windows splits that into one argument, `C:\" --report <file>`. App.OnStartup finds no `--report` and starts in interactive mode with a bogus root. No report is written, and W-001 waits its full 1200 s with the window open on the person's desktop, kills the app, and fails 'a report was written'. The owner's criterion-3 run, the only way C3 can be discharged, cannot produce c-drive-run.json as written. The project already knows this rule: eng/read-window.ps1:52 doubles a trailing backslash ('C:\\ would arrive as C:\"'), and CommandLine.RootArgument documents the same escaping. Measured here: CommandLineToArgvW splits W-001's command line for C:\\ into the one argument above. A 20 s launch of the published exe with `\"C:\\Windows\\Logs\" --report` exited 0 and wrote its report; the same with `\"C:\\Windows\\Logs\\\"` never exited and wrote nothing.",
+    "evidence": "tests/window/WindowCases.ps1:5907 (Test-W001), Invoke-HookedRun (:515) and Start-App (:458) quote the root as given. eng/read-window.ps1:52 does `$rootArgument = $Root -replace '(\\\\+)$', '$1$1'`. The command is documented in docs/design/SL-089-seams.md:51 (`-Case W-001 -Root C:\\`) and in Test-W001's throw text ('C:\\ for criterion 3').",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 5907,
+     "text": "        $run = Invoke-HookedRun 'rows' $Root $report @{ FSA_HOOK_ROWS = '1' } 1200"
+    },
+    "fix": "Double a trailing backslash before the root reaches argv, as read-window.ps1:52 does. Do it once in Invoke-HookedRun, or in Start-App's root argument, so every hooked case gets it: `$root -replace '(\\\\+)$', '$1$1'`. Then prove it with a W001OracleTests-style or C-013-style check: a rows-mode run of a temp root given with a trailing backslash writes its report and dump. Corpus rows: `C:\\`, `<tempdir>\\`, `C:` (Core's LongPath already repairs it to C:\\), and a root without a trailing backslash.",
+    "class_of": "a root ending in a backslash handed to the app's argv undoubled",
+    "threat": "accident"
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "claim": "The slice's record says N-006 'fails if a later Windows starts returning an error under any of the three endings'. The code fails only the kill and timeout controls on a row for s. Under release, a row for s is taken as the positive control, which is what Q-177 decided ('If error-completion does produce a row, C1's cloud half is the ordinary positive check'). The record that every later reader checks the case against therefore misstates what the case does in the one future Q-177 plans for.",
+    "evidence": "docs/design/SL-089-seams.md:38 against Test-N006 in tests/window/WindowCases.ps1: `if ($ending -cne 'release') { ... Check ($s.Count -eq 0) ... }`.",
+    "quote": {
+     "path": "docs/design/SL-089-seams.md",
+     "line": 37,
+     "text": "as a positive check, and fails if a later Windows starts returning an error under any of the three endings."
+    },
+    "fix": "Reword the sentence: N-006 fails if a later Windows returns an error under the kill or the timeout ending. Under the release ending, a row for s becomes the positive control, and s's absence after Stop is then reported as held beside it (Q-177)."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "tests/window/WindowCases.ps1 Test-N006 runs a 'release' control without Stop. Step-CloudSeamRun sends 'release', and tests/CfProvider/Program.cs Fail() completes the held FETCH_PLACEHOLDERS through CfExecute TRANSFER_PLACEHOLDERS with STATUS_CLOUD_FILE_UNSUCCESSFUL. The CF_OPERATION_INFO and CF_OPERATION_PARAMETERS layouts check out (union at offset 8, ParamSize 40). The precondition was measured false (no row for s), and the case applies Q-177's platform-limit branch, so it is verified negative rather than assumed. I did not run N-006 (Q-176 grants it to build and validate)."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "Test-N006 builds $platformLimit for s, t and u only when none of the three controls lit them, and CheckSeamMain records 'held: platform gives no failed read (Q-177)' for those. t and u's first fetches are taken from the provider's FETCH log, filtered to the app's pid. The outcome comes from reading the code; I did not run N-006."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "Invoke-SmbSeamRun with $stop=false runs the hook in rows mode, kills the rig at hold+8 s, then waits up to 90 s (Wait-App). CheckSeamControl requires exit 0, a report and core.status Completed. Builder measured it; I did not run N-005."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "Control and main share Invoke-SmbSeamRun and Start-CloudSeamRun (same fixture, the failpoint b|3|59, the same $SeamReleaseMs 8000). Test-N005 and Test-N006 compare the hold-to-teardown and hold-to-release offsets and report Inconclusive if they differ by more than 1000 ms."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "Test-N005: the rig holds s (StallRig --seam), the hook presses Stop 2 s after the armed marker, and the rig is killed 8 s after its logged hold. The control must light s, and CheckSeamMain asserts no row for s with the control's lit state."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "CheckSeamMain takes t and u's first create from the rig's --log (SmbRig Trace) or first fetch from the provider's FETCH lines, and their absence counts only with a lit control or the platform-limit branch."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "CheckSeamMain calls CheckPanelAgrees with expected 2 and checks a and b with CheckSeamRow. Test-N005 and Test-N006 report Inconclusive unless a's refused create (N-005), b's 'fail-listing fired b page 3' and s's hold all come before the Stop."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "Test-N006's main run (stop mode, marker written at s's held fetch, release at hold+8 s) and its three controls. In the main run, Cancel frees the cloud wait in about 34 ms, so the failure completion lands after the scan has returned; the absence of s is reported under Q-177, not as a positive check."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "I ran T-009: probes h 5/32, c 5/0, p 0/0; one row h, NothingListed 32, drawn 'could not be opened: in use by another program'; 'access denied' appears nowhere. HeldFolderReasonTests passed in the default suite."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "T-009 run: c is no row and core.unreadable is 1. HeldFolderReasonTests asserts c is listed with its file and that LastAccessAsked − LastAccessKept ≥ 2."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "StallRig --seam pins b at 1,200 names of 46 characters. CheckSeamControl and the main run require 'fail-listing fired b page 3', and CheckSeamRow requires b drawn 'only partly read: network or share error'. Read only; N-005 not run by me."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "I ran W-001 on C:\\ProgramData\\Microsoft\\Windows: 457 rows = header 457 = core.unreadable 457, 6 realized, notScanned 1, no duplicates, no empty reasons, hook and checker unelevated. Bounded roots only; the whole-C:\\ run is the owner's and is currently broken by M1."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "Get-OracleRow opens every code-5 NothingListed row with the scanner's plain mask (same values as SynchronousIoCancel.cs:246/505). In my run all 457 were opened and stayed refused, with 0 leaks. Get-CheckerControls' refused-then-listed control held. W001OracleTests' F02 (a listable code-5 row is classed 'leak') passed."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "W001OracleTests.TheOracleGivesEveryRowOfTheCorpusItsClass passed here: F11 (363) → leftover-363, F13 (code 5 on a reparse point) → leftover-reparse, F12 (1920) → other-code."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "Same test: F08 (code 2, recreated) → other-code, never opened; F04 (code 5, recreated) → changed-since-scan."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "Test-R002 step 'f': Invoke-WatchedReveal on 'unreadable:<leaf of deny300>', then Check-PanelLanding (surface unreadable, hresult 0, at most 3 s, folder Name, single selection by Name, no dialog, no consent.exe). Read only; R-002 not run by me."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "Test-R002 builds a 1000-character deny-ListDirectory leaf (Get-ExactPath, Set-DenyRule) and asserts it is listable-denied, its parent listable and neither hidden nor system. Step 'g' runs Check-PanelLanding. Read only."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "tests/window/FsaWindowHook/StartupHook.cs: 'rows' is in the mode list, FSA_HOOK_ROWS is allowed with rows and stop only, rows mode refuses FSA_HOOK_ARMED and has no deadline, and ArmFailListing runs in Initialize for any mode. The T-009 run logged 'loaded mode=rows'."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "The dump writes UnreadableKind names. W-001 checks nothingListed + listedPartway = rows and opened + tallied = nothingListed, and both held in my run."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "fitness.yaml carries only the twinned TheWindowReportReadsOnlyTheFailedFolderCount (*.cs); rule 2 is absent and cited in the SL-089 settled comment. rules-parity reported AGREE 16/20/40 in both shells."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "The single-line pattern with (?m), including_comments: true and the ArchitectureRulesTests Fact. WindowReportRuleTests passed. Plants F36-F40 and P28-P31 are in plants.json, still unrecorded by the harness (validate's job under Q-027)."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "Invoke-SmbSeamRun's finally runs Remove-RigMappingsLeft (StallRig --sweep, which calls SmbRig.SweepLeftBehind under RigLock). Test-N005 checks Get-RigMappings is empty after each run. Start-SeamRig retries on error 53 for up to 75 s."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "Complete-CloudSeamRun → Remove-CloudRoot (unregister, probe, delete with CfProvider's FILE_FLAG_OPEN_REPARSE_POINT fallback). Test-N006 checks NOT-REGISTERED and that the folder is gone per run. Get-CloudCaseBase moves roots off C:\\WINDOWS\\TEMP, and Clear-StaleCloudRoots runs at start and end."
+   },
+   {
+    "key": "O-024",
+    "discharged": "yes",
+    "evidence": "Test-N006 runs release, kill and timeout controls, prints core files, folders and bytes, and fails kill and timeout on any row for s. The platform-limit verdict is applied. The timeout control is ended at the first filter timeout (declared deviation)."
+   },
+   {
+    "key": "O-025",
+    "discharged": "yes",
+    "evidence": "Test-W001 requires -Root, records kernel paged and nonpaged pool before and after, and checks the wcifs-layer-store precaution was on for a whole drive. The whole-C:\\ run is left to the owner (docs/design/SL-089-seams.md). M1 separately breaks that owner command."
+   },
+   {
+    "key": "O-026",
+    "discharged": "yes",
+    "evidence": "Get-CheckerControls and Get-W001Verdict; W001OracleTests' controls and verdict tests passed. My W-001 run recorded checkerControls all true."
+   },
+   {
+    "key": "O-027",
+    "discharged": "yes",
+    "evidence": "fitness.yaml's SL-089 settled comment cites SL-033's 'the shipped app carries no test seam'; no must_not_import entry was added."
+   },
+   {
+    "key": "O-028",
+    "discharged": "yes",
+    "evidence": "RowsMode.Read runs on EndingShown, selects UnreadableTab, calls UpdateLayout and reads containers. My T-009 run logged 'realized=1 selected=True', with drawn text required by CheckSeamRow."
+   },
+   {
+    "key": "O-029",
+    "discharged": "yes",
+    "evidence": "Get-OracleRow opens only code-5 NothingListed rows, tallies the other codes, 363 and reparse rows, and exempts rows whose CreationTime or ChangeTime is after the scan's start. The 15-row corpus in tests/window/W001OracleCorpus.json passed in W001OracleTests."
+   },
+   {
+    "key": "O-030",
+    "discharged": "yes",
+    "evidence": "tests/FsAnalyser.Core.Tests/HeldFolderReasonTests.cs probes both opens per folder and asserts LastAccessAsked − LastAccessKept ≥ 2 and that c and p are listed. It passed here. I did not re-run the recorded mutation."
+   },
+   {
+    "key": "O-031",
+    "discharged": "yes",
+    "evidence": "StallRig SeamChildren 1_200 / SeamNameLength 46 and CfProvider BChildren 1_200 / BNameLength 46 (names padded to exactly 46). CheckSeamControl asserts 'fail-listing fired b page 3'."
+   },
+   {
+    "key": "O-032",
+    "discharged": "no",
+    "evidence": "Waived to SC-133 by decision. The rule fences only the record (fitness.yaml comment says so); no GetPath or .Path pattern was added."
+   },
+   {
+    "key": "O-033",
+    "discharged": "no",
+    "evidence": "Waived to SC-134 by decision. Initialize-SeamWin32 copies the mask literals with a comment citing SC-134; they match SynchronousIoCancel.cs today."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "Test-N005 / Invoke-SmbSeamRun: the rig holds s, Stop comes 2 s after the armed marker, and the rig is killed at hold+8 s. The control (rows mode, same kill offset) must light s; the main run asserts no row for s. Read, not run."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "CheckSeamMain classifies t and u by their first create (SMB rig --log) or first fetch (provider log) against the hook's stopUtc. Absence counts only beside a lit control or the Q-177 platform limit."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "a is denied at create (StallRig --deny a) or by NTFS ACE (cloud), and b fails partway via FSA_HOOK_FAIL_LISTING=b|3|59. CheckPanelAgrees expects 2 and CheckSeamRow expects each once. Preconditions are timed against the Stop or the case is Inconclusive."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "Test-N006's main run: s's FETCH_PLACEHOLDERS is held, Stop comes 2 s later, and CfExecute fails the fetch at hold+8 s. Cancel frees the wait in about 34 ms, so the failure lands after the scan returned. The release control shows the failure never makes a row even without Stop, so the verdict is Q-177's platform limit."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "I ran T-009: the holder opens first, then the deny-WriteAttributes ACE; probes 5/32 on h; row h at code 32. HeldFolderReasonTests feeds the same fixture in the default suite."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "T-009 and HeldFolderReasonTests: c probes 5/0 (refused keep-open, plain open lists) and is asserted no row, listed with its file."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "StallRig --seam b: 1,200 files of 46 characters over real SMB; failpoint b|3|59; the 'fired b page 3' assertion; the row drawn 'only partly read: network or share error'. The code is injected client-side, as designed (U-103)."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "W-001 with the published exe in rows mode, unelevated. My run on C:\\ProgramData\\Microsoft\\Windows gave 457 rows with 6 realized, reasons read from items. The whole C:\\ is not run (owner's), and its command is broken by M1."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "Fed directly by T-009's c and HeldFolderReasonTests' c (refused-then-listed, no row). In W-001 the checker's refused-then-listed control is planted outside the scanned root, so bounded W-001 runs do not themselves prove the root held such folders."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "W001OracleTests feeds corpus F11 (363) and F13 (code 5 on a real junction, REPARSE attribute) to Get-OracleRow, which branches on code and attribute alone. Synthetic rows; passed here."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "W001OracleTests F08: a real folder deleted and recreated after the scan-start moment with code 2 → other-code, never opened (the m3 rule)."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "Test-R002 step 'f' reveals the 300-character deny-all folder via the hook's 'unreadable:' surface and checks folder and selection by Name, hresult, the 3 s bound, dialogs and consent.exe. Read only."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "Test-R002 step 'g' uses a new 1000-character leaf denied ListDirectory only, checked not hidden or system, revealed from its panel row with the same Name-only checks. Read only."
+   },
+   {
+    "key": "C-014",
+    "exercised": "no",
+    "evidence": "Deferred by the design (material false). The reason still holds: Q-175 assigns hidden/system to a follow-on, criterion 4 does not name it, and step g asserts its fixture is neither hidden nor system."
+   }
+  ],
+  "drift": [
+   "W-001 keeps no raw dump with paths in gitignored artifacts/, though the design's c-drive-run.json contract says offending rows are reported 'by path only in the gitignored raw dump'. The hook log is deleted in Invoke-WithHook's finally, so a leak's path survives only in the console line 'LEAK: a row with code 5 that opens: <path>'.",
+   "CfProvider's stop-seam release is signalled by a 'release' line on the provider's stdin, not by the design's named event. This is harmless and undeclared.",
+   "N-005 gives the app 90 s after the rig is killed (Wait-App 90), where the case contract said 'No report within 60 s of teardown or release: failed'.",
+   "Built on uat's SL-095 merge: the rows dump also carries NotScannedRow items as 'notScanned' lines (declared). I exercised it on C:\\ProgramData\\Microsoft\\Windows (notScanned 1, header suffix parsed). No committed or recorded run reached that branch before, and the owner's whole-C:\\ W-001 is the only planned run that does."
+  ],
+  "matches_design": true,
+  "unreviewed": [],
+  "second_round": {
+   "run_id": 2581,
+   "filed": 0
+  }
+ }
+}

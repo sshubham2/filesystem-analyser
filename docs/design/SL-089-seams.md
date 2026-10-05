@@ -35,7 +35,9 @@ On this Windows build the cloud filter gives the reader no failed read. Whether 
 silent until the filter's own timeout, the listing the scanner gets back is a success with no entries, so the engine
 records nothing for s, and nothing for t or u, whose fetches the provider failed the same way. The app therefore cannot
 list these folders as unreadable, with Stop or without it. N-006 reports their absence after Stop as this limit, never
-as a positive check, and fails if a later Windows starts returning an error under any of the three endings.
+as a positive check. It fails if a later Windows returns an error for s under the kill or the timeout ending. Under the
+release ending a row for s is not a failure: it becomes the positive control, and s's absence after Stop is then reported
+as held beside it (Q-177).
 
 It is also a silent undercount the app cannot detect: s, t and u were listed as empty under every ending, so whatever the
 cloud holds under them is in no total and in no row. It is not fixed here.
@@ -49,3 +51,9 @@ wcifs-layer-store precaution on (it is at every launch), and W-001 writes `.taad
 (counts, codes and reason texts only):
 
     pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case W-001 -Root C:\
+
+The trailing backslash is safe: every case hands the app its paths through `Format-AppArgument`, which doubles it as
+`eng/read-window.ps1` does (review M1: quoted by hand, `"C:\" --report "<file>"` reached the app as one argument and no
+report was ever written). `tests/window/AppArgumentCorpus.json` lists the roots, the launch-line plants and every script
+that launches the app; `AppArgumentTests` runs them, and C-013 launches a temp root ending in a backslash in rows mode.
+Measured at this build: W-001 with `-Root C:\Windows\Logs\` wrote its report, 1 row, verdict held.

@@ -141,7 +141,7 @@ $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_H
     'FSA_HOOK_WALK', 'FSA_HOOK_RECYCLE', 'FSA_HOOK_MULTIPLY', 'FSA_HOOK_SELECT', 'FSA_HOOK_RELEASE', 'FSA_HOOK_GAP', 'FSA_HOOK_HEIGHT', 'FSA_HOOK_REVEAL', 'FSA_HOOK_STATUS',
     'FSA_HOOK_MAXIMIZE', 'FSA_HOOK_BACK', 'FSA_HOOK_READABLE', 'FSA_HOOK_BEFORE', 'FSA_HOOK_AFTER', 'FSA_HOOK_RENAMED', 'FSA_HOOK_RENDER', 'FSA_HOOK_FAIL_LISTING', 'FSA_HOOK_REVEAL_GATE',
     'FSA_HOOK_AT_FOLDERS', 'FSA_HOOK_PAST', 'FSA_HOOK_PAST_FOLDERS', 'FSA_HOOK_AT_SIZED', 'FSA_HOOK_TRIGGER_DEADLINE_S', 'FSA_HOOK_ANSWER', 'FSA_HOOK_ROWS'
-$HookedCases = 'C-002', 'C-006', 'C-012', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
+$HookedCases = 'C-002', 'C-006', 'C-012', 'C-013', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
     'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002',
     'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005', 'N-005', 'N-006', 'W-001'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004', 'N-005'
@@ -452,6 +452,14 @@ function Read-Window([string] $root, [int] $timeoutSec = 120) {
     }
 }
 
+# One path as the app's argv must receive it: quoted, with a trailing backslash doubled so that it does not escape the
+# closing quote, as eng/read-window.ps1 does. Quoted by hand, "C:\" --report "<file>" reaches the app as the one argument
+# C:" --report <file>: no report mode, and the window waits on a person (SL-089 review M1). Every case that hands the app
+# a path on a command line goes through here; tests/window/AppArgumentCorpus.json holds the roots it is proved against.
+function Format-AppArgument([string] $path) {
+    '"' + ($path -replace '(\\+)$', '$1$1') + '"'
+}
+
 # Straight through Start-Process, for the cases about raw arguments. -ArgumentList joins an array with
 # spaces and quotes nothing. $environment (SL-080) is given to this one process alone (-Environment, pwsh 7.4+),
 # never set in this script's own $env:, so no build or other process it starts ever sees it.
@@ -513,7 +521,7 @@ function Invoke-WithHook([string] $mode, [string] $hookDll, [scriptblock] $actio
 # these cases plant a stale report at a path of their own and eng/read-window.ps1 picks its own. $variables
 # holds any other hook variables, set and removed as Invoke-WithHook does.
 function Invoke-HookedRun([string] $mode, [string] $root, [string] $report, [hashtable] $variables = @{}, [int] $timeoutSec = 60) {
-    $run = Invoke-WithHook $mode $HookDll { Wait-App (Start-App "`"$root`" --report `"$report`"") $timeoutSec } $variables
+    $run = Invoke-WithHook $mode $HookDll { Wait-App (Start-App "$(Format-AppArgument $root) --report $(Format-AppArgument $report)") $timeoutSec } $variables
     $text = if (Test-Path -LiteralPath $report -PathType Leaf) { Get-Content -LiteralPath $report -Raw } else { $null }
     [pscustomobject]@{
         Exit   = $run.Result
@@ -1069,7 +1077,7 @@ function Test-C009 {
         $out = Join-Path $case 'out'
         [void][System.IO.Directory]::CreateDirectory($out)
         $report = Join-Path $out 'r.json'
-        $process = Start-App "`"$large`" --report `"$report`""
+        $process = Start-App "$(Format-AppArgument $large) --report $(Format-AppArgument $report)"
         $clock = [System.Diagnostics.Stopwatch]::StartNew()
         while (-not $process.HasExited -and $process.MainWindowHandle -eq [IntPtr]::Zero -and $clock.Elapsed.TotalSeconds -lt 30) {
             Start-Sleep -Milliseconds 10
@@ -1109,7 +1117,7 @@ function Test-C010 {
 
         # The file itself, read by both shells.
         $report = Join-Path $case 'report.json'
-        CheckEqual '0' (Invoke-App "`"$root`" --report `"$report`"") 'direct run: exit code'
+        CheckEqual '0' (Invoke-App "$(Format-AppArgument $root) --report $(Format-AppArgument $report)") 'direct run: exit code'
         [byte[]] $bytes = [System.IO.File]::ReadAllBytes($report)
         CheckEqual '123' $bytes[0] 'the file starts with { (no byte-order mark)'
         Check (@($bytes | Where-Object { $_ -ge 0x80 }).Count -eq 0) 'every byte of the file is ASCII'
@@ -1187,7 +1195,8 @@ function Test-C012 {
 }
 
 # C-013: a root ending in a backslash, which would escape the closing quote if the reader did not
-# double it.
+# double it. Read through eng/read-window.ps1, and launched through Invoke-HookedRun in rows mode as every hooked case
+# and W-001 are (SL-089 review M1: W-001 -Root C:\ reached the app as one argument, and no report was ever written).
 function Test-C013 {
     $case = New-CaseFolder
     try {
@@ -1195,6 +1204,10 @@ function Test-C013 {
         $manifest = New-SmallTree $tree
         $root = "$tree\"
         CheckFinished (Read-Window $root) $root $tree $manifest
+
+        $run = Invoke-HookedRun 'rows' $root (Join-Path $case 'report.json') @{ FSA_HOOK_ROWS = '1' } 60
+        CheckFinished ([pscustomobject]@{ Exit = "EXIT $($run.Exit)"; Report = $run.Report }) $root $tree $manifest
+        if ($null -ne $run.Report) { CheckPanelAgrees $run.Report (Read-RowsDump $run.Log) 'hooked run' 0 }
     }
     finally { Remove-CaseFolder $case }
 }
@@ -1403,7 +1416,7 @@ function Test-N001 {
         Wait-RigRoot $rig
         if (-not $rig.Root) { return }
         $report = Join-Path $case 'report.json'
-        $run = Invoke-WithHook 'stop' $HookDll { Wait-App (Start-App "`"$($rig.Root)`" --report `"$report`"") 150 } @{
+        $run = Invoke-WithHook 'stop' $HookDll { Wait-App (Start-App "$(Format-AppArgument $rig.Root) --report $(Format-AppArgument $report)") 150 } @{
             FSA_HOOK_ARMED           = $rig.Marker
             FSA_HOOK_CANCEL_DELAY_MS = '3000'
         }
@@ -1451,7 +1464,7 @@ function Test-N002 {
             $armed = @{ FSA_HOOK_ARMED = $rig.Marker; FSA_HOOK_CLOSE_DELAY_MS = $shape.Close }
             if ($shape.Cancel) { $armed.FSA_HOOK_CANCEL_DELAY_MS = $shape.Cancel }
             $run = Invoke-WithHook 'close' $HookDll {
-                $process = Start-App "`"$($rig.Root)`""
+                $process = Start-App (Format-AppArgument $rig.Root)
                 $exit = Wait-App $process 150
                 [pscustomobject]@{ Exit = $exit; ExitUtc = if ($exit -ne 'TIMEOUT') { $process.ExitTime.ToUniversalTime() } }
             } $armed
@@ -2318,7 +2331,7 @@ function Read-HookJson($log) {
 # One launch of the app on $root without --report, under the hook's tree mode with $variables: the exit code (or
 # TIMEOUT) and the hook's lines, raw and as objects. $environment goes to the app's process alone (Start-App).
 function Invoke-TreeRun([string] $root, [hashtable] $variables = @{}, [int] $timeoutSec = 120, [hashtable] $environment = @{}) {
-    $run = Invoke-WithHook 'tree' $HookDll { Wait-App (Start-App "`"$root`"" ([System.IO.Path]::GetTempPath()) $environment) $timeoutSec } $variables
+    $run = Invoke-WithHook 'tree' $HookDll { Wait-App (Start-App (Format-AppArgument $root) ([System.IO.Path]::GetTempPath()) $environment) $timeoutSec } $variables
     [pscustomobject]@{
         Exit  = $run.Result
         Log   = $run.Log
@@ -3356,7 +3369,7 @@ function Test-K003 {
 
 function Invoke-RevealRun([string] $root, [string] $revealTargets, [int] $timeoutSec = 60) {
     $variables = @{ FSA_HOOK_REVEAL = $revealTargets }
-    $run = Invoke-WithHook 'reveal' $HookDll { Wait-App (Start-App "`"$root`"") $timeoutSec } $variables
+    $run = Invoke-WithHook 'reveal' $HookDll { Wait-App (Start-App (Format-AppArgument $root)) $timeoutSec } $variables
     $lines = @(Read-HookJson $run.Log)
     # Every menu the hook opened acted on the row the app's own Opened handler captured: the hook reads the menu's
     # Tag and never writes it (B3-3). Printed to the host: this function's output is the run.
@@ -4047,7 +4060,7 @@ function Invoke-WatchedReveal([string] $root, [string] $revealTarget, [string] $
     $variables = @{ FSA_HOOK_REVEAL = $revealTarget }
     $consentBefore = @(Get-Process -Name consent -ErrorAction SilentlyContinue | ForEach-Object Id)
     $run = Invoke-WithHook 'reveal' $HookDll {
-        $process = Start-App "`"$root`""
+        $process = Start-App (Format-AppArgument $root)
         $dialogsBefore = @(Get-Dialogs $process.Id)
         $shell = New-Object -ComObject Shell.Application
         $landed = $null
@@ -4148,7 +4161,7 @@ function Invoke-RefusedReveal([string] $root, [string] $revealTarget, [scriptblo
     $before = Get-ExplorerState
     try {
         $run = Invoke-WithHook 'reveal' $HookDll {
-            $process = Start-App "`"$root`""
+            $process = Start-App (Format-AppArgument $root)
             $changes = [System.Collections.Generic.List[string]]::new()
             $opened = $false
             $clock = [System.Diagnostics.Stopwatch]::StartNew()
@@ -4887,7 +4900,7 @@ function Test-X005 {
             Remove-Item -LiteralPath $report -ErrorAction SilentlyContinue
         }
         Write-Output '    the next launch'
-        $exit = Wait-App (Start-App "`"$root`" --report `"$report`"") 60
+        $exit = Wait-App (Start-App "$(Format-AppArgument $root) --report $(Format-AppArgument $report)") 60
         CheckEqual '0' $exit 'exit code'
         $next = if (Test-Path -LiteralPath $report) { Get-Content -LiteralPath $report -Raw | ConvertFrom-Json } else { $null }
         Check ($null -ne $next) 'a report was written'
@@ -5245,7 +5258,7 @@ function Invoke-SmbSeamRun([string] $case, [bool] $stop) {
     }
     try {
         $run = Invoke-WithHook $mode $HookDll {
-            $process = Start-App "`"$($rig.Root)`" --report `"$report`""
+            $process = Start-App "$(Format-AppArgument $rig.Root) --report $(Format-AppArgument $report)"
             $clock = [System.Diagnostics.Stopwatch]::StartNew()
             $hold = $null
             $killUtc = $null
@@ -5556,7 +5569,7 @@ function Start-CloudSeamRun([string] $case, [string] $ending, [bool] $stop) {
             $environment.FSA_HOOK_ARMED = $run.Marker
             $environment.FSA_HOOK_CANCEL_DELAY_MS = '2000'
         }
-        $run.Process = Start-App "`"$($run.Root)`" --report `"$($run.ReportFile)`"" ([System.IO.Path]::GetTempPath()) $environment
+        $run.Process = Start-App "$(Format-AppArgument $run.Root) --report $(Format-AppArgument $run.ReportFile)" ([System.IO.Path]::GetTempPath()) $environment
         $run.AppPid = $run.Process.Id
         $run.Ready = $true
     }

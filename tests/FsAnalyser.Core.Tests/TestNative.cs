@@ -59,6 +59,32 @@ internal static class TestNative
         return opened.IsInvalid ? Marshal.GetLastPInvokeError() : 0;
     }
 
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CommandLineToArgvW(string commandLine, out int count);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr LocalFree(IntPtr memory);
+
+    /// <summary>
+    /// The arguments a program's argv holds for <paramref name="arguments"/>, the part of its command line after the
+    /// program's own name, split by Windows' rules: a backslash run before a quote is halved and, when odd, escapes it
+    /// (SL-089 review M1).
+    /// </summary>
+    public static string[] SplitArguments(string arguments)
+    {
+        IntPtr argv = CommandLineToArgvW("app.exe " + arguments, out int count);
+        if (argv == IntPtr.Zero)
+            throw new Win32Exception(Marshal.GetLastPInvokeError(), "CommandLineToArgvW failed.");
+        try
+        {
+            return [.. Enumerable.Range(1, count - 1).Select(i => Marshal.PtrToStringUni(Marshal.ReadIntPtr(argv, i * IntPtr.Size))!)];
+        }
+        finally
+        {
+            LocalFree(argv);
+        }
+    }
+
     private const uint SPI_GETWORKAREA = 0x0030;
 
     [DllImport("user32.dll")]
