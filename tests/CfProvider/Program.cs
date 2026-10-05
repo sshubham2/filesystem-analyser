@@ -19,6 +19,12 @@ namespace CfProvider;
 /// from the first call that fails, after which it exits 2.</para>
 /// <para>The scenario <c>silent</c> registers nothing and prints nothing on stdout until its stdin closes: the
 /// shape of a provider that hangs before READY, for the test that the rig kills it and fails.</para>
+/// <para><c>stop-seam &lt;absoluteRoot&gt; [NTSTATUS]</c> (SL-089, the window case N-006) is the one scenario that calls
+/// CfExecute: it holds every FETCH_PLACEHOLDERS, logging each as <c>FETCH &lt;name&gt; pid=&lt;n&gt; utc=&lt;time&gt; held</c>,
+/// until a line <c>release</c> on stdin, and then completes each with that failure status (STATUS_CLOUD_FILE_UNSUCCESSFUL
+/// by default), and every later one at once, logging <c>failed status=0x.. hr=0x..</c> (see CreateStopSeam). It exits
+/// when stdin ends. <c>unregister</c>, <c>probe</c> and <c>delete</c>, each with the root, are the case's teardown, run as
+/// processes of their own once the provider is gone (see Teardown).</para>
 /// <para>The structures and policies are the ones the SL-024 re-spike measured working
 /// (.taad/slices/SL-024/build-slice-2-respike/Program.cs), with the requesting process read from
 /// CF_CALLBACK_INFO.ProcessInfo (connect flag REQUIRE_PROCESS_INFO), as SL-049's spike did.</para>
@@ -56,14 +62,20 @@ internal static unsafe class Program
 
     private static int Main(string[] args)
     {
-        if (args.Length != 2 || args[0] is not ("stall" or "tree" or "silent") || !Path.IsPathFullyQualified(args[1]))
+        if (args.Length is not (2 or 3) || args[0] is not ("stall" or "tree" or "silent" or "stop-seam" or "unregister" or "probe" or "delete")
+            || !Path.IsPathFullyQualified(args[1]) || (args.Length == 3 && (args[0] != "stop-seam" || !TryParseStatus(args[2], out _))))
         {
-            Line($"ERR usage hr=0x{E_INVALIDARG:X8} expected <stall|tree|silent> <absoluteRoot>, got: {string.Join(' ', args)}");
+            Line($"ERR usage hr=0x{E_INVALIDARG:X8} expected <stall|tree|silent|stop-seam|unregister|probe|delete> <absoluteRoot> [failure NTSTATUS, stop-seam only], got: {string.Join(' ', args)}");
             return ExitError;
         }
 
         string scenario = args[0];
         string root = Path.TrimEndingDirectorySeparator(args[1]);
+        if (scenario is "unregister" or "probe" or "delete")
+            return Teardown(scenario, root);
+        _seam = scenario == "stop-seam";
+        if (args.Length == 3)
+            _failStatus = ParseStatus(args[2]);
         if (scenario == "silent")
         {
             Console.Error.WriteLine("silent: registering nothing and printing nothing on stdout until stdin closes");
@@ -78,6 +90,8 @@ internal static unsafe class Program
             Connect(root);
             if (scenario == "stall")
                 CreateStall(root);
+            else if (_seam)
+                CreateStopSeam(root);
             else
                 CreateTree(root);
         }
@@ -88,6 +102,16 @@ internal static unsafe class Program
         }
 
         Line("READY");
+        if (_seam)
+        {
+            // One command a line: 'release' fails every fetch still held, and every later one, with the failure status.
+            while (Console.In.ReadLine() is { } command)
+            {
+                if (command.Trim() == "release")
+                    Release();
+            }
+            return 0;
+        }
         // End of file: the test closed our stdin, or the process that started us is gone.
         Console.In.ReadToEnd();
         return 0;
@@ -104,6 +128,33 @@ internal static unsafe class Program
             NewFile("f1.txt", 1_000),
             NewFile("f2.txt", 2_000),
             NewFile("f3.txt", 3_000));
+    }
+
+    // stop-seam (SL-089, the window case N-006): a and b populated, s, t and u not. a holds one file and is denied to the
+    // scan by the case, with an NTFS ACE, once READY is printed. b holds BChildren dehydrated files whose names are
+    // BNameLength characters, so the scanner's 64 KiB listing buffer takes about 355 of them a page and its third page is
+    // a full one, which the listing failpoint b|3|59 fails (review m5). s, t and u keep on-demand population, so listing
+    // any of them asks the provider for its children: those requests are held, each logged as it comes, until 'release'
+    // on stdin fails them, and every one after that is failed at once (Fetched, Release).
+    private const int BChildren = 1_200;
+    private const int BNameLength = 46;
+
+    private static void CreateStopSeam(string root)
+    {
+        CreatePlaceholders(root,
+            NewFolder("a", populationDisabled: true),
+            NewFolder("b", populationDisabled: true),
+            NewFolder("s", populationDisabled: false),
+            NewFolder("t", populationDisabled: false),
+            NewFolder("u", populationDisabled: false));
+        CreatePlaceholders(Path.Combine(root, "a"), NewFile("one.bin", 100));
+        var children = new Placeholder[BChildren];
+        for (int i = 0; i < children.Length; i++)
+        {
+            string name = $"b-{i:D4}-";
+            children[i] = NewFile(name + new string('n', BNameLength - name.Length - 4) + ".bin", 100);
+        }
+        CreatePlaceholders(Path.Combine(root, "b"), children);
     }
 
     // Every folder has on-demand population disabled, so listing the tree raises no callback. Every file is a
@@ -228,7 +279,186 @@ internal static unsafe class Program
     private static void OnCancelFetchData(CF_CALLBACK_INFO* info, byte* parameters) => Report("CANCEL_FETCH_DATA", info, null);
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
-    private static void OnFetchPlaceholders(CF_CALLBACK_INFO* info, byte* parameters) => Report("FETCH_PLACEHOLDERS", info, null);
+    private static void OnFetchPlaceholders(CF_CALLBACK_INFO* info, byte* parameters)
+    {
+        Report("FETCH_PLACEHOLDERS", info, null);
+        if (_seam)
+            Fetched(info);
+    }
+
+    // ---- stop-seam's fetches (SL-089) ----
+
+    // The NTSTATUS a failed fetch is completed with: STATUS_CLOUD_FILE_UNSUCCESSFUL unless the command line names another.
+    private const int StatusCloudFileUnsuccessful = unchecked((int)0xC000CF12);
+    private const uint CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS = 4;
+
+    private static bool _seam;
+    private static int? _failStatus;
+    private static bool _released;
+    private static readonly List<(long Connection, long Transfer, long Request, string Name, uint Pid)> Pending = [];
+
+    private static int FailStatus => _failStatus ?? StatusCloudFileUnsuccessful;
+
+    // Held until 'release', or failed at once after it. One line each: FETCH <name> pid=<n> utc=<time> held, or
+    // FETCH <name> pid=<n> utc=<time> failed status=0x.. hr=0x.. with CfExecute's own result.
+    private static void Fetched(CF_CALLBACK_INFO* info)
+    {
+        try
+        {
+            uint pid = info->ProcessInfo is null ? 0 : info->ProcessInfo->ProcessId;
+            string path = info->NormalizedPath is null ? "" : new string(info->NormalizedPath).TrimEnd('\\');
+            string name = path[(path.LastIndexOf('\\') + 1)..];
+            lock (Gate)
+            {
+                if (!_released)
+                {
+                    Pending.Add((info->ConnectionKey, info->TransferKey, info->RequestKey, name, pid));
+                    Out.WriteLine($"FETCH {name} pid={pid} utc={Utc()} held");
+                    return;
+                }
+            }
+            int hr = Fail(info->ConnectionKey, info->TransferKey, info->RequestKey);
+            Line($"FETCH {name} pid={pid} utc={Utc()} failed status=0x{FailStatus:X8} hr=0x{hr:X8}");
+        }
+        catch
+        {
+            // A callback must not throw into cldflt.
+        }
+    }
+
+    // Every held fetch failed with the failure status, in the order they came, and from now on every later one too.
+    private static void Release()
+    {
+        List<(long Connection, long Transfer, long Request, string Name, uint Pid)> held;
+        lock (Gate)
+        {
+            if (_released)
+                return;
+            _released = true;
+            held = [.. Pending];
+            Pending.Clear();
+            Out.WriteLine($"RELEASE utc={Utc()} pending={held.Count}");
+        }
+        foreach ((long connection, long transfer, long request, string name, uint pid) in held)
+        {
+            int hr = Fail(connection, transfer, request);
+            Line($"FETCH {name} pid={pid} utc={Utc()} failed status=0x{FailStatus:X8} hr=0x{hr:X8}");
+        }
+    }
+
+    private static int Fail(long connection, long transfer, long request)
+    {
+        var operation = new CF_OPERATION_INFO
+        {
+            StructSize = (uint)sizeof(CF_OPERATION_INFO),
+            Type = CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS,
+            ConnectionKey = connection,
+            TransferKey = transfer,
+            RequestKey = request,
+        };
+        var parameters = new CF_OPERATION_PARAMETERS_TRANSFER_PLACEHOLDERS
+        {
+            ParamSize = (uint)sizeof(CF_OPERATION_PARAMETERS_TRANSFER_PLACEHOLDERS),
+            CompletionStatus = FailStatus,
+        };
+        return CfExecute(&operation, &parameters);
+    }
+
+    private static string Utc() => DateTime.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static bool TryParseStatus(string text, out int status) =>
+        int.TryParse(text.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? text[2..] : text,
+            System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out status) && status < 0;
+
+    private static int ParseStatus(string text) => TryParseStatus(text, out int status) ? status : StatusCloudFileUnsuccessful;
+
+    // ---- teardown for the window case (SL-089, review M6) ----
+
+    private const uint DELETE = 0x00010000;
+    private const uint FILE_SHARE_ALL = 0x7;
+    private const uint OPEN_EXISTING = 3;
+    private const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+    private const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+    private const uint FILE_FLAG_DELETE_ON_CLOSE = 0x04000000;
+
+    // unregister: CfUnregisterSyncRoot, printing 'UNREGISTERED hr=...'. probe: CfGetSyncRootInfoByPath, printing
+    // 'REGISTERED' or 'NOT-REGISTERED hr=...'. delete: the folder and all it holds, printing 'DELETED' or 'LEFT n ...'; what
+    // the filter will not list or delete is deleted by opening its reparse point itself, as the cloud-hang spike had to.
+    private static int Teardown(string what, string root)
+    {
+        switch (what)
+        {
+            case "unregister":
+            {
+                int hr = CfUnregisterSyncRoot(root);
+                Line($"UNREGISTERED hr=0x{hr:X8}");
+                return hr < 0 ? ExitError : 0;
+            }
+            case "probe":
+            {
+                byte* info = stackalloc byte[4096];
+                uint returned;
+                int hr = CfGetSyncRootInfoByPath(root, 0, info, 4096, &returned);
+                Line(hr >= 0 ? "REGISTERED" : $"NOT-REGISTERED hr=0x{hr:X8}");
+                return 0;
+            }
+            default:
+            {
+                var left = new List<string>();
+                if (Directory.Exists(root))
+                {
+                    try
+                    {
+                        Directory.Delete(root, recursive: true);
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                    {
+                        Line($"FALLBACK {e.GetType().Name}: {e.Message}");
+                        DeleteThroughReparsePoints(root, left);
+                    }
+                }
+                bool there = Directory.Exists(root);
+                Line(there ? $"LEFT {Math.Max(1, left.Count)} {string.Join(" | ", left)}" : "DELETED");
+                return there ? ExitError : 0;
+            }
+        }
+    }
+
+    private static void DeleteThroughReparsePoints(string folder, List<string> left)
+    {
+        string[] children;
+        try
+        {
+            children = Directory.GetFileSystemEntries(folder);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            children = []; // a placeholder that can no longer be listed holds nothing on disk
+        }
+        foreach (string child in children)
+        {
+            if ((File.GetAttributes(child) & FileAttributes.Directory) != 0)
+                DeleteThroughReparsePoints(child, left);
+            else
+                DeleteOne(child, left);
+        }
+        DeleteOne(folder, left);
+    }
+
+    private static void DeleteOne(string path, List<string> left)
+    {
+        using (Microsoft.Win32.SafeHandles.SafeFileHandle handle = CreateFileW(@"\\?\" + path, DELETE, FILE_SHARE_ALL, IntPtr.Zero, OPEN_EXISTING,
+                   FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_DELETE_ON_CLOSE, IntPtr.Zero))
+        {
+            if (handle.IsInvalid)
+            {
+                left.Add($"{path} ({Marshal.GetLastPInvokeError()})");
+                return;
+            }
+        }
+        if (Path.Exists(path))
+            left.Add($"{path} (still there)");
+    }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
     private static void OnCancelFetchPlaceholders(CF_CALLBACK_INFO* info, byte* parameters) => Report("CANCEL_FETCH_PLACEHOLDERS", info, null);
@@ -369,6 +599,45 @@ internal static unsafe class Program
     [DllImport("cldapi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern int CfCreatePlaceholders(string baseDirectoryPath, CF_PLACEHOLDER_CREATE_INFO* placeholderArray, uint placeholderCount,
         uint createFlags, uint* entriesProcessed);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CF_OPERATION_INFO
+    {
+        public uint StructSize;
+        public uint Type;
+        public long ConnectionKey;
+        public long TransferKey;
+        public void* CorrelationVector;
+        public void* SyncStatus;
+        public long RequestKey;
+    }
+
+    // CF_OPERATION_PARAMETERS with its TransferPlaceholders member: ParamSize, then the union at 8.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CF_OPERATION_PARAMETERS_TRANSFER_PLACEHOLDERS
+    {
+        public uint ParamSize;
+        public uint Padding;
+        public uint Flags;
+        public int CompletionStatus;
+        public long PlaceholderTotalCount;
+        public CF_PLACEHOLDER_CREATE_INFO* PlaceholderArray;
+        public uint PlaceholderCount;
+        public uint EntriesProcessed;
+    }
+
+    [DllImport("cldapi.dll", ExactSpelling = true)]
+    private static extern int CfExecute(CF_OPERATION_INFO* operationInfo, CF_OPERATION_PARAMETERS_TRANSFER_PLACEHOLDERS* operationParameters);
+
+    [DllImport("cldapi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern int CfUnregisterSyncRoot(string syncRootPath);
+
+    [DllImport("cldapi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern int CfGetSyncRootInfoByPath(string filePath, int infoClass, void* infoBuffer, uint infoBufferLength, uint* returnedLength);
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    private static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFileW(string fileName, uint desiredAccess, uint shareMode,
+        IntPtr securityAttributes, uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);
 
     [DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

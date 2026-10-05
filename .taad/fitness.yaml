@@ -257,6 +257,13 @@ rules:
     including_comments: true
     because: 'Nothing in the app hands Explorer its select switch (SL-088 criterion 3, declared by its design and twinned by its build). U-114 measured explorer.exe given the switch and a path of 300 or 1000 characters silently opening OneDrive\Documents, with exit code 1, no dialog and no HRESULT, so any launch with it, fallback or not, lands the person in the wrong folder with no signal. The reveal goes through SHParseDisplayName and SHOpenFolderAndSelectItems alone. SL-047''s settled pattern, the switch followed by a comma, misses the switch as its own argument (ArgumentList.Add), in upper case, and followed by a space and a quote; this one catches every spelling and case, and the word boundary leaves /selection and selected alone (plants F31-F35, P25-P27; SelectSwitchRuleTests). No file is exempt, ShellReveal.cs included. Comments are matched too, so a comment in src must call it Explorer''s select switch and not spell it.'
 
+  - name: 'TheWindowReportReadsOnlyTheFailedFolderCount (*.cs)'
+    files: 'src/FsAnalyser.App/**/WindowReport.cs'
+    must_not_match:
+      - '(?m)(?<!TopLevelState\.)\bUnreadable\b(?!\s*\??\.\s*Count\b)'
+    including_comments: true
+    because: 'The window report takes only the count from the scan''s failed-folder record (SL-089, declared by its design and twinned by its build). The record holds each failed folder''s entry, one step from its path, and Q-016 bars names and paths from the schema-1 report, which every window case reads and keeps as evidence: an element, an indexer, a foreach or a LINQ projection over the record is how a path would get in. The pattern names the record and allows it only followed by .Count, so it holds on one line: the record alone at the end of a line, the first line of the two-line fluent layout this file writes its LINQ in, fails the xUnit twin as it fails here (review M4). TopLevelState.Unreadable, a row state the report counts, is not the record. A tripwire on one route: another route to a path (the store, a list''s rows) is not fenced here (SC-133). Comments are matched too.'
+
   # settled by SL-023
   - name: the window report reads the window, never rebuilds it from Core
     files: src/FsAnalyser.App/WindowReport.cs
@@ -1069,3 +1076,11 @@ rules:
       PASS on missing data in -Report''s verdict code (M1: logs with a crashed full scan read
       ''OUTCOME A / VERDICT PASS''). A verdict word printed by a harness that checks only completeness
       reads as DONE (c) met.'
+
+  # settled by SL-089
+  # Its design declared two rules here. 'The window report reads only the count from the failed-folder record' is
+  # twinned instead, above the first marker, as TheWindowReportReadsOnlyTheFailedFolderCount (*.cs), with (?m),
+  # including_comments: true and plants (F36-F40 must fire, P28-P31 must stay quiet), written to hold on one line so the
+  # xUnit twin fails the two-line fluent layout WindowReport.cs already uses (review M4). 'The shipped app never dumps
+  # panel rows; only the test hook does' is dropped (review M3, m1): a twinned entry cannot hold must_not_import, and
+  # SL-033's settled 'the shipped app carries no test seam' already forbids FSA_HOOK_ and FsaWindowHook across src/**.

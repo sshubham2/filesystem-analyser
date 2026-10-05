@@ -1,0 +1,33 @@
+{
+  "_note": "The class SL-089 review M1 is one member of: a root ending in a backslash handed to the app's argv undoubled. Quoted by hand, \"C:\\\" --report \"<file>\" reaches the app as the one argument C:\" --report <file>, so it never enters report mode, writes no report and leaves its window waiting on a person; with two backslashes at the end one is lost. The rule is eng/read-window.ps1's: quote the path and double a trailing backslash run, which tests/window/WindowCases.ps1's Format-AppArgument does for every case. Core.Tests' AppArgumentTests reads this file. roots: the paths a case hands the app, bounded by who produces them (<temp> is a real temp folder, <report> the report path); each must reach the app's argv as [root, --report, report] through the script's own Invoke-HookedRun, and handQuoted says what quoting by hand, as the scripts did before the fix, gave the same root (checked on every run, so the rows the fix closes stay shown). plants: lines the census pattern must find (fire) or pass (quiet). producers: every script in the repository that names the app's exe or launches it, and how it quotes, so a new launcher that is not listed fails the test.",
+  "roots": [
+    { "id": "A01", "producer": "W-001's criterion-3 root, -Root C:\\ as docs/design/SL-089-seams.md and Test-W001's own message give it", "root": "C:\\", "handQuoted": "wrong" },
+    { "id": "A02", "producer": "a whole-drive root given by hand, as a real-D:\\ run (Q-144, Q-163)", "root": "D:\\", "handQuoted": "wrong" },
+    { "id": "A03", "producer": "C-013's root: a folder typed or pasted with its trailing backslash", "root": "<temp>\\", "handQuoted": "wrong" },
+    { "id": "A04", "producer": "the same, with a space in the folder's name", "root": "<temp>\\a folder\\", "handQuoted": "wrong" },
+    { "id": "A05", "producer": "a share root written with its trailing backslash (the stall rig serves \\\\127.0.0.1\\fsa<8hex>)", "root": "\\\\127.0.0.1\\fsa00000000\\", "handQuoted": "wrong" },
+    { "id": "A06", "producer": "a drive root in long-path form", "root": "\\\\?\\C:\\", "handQuoted": "wrong" },
+    { "id": "A07", "producer": "a path joined onto one that already ended in a backslash: two at the end, and hand-quoting drops one", "root": "<temp>\\\\", "handQuoted": "wrong" },
+    { "id": "A08", "producer": "a bare drive, which Core's LongPath repairs to C:\\ after argv", "root": "C:", "handQuoted": "right" },
+    { "id": "A09", "producer": "the root every case makes with Join-Path, no trailing backslash", "root": "<temp>", "handQuoted": "right" },
+    { "id": "A10", "producer": "a folder with a space and no trailing backslash (C-007's folder, quoted)", "root": "<temp>\\a folder", "handQuoted": "right" }
+  ],
+  "plants": [
+    { "id": "P01", "line": "            $process = Start-App \"`\"$root`\"\"", "expect": "fire", "note": "HookCases.ps1 and R-001 before the fix" },
+    { "id": "P02", "line": "    $run = Invoke-WithHook $mode $HookDll { Wait-App (Start-App \"`\"$root`\" --report `\"$report`\"\") $timeoutSec } $variables", "expect": "fire", "note": "Invoke-HookedRun before the fix" },
+    { "id": "P03", "line": "        CheckEqual '0' (Invoke-App \"`\"$root`\" --report `\"$report`\"\") 'direct run: exit code'", "expect": "fire", "note": "C-010 before the fix" },
+    { "id": "P04", "line": "        $run.Process = Start-App \"`\"$($run.Root)`\" --report `\"$($run.ReportFile)`\"\" ([System.IO.Path]::GetTempPath()) $environment", "expect": "fire", "note": "N-006 before the fix" },
+    { "id": "P05", "line": "            $process = Start-App (Format-AppArgument $root)", "expect": "quiet", "note": "the fix" },
+    { "id": "P06", "line": "    $run = Invoke-WithHook $mode $HookDll { Wait-App (Start-App \"$(Format-AppArgument $root) --report $(Format-AppArgument $report)\") $timeoutSec } $variables", "expect": "quiet", "note": "the fix" },
+    { "id": "P07", "line": "        CheckEqual '2' (Invoke-App @($root, '--report', $report)) 'unquoted root: exit code'", "expect": "quiet", "note": "C-007's raw, unquoted arguments: a backslash before no quote is kept as it is" },
+    { "id": "P08", "line": "    # Start-App \"`\"$root`\"\" was how the cases quoted a root", "expect": "quiet", "note": "a comment launches nothing" }
+  ],
+  "producers": [
+    { "file": "tests/window/WindowCases.ps1", "check": "uses-format", "how": "Format-AppArgument, in Invoke-HookedRun and every other Start-App or Invoke-App given a command line; the raw-argument cases pass arrays, unquoted, on purpose" },
+    { "file": "tests/window/HookCases.ps1", "check": "uses-format", "how": "loads Format-AppArgument and Invoke-HookedRun from WindowCases.ps1 by name" },
+    { "file": "eng/read-window.ps1", "check": "doubles", "how": "doubles the root's trailing backslashes ($rootArgument); its report path is its own <guid>.json" },
+    { "file": "tests/window/PoolWatch.ps1", "check": "doubles", "how": "Start-Exe quotes any argument with a space or quote and doubles its trailing backslashes" },
+    { "file": "tests/window/T005Batch.ps1", "check": "not-a-launcher", "how": "names the exe only to rebuild it when stale; the app is launched by WindowCases.ps1 -Case T-005" },
+    { "file": "tests/window/PoolWatchCases.ps1", "check": "not-a-launcher", "how": "names the exe only to find PoolWatch's own processes by their command line" }
+  ]
+}
