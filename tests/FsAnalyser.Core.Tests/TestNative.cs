@@ -20,6 +20,71 @@ internal static class TestNative
     private static extern bool DeviceIoControlIn(SafeFileHandle device, uint ioControlCode, byte[] inBuffer, int inBufferSize,
         IntPtr outBuffer, int outBufferSize, out int bytesReturned, IntPtr overlapped);
 
+    // A folder's opens as the scanner makes them (SynchronousIoCancel.Open), for fixtures that must show which of its two
+    // opens a folder refuses before a scan is asked about it (SL-089).
+    public const uint FILE_LIST_DIRECTORY = 0x0001;
+    public const uint FILE_WRITE_ATTRIBUTES = 0x0100;
+    private const uint FILE_SHARE_READ = 0x1;
+    private const uint FILE_SHARE_WRITE = 0x2;
+    private const uint FILE_SHARE_DELETE = 0x4;
+    private const uint OPEN_EXISTING = 3;
+    private const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(string fileName, uint desiredAccess, uint shareMode, IntPtr securityAttributes,
+        uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);
+
+    /// <summary>
+    /// A folder held open as another program can hold one (SL-085, SL-089): able to list it, and sharing write and delete
+    /// but not read, so any later open that asks to list it meets a sharing violation (32) once its access check has
+    /// passed. Close the handle to let go.
+    /// </summary>
+    public static SafeFileHandle HoldFolderSharingNoRead(string folder)
+    {
+        SafeFileHandle held = CreateFileW(@"\\?\" + folder, FILE_LIST_DIRECTORY, FILE_SHARE_WRITE | FILE_SHARE_DELETE, IntPtr.Zero,
+            OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, IntPtr.Zero);
+        if (held.IsInvalid)
+            throw new Win32Exception(Marshal.GetLastPInvokeError(), $"Could not hold {folder} open.");
+        return held;
+    }
+
+    /// <summary>
+    /// The Win32 error a folder open with <paramref name="access"/> gets, with every share mode and backup semantics as
+    /// the scanner asks, or 0 when it opens; the handle is closed at once and nothing is listed.
+    /// </summary>
+    public static int FolderOpenError(string folder, uint access)
+    {
+        using SafeFileHandle opened = CreateFileW(@"\\?\" + folder, access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, IntPtr.Zero,
+            OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, IntPtr.Zero);
+        return opened.IsInvalid ? Marshal.GetLastPInvokeError() : 0;
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CommandLineToArgvW(string commandLine, out int count);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr LocalFree(IntPtr memory);
+
+    /// <summary>
+    /// The arguments a program's argv holds for <paramref name="arguments"/>, the part of its command line after the
+    /// program's own name, split by Windows' rules: a backslash run before a quote is halved and, when odd, escapes it
+    /// (SL-089 review M1).
+    /// </summary>
+    public static string[] SplitArguments(string arguments)
+    {
+        IntPtr argv = CommandLineToArgvW("app.exe " + arguments, out int count);
+        if (argv == IntPtr.Zero)
+            throw new Win32Exception(Marshal.GetLastPInvokeError(), "CommandLineToArgvW failed.");
+        try
+        {
+            return [.. Enumerable.Range(1, count - 1).Select(i => Marshal.PtrToStringUni(Marshal.ReadIntPtr(argv, i * IntPtr.Size))!)];
+        }
+        finally
+        {
+            LocalFree(argv);
+        }
+    }
+
     private const uint SPI_GETWORKAREA = 0x0030;
 
     [DllImport("user32.dll")]

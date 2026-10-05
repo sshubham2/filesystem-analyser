@@ -1,0 +1,401 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-089",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-09-29T18:50:16.495Z",
+ "head": "afd021d2e231a732a596033c22af811201e6659d",
+ "run_id": 2322,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "reason": "One proposal (practice), selected as the core. It was checked against the survey, the four slice spikes, SL-085's measured order and U-114. Four seams were redesigned where reality contradicted it: the cloud control ending, rendered-text availability, the C3 oracle's exemptions, and an engine-level twin for the held-folder reason.",
+  "selection_rationale": "Only one proposal existed, so the choice was whether it fits what is measured. It does in the places that matter most.\n(1) The survey measured that the schema-1 report cannot carry panel rows, and Q-016 forbids paths in it (WindowReport.cs:164-168,213; fitness.yaml:814). The proposal sends per-row content through the test hook's log and adds only a count to the report. The app-stopped-scan-panel-rows spike read rows exactly this way and held 6/6.\n(2) The staging it proposes is the staging the spikes ran: a is denied at open, b uses the client-side FSA_HOOK_FAIL_LISTING=b|3|59 failpoint, and the hold is released by teardown. The smb-stall spike held 10/10 with controls lighting at code 59. The reveal spike held 6/6 at 300 and 1000 characters from a panel row through the hook's unreadable: surface.\n(3) The held-folder fixture uses the holder-first-then-ACE order that SL-085 measured to give 5/32 with a row at 32. The reverse order gave no row.\n(4) Every addition reuses a harness that already exists: FsaWindowHook, StallRig/SmbRig, CfProvider, WindowCases.ps1 N-001, R-001 step 14, R-002, and eng/read-window.ps1. No new project or framework.\n\nFour places were changed where the proposal ran against reality:\n(a) Cloud release. The proposal's cloud release (kill the provider) is the ending the cloud-hang spike measured to end in success with an empty listing (0/6 controls put H in the list). Under the proposal's own control discipline, its N-006 could therefore never prove the cut-short half of C1. The release is replaced by an error completion of the held fetch, which is the candidate that spike named as untested.\n(b) Rendered text. Rendered row text is needed for C2, but the proposal accepted null for unrealised rows. Rows mode now brings the Unreadable panel into view when the window is shown, and C2 rows fail without rendered text.\n(c) The C3 open oracle. As proposed it would fail a correct run on the ~30 expected 363/REPARSE rows, which can open plainly, and on code-2 folders recreated since the scan. Both are now told apart explicitly.\n(d) An xUnit Fact pins the recorded 32 in the default suite. T-008 is the only other proof, and it runs rarely.",
+  "components": [
+   {
+    "name": "Rows dump in the window hook",
+    "responsibility": "When FSA_HOOK_ROWS=1, the hook brings the Unreadable panel into view as soon as the main window is shown, so its first rows get laid out. At Dispatcher.ShutdownStarted it writes the panel's rows once to FSA_HOOK_LOG as JSONL. ShutdownStarted comes after the app has written its --report file and before exit. Each row line holds one UnreadableList item's Path, Kind, Win32Error and Reason, read by reflection from UnreadableRow (the property set the spike read). It also holds the TextBlock texts of that row's container when the container has been realised. A closing line holds the count, the hook's IsInRole(Administrator), and the UTC time.",
+    "lives_at": "tests/window/FsaWindowHook",
+    "key_interactions": "It reuses RevealMode's FindUnreadableContainer to locate UnreadableList (RevealMode.cs:541-566). It runs alongside stop mode (FSA_HOOK_MODE=stop, FSA_HOOK_CANCEL_DELAY_MS) and the FSA_HOOK_FAIL_LISTING failpoint. It is built by Update-Hook into gitignored artifacts/window-hook, never ships in the exe, and is outside FsAnalyser.slnx."
+   },
+   {
+    "name": "Engine failed-folder count in the schema-1 report",
+    "responsibility": "Adds one field, core.unreadable = ScanResult.Unreadable.Count. It goes next to status, files and folders (WindowReport.cs:201-211), and the schema stays 1. It is a count, so Q-016 still holds. It is the raw record count, so it stands as an independent witness against the tab header's distinct N and against the dump's row count.",
+    "lives_at": "src/FsAnalyser.App",
+    "key_interactions": "Read by eng/read-window.ps1 and WindowCases.ps1. Guarded by architecture rule 1: WindowReport may read only Count from the record."
+   },
+   {
+    "name": "SMB rig: deny at open and a timestamped log",
+    "responsibility": "StallRig gets --deny <name>: the served store answers STATUS_ACCESS_DENIED to that folder's create (the hook the smb-stall spike measured as code 5). It also gets --log <file>, which writes UTC-stamped lines for every create with its status and for the start of the existing StopAnsweringAtTheListingOf hold. There is no graceful release: the case kills StallRig.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/Rig/SmbRig.cs",
+    "key_interactions": "Linked by the StallRig console (tests/window/StallRig), which Update-StallRig builds into artifacts/stall-rig. The existing opt-in StalledShareTests are unchanged."
+   },
+   {
+    "name": "CfProvider stop-seam scenario",
+    "responsibility": "A new scenario, 'stop-seam', serves a and b as populated placeholders, with b holding about 900 children (at least 3 listing pages), plus s, t and u as unpopulated folders. The provider leaves s's FETCH_PLACEHOLDERS pending. At the release moment (hold + 8 s, signalled by the case through a named event), it completes the pending fetch through CfExecute TRANSFER_PLACEHOLDERS with a failure CompletionStatus, and fails every later fetch the same way. Each FETCH_PLACEHOLDERS request is logged with a UTC time, the folder name, the requesting pid, and how it was answered. After the root is populated, the case adds an NTFS deny-ListDirectory ACE to a.",
+    "lives_at": "tests/CfProvider",
+    "key_interactions": "Runs as its own process under a sync root in the case's scratch folder. The case kills it and unregisters the root in cleanup. It stays in FsAnalyser.slnx as today, so dotnet build builds it."
+   },
+   {
+    "name": "N-005: stopped scan on the SMB rig (+ -Control)",
+    "responsibility": "Serves C1 (SMB) and the SMB half of C2.\n\nShare contents: a (denied at create), b (about 900 files, FSA_HOOK_FAIL_LISTING=b|3|59), s (held), and t and u (plain).\n\nRun: the hook presses Stop, and the case kills StallRig 8 s after the rig logs the hold.\n\nAssertions: status is Cancelled, and header N = core.unreadable = dump count = 2. The rows are exactly a (OpenRefused, code 5, rendered 'access denied') and b (ListedPartway, code 59, rendered 'only partly read' and 'network or share error'), each once. There is no row for s, and no row for any folder whose first create is logged after the hook's Stop time or never.\n\nPreconditions, from the log times: a's denied create and b's failpoint happen before Stop, and s's hold starts before Stop. Otherwise the case is inconclusive.\n\n-Control uses the same fixture and kill offset without Stop. It must show s as a row with a network code, and must show which unreached folders became rows. A 'no row' is reported as held only for folders the control lit up.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "Reuses N-001's mapping setup and cleanup (WindowCases.ps1:1338-1372), Update-Hook, Update-StallRig and read-window.ps1. It adds a non-persistent SMB client mapping."
+   },
+   {
+    "name": "N-006: stopped scan on the cloud rig (+ -Control)",
+    "responsibility": "Serves C1 (cloud). It is the project's first cloud window case. It makes the same row assertions as N-005 on the stop-seam root: exactly a and b once each, no row for s, and no row for any folder first fetched after Stop or never.\n\nThe hold is s's logged FETCH_PLACEHOLDERS from the exe's pid, and it must come before the Stop time. Release is the provider's error completion at hold + 8 s.\n\n-Control runs without Stop. If the control does not put s in the list, the case prints 's: no control' and reports that folder as inconclusive, never held. The same rule applies to t and u.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "Starts CfProvider as its own process and signals the release. It registers a sync root and unregisters it in cleanup."
+   },
+   {
+    "name": "T-008: a held folder shows its real reason",
+    "responsibility": "Serves C2 (temp half). It works in a scratch folder holding three folders, h, c and p, with one file each.\n\nSetup order: pwsh first holds h through CreateFileW(FILE_LIST_DIRECTORY, share WRITE|DELETE with no READ, BACKUP_SEMANTICS). Only then does it add a deny FILE_WRITE_ATTRIBUTES ACE to h and to c.\n\nProbes before the scan, using the masks read from SynchronousIoCancel.cs: the keep-last-access open gets 5 on h and on c; the plain open gets 32 on h and succeeds on c. Any other pair makes the case inconclusive.\n\nAssertions: exactly one row, h, with code 32 and rendered 'in use by another program', and no rendered 'access denied' anywhere. c and p are not rows. core.unreadable = 1.\n\nCleanup releases the handle and removes the ACEs. No rig is needed, so an engine stage can run it.",
+    "lives_at": "tests/window/WindowCases.ps1"
+   },
+   {
+    "name": "Held-folder engine Fact",
+    "responsibility": "The default-suite twin of T-008 at engine level. It builds the same h/c/p tree on a real NTFS temp folder in the same holder-first order. It asserts that Scanner.Scan records h once with Win32Error 32 and records neither c nor p. That pins SynchronousIoCancel.cs:442-449 (the plain open's error is the one recorded) on every dotnet test, not only when a window case is run.",
+    "lives_at": "tests/FsAnalyser.Core.Tests",
+    "key_interactions": "It does not rely on last-access back-dating, so the TEMP=C:\\WINDOWS\\TEMP failures in this shell (LastAccessTests, HeldOpenTreeTests) do not touch it. It is not trait-gated."
+   },
+   {
+    "name": "W-001: whole-C:\\ recorded run and open checker",
+    "responsibility": "Serves C3.\n\nRun: the published net10 exe scans C:\\ with --report and FSA_HOOK_ROWS=1. The raw dump, which holds paths, goes to gitignored artifacts/.\n\nIt passes only if all of these hold: the hook and the checker both report non-elevated; status is Completed; dump rows = core.unreadable = header N; no path appears twice; and no Reason is empty for any code recorded.\n\nOpen oracle: each OpenRefused row gets an independent open with the engine's plain access and share mask, BACKUP_SEMANTICS and a \\\\?\\ prefix, with no listing. A row that opens is a leak and fails the run, with two exemptions: it carries code 363 or a REPARSE attribute (tallied as the expected CfProvider leftovers), or its creation time, read from the open handle, is after the scan's start (tallied as recreated). ListedPartway rows are counted, not opened.\n\nIt writes .taad/slices/SL-089/c-drive-run.json with counts, codes and fixed reason texts only.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "The checker is Add-Type P/Invoke inside WindowCases.ps1. Its mask constants are copied from SynchronousIoCancel.cs, with a pointer to that source."
+   },
+   {
+    "name": "R-002 panel-row reveal steps",
+    "responsibility": "Serves C4. Adds two steps that invoke a panel row's 'Open in Explorer' through the hook's unreadable: surface. The 300-character target is R-002's existing deny-all folder. The 1000-character target is a new leaf at the end of a chain of ordinary, non-hidden, non-system folders, with a deny FILE_LIST_DIRECTORY ACE on the leaf only (the spike's recipe).\n\nEach step asserts, within 3 s:\n- a new ShellWindows entry whose Document.Folder.Self.Name is the parent's leaf name\n- SelectedItems().Count = 1, with Item(0).Name = the leaf name\n- hook outcome kind=Exact, with hresult 0\n- no consent.exe started\n- no new #32770 dialog\n\nOnly the windows the case opened are closed, found by comparing against the windows open before it.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "Reuses R-001 step 14's Explorer assertion helper (WindowCases.ps1:3830-3839) and R-002's fixture (WindowCases.ps1:4170-4186)."
+   },
+   {
+    "name": "Architecture rule twins",
+    "responsibility": "Adds the two rules below. Each is written as a Fact in ArchitectureRulesTests and as a matching single-quoted entry in fitness.yaml above the first '# settled by' marker, so eng/rules-parity.ps1 reports no DRIFT (the SL-087 condition).",
+    "lives_at": "tests/FsAnalyser.Core.Tests",
+    "key_interactions": "eng/rules-parity.ps1 and eng/rules-harness/harness.py."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "Hook rows dump (FSA_HOOK_ROWS=1 → FSA_HOOK_LOG JSONL)",
+    "kind": "event",
+    "notes": "Row lines: {event:'row', i, path, kind:'OpenRefused'|'ListedPartway', code, reason, shown:[texts]|null}. Closing line: {event:'rows', count, elevated, atUtc}. shown is null for rows that were never realised, which is normal on a whole-drive panel. C2 cases require shown to be non-null for their rows. The file lives only in artifacts/ or the case's scratch folder and is never committed.",
+    "error_cases": "If UnreadableList is not found, or an UnreadableRow property is missing (an App rename), the hook writes {event:'rows', error:'<what>'} and no row lines, and the case fails on count ≠ header N. It never passes on an empty list. If there is no closing line (ShutdownStarted never fired), the case fails with 'no dump'.",
+    "auth_model": "In-process under the user's token. The hook is test-only and not in the shipped exe."
+   },
+   {
+    "name": "schema-1 report: core.unreadable",
+    "kind": "cli",
+    "notes": "An integer, ScanResult.Unreadable.Count, taken at the same first ending the report already captures. It is additive, so the schema stays 1 and existing readers ignore it. It carries no name and no path (Q-016).",
+    "error_cases": "If the scan never started or ended in rootError, it is 0, as the other core counts are."
+   },
+   {
+    "name": "StallRig --deny <name> --log <file>",
+    "kind": "cli",
+    "notes": "--deny answers STATUS_ACCESS_DENIED to that folder's create. --log writes UTC lines 'create <name> <status>' and 'hold <name>'. StopAnsweringAtTheListingOf is unchanged. Killing the process is the teardown.",
+    "error_cases": "If the named folder is not in the served tree, the rig exits non-zero before mapping and the case is inconclusive."
+   },
+   {
+    "name": "CfProvider scenario 'stop-seam'",
+    "kind": "cli",
+    "notes": "Tree: a and b are populated (b has about 900 children); s, t and u are unpopulated. s's fetch is held until the release event. At release, the pending fetch and every later fetch are completed with a failure CompletionStatus through CfExecute TRANSFER_PLACEHOLDERS. Every fetch is logged with UTC time, name, requesting pid and outcome.",
+    "error_cases": "If the sync root cannot be registered, the provider exits non-zero and the case reports inconclusive, not failed. If CfExecute returns a failure, that is logged, and the -Control shows it as 's: no control'."
+   },
+   {
+    "name": "WindowCases.ps1 -Case N-005|N-006 [-Control], T-008, W-001, R-002",
+    "kind": "cli",
+    "notes": "Each case prints held, failed or inconclusive, with the reason and with each folder's control state. N-005 adds an SMB mapping. N-006 registers a sync root. R-002 opens Explorer windows. W-001 takes minutes. T-008 needs none of these.",
+    "error_cases": "No report within 60 s of teardown or release: failed ('no stopped state'). A missed precondition, or a folder with no lit control: inconclusive for that folder, never held. Run elevated: W-001 refuses and reports inconclusive."
+   },
+   {
+    "name": ".taad/slices/SL-089/c-drive-run.json",
+    "kind": "cli",
+    "notes": "Fields: commit, elevated, checkerElevated, status, elapsedMs, header, coreUnreadable, rows, duplicates, emptyReasons, byKind{openRefused, listedPartway}, byCode[{code, count, reason}], openRefusedButOpenable, leftoverRows{code363, reparse}, recreatedSinceScanStart, verdict. The writer emits only integers, fixed field names and strings taken from the reason table. Any other string field is a writer bug and aborts the write.",
+    "error_cases": "The run fails if openRefusedButOpenable > 0 after the exemptions. Offending rows are reported by code in the artefact, and by path only in the gitignored raw dump."
+   },
+   {
+    "name": "Panel row 'Open in Explorer'",
+    "kind": "ui",
+    "notes": "The existing RowContextMenu on UnreadableList items (MainWindow.xaml:367-373) → PathOf(UnreadableRow) (MainWindow.xaml.cs:732) → ShellReveal.RevealAsync (MainWindow.xaml.cs:775). This is the action criterion 4 calls 'Show in Explorer'. It is not renamed.",
+    "error_cases": "A shell failure puts a message on the status line and opens nothing. The case catches that through hook outcome kind≠Exact or hresult≠0."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Per-row panel content (path, kind, code, reason, rendered text) goes out only through FsaWindowHook's log. The schema-1 report carries counts only. This replaces the criteria's wording 'reading the panel's rows through the schema-1 report', which the survey measured cannot be done under Q-016.",
+    "reversibility": "cheap",
+    "rationale": "Q-016 is a decided rule enforced at WindowReport.cs:213 and fitness.yaml:814, and it outranks the criteria's method wording. SL-087's reflect recorded that the shipped exe cannot be asked what a row says. The app-stopped spike read rows this way 6/6."
+   },
+   {
+    "decision": "Add core.unreadable = ScanResult.Unreadable.Count to the schema-1 report as an additive field, keeping schema 1.",
+    "reversibility": "cheap",
+    "rationale": "If rows and engine count were both read by reflection in the same hook, they would share a failure mode. The app's own report code gives an independent witness. The header's N is the distinct row count (MainWindow.xaml.cs:503), so raw count = distinct N = dump rows also catches a double record."
+   },
+   {
+    "decision": "Dump once at Dispatcher.ShutdownStarted, after the report is written. In rows mode, the hook brings the Unreadable panel into view when the window is shown, so the first rows' containers exist at the dump. C2 rows fail when their rendered text is missing.",
+    "reversibility": "cheap",
+    "rationale": "The spikes showed that the stopped state appears only after the engine returns, so the record and the panel are final at shutdown. At ShutdownStarted, layout can no longer be pumped, so the panel has to be laid out earlier. WindowReport already reads UnreadableList's fullRows, which is evidence that visible rows are realised when the report is written."
+   },
+   {
+    "decision": "Failures before Stop are staged the way the spikes did it. On SMB, a is refused by the rig at create; on cloud, a gets an NTFS deny ACE. On both rigs, b fails partway through the existing client-side failpoint FSA_HOOK_FAIL_LISTING=b|3|59. C2's SMB half is proved by N-005's b row, not by a separate case.",
+    "reversibility": "cheap",
+    "rationale": "SMBLibrary serves a listing from one store call and pages it from memory (U-103, app-stopped spike). A server-side 'fail at page 3' would need fragile stack-frame matching. The SMB paging, the kind derivation from child count (Scanner.cs:285-286) and the rendered reason are all real. Only the code 59 is injected, and the smb-stall spike separately measured that a real teardown mid-listing surfaces as 59."
+   },
+   {
+    "decision": "On the SMB rig, the hold is released after Stop by killing StallRig, not by answering the request.",
+    "reversibility": "cheap",
+    "rationale": "Teardown is the ending in which a post-Stop error could leak into the record. A graceful release could not exercise the FolderDone Cancelled guard (Scanner.cs:272-273). The engine-level spike measured S absent 10/10, with controls at 59."
+   },
+   {
+    "decision": "On the cloud rig, the hold is released by the provider completing s's pending FETCH_PLACEHOLDERS with a failure status, and failing every later fetch. It is not released by killing the provider.",
+    "reversibility": "cheap",
+    "rationale": "The cloud-hang spike measured that both provider kill and the cldflt timeout end in success with an empty listing (0/6 controls). A kill release therefore makes C1's cloud negative pass whatever the code does. An error completion is the one candidate that spike named. If its control still shows no s row, the case says so rather than claiming held."
+   },
+   {
+    "decision": "Each rig Stop case has a -Control run with the same fixture and the same release offset from the logged hold, and no Stop. A 'no row' counts as held only for folders the control put in the list. Otherwise that folder is inconclusive.",
+    "reversibility": "cheap",
+    "rationale": "A negative assertion with no positive control passes by default. This is the discipline the slice's own spikes used, and it is the cross-domain pattern carried below."
+   },
+   {
+    "decision": "C2's temp half follows SL-085's measured order: the holder opens without read sharing first, and only then is the deny FILE_WRITE_ATTRIBUTES ACE added. It is proved twice: by T-008 on the published exe (rendered text), and by an xUnit Fact in the default Core suite (recorded code 32).",
+    "reversibility": "cheap",
+    "rationale": "SL-085 measured that the reverse order lets the read-only open succeed and gives no row. The window case runs rarely, so the engine-level Fact keeps SynchronousIoCancel.cs:442-449's behaviour under every dotnet test."
+   },
+   {
+    "decision": "C3's 'not listed in full' oracle is an independent plain open of each OpenRefused row: the engine's plain mask, no listing, and a non-elevated checker. It replaces the criteria's 'check against the tree's fully-listed state'. Rows with code 363 or a REPARSE attribute, and code-2 folders created after the scan started, are tallied separately. ListedPartway rows are counted, not opened. Only counts are committed.",
+    "reversibility": "cheap",
+    "rationale": "The tree's not-fully-listed mark and the row come from the same recorded error, so comparing them is circular. A refused-then-listed folder (about 306k on this PC, U-108) opens plainly by definition, so a leak is caught row by row, and an open alone does not move last-access. Without the exemptions the oracle would fail a correct run on rows criterion 3 itself calls expected."
+   },
+   {
+    "decision": "C4 extends R-002 with two panel-row steps rather than adding a new case. The 1000-character target is a new non-hidden deny-ListDirectory leaf. Results are compared by leaf Name through Shell.Application, never by path string. The menu keeps its 'Open in Explorer' label.",
+    "reversibility": "cheap",
+    "rationale": "R-002 already builds the 300-character denied folder, and its long-path machinery. U-114 measured that Explorer reports 8.3 aliases at these lengths, and that explorer /select misroutes silently. SL-088 measured that hidden or system targets do not get selected. Renaming UI text is not a seam proof."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "This was the only proposal, and it was taken as the core. The text handed to composition was clipped at 20,000 characters, part-way through prior_art, so anything after that point (risks, any over_engineering_flag, any architecture rules it proposed) was not seen. Four seams were changed: the cloud release (kill replaced by an error completion, because kill cannot light a control); rendered text for C2 (the panel is brought into view in rows mode, and null is no longer accepted for C2 rows); C3 oracle exemptions (363/REPARSE leftovers, code-2 folders recreated since the scan, a non-elevated checker); and an added default-suite Fact for the held-folder code."
+   }
+  ],
+  "coherence_check": "ONE PROPOSAL, NO COMPOSITION TO CHECK. Nothing in this design has survived a disagreement with another designer. Review is the first place it will be argued with, and should treat every decision here as uncontested. The proposal text I was handed was clipped at 20,000 characters. Anything it said after its prior_art (risks, an over-engineering flag, rules) was not seen and not weighed.\n\nWHAT WAS CHECKED against reality, not against another proposal:\n(1) The proposal's N-006 used provider kill as the release, while its own control discipline says a negative counts only beside a lit control. The cloud-hang spike measured that kill and the cldflt timeout both end in success, with 0/6 controls. Shipped together, the cloud half of C1 could only ever be 'inconclusive'. Redesigned: the release is an error completion of s's fetch and of every later fetch. Unchanged: the control rule and the case's error contract (held / failed / inconclusive).\n(2) Dumping at ShutdownStarted and requiring rendered text for C2 were jointly incoherent if the panel was never laid out, because layout cannot be pumped during shutdown. Redesigned: rows mode brings the panel into view when the window is shown.\n(3) The C3 open oracle against criterion 3's own expected rows: as proposed, it would fail a correct run on 363/REPARSE rows that open plainly, and on code-2 folders recreated since the scan. Exemptions were added, each tallied rather than hidden. The checker must also be non-elevated, like the app.\n(4) Error contracts are consistent across all five cases. A missed precondition or an unlit control gives inconclusive, never held. No report after the release gives failed.\n(5) Q-016 is consistent across all pieces. Paths exist only in the hook log, the rig and provider logs, and W-001's raw dump, all in gitignored artifacts/ or scratch. The report gains one integer. The committed artefact holds counts and reason-table strings only.\n(6) The new Core.Tests Fact and T-008 use the same fixture order (SL-085's), so they cannot disagree about which code is recorded.\n\nNo decidable_disagreements are recorded. Each open question about reality leaves every component boundary and contract unchanged:\n- Does an error completion surface as a non-zero code? If not, the case prints 'no control', and the open question below goes to the person.\n- Does the --report exit fire ShutdownStarted? If not, the case fails with 'no dump', and the trigger moves inside the hook.\n- Does the app-level SMB control reach an ending after StallRig is killed?\n\nArchitecture rules: two. Each must be written twice, as an ArchitectureRulesTests Fact and a fitness.yaml twin, or rules-parity reports DRIFT (SL-087). Rule 1's glob, src/FsAnalyser.App/**/WindowReport.cs, must be confirmed at build to match the real file, and its patterns run against HEAD first to show they do not fire on today's correct code. A glob that matches nothing can never fail.\n\nThe 3 failing LastAccess/HeldOpenTree tests seen by build-check (TEMP=C:\\WINDOWS\\TEMP) are outside this slice. No new test depends on last-access back-dating.",
+  "architecture_rules": [
+   {
+    "name": "the window report reads only the count from the failed-folder record",
+    "files": "src/FsAnalyser.App/**/WindowReport.cs",
+    "must_not_match": [
+     "\\bUnreadable\\s*\\??\\.\\s*(?!Count\\b)\\w",
+     "\\bUnreadable\\s*\\??\\[",
+     "\\bin\\s+[\\w.?]*\\bUnreadable\\b"
+    ],
+    "because": "This slice puts core.unreadable into the report writer, next to code that can reach UnreadableFolder.Entry. Anything taken from the record beyond Count (an element, an enumeration, a LINQ projection) is one step from writing a path into the schema-1 report. Q-016 bars paths there, and the report is read by every window case and kept as evidence."
+   },
+   {
+    "name": "the shipped app never dumps panel rows; only the test hook does",
+    "files": "src/**",
+    "must_not_import": [
+     "FsaWindowHook*"
+    ],
+    "must_not_match": [
+     "FSA_HOOK_ROWS"
+    ],
+    "because": "The rows dump carries every unreadable folder's full path. If product code honoured the switch, the published exe would write paths to a file whenever an environment variable was set, outside Q-016's report rule. And if the app built the dump itself, from the engine record rather than from UnreadableList's items, the seam proofs would be testing the record instead of the panel the person sees."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "stop a scan on the stalled SMB share",
+    "shape": "The folder being listed when Stop is pressed (s) is then released by the share being torn down, so its listing ends in a network error.",
+    "why": "FolderDone skips recording only when the read reports Cancelled (Scanner.cs:272-273). Teardown turns the hold into code 59. Only a -Control with the same kill offset and no Stop, which puts s in as a network code, makes 'no s row' mean anything. The smb-stall spike measured this at engine level only (10/10 absent, controls at 59), never through the panel after a kill.",
+    "material": true
+   },
+   {
+    "behaviour": "stop a scan on either rig",
+    "shape": "Folders whose first open or fetch is logged after the Stop time, or never, and which fail once the share is gone or the provider is failing fetches (t, u).",
+    "why": "Unreached folders must never be read. The -Control must show them becoming rows after teardown or release. The rig or provider log time decides which folders count as unreached, not the fixture order, because the engine's visit order is asserted nowhere.",
+    "material": true
+   },
+   {
+    "behaviour": "stop a scan on either rig",
+    "shape": "One folder refused at open (a) and one that failed partway (b), both finished before Stop.",
+    "why": "'Listed once each' has never been exercised: the survey found no rig tree with a failure before Stop. The header's N is distinct while core.unreadable is raw, so a double record shows as a mismatch. The case is inconclusive unless a's denied create and b's failpoint are logged before the Stop time.",
+    "material": true
+   },
+   {
+    "behaviour": "stop a scan on the hung cloud rig",
+    "shape": "The placeholder folder whose FETCH_PLACEHOLDERS is pending when Stop is pressed (s), after which the provider completes that fetch with a failure status.",
+    "why": "Provider kill and the 60 s cldflt timeout both end the wait in success with an empty listing (cloud-hang spike, 0/6 controls), so they can never produce the row Stop must suppress. The error completion is unmeasured. If the -Control shows no s row, the case prints 's: no control' and reports inconclusive for s, never held.",
+    "material": true
+   },
+   {
+    "behaviour": "show why a held folder could not be read",
+    "shape": "The folder's last-access open is refused (5), and another process holds it open without read sharing, so the plain open gets a sharing violation (32).",
+    "why": "SynchronousIoCancel.cs:442-449 records the plain open's error, not the refused one. The row must be code 32, rendered 'in use by another program', never 'access denied'. The holder must open before the deny ACE is added: SL-085 measured that the reverse order gives no row, so the case probes both opens first and is inconclusive on any other pair. It is exercised by T-008 on the exe and by the Core Fact.",
+    "material": true
+   },
+   {
+    "behaviour": "show why a held folder could not be read",
+    "shape": "The last-access open is refused but nobody holds the folder, so the plain open lists it in full (c).",
+    "why": "This is the refused-then-listed class in miniature (about 306k on this PC, U-108). c must not be a row, and T-008's core.unreadable must be exactly 1, or the fallback is recording the refused open.",
+    "material": true
+   },
+   {
+    "behaviour": "show why a folder was only partly read on the SMB rig",
+    "shape": "b's listing fails on page 3 with Win32 59, after two real pages over SMB.",
+    "why": "The kind comes from the store's child count (Scanner.cs:285-286), so a failure after children were stored must render 'only partly read', and 59 must render 'network or share error'. The failure is injected client-side because SMBLibrary pages from memory after one store call (U-103). The case output states that substitution.",
+    "material": true
+   },
+   {
+    "behaviour": "compare the panel with the engine on a whole C:\\ scan",
+    "shape": "The published exe runs non-elevated with several hundred rows, most of which are never realised on screen.",
+    "why": "Header N (distinct), the dump's row count and core.unreadable must be equal, with no path appearing twice. Reason is read from the item, not the container, because unrealised rows have no text, and it must be non-empty for every code seen (2, 5, 363 and 1920 were recorded on this PC). An elevated hook or checker makes the run meaningless, so W-001 refuses to run elevated. ListedPartway rows are counted but not opened, since they open by definition; U-098 measured 0 of them on this PC.",
+    "material": true
+   },
+   {
+    "behaviour": "compare the panel with the engine on a whole C:\\ scan",
+    "shape": "A folder whose last-access open was refused and which was then listed in full (about 306,000 on this PC).",
+    "why": "None may be a row. The tree's not-fully-listed mark comes from the same recorded error as the row, so the check is an independent plain open of each OpenRefused row, with no listing and no change to last-access. A row that opens is a leak.",
+    "material": true
+   },
+   {
+    "behaviour": "compare the panel with the engine on a whole C:\\ scan",
+    "shape": "Rows left over from the CfProvider rig: code 363, or a REPARSE attribute (about 30).",
+    "why": "Criterion 3 names these as expected rows, and a placeholder can open plainly even when its enumeration fails. Without a separate tally, the open oracle fails a correct run on them.",
+    "material": true
+   },
+   {
+    "behaviour": "compare the panel with the engine on a whole C:\\ scan",
+    "shape": "A code-2 row whose folder was deleted during the scan and has since been recreated under the same name.",
+    "why": "The checker's open succeeds on the new folder. It is told apart from a leak by a creation time after the scan's start, read from the open handle. Without that, the oracle fails a correct run on churn under paths such as WER and Temp.",
+    "material": true
+   },
+   {
+    "behaviour": "Show in Explorer from a panel row",
+    "shape": "The denied folder's path is about 300 characters.",
+    "why": "R-002 reveals this folder only from a tree row today. The panel row is a different surface (PathOf(UnreadableRow) → ShellReveal). U-114 found that explorer /select misroutes silently at 300+ characters, so the evidence is the window's folder Name and a single selected item's Name, plus hook outcome Exact with hresult 0, no consent.exe and no dialog.",
+    "material": true
+   },
+   {
+    "behaviour": "Show in Explorer from a panel row",
+    "shape": "The denied folder's path is about 1000 characters.",
+    "why": "No 1000-character denied-folder fixture exists: R-002's 1000-character target is a file in the biggest-files list. At this length Explorer reports 8.3 aliases for both the folder and the selection (U-114), so only a leaf-Name comparison is valid.",
+    "material": true
+   },
+   {
+    "behaviour": "Show in Explorer from a panel row",
+    "shape": "The denied folder is hidden or system.",
+    "why": "SL-088 measured that 0 of 13 hidden or system reveals selected the item when Explorer is set to Hidden=2. That comes from Explorer's view setting, not from this seam, and criterion 4 does not name it. The fixtures must not set Hidden or System. No test is owed here, and a later slice may disagree.",
+    "material": false
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Clinical and analytical lab assays",
+   "pattern": "A negative result counts only beside a positive control: the same sample preparation minus the intervention, which must show the signal. If the control does not light up, the negative is reported as 'no information', not as 'absent'.",
+   "transfer_found": true,
+   "rationale": "C1 is two negative assertions: no row for the folder Stop cut short, and none for unreached folders. Without a control that produces those rows, either assertion passes when the ending simply never creates a failure. The cloud-hang spike found exactly that on the cloud rig, which is why the cloud release was changed in this composition.",
+   "invariants": [
+    {
+     "precondition": "Without Stop, the same SMB teardown during s's held listing puts s in the failed-folder record.",
+     "status": "holds",
+     "evidence": "smb-stall-errors-after-stop-no-row: controls put S in as code 59, and Cancel runs had S absent 10/10 (engine level)."
+    },
+    {
+     "precondition": "Without Stop, provider kill or the cldflt timeout puts the stalled cloud folder in the record.",
+     "status": "fails",
+     "evidence": "cloud-hang-errors-after-stop-no-row: both endings return success with an empty listing, and controls put H in Unreadable 0/6. This is why N-006 no longer uses kill as its release."
+    },
+    {
+     "precondition": "Without Stop, a provider that completes s's pending FETCH_PLACEHOLDERS with a failure CompletionStatus makes the engine record s with a non-zero code.",
+     "status": "must-verify",
+     "evidence": "Unmeasured. The cloud-hang spike named it as the candidate and noted that tests/CfProvider never calls CfExecute. If it fails, N-006 reports s as 'no control' and open question 2 applies."
+    },
+    {
+     "precondition": "Without Stop, placeholders t and u, fetched after the provider starts failing fetches, are recorded with a cloud code, giving N-006 a control for 'never reached'.",
+     "status": "must-verify",
+     "evidence": "Not measured. U-110 and U-111 show leftover CfProvider folders on C: recording code 363, which suggests it but does not prove it."
+    },
+    {
+     "precondition": "At app level, the no-Stop SMB control reaches an ending and writes its report after StallRig is killed.",
+     "status": "must-verify",
+     "evidence": "Measured only at engine level with an in-process SMBServer.Stop(), where the scan thread returned 14-30 ms after the sockets closed. The app-stopped spike released S gracefully."
+    },
+    {
+     "precondition": "Case and control differ only in Stop: same fixture, same failpoint, same release offset from the logged hold.",
+     "status": "must-verify",
+     "evidence": "Enforced by the case script from the rig and provider log times, and checked on each run."
+    }
+   ]
+  },
+  "channeled_experts": [
+   "Raymond Chen (NT create: access check before share-mode check)",
+   "Michael Feathers (seams, and tests that can fail)"
+  ],
+  "prior_art": [
+   {
+    "pattern": "A paired positive control for every negative assertion, so a test cannot pass only because the signal never occurs.",
+    "where": "Lab assay practice; also the discipline used in this slice's own smb-stall and cloud-hang spikes.",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "On NT create, the access check runs before the share-mode check (IoCheckShareAccess). A write-attributes deny together with a holder that shares no read therefore gives 5 on the keep-last-access open and 32 on the plain open.",
+    "where": "The Windows I/O manager's create path. Measured for this repo by SL-085: 'holder then ACE: 5/32, HEAD row is 32'.",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "A cloud files provider completes FETCH_PLACEHOLDERS through CfExecute with CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS and a CompletionStatus. A failure status fails the directory enumeration that triggered the fetch.",
+    "where": "Microsoft Cloud Filter API (cfapi.h: CfExecute, CF_OPERATION_PARAMETERS.TransferPlaceholders). Named as the untested candidate by the cloud-hang spike.",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Reveal through SHParseDisplayName and SHOpenFolderAndSelectItems, never explorer /select. Check the landing by the window's folder Name and the selected item's Name, because Explorer reports 8.3 aliases at 300 and 1000 characters.",
+    "where": "U-114 (this epic's measured verdict) and SL-088's reveal spikes; src/FsAnalyser.Core/Native/ShellReveal.cs.",
+    "authority": "official",
+    "basis": "cited"
+   }
+  ],
+  "whats_new": [
+   "FsaWindowHook rows mode (FSA_HOOK_ROWS=1): brings the Unreadable panel into view when the window is shown, then dumps the rows as JSONL at ShutdownStarted.",
+   "A core.unreadable count in the schema-1 report (additive; schema stays 1).",
+   "StallRig --deny <name> and --log <file> (a create-time ACCESS_DENIED hook and UTC create/hold log in SmbRig.cs).",
+   "A CfProvider 'stop-seam' scenario with a logged fetch and an error-completion release through CfExecute.",
+   "N-005: stopped scan on the SMB rig, with -Control.",
+   "N-006: stopped scan on the cloud rig, with -Control (the first cloud window case).",
+   "T-008: a held folder shows 'in use by another program', using the holder-first-then-ACE fixture.",
+   "A Core.Tests Fact asserting that the engine records the held folder as 32, and does not record the refused-then-listed folder.",
+   "W-001: a whole-C:\\ recorded run, with an independent plain-open checker and the counts-only .taad/slices/SL-089/c-drive-run.json.",
+   "Two R-002 panel-row reveal steps, and a 1000-character non-hidden deny-ListDirectory folder fixture.",
+   "Two architecture rules, each written as an xUnit Fact and a fitness.yaml twin."
+  ],
+  "whats_reused": [
+   "FsaWindowHook stop mode (FSA_HOOK_MODE=stop, FSA_HOOK_CANCEL_DELAY_MS) and RevealMode's FindUnreadableContainer and unreadable: surface (RevealMode.cs:497,541-566).",
+   "The listing failpoint FSA_HOOK_FAIL_LISTING (b|3|59), as run by the app-stopped spike.",
+   "StallRig and SmbRig's StopAnsweringAtTheListingOf hold, with Update-StallRig.",
+   "The CfProvider separate-process provider and sync-root setup under scratch.",
+   "N-001's SMB mapping setup and cleanup (WindowCases.ps1:1338-1372).",
+   "R-001 step 14's Explorer assertion helper (WindowCases.ps1:3830-3839) and R-002's 300-character deny-all fixture (WindowCases.ps1:4170-4186).",
+   "eng/read-window.ps1, the schema-1 --report path, and eng/dotnet.ps1 with its repo-local SDK 10.0.401.",
+   "UnreadableRows.Build and its reason table (32/33 'in use by another program'; 51-72 and 1203-2250 'network or share error'; ListedPartway 'only partly read'), which passed 113/113.",
+   "The panel row's RowContextMenu → PathOf → ShellReveal.RevealAsync ('Open in Explorer').",
+   "Scanner.FolderDone's Cancelled guard and SynchronousIoCancel's plain-open fallback, proven here, not changed.",
+   "The rules parity mechanism: ArchitectureRulesTests, fitness.yaml and eng/rules-parity.ps1."
+  ],
+  "taste_disagreements": [
+   "No designer disagreed with another: there was one proposal. The items below are placements review may want to argue, not settled contests.",
+   "The rows dump lives in the test hook, read by reflection over UnreadableList's items. The alternative is a hidden App flag. The hook was chosen so the shipped exe never writes paths and the proof reads the panel, not the record.",
+   "C2's SMB half is folded into N-005's b row rather than given its own case.",
+   "The menu stays labelled 'Open in Explorer', while criterion 4 says 'Show in Explorer'.",
+   "C4 is two new steps in R-002 rather than a new case, R-003."
+  ],
+  "open_questions": [
+   "N-005, N-006, R-002 and W-001 change this PC's state or take its desktop: they add an SMB client mapping, register a cloud sync root, open real Explorer windows, and run a minutes-long C:\\ scan. SL-088's validation marked such cases as runs for a person, but this slice's spikes ran every one of them unattended. May the build and validate stages run them here, or must a person run them? Until that is decided, the engine cannot discharge the obligations for C1, C3 and C4 on its own.",
+   "The cloud half of C1 may have no ending that lights the control. If the error-completion release also fails to put the cut-short folder in the list without Stop (as provider kill and the cldflt timeout already fail to), is C1's cloud half met by 'no row, and the platform never produces one', or should it be re-scoped?"
+  ]
+ }
+}

@@ -234,6 +234,22 @@ public class ArchitectureRulesTests
             @"/[Ss][Ee][Ll][Ee][Cc][Tt]\b");
     }
 
+    /// <summary>
+    /// The window report takes only the count from the scan's failed-folder record (SL-089). The record holds each failed
+    /// folder's entry, one step from its path, and Q-016 bars names and paths from the schema-1 report, which every window
+    /// case reads and keeps as evidence. The pattern names the record and allows it only followed by .Count, so it holds on
+    /// one line: the record alone at the end of a line, the first line of the two-line fluent layout the report writes its
+    /// LINQ in, fails here as it fails in Fitness, which matches the whole file (review M4). TopLevelState.Unreadable, a row
+    /// state the report counts, is not the record. WindowReportRuleTests feeds this pattern the shapes it must catch and
+    /// the look-alikes it must leave. Comments are matched too.
+    /// </summary>
+    [Fact]
+    public void TheWindowReportReadsOnlyTheFailedFolderCount()
+    {
+        AssertNoMatch(Files(@"src\FsAnalyser.App", "WindowReport.cs"),
+            @"(?<!TopLevelState\.)\bUnreadable\b(?!\s*\??\.\s*Count\b)");
+    }
+
     private static IEnumerable<string> Files(string folder, params string[] patterns) =>
         patterns
             .SelectMany(p => Directory.EnumerateFiles(Path.Combine(Repo, folder), p, SearchOption.AllDirectories))

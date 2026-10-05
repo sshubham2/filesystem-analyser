@@ -89,8 +89,8 @@ public class WindowCasesHelperTests
         }
     }
 
-    // $script: WindowCases.ps1's parse, stopping at the first error.
-    private static string ParseScript()
+    // $script: WindowCases.ps1's parse, stopping at the first error. W001OracleTests loads its functions the same way.
+    internal static string ParseScript()
     {
         string script = Path.Combine(FindRepo(), "tests", "window", "WindowCases.ps1");
         return "$errors = $null; " +
@@ -99,13 +99,13 @@ public class WindowCasesHelperTests
     }
 
     // One of its top-level functions, defined here as HookCases.ps1 defines it.
-    private static string Load(string function) =>
+    internal static string Load(string function) =>
         "$found = @($script.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -eq '" + function + "' }); " +
         "if ($found.Count -ne 1) { 'WindowCases.ps1 no longer defines " + function + " at its top level'; exit 1 }; " +
         ". ([scriptblock]::Create($found[0].Extent.Text)); ";
 
     // Runs a command under pwsh and returns what it wrote; with a temp folder, as its %TEMP% and %TMP%.
-    private static async Task<string> Pwsh(string command, string? temp = null)
+    internal static async Task<string> Pwsh(string command, string? temp = null)
     {
         var start = new ProcessStartInfo("pwsh.exe")
         {

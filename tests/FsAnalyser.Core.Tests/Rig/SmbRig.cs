@@ -114,6 +114,23 @@ internal sealed class LoopbackShare : IDisposable
     /// <summary>Whether a mapping is one the rig makes: 127.0.0.1 and a share named fsa and 8 hex digits, exactly.</summary>
     public static bool IsRigMapping(string remotePath) => RigRemotePath.IsMatch(remotePath);
 
+    /// <summary>
+    /// Removes every rig mapping a killed run left behind, under the lock, as a new run does before it maps (SL-089,
+    /// review M5): a case that kills its rig, so that the share's teardown fails the listing it held, runs this next, so
+    /// no mapping to 127.0.0.1 outlives the case. Returns what it removed.
+    /// </summary>
+    public static IReadOnlyList<string> SweepLeftBehind(TimeSpan waitForOtherRun)
+    {
+        using RigLock held = RigLock.Take(RigLock.SessionName, waitForOtherRun);
+        List<string> left = PowerShell("Get-SmbMapping | ForEach-Object { $_.RemotePath }")
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(IsRigMapping)
+            .ToList();
+        if (left.Count > 0)
+            PowerShell(string.Concat(left.Select(path => $"Remove-SmbMapping -RemotePath '{path}' -Force -UpdateProfile -Confirm:$false; ")));
+        return left;
+    }
+
     public void Dispose()
     {
         Store.Release();
@@ -229,6 +246,19 @@ internal sealed class StallingFileStore(Smb.INTFileStore inner) : Smb.INTFileSto
     /// <summary>The folder, relative to the share, whose listing is the first request not answered.</summary>
     public void StopAnsweringAtTheListingOf(string folder) => _stallAt = folder;
 
+    /// <summary>
+    /// A folder, relative to the share, whose every open is answered STATUS_ACCESS_DENIED, as a server refusing it would
+    /// (SL-089): the scan records it as could not be opened, code 5.
+    /// </summary>
+    public string? DenyAtOpen { get; set; }
+
+    /// <summary>
+    /// Called with one line per open the server answers, 'create &lt;name&gt; &lt;status&gt;', and 'hold &lt;name&gt;' as it stops
+    /// answering (SL-089), so a case can tell which folders were opened before its Stop and which after. The root is
+    /// '&lt;root&gt;'. The rig stamps the time.
+    /// </summary>
+    public Action<string>? Trace { get; set; }
+
     public void Release() => _release.Set();
 
     /// <summary>Closes what the client left open, so the folder can be removed.</summary>
@@ -246,8 +276,17 @@ internal sealed class StallingFileStore(Smb.INTFileStore inner) : Smb.INTFileSto
         Smb.CreateOptions createOptions, Smb.SecurityContext securityContext)
     {
         Gate();
+        string name = path.Trim('\\');
+        if (DenyAtOpen is { } denied && string.Equals(name, denied, StringComparison.OrdinalIgnoreCase))
+        {
+            handle = null!;
+            fileStatus = Smb.FileStatus.FILE_DOES_NOT_EXIST;
+            Trace?.Invoke($"create {name} {Smb.NTStatus.STATUS_ACCESS_DENIED}");
+            return Smb.NTStatus.STATUS_ACCESS_DENIED;
+        }
         Smb.NTStatus status = inner.CreateFile(out object opened, out fileStatus, path, desiredAccess, fileAttributes, shareAccess,
             createDisposition, createOptions, securityContext);
+        Trace?.Invoke($"create {(name.Length == 0 ? "<root>" : name)} {status}");
         if (status != Smb.NTStatus.STATUS_SUCCESS)
         {
             handle = opened;
@@ -277,6 +316,7 @@ internal sealed class StallingFileStore(Smb.INTFileStore inner) : Smb.INTFileSto
         {
             _stopped = true;
             StalledAt = _clock.Elapsed;
+            Trace?.Invoke($"hold {stallAt}");
             Stalled.Set();
             _release.Wait();
         }

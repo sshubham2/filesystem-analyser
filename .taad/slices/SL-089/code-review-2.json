@@ -1,0 +1,292 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-089",
+ "stage": "code-review",
+ "attempt": 2,
+ "at": "2026-10-05T19:33:00.053Z",
+ "head": "f9c303e129b8a8473eab5f49c40859611f6aadde",
+ "run_id": 2584,
+ "summary": "Both items sent back are fixed in the tree.\n\n**O-034 (trailing backslash).** Format-AppArgument in tests/window/WindowCases.ps1 quotes the path and doubles a trailing backslash run, the same rule as eng/read-window.ps1:52.\n- Invoke-HookedRun and every other launch in WindowCases.ps1 and HookCases.ps1 that builds a command line now go through it. The only exceptions are the raw-array cases C-007, C-012 and C-014, which pass arrays on purpose.\n- HookCases.ps1 loads the helper by name.\n\n**O-035 (doc).** docs/design/SL-089-seams.md:38-40 now matches Test-N006: a row for s fails the run only under the kill or timeout ending.\n\n**What I ran:**\n- **Build:** 0 warnings, 0 errors.\n- **Slice's tests:** 44/44 green, including the three new AppArgumentTests.\n- **C-013:** passed. The hooked rows-mode run of `tree\\` wrote its report with the root as passed, and the dump agrees.\n- **W-001 with `-Root C:\\Windows\\Logs\\`:** passed. Report written, 1 row, checker controls held, verdict held, no app left running.\n\n**One new finding (minor).** The census that is meant to stop hand-quoting from coming back only matches a backtick-escaped quote on the same line as Start-App or Invoke-App. PowerShell's other common spelling, doubled quotes, passes it. I checked this against the test's own pattern: `Start-App \"\"\"$root\"\" --report \"\"$report\"\"\"` is not matched. That line reproduces the exact M1 failure: Windows splits it into the single argument `C:\" --report <file>`. Concatenating `'\"'`, and hand-quoting into a variable on an earlier line, also pass the census. No such line exists in the tree today, so nothing is broken now; the check simply passes falsely on those spellings.\n\nNo other statement in the files I passed earlier is made false by this change.\n\nSecond round: Nothing new turned up. I went back over this diff trying to break it, and the census gap I filed last round (m2: doubled-quote, concatenation and variable spellings pass the census) is still the only open item.\n\nWhat I tested:\n- **Format-AppArgument:**\n  - **Inputs:** a null or empty path, `$` signs in the path, `\\\\?\\` and UNC forms, a run of two trailing backslashes, and a bare drive letter.\n  - **Raw-array callers:** C-007, C-012 and C-014 pass arrays to Start-App unquoted. A trailing backslash there sits before a space, so Windows keeps it as is.\n- **AppArgumentTests:**\n  - **Corpus:** `<temp>` substitution, and the pwsh stub round-trip of command lines through ConvertTo-Json.\n  - **SplitArguments:** the CommandLineToArgvW program-name quirk is avoided by the `app.exe` prefix.\n  - **Census walker and regex:** hidden folders such as the now-untracked `.taad-scratch` hold no launcher. Comment lines, tab indentation, CRLF and block comments fail closed at worst. The 'doubles' check matches the literal rule text in both eng/read-window.ps1 and PoolWatch.ps1.\n- **Callers outside WindowCases.ps1:**\n  - **Loading helpers by name:** only HookCases.ps1 loads Invoke-HookedRun, and it now loads Format-AppArgument too. T005Batch, the SL-064/SL-076 bug scripts and WindowCasesHelperTests load functions that never launch the app.\n  - **WindowMutants.ps1:** it never refers to C-013, $HookedCases or the launch helpers.\n- **The owner's command, as typed:**\n  - Typed in pwsh as `-Root C:\\` (or `\"C:\\\"`), it arrives as `C:\\`.\n  - From cmd.exe as `-Root \"C:\\\"`, it arrives as `C:\"`. Test-W001 then stops at once with 'is not a folder' and never starts a scan.\n\nLast round's runs still stand: build clean, 44/44 slice tests, C-013 passed, and W-001 with `-Root C:\\Windows\\Logs\\` held.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "Both items sent back are fixed in the tree.\n\n**O-034 (trailing backslash).** Format-AppArgument in tests/window/WindowCases.ps1 quotes the path and doubles a trailing backslash run, the same rule as eng/read-window.ps1:52.\n- Invoke-HookedRun and every other launch in WindowCases.ps1 and HookCases.ps1 that builds a command line now go through it. The only exceptions are the raw-array cases C-007, C-012 and C-014, which pass arrays on purpose.\n- HookCases.ps1 loads the helper by name.\n\n**O-035 (doc).** docs/design/SL-089-seams.md:38-40 now matches Test-N006: a row for s fails the run only under the kill or timeout ending.\n\n**What I ran:**\n- **Build:** 0 warnings, 0 errors.\n- **Slice's tests:** 44/44 green, including the three new AppArgumentTests.\n- **C-013:** passed. The hooked rows-mode run of `tree\\` wrote its report with the root as passed, and the dump agrees.\n- **W-001 with `-Root C:\\Windows\\Logs\\`:** passed. Report written, 1 row, checker controls held, verdict held, no app left running.\n\n**One new finding (minor).** The census that is meant to stop hand-quoting from coming back only matches a backtick-escaped quote on the same line as Start-App or Invoke-App. PowerShell's other common spelling, doubled quotes, passes it. I checked this against the test's own pattern: `Start-App \"\"\"$root\"\" --report \"\"$report\"\"\"` is not matched. That line reproduces the exact M1 failure: Windows splits it into the single argument `C:\" --report <file>`. Concatenating `'\"'`, and hand-quoting into a variable on an earlier line, also pass the census. No such line exists in the tree today, so nothing is broken now; the check simply passes falsely on those spellings.\n\nNo other statement in the files I passed earlier is made false by this change.\n\nSecond round: Nothing new turned up. I went back over this diff trying to break it, and the census gap I filed last round (m2: doubled-quote, concatenation and variable spellings pass the census) is still the only open item.\n\nWhat I tested:\n- **Format-AppArgument:**\n  - **Inputs:** a null or empty path, `$` signs in the path, `\\\\?\\` and UNC forms, a run of two trailing backslashes, and a bare drive letter.\n  - **Raw-array callers:** C-007, C-012 and C-014 pass arrays to Start-App unquoted. A trailing backslash there sits before a space, so Windows keeps it as is.\n- **AppArgumentTests:**\n  - **Corpus:** `<temp>` substitution, and the pwsh stub round-trip of command lines through ConvertTo-Json.\n  - **SplitArguments:** the CommandLineToArgvW program-name quirk is avoided by the `app.exe` prefix.\n  - **Census walker and regex:** hidden folders such as the now-untracked `.taad-scratch` hold no launcher. Comment lines, tab indentation, CRLF and block comments fail closed at worst. The 'doubles' check matches the literal rule text in both eng/read-window.ps1 and PoolWatch.ps1.\n- **Callers outside WindowCases.ps1:**\n  - **Loading helpers by name:** only HookCases.ps1 loads Invoke-HookedRun, and it now loads Format-AppArgument too. T005Batch, the SL-064/SL-076 bug scripts and WindowCasesHelperTests load functions that never launch the app.\n  - **WindowMutants.ps1:** it never refers to C-013, $HookedCases or the launch helpers.\n- **The owner's command, as typed:**\n  - Typed in pwsh as `-Root C:\\` (or `\"C:\\\"`), it arrives as `C:\\`.\n  - From cmd.exe as `-Root \"C:\\\"`, it arrives as `C:\"`. Test-W001 then stops at once with 'is not a folder' and never starts a scan.\n\nLast round's runs still stand: build clean, 44/44 slice tests, C-013 passed, and W-001 with `-Root C:\\Windows\\Logs\\` held.",
+  "findings": [
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "defect",
+    "claim": "AppArgumentTests' census is the check that is meant to fail the build if hand-quoting comes back, and the builder's account says it catches 'any hand-quoted launch line'. Its pattern only matches a backtick-escaped quote on a Start-App or Invoke-App line, so it passes falsely on other spellings PowerShell allows for the same hand-quoting:\n- Doubled quotes. Measured: `Start-App \"\"\"$root\"\" --report \"\"$report\"\"\"` is not matched by the test's own pattern. With $root = C:\\ that line expands to `\"C:\\\" --report \"C:\\t\\r.json\"`, which Windows splits into the one argument `C:\" --report C:\\t\\r.json`. That is M1's exact failure: no report mode.\n- String concatenation: `Start-App ('\"' + $root + '\"')` is not matched.\n- A command line built with backtick quotes in a variable on an earlier line, then passed as `Start-App $line`, is not matched.\nA regression in any of these spellings would keep `dotnet test` green while W-001 -Root C:\\ hangs again for 1200 s.",
+    "evidence": "tests/FsAnalyser.Core.Tests/AppArgumentTests.cs, the HandQuoted constant, used by both the plants test and the 'uses-format' census over tests/window/WindowCases.ps1 and HookCases.ps1. tests/window/AppArgumentCorpus.json plants P01-P08 hold only the backtick spelling. Run here: [regex]::IsMatch on the four spellings above gave True only for the backtick one, and CommandLineToArgvW on the doubled-quote expansion gave one argument.",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/AppArgumentTests.cs",
+     "line": 23,
+     "text": "    private const string HandQuoted = @\"(?m)^(?!\\s*#).*\\b(?:Start-App|Invoke-App)\\b.*`\"\"\";"
+    },
+    "fix": "Invert the census. Every Start-App or Invoke-App call in the 'uses-format' producers, other than the two helpers' own definitions, must either pass an array literal (`@(`) or contain Format-AppArgument on that line; anything else fires. Add plant rows that must fire: `$process = Start-App \"\"\"$root\"\" --report \"\"$report\"\"\"`, `$process = Start-App ('\"' + $root + '\"')` and `$process = Start-App $line`. Keep P05-P07 quiet.",
+    "class_of": "a root ending in a backslash handed to the app's argv undoubled",
+    "threat": "accident"
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "Unchanged by this diff. N-006's release control in tests/window/WindowCases.ps1 (Start-CloudSeamRun/Step-CloudSeamRun, CfProvider Fail() via CfExecute) measures it each run. The precondition was measured false, and the Q-177 branch is applied and recorded in docs/design/SL-089-seams.md."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "Unchanged. Test-N006's $platformLimit covers t and u when no control lit them."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "Unchanged. Invoke-SmbSeamRun's control path and CheckSeamControl (exit 0, a report, Completed). The launch line now uses Format-AppArgument on $rig.Root, a UNC path with no trailing backslash, so the command line is the same string as before."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "Unchanged. Shared run functions, and the hold-to-teardown and hold-to-release offsets compared within 1000 ms."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "Unchanged (Test-N005)."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "Unchanged (CheckSeamMain)."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "Unchanged."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "Unchanged (Test-N006)."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "Unchanged. T-009 and HeldFolderReasonTests (passed in this run's filter)."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "Unchanged."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "Unchanged."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "Unchanged. W-001 ran here again on C:\\Windows\\Logs\\ (trailing backslash) and held."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "Unchanged. In this run the oracle opened the code-5 row and it was still refused, with 0 leaks."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "Unchanged. W001OracleTests passed."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "Unchanged. W001OracleTests passed."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "Unchanged. R-002 step f; Invoke-WatchedReveal now launches through Format-AppArgument."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "Unchanged. R-002 step g."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "Unchanged. StartupHook rows mode; C-013's new hooked run and W-001 used it here."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "Unchanged."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "Unchanged. ArchitectureRulesTests and RuleCopiesAgreeTests passed in this run's filter."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "Unchanged. WindowReportRuleTests passed."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "Unchanged."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "Unchanged."
+   },
+   {
+    "key": "O-024",
+    "discharged": "yes",
+    "evidence": "Unchanged."
+   },
+   {
+    "key": "O-025",
+    "discharged": "yes",
+    "evidence": "Unchanged. W-001's whole-C:\\ run is the owner's; its command now reaches report mode (O-034)."
+   },
+   {
+    "key": "O-026",
+    "discharged": "yes",
+    "evidence": "Unchanged. Checker controls all true in this run."
+   },
+   {
+    "key": "O-027",
+    "discharged": "yes",
+    "evidence": "Unchanged."
+   },
+   {
+    "key": "O-028",
+    "discharged": "yes",
+    "evidence": "Unchanged."
+   },
+   {
+    "key": "O-029",
+    "discharged": "yes",
+    "evidence": "Unchanged."
+   },
+   {
+    "key": "O-030",
+    "discharged": "yes",
+    "evidence": "Unchanged."
+   },
+   {
+    "key": "O-031",
+    "discharged": "yes",
+    "evidence": "Unchanged."
+   },
+   {
+    "key": "O-032",
+    "discharged": "no",
+    "evidence": "Waived to SC-133 by decision."
+   },
+   {
+    "key": "O-033",
+    "discharged": "no",
+    "evidence": "Waived to SC-134 by decision."
+   },
+   {
+    "key": "O-034",
+    "discharged": "yes",
+    "evidence": "Format-AppArgument in tests/window/WindowCases.ps1 doubles the trailing backslash run; Invoke-HookedRun (:524) and every string-command-line launch in WindowCases.ps1 and HookCases.ps1 use it. AppArgumentTests' root corpus (A01-A10 through the script's real Invoke-HookedRun, split by CommandLineToArgvW) passed here. C-013's hooked run of `tree\\` and W-001 -Root C:\\Windows\\Logs\\ both wrote their reports and passed in my runs. The census guarding the class misses other quoting spellings (finding m2)."
+   },
+   {
+    "key": "O-035",
+    "discharged": "yes",
+    "evidence": "docs/design/SL-089-seams.md:38-40 now says N-006 fails on a row for s under the kill or timeout ending only, with release a positive control, which matches Test-N006's `$ending -cne 'release'` guard."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "Unchanged: Test-N005 main and control (read, not run)."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "Unchanged: CheckSeamMain's first-seen logic from the rig and provider logs."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "Unchanged."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "Unchanged: N-006's main run, with Cancel freeing the wait before the release; Q-177 platform limit."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "Unchanged: T-009 and HeldFolderReasonTests."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "Unchanged."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "Unchanged."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "W-001 on bounded roots, run here with a trailing-backslash root. The whole-C:\\ form now reaches report mode; it is still the owner's run."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "Unchanged: T-009's c and the Fact's c."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "Unchanged: corpus F11, F13."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "Unchanged: corpus F08."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "Unchanged: R-002 step f."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "Unchanged: R-002 step g."
+   },
+   {
+    "key": "C-014",
+    "exercised": "no",
+    "evidence": "Deferred by the design (material false). The reason still holds: step g's fixture is asserted neither hidden nor system."
+   }
+  ],
+  "drift": [
+   "Commit f9c303e also stops tracking the 45 `.taad-scratch/` files that SL-095's merge had committed. They are still on disk here as untracked files, and merging SL-089 would remove them from uat. Neither the builder's account nor its declared deviations mention this, though it looks like the engine's own commit hygiene. No SL-095 record or doc cites a `.taad-scratch` path; I checked .taad/slices/SL-095/*.json and docs/design/SL-095-container-layer-store.md. Their copies under docs/design/SL-095-runs/ stay, so no cited evidence is lost.",
+   "docs/design/SL-089-seams.md says 'every case hands the app its paths through Format-AppArgument'. The raw-argument cases (C-007, C-012's `Start-App @($root) $work`, C-014) pass arrays on purpose and do not, as the helper's own comment and the corpus's producers note say."
+  ],
+  "matches_design": true,
+  "unreviewed": [],
+  "second_round": {
+   "run_id": 2585,
+   "filed": 0
+  }
+ }
+}

@@ -18,7 +18,7 @@ using System.Windows.Threading;
 /// </summary>
 /// <remarks>
 /// <code>
-///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|watch|measure|rescan|expand|hide|kinds|size|tree|settings
+///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|watch|measure|rescan|expand|hide|kinds|size|tree|reveal|settings|rows
 ///   [FSA_HOOK_ANSWER=yes|no]  (settings only, SL-095: SettingsMode.cs turns the first precaution off and answers its question)
 ///   FSA_HOOK_LOG=&lt;file&gt;  [FSA_HOOK_ARMED=&lt;marker file&gt;  FSA_HOOK_CANCEL_DELAY_MS=&lt;n&gt;  FSA_HOOK_CLOSE_DELAY_MS=&lt;n&gt;]
 ///   [FSA_HOOK_SLOW_REFRESH_MS=&lt;n&gt;]  [FSA_HOOK_RENAMED=LastRefresh|SkippedRefreshes|SkipsNextRefresh]  (watch and measure only)
@@ -31,9 +31,12 @@ using System.Windows.Threading;
 ///   [FSA_HOOK_RENDER=software]  (SL-080: WPF draws the process in software, set before Main; tree mode's facts line says so)
 ///   [FSA_HOOK_FAIL_LISTING=&lt;folder name&gt;|&lt;page&gt;|&lt;Win32 error&gt;]  (SL-082, any mode: Core's listing failpoint, armed
 ///   before Main; see ArmFailListing)
+///   [FSA_HOOK_ROWS=1]  (SL-089, rows and stop only: the unreadable-folders panel's rows, written at shutdown; RowsMode.cs)
 /// </code>
 /// tree (SL-044) reads and drives the folder tree a completed scan shows, and logs JSON lines; TreeMode.cs has
-/// all of it. It is not armed and takes no FSA_HOOK_SLOW_REFRESH_MS.
+/// all of it. It is not armed and takes no FSA_HOOK_SLOW_REFRESH_MS. rows (SL-089) presses nothing and has no deadline:
+/// the scan runs to its own ending, a whole drive's included, with the listing failpoint armed as under any mode, and
+/// with FSA_HOOK_ROWS=1 the panel's rows are written as the app shuts down (RowsMode.cs). It is not armed.
 ///
 /// The runtime calls <see cref="Initialize"/> before the app's Main, in every .NET process that inherits the
 /// variable: pwsh 7, dotnet.exe and MSBuild nodes too. So it does nothing unless FSA_HOOK_MODE is set and the
@@ -285,11 +288,28 @@ internal class StartupHook
         try
         {
             Log($"loaded mode={mode} pid={Environment.ProcessId}");
-            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "hide" or "kinds" or "size" or "tree" or "reveal" or "settings"))
+            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "hide" or "kinds" or "size" or "tree" or "reveal" or "settings" or "rows"))
             {
                 Log($"refused mode={mode} reason=unknown mode");
                 return;
             }
+            // FSA_HOOK_ROWS (SL-089): the panel's rows, beside stop's press or under rows mode's none.
+            string? dumpRows = Environment.GetEnvironmentVariable("FSA_HOOK_ROWS");
+            if (!string.IsNullOrEmpty(dumpRows) && (dumpRows != "1" || mode is not ("stop" or "rows")))
+            {
+                Log($"refused mode={mode} reason=FSA_HOOK_ROWS is 1, for rows and stop only");
+                return;
+            }
+            if (mode == "rows")
+            {
+                if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("FSA_HOOK_ARMED")))
+                    Log("refused mode=rows reason=rows mode is not armed");
+                else if (!string.IsNullOrEmpty(dumpRows))
+                    RowsMode.Arm(mode);
+                return;
+            }
+            if (!string.IsNullOrEmpty(dumpRows))
+                RowsMode.Arm(mode);
             string? minSize = Environment.GetEnvironmentVariable("FSA_HOOK_MINSIZE");
             bool sizeFirst = !string.IsNullOrEmpty(minSize);
             if (sizeFirst && (minSize != "1" || mode is not ("watch" or "expand" or "kinds")))
@@ -1362,6 +1382,7 @@ internal class StartupHook
         switch (mode)
         {
             case "stop":
+                RowsMode.StopUtc = Utc();
                 StartStoppingLog(app);
                 // What a click raises: reaches OnCancel through the Click wiring in MainWindow.xaml.
                 cancelButton!.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
