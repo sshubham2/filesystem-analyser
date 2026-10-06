@@ -1,0 +1,231 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-091",
+ "stage": "validate-slice",
+ "attempt": 2,
+ "at": "2026-10-06T00:54:53.104Z",
+ "head": "",
+ "run_id": 2646,
+ "summary": "All 14 acceptance criteria are met on this PC. The code has not changed since validate attempt 1: HEAD is still 6259427 and nothing outside .taad is modified. This attempt re-ran these on that tree:\n- the focused Core tests: 199/199;\n- R-003 through the shipped exe: passed in 19 s, with no Explorer window opened;\n- rules-parity: AGREE 18/22/48;\n- Fitness: 85 rules hold.\n\nThe longer runs from attempt 1 at this HEAD still stand: the full suite (689/692, with the 3 last-access failures that were already there), WindowMutants -Mutant All 12/12 (Q-114), and the full rules harness at 117/117 AS-RECORDED (Q-027).\n\n**New this attempt: the two obligations owed to validate.** I built a small harness, now deleted. In its own process only, it pointed HKCU at a private registry hive file (RegLoadAppKey + RegOverridePredefKey). That let the real shell32 SHGetSetSettings, and the project's own ShellReveal.ReadExplorerView and Walk, run under view settings this PC does not have. Nothing was written to the person's registry or to Explorer: HKCU stayed at Hidden=1, ShowSuperHidden=0, with 0 Explorer windows before and after.\n\n**O-042 is verified.**\n\n| Private hive (Hidden, ShowSuperHidden) | Raw shell state | What it shows |\n|---|---|---|\n| (2,1) | 0x00008000 | Decodes as ShowsHidden=False, ShowsProtected=True. This is the opposite of the real settings, so the override really took effect. |\n| (1,1) | 0x00008001 | Walk passed both the Hidden-only and the Hidden+System file to the open (Exact). |\n| (2,0), Windows' defaults | 0x0 | H-only refused for HiddenFiles; H+S refused for both settings. |\n| (1,0) and the real HKCU | 0x1 | H-only lands; H+S refused for ProtectedFiles. |\n\n**O-041 stays cannot-tell, but it now rests on a measured fact.** The test process had a WPF window and a DispatcherTimer, and opened a new STA thread for each read, as RevealAsync does. In that process, shell32 kept returning the old view for 3.8 s (15 reads) after the hive's values changed.\n- So the shell holds the view in memory per process and does not re-read the registry on every call.\n- Whether the running app sees a change depends entirely on Explorer's own Apply clearing that copy. That was not exercised: it needs a person to toggle the setting.\n- I filed this as an extra (backlog) item, because a settings change made outside Explorer would leave the app on a stale view.\n\n**What I could not observe.** Explorer's actual selection behaviour at Windows' defaults was not observed. The 0-of-13 re-measurement, the R-001/R-002 landings and the mid-session toggle are left to a person.",
+ "payload": {
+  "status": "complete",
+  "verdict": "passes",
+  "contact": "code",
+  "summary": "All 14 acceptance criteria are met on this PC. The code has not changed since validate attempt 1: HEAD is still 6259427 and nothing outside .taad is modified. This attempt re-ran these on that tree:\n- the focused Core tests: 199/199;\n- R-003 through the shipped exe: passed in 19 s, with no Explorer window opened;\n- rules-parity: AGREE 18/22/48;\n- Fitness: 85 rules hold.\n\nThe longer runs from attempt 1 at this HEAD still stand: the full suite (689/692, with the 3 last-access failures that were already there), WindowMutants -Mutant All 12/12 (Q-114), and the full rules harness at 117/117 AS-RECORDED (Q-027).\n\n**New this attempt: the two obligations owed to validate.** I built a small harness, now deleted. In its own process only, it pointed HKCU at a private registry hive file (RegLoadAppKey + RegOverridePredefKey). That let the real shell32 SHGetSetSettings, and the project's own ShellReveal.ReadExplorerView and Walk, run under view settings this PC does not have. Nothing was written to the person's registry or to Explorer: HKCU stayed at Hidden=1, ShowSuperHidden=0, with 0 Explorer windows before and after.\n\n**O-042 is verified.**\n\n| Private hive (Hidden, ShowSuperHidden) | Raw shell state | What it shows |\n|---|---|---|\n| (2,1) | 0x00008000 | Decodes as ShowsHidden=False, ShowsProtected=True. This is the opposite of the real settings, so the override really took effect. |\n| (1,1) | 0x00008001 | Walk passed both the Hidden-only and the Hidden+System file to the open (Exact). |\n| (2,0), Windows' defaults | 0x0 | H-only refused for HiddenFiles; H+S refused for both settings. |\n| (1,0) and the real HKCU | 0x1 | H-only lands; H+S refused for ProtectedFiles. |\n\n**O-041 stays cannot-tell, but it now rests on a measured fact.** The test process had a WPF window and a DispatcherTimer, and opened a new STA thread for each read, as RevealAsync does. In that process, shell32 kept returning the old view for 3.8 s (15 reads) after the hive's values changed.\n- So the shell holds the view in memory per process and does not re-read the registry on every call.\n- Whether the running app sees a change depends entirely on Explorer's own Apply clearing that copy. That was not exercised: it needs a person to toggle the setting.\n- I filed this as an extra (backlog) item, because a settings change made outside Explorer would leave the app on a stale view.\n\n**What I could not observe.** Explorer's actual selection behaviour at Windows' defaults was not observed. The 0-of-13 re-measurement, the R-001/R-002 landings and the mid-session toggle are left to a person.",
+  "criteria": [
+   {
+    "criterion": "1. Reveal an item that is not Hidden: a plain or System-only file or folder",
+    "met": "yes",
+    "how": "Walk_ItemNotHidden_PlainOrSystemOnly_OpensWithoutReadingTheView passed within the focused run (199/199, this attempt). Each row is Exact with 0 view reads and View null. Harness: a plain file under every view (0x0, 0x1, 0x8000, 0x8001) went to the open with View null."
+   },
+   {
+    "criterion": "2. Reveal a non-hidden item with a +H or +H+S folder above it",
+    "met": "yes",
+    "how": "Walk_PlainItemUnderHiddenOrHiddenSystemFolder_OpensWithoutReadingTheView passed (199/199). The rule that only the item's own attributes count rests on the go verdicts of spikes hidden-ancestor-selection-at-defaults-in-windows-sandbox (18/18 per class) and run-2285-control-sat-under-hidden-appdata. Neither was re-run, and neither ran on this host's build 26200 at Hidden=2."
+   },
+   {
+    "criterion": "3. Reveal a Hidden-only item while hidden files are not shown, including a +H file in a +H folder and a path over 260 characters",
+    "met": "yes",
+    "how": "Walk_HiddenOnlyWhileHiddenFilesAreNotShown_RefusesWithoutOpening passed (199/199). R-003(a), this attempt, refused h_file.dat and h_dir under injected 0|0 with no window opened. Harness: with the live shell reading 0x0 and 0x8000 (private hive), a real +H file was refused with HiddenFiles and the open was never reached."
+   },
+   {
+    "criterion": "4. Reveal a Hidden item when every setting that would hide it is set to show: H-only at (1,x), H+S at (1,1)",
+    "met": "yes",
+    "how": "Walk_HiddenItemWhoseEverySettingShowsIt_Lands passed (199/199). Harness, new: with the live shell reading 0x8001 (private hive at 1,1), the real parse plus Walk passed both the H-only and the H+S file to the open (Exact, 1 faked open each). Under 0x1 the H-only file did the same. Whether Explorer then shows the item selected (R-001 step 5) was not run; that is for a person. The old note is gone from the source and from the exe (attempt 1)."
+   },
+   {
+    "criterion": "5. Reveal a Hidden+System item while protected files are hidden, at the owner's (1,0) and at Windows defaults (0,0)",
+    "met": "yes",
+    "how": "Walk_HiddenSystemWhileASettingHidesIt_RefusesNamingEachSettingThatHides passed. R-003(d), this attempt, refused hs_file.sys and hs_dir for ProtectedFiles under the real (1,0). R-003(a)/(c) refused naming both settings under injected 0|0. Harness: live 0x0 (hive 2,0) gave HiddenBy=HiddenFiles, ProtectedFiles; the real 0x1 gave ProtectedFiles only."
+   },
+   {
+    "criterion": "6. Reveal an item the user cannot open: a deny-all +H+S temp folder, the real C:\\System Volume Information, and the paging file",
+    "met": "yes",
+    "how": "Walk_HiddenSystemFolderTheUserCannotOpen_IsRefusedNotTakenForVisible and Walk_RealProtectedItemsAtTheSystemRoot_AreRefusedAndNeverOpened passed (199/199). The second uses the real parse on the real C:\\ items and never skips. R-003(c), this attempt, refused the real pagefile.sys through the shipped exe from a C:\\ scan stopped at the root listing."
+   },
+   {
+    "criterion": "7. Reveal a volume root (C:\\), whose own attributes read Hidden+System",
+    "met": "yes",
+    "how": "Walk_VolumeRoot_IsExemptAndReadsNoView passed: C:\\ at 0|0 is Exact with 0 view reads."
+   },
+   {
+    "criterion": "8. An earlier failure on a hidden target: no longer exists, parses as another item, or unaddressable name",
+    "met": "yes",
+    "how": "Walk_EarlierFailureOnAHiddenSystemTarget_KeepsItsReasonAndReadsNoView passed (199/199). Each failure keeps its reason, reads 0 views, and frees the ID list once."
+   },
+   {
+    "criterion": "9. Read Explorer's view settings when the shell-state DWORD carries other bits or bit 15",
+    "met": "yes",
+    "how": "FromShellState_ReadsBitZeroAsHiddenAndBitFifteenAsProtected and ReadExplorerView_AgreesWithTheRegistryOnThisPc passed. New: the live shell32 returned 0x00008000 and 0x00008001 under private hives with ShowSuperHidden=1, and ReadExplorerView decoded both as ShowsProtected=True. This is the first time bit 15 = 1 has been observed live."
+   },
+   {
+    "criterion": "10. Inject a view for a test: every real x injected pair, and null",
+    "met": "yes",
+    "how": "ExplorerViewOverride_OnlyHides_ForEveryRealViewAndMask and OverrideExplorerView_IsTheMaskRevealsAreDecidedUnder passed (199/199)."
+   },
+   {
+    "criterion": "11. The status line for each label variant: HiddenFiles only, both, ProtectedFiles only",
+    "met": "yes",
+    "how": "R-003 passed this attempt with exact-text comparisons: HiddenFiles for h_file.dat/h_dir at 0|0; both settings for hs_file.sys, hs_dir, the 200-character .sys and pagefile.sys at 0|0; ProtectedFiles for hs_file.sys/hs_dir under the real 1|0. No Explorer window opened."
+   },
+   {
+    "criterion": "12. Arming the hook's view injection when FSA_HOOK_EXPLORER_VIEW is malformed or OverrideExplorerView is missing",
+    "met": "yes",
+    "how": "R-003(b), this attempt: 'explorer-view refused reason=format FormatException: '2|x' ...', and no window opened. NoExplorerViewMember mutant: passed in WindowMutants -Mutant All 12/12 (attempt 1, same HEAD 6259427, tree unchanged), with reason=member."
+   },
+   {
+    "criterion": "13. The longest refusal at the minimum window size: both labels with a 200-character name at 560x644",
+    "met": "yes",
+    "how": "B-007, S-001 and S-006 passed in attempt 1 at this HEAD; not re-run, since the tree is unchanged. One 15.96 px status line; 141 of 323 characters show, including the refusal's lead. B-008's status-line checks passed too. Its one failure is a title-length check that depends on how long TEMP's path is, and it passed under a longer TEMP."
+   },
+   {
+    "criterion": "14. Reveal an item when the attribute read throws",
+    "met": "yes",
+    "how": "Code read (ShellReveal.cs:305-315): the catch counts the item as not hidden and Walk goes on to the open, as the design's error_cases say. The branch is exercised by Walk_TargetParses_OpensItOnceFreesItAndReportsExact and Walk_OpenFails_..., whose fake parse succeeds for the nonexistent C:\\a\\b.txt. Both passed (199/199)."
+   }
+  ],
+  "checks": [
+   {
+    "what": "Tree unchanged since validate attempt 1",
+    "outcome": "passed",
+    "command": "git rev-parse --short HEAD; git status --porcelain (excluding .taad/)",
+    "evidence": "HEAD=6259427, the same as attempt 1 and the build. No uncommitted change outside .taad/."
+   },
+   {
+    "what": "Focused Core tests: ShellReveal, ArchitectureRules, ExplorerSettingsWriteRule, RuleCopiesAgree",
+    "outcome": "passed",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~ShellRevealTests|FullyQualifiedName~ArchitectureRulesTests|FullyQualifiedName~ExplorerSettingsWriteRuleTests|FullyQualifiedName~RuleCopiesAgreeTests\"",
+    "evidence": "Passed! Failed 0, Passed 199, Total 199."
+   },
+   {
+    "what": "Full Core suite (attempt 1, same HEAD, not re-run)",
+    "outcome": "failed",
+    "nature": "pre-existing",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx",
+    "evidence": "Attempt 1 at 6259427: 689/692. The 3 failures are HeldOpenTreeTests x2 and LastAccessTests x1. Build-check (surveys#79) saw the same 3 fail before this slice; Q-190 is open on them. No reveal test failed."
+   },
+   {
+    "what": "R-003 through the shipped exe",
+    "outcome": "passed",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-003",
+    "evidence": "PASSED: R-003 in 19 s, exit 0. (a) 5 targets refused under injected 0|0. (b) 'explorer-view refused reason=format'. (c) pagefile.sys refused for HiddenFiles, ProtectedFiles. (d) hs_file.sys and hs_dir refused for ProtectedFiles under 1|0. 'no Explorer window opened or changed' held in every step."
+   },
+   {
+    "what": "Rule-copy parity",
+    "outcome": "passed",
+    "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File eng/rules-parity.ps1",
+    "evidence": "rules-parity: AGREE 18 facts <- 22 twinned entries, 48 patterns; 63 settled entries."
+   },
+   {
+    "what": "Architecture rules",
+    "outcome": "passed",
+    "command": "Fitness op=check",
+    "evidence": "85 rules checked against 136 parsed files. Every declared rule holds."
+   },
+   {
+    "what": "O-042: the live shell state's bit 15 when ShowSuperHidden=1 (private hive, this process only)",
+    "outcome": "passed",
+    "command": "harness (artifacts/sl091-validate, since deleted): RegLoadAppKey(scratch hive) + RegOverridePredefKey(HKEY_CURRENT_USER), then shell32 SHGetSetSettings(SSF_SHOWALLOBJECTS|SSF_SHOWSUPERHIDDEN, read) and ShellReveal.ReadExplorerView; modes 'hive 2 1' and 'hive 1 1'",
+    "evidence": "Hive (2,1): raw=0x00008000, bit0=0, bit15=1, ReadExplorerView = { ShowsHidden=False, ShowsProtected=True }. This is the opposite of the real HKCU (1,0), which proves the read came from the private hive. Hive (1,1): raw=0x00008001, decoded { True, True }."
+   },
+   {
+    "what": "Walk decisions under the live shell state, for each view cell (real parse and resolve-back, open faked)",
+    "outcome": "passed",
+    "command": "harness modes real, hive 1 1, hive 2 1, hive 2 0, hive 1 0: ShellReveal.Walk(Plan(f), f, ParseDisplayName, PathOfIdList, fake open, FreeIdList, EffectiveExplorerView) over plain.txt, h_file.dat (+H) and hs_file.sys (+H+S)",
+    "evidence": "(1,1) 0x8001: all three Exact, 1 open each. (2,1) 0x8000: H refused for HiddenFiles, H+S refused for HiddenFiles. (2,0) 0x0: H refused for HiddenFiles, H+S for HiddenFiles, ProtectedFiles. (1,0) and the real HKCU, 0x1: H Exact, H+S refused for ProtectedFiles. The plain file was Exact with View null every time. No refused item reached the open."
+   },
+   {
+    "what": "O-041 probe: does the shell re-read the view on each call in a long-running WPF process?",
+    "outcome": "failed",
+    "nature": "extra",
+    "command": "harness mode 'wpf': private hive at (1,0); WPF Window plus DispatcherTimer at 250 ms; each tick reads on the UI thread and on a new STA thread (as RevealAsync does); at tick 5 the hive changes to (2,1) with no Explorer apply and no settings broadcast",
+    "evidence": "Ticks 5-20 (1693-5486 ms) all still read raw=0x00000001 / Effective { True, False } on both threads. The change was never seen within 3.8 s. So shell32 keeps the view in memory per process: the app sees a change only if something clears that copy, which Explorer's own Apply is expected to do. That path was not exercised. A settings change made any other way (a registry edit, a policy) would leave the running app on a stale view until restart, and a stale view could give a false Exact. This was not required by the slice; filed for the backlog. O-041 itself stays cannot-tell."
+   },
+   {
+    "what": "The person's settings and windows were not changed by any run",
+    "outcome": "passed",
+    "command": "HKCU ...\\Explorer\\Advanced and Shell.Application.Windows().Count, read before and after the harness and after R-003",
+    "evidence": "Hidden=1, ShowSuperHidden=0, explorerWindows=0 at every read. Every harness write went through the app hive's own handle, never through HKCU. Its window was its own, off-screen, and shown for about 5 s."
+   },
+   {
+    "what": "My leftovers cleaned up",
+    "outcome": "passed",
+    "command": "Remove-Item -Recurse artifacts/sl091-validate; Test-Path; Get-Process FsAnalyser*, testhost",
+    "evidence": "The harness folder (5 hive files of 8 KB each plus logs) is gone. No FsAnalyser or testhost process is left."
+   },
+   {
+    "what": "B-007, S-001, S-006 at 560x644 (attempt 1, same HEAD, not re-run)",
+    "outcome": "passed",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case B-007 / S-001 / S-006",
+    "evidence": "Attempt 1: all PASSED. statusHeight 15.96, statusTextWidth 1223.91 in 512 px, 141 of 323 characters show, and the refusal's lead is shown."
+   },
+   {
+    "what": "B-008 under the engine's TEMP (attempt 1, same HEAD)",
+    "outcome": "failed",
+    "nature": "extra",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case B-008",
+    "evidence": "Only the title-and-detail-length check failed (384 characters, needs more than 400), because the root's length follows TEMP's. The status-line checks passed. It passed at 407 characters under a longer TEMP. This is the same item build-slice already left open."
+   },
+   {
+    "what": "WindowMutants -Mutant All (Q-114; attempt 1, same HEAD)",
+    "outcome": "passed",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowMutants.ps1 -Mutant All",
+    "evidence": "12/12 PASSED, including NoExplorerViewMember, where R-003 failed only on its armed checks with reason=member."
+   },
+   {
+    "what": "Full rules harness (Q-027; attempt 1, same HEAD)",
+    "outcome": "passed",
+    "command": "%APPDATA%\\taad3\\venv\\Scripts\\python.exe eng/rules-harness/harness.py --engine-root C:\\Users\\sshub\\projets\\taad_v3\\backend --dotnet-from <repo>",
+    "evidence": "117 rows, 117 AS-RECORDED, 0 stray hits, exit 0."
+   },
+   {
+    "what": "RuleCases -Case All under the engine's TEMP (attempt 1)",
+    "outcome": "failed",
+    "nature": "extra",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case All -EnginePython <venv> -EngineRoot <taad_v3 backend>",
+    "evidence": "C-006/007/008/009/012/014 stopped with 'Access is denied', because this user cannot list C:\\WINDOWS\\TEMP. With a TEMP this user can list: exit 0, 'All checks held'. RuleCases.ps1 is not touched by this slice."
+   },
+   {
+    "what": "The shipped exe is current and carries the new text (attempt 1)",
+    "outcome": "passed",
+    "command": "timestamps of artifacts\\publish\\FsAnalyser.App.exe against the sources; UTF-16 search of the exe",
+    "evidence": "The exe is newer than ShellReveal.cs and MainWindow.xaml.cs, and no src change since. It contains \"Nothing was opened: Explorer hides '\" and does not contain 'only highlights it if'."
+   },
+   {
+    "what": "R-001 step 5 and R-002: landings through the exe",
+    "outcome": "not-run",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-001 / -Case R-002",
+    "evidence": "Both open real Explorer windows and read them. Q-176's unattended exception covered SL-089 only, so these are left to a person."
+   },
+   {
+    "what": "Hidden=2 re-measurement (0/13), Explorer's own Apply mid-session, a real H+S landing at (1,1)",
+    "outcome": "not-run",
+    "command": "none: each needs Explorer's Folder Options changed by the person",
+    "evidence": "Changing Explorer's settings is the person's to do. The exe now refuses before any open, so 0/13 can no longer be re-measured through it (SC-159)."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-042",
+    "verified": "yes",
+    "evidence": "Measured on this PC's real shell32 (Windows 11 26200). HKCU was redirected, in my harness process only, to a private hive file with Explorer\\Advanced ShowSuperHidden=1. SHGetSetSettings(SSF_SHOWALLOBJECTS|SSF_SHOWSUPERHIDDEN, read) returned 0x00008000 with Hidden=2 and 0x00008001 with Hidden=1, and the project's ShellReveal.ReadExplorerView decoded both as ShowsProtected=True. The (2,1) read is the opposite of the real (1,0), so the value came from the hive and not from the person's settings. Limit: ShowSuperHidden=1 was put there directly, as the value Folder Options persists. The Folder Options checkbox itself was not ticked."
+   },
+   {
+    "key": "O-041",
+    "verified": "cannot-tell",
+    "evidence": "Measured: shell32 keeps the view in memory per process. In a WPF process with a DispatcherTimer and a new STA thread per read, changing the underlying settings from (1,0) to (2,1) in the private hive went unseen for 3.8 s (15 reads on both threads). So the running app sees a new view only if Explorer's own Apply clears that copy, and that was not exercised: only a person can toggle Explorer's settings. PERSON-RUN, all four steps in one app session: (1) Start artifacts\\publish\\FsAnalyser.App.exe on a temp folder holding a file set with attrib +h +s, and reveal it. The status line must read \"Nothing was opened: Explorer hides '<name>' (Hide protected operating system files).\" (2) Without closing the app, untick 'Hide protected operating system files' in File Explorer Options > View, and press Apply. (3) Reveal the same row again. Explorer must open the folder with the file selected, and the status line must be empty. (4) Tick the option again, press Apply, and reveal again. It must be refused again. Repeat with View > Show > Hidden items for a file set with +h only."
+   }
+  ],
+  "not_reached": [
+   "What Explorer actually selects at Windows' defaults (Hidden=2, ShowSuperHidden=0). The 0-of-13 claim behind this slice was not re-measured: that needs a person to change the setting, and the exe now refuses before any open (SC-159).",
+   "O-041: whether Explorer's own Apply or View toggle clears shell32's in-process copy of the view, so a running app sees the change. Measured instead: a raw registry change is not seen for at least 3.8 s.",
+   "O-042 through the Folder Options UI itself. Bit 15 = 1 was observed with ShowSuperHidden=1 put in a private hive, not by ticking the checkbox.",
+   "R-001 step 5 and R-002 through the exe: an H-only item at this PC's (1,0) landing selected with an empty status line. These open real Explorer windows.",
+   "The H+S at (1,1) landing in Explorer. The app's decision (Exact) was measured with the live shell reading 0x8001; Explorer's selection was not.",
+   "A hidden folder above the item not blocking selection on this host's build 26200 at Hidden=2. This was measured only in Windows Sandbox (26100) and through the run-2285 control.",
+   "The real C:\\Program Files\\WindowsApps, and real System-only items, at Windows' defaults.",
+   "Windows 10: the SHGetSetSettings decode and Explorer's hidden-item filtering (Q-197, Q-199)."
+  ],
+  "planned": []
+ }
+}
