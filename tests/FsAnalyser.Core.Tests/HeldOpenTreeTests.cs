@@ -231,8 +231,11 @@ public class HeldOpenTreeTests(HeldOpenTreeTests.HeldOpenTree held, ITestOutputH
                 "links", @"links\a-first", @"links\b-second", @"links\b-second\written.bin", "held" }.Select(_tree.PathOf));
 
             // Back-dated, so an access would show. Never through a held file or the stale name (see the class remarks).
+            // Deepest first (SL-096): where opening a child with write access moves its parent's last-access time, as it
+            // does under the Windows folder, a parent back-dated before its children would be reset by them, and the test
+            // would fail its 'not back-dated' checks instead of the check that names the cause.
             DateTime old = DateTime.UtcNow.AddHours(-48);
-            foreach (string path in Observed.Append(control).Append(Path.Combine(control, "c.txt")))
+            foreach (string path in Enumerable.Reverse(Observed).Append(Path.Combine(control, "c.txt")).Append(control))
             {
                 if (Directory.Exists(path))
                     Directory.SetLastAccessTimeUtc(path, old);

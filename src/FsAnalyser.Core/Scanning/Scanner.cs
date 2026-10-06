@@ -21,7 +21,9 @@ namespace FsAnalyser.Core.Scanning;
 /// only once every probe is applied.</para>
 /// <para>On a local NTFS volume, outside a sync engine's folders, each folder is listed through a handle that
 /// keeps its last-access time (<see cref="SynchronousIoCancel.OpenDirectory"/>), so the scan changes no folder's
-/// metadata where the folder lets it.</para>
+/// metadata where the folder lets it. Under the Windows folder it cannot keep them all: there a child folder's kept open
+/// moves its parent's last-access time, which the scan does not prevent and counts as not kept (SL-096,
+/// <see cref="ScanResult.LastAccessKept"/>).</para>
 /// Nothing that goes wrong inside the tree fails the scan: an unreadable folder is flagged and listed in
 /// <see cref="ScanResult.Unreadable"/>.
 /// <para>Cancel interrupts the filesystem call the scan is blocked in, through the scan thread's
@@ -108,6 +110,17 @@ public static class Scanner
         return normalized;
     }
 
+    /// <summary>
+    /// The Windows folder (%SystemRoot%) in \\?\ form, normalised as the sync roots are (review m1), or null when the
+    /// environment names none, in which case no kept count is corrected. Under it, opening a child with write access moves
+    /// the parent's last-access time (SL-096).
+    /// </summary>
+    private static string? WindowsFolderFromEnvironment()
+    {
+        string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        return string.IsNullOrWhiteSpace(windows) || !Path.IsPathFullyQualified(windows) ? null : LongPath.NormalizeRoot(windows).Win32;
+    }
+
     internal enum ReadOutcome
     {
         Read,
@@ -141,6 +154,10 @@ public static class Scanner
         private readonly List<UnreadableFolder> _unreadable = [];
         private readonly List<NotScannedFolder> _skipped = [];
         private readonly IReadOnlyList<string> _syncRoots = options.SyncRoots is { } roots ? NormalizeSyncRoots(roots) : SyncRootsFromEnvironment();
+        private readonly string? _windowsFolder = WindowsFolderFromEnvironment();
+        // Kept folders at or under the Windows folder, without trailing separators, each until a child folder of its own is
+        // kept: that child's open moved it (SL-096). Few are ever kept there: most of it refuses write-attributes.
+        private readonly HashSet<string> _keptUnderWindows = new(StringComparer.OrdinalIgnoreCase);
         private readonly Stopwatch _clock = Stopwatch.StartNew();
         private bool _fullClass = options.ForceFullDirectoryClass;
         private bool _keepLastAccess; // the root's volume is local NTFS: decided once, at the root
@@ -188,7 +205,7 @@ public static class Scanner
                         return Finish(ScanStatus.Cancelled);
                     continue;
                 }
-                CountListingOpen(keep);
+                CountListingOpen(keep, path);
                 if (FolderDone(folder, path, row, error))
                     return Finish(ScanStatus.Cancelled);
             }
@@ -232,7 +249,7 @@ public static class Scanner
                     io.Close(handle!);
                     handle = keeping;
                 }
-                CountListingOpen(keep);
+                CountListingOpen(keep, win32Root);
 
                 error = _reader.List(handle!, _fullClass);
                 if (!_fullClass && _reader.Count == 0 && error is Kernel32.ERROR_INVALID_FUNCTION
@@ -308,13 +325,25 @@ public static class Scanner
             return ct.IsCancellationRequested;
         }
 
-        private void CountListingOpen(bool asked)
+        // Counts a folder's listing open. Under the Windows folder, a child folder's kept open is itself a write-attributes
+        // open, which there moves the parent's last-access time (SL-096, measured in %SystemRoot%\Temp): so its parent, if it
+        // was counted kept, is counted out, once. Only a kept open counts a parent out; a refused one moves nothing. A
+        // parent is always counted before any of its children is opened, on this one thread.
+        private void CountListingOpen(bool asked, string folderPath)
         {
             if (!asked)
                 return;
             _lastAccessAsked++;
-            if (io.KeptLastAccess)
-                _lastAccessKept++;
+            if (!io.KeptLastAccess)
+                return;
+            _lastAccessKept++;
+            if (_windowsFolder is null || !IsAtOrUnder(folderPath, _windowsFolder))
+                return;
+            string folder = folderPath.TrimEnd('\\');
+            int cut = folder.LastIndexOf('\\');
+            if (cut > 0 && _keptUnderWindows.Remove(folder[..cut]))
+                _lastAccessKept--;
+            _keptUnderWindows.Add(folder);
         }
 
         // Appends the listing as the folder's children, queues its subfolders, publishes progress, and reports

@@ -188,8 +188,22 @@ public sealed class ScanResult
     internal int LastAccessAsked { get; init; }
 
     /// <summary>
-    /// Of <see cref="LastAccessAsked"/>, the folders whose listing handle did keep it. The rest refused the
-    /// write-attributes open, were listed plainly, and their last-access time may have moved.
+    /// Of <see cref="LastAccessAsked"/>, the folders whose keep-open succeeded (the write-attributes open, and the
+    /// last-access time set to -1 through it), minus each such folder at or under the Windows folder (%SystemRoot%) that
+    /// has a child folder whose keep-open also succeeded. The rest refused the write-attributes open, were listed
+    /// plainly, and their last-access time may have moved.
     /// </summary>
+    /// <remarks>
+    /// The subtraction is a rule about what was opened, not a reading: nothing reads a time back. It stands for what was
+    /// measured on Windows 11 in %SystemRoot%\Temp (SL-096): there a child's write-class open moves its parent's
+    /// last-access time to now, inside the child's open, and the parent's own -1 handle, closed by then, cannot prevent it
+    /// (attributed to UAC file virtualization, luafv.sys). The scan does not prevent it; this count says it. Known gaps:
+    /// a parent is counted out even when nothing moved (its time within NTFS's hour, or last-access updates off); one is
+    /// not counted out when a child's write-attributes open succeeded but its -1 set failed, though that open moved it;
+    /// %ProgramData% and %ProgramFiles%, which UAC file virtualization also covers, are unmeasured and not corrected; and the
+    /// Windows folder is matched by how the root is spelled, so a root reaching it through a subst drive, a junction or a
+    /// volume path is not corrected. The root's own parent, outside the scan, moves too and is never counted.
+    /// Internal: the window never shows it (Q-103, Q-159).
+    /// </remarks>
     internal int LastAccessKept { get; init; }
 }
