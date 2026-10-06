@@ -1,0 +1,398 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-097",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-10-06T17:14:54.247Z",
+ "head": "2fc73e1c4fa7f8d33b3580f3f76323d7ad2b70a2",
+ "run_id": 2994,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "Selected the single proposal (practice), held against the measurements. Every load-bearing claim in it is backed by a measurement, either by this slice's own stages or by the investigation:\n- Spike #2 ran the exact Fact this design adds, on this PC, through the real Scanner, TempTree and back-dating code. All 3 ProgramData trees gave 'kept 7 of 7; moved: none'. In the same invocation the C:\\Windows\\Temp control gave 'moved: <root>, plain, links'.\n- The survey and the investigation measured existing folders in %ProgramData%, %ProgramFiles(x86)% and the one write-grantable %ProgramFiles% folder, with 0 parents moved.\n- Spike #3 falsified the investigation's re-scan limit, and the proposal keeps it out.\n\nThe proposal fits how the tree is already shaped:\n- One Fact, in the class SL-096 already made the deliberate hostile-location test. It reuses that class's tree, its back-dating and its 'moved:' reporter.\n- TempTree(string) is used unchanged. Scanner.cs is not touched.\n- Two sentences that say 'unmeasured' are rewritten in place, plus one short measurement doc.\n\nEvery piece is cheap to reverse, and this is the simplest thing that meets C1 and C4 with a machine check. The practice designer raised over_engineering_flag against their own interest: no CI matrix, no committed probe kit, no path-fence rule. It is honoured. A hosted Windows runner would reproduce the EnableLUA=0 condition that already made the Sandbox useless. The scratch probe is a measuring rig that belongs to the spike.\n\nC2 (%ProgramFiles%) gets no fixture: a standard user cannot create a tree there. Its non-elevated verdict is recorded from the existing-folder measurements. C3 (Windows 10) and the elevated leg are the person's. They are filed, and nothing is built to judge them.",
+  "components": [
+   {
+    "name": "%ProgramData% kept-folder Fact",
+    "responsibility": "Add one never-skipped [Fact] beside OutsideTheWindowsFolderEveryKeptFolderStaysKept, named InProgramDataNoKeptFolderMovesItsParent.\n- Root: Environment.GetFolderPath(SpecialFolder.CommonApplicationData) + \\fsa-tests, through TempTree(string testsRoot). Never the ProgramData or ALLUSERSPROFILE environment variable. A root that is blank, not fully qualified, or at/under the Windows folder (Scanner.IsAtOrUnder on NormalizeRoot'd paths) fails with a named refusal, never a skip.\n- Tree: the class's own 7-folder/4-file tree, back-dated 48 h deepest-first with the class's existing helper, scanned with the real Scanner.\n- Output: the same line as its siblings, 'kept K of 7; S of 7 folders still at least 47 h old; moved: ...'.\n- Asserts, in this order, each with its own message:\n  (1) LastAccessAsked == 7: 'keep-open was not asked for every folder'.\n  (2) LastAccessKept == 7: 'kept K of 7: the keep-open was refused, or a correction fired outside %SystemRoot%'.\n  (3) still-old == LastAccessKept: 'parents moved in %ProgramData%: <list>; LastAccessKept over-counts here because Scanner.CountListingOpen corrects only at or under %SystemRoot%'.\n- A refused CreateDirectory of the tests root is a named refusal (Q-210's pattern). Reuse the class's wrap if SL-096 built one; otherwise add the same wrap for this root.\n- The Fact asserts a product property: the counter is truthful in %ProgramData%. Its 'moved:' line becomes a measurement only beside the same run's Windows\\Temp lines.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/LastAccessUnderSystemRootTests.cs",
+    "key_interactions": "Calls TempTree(string) (TempTree.cs:39-45, with the NTFS and compression refusals at :78-88) and Scanner.Scan, both unmodified. Exercises the branch at Scanner.cs:340 that returns without a correction. Runs in the default suite and under the existing filter FullyQualifiedName~LastAccessUnderSystemRootTests, which is also the Windows 10 hand-off. TempTree.Dispose removes <guid> with [IO.Directory]::Delete. The empty fsa-tests parent stays, as C:\\Windows\\Temp\\fsa-tests and %LOCALAPPDATA%\\Temp\\fsa-tests do."
+   },
+   {
+    "name": "LastAccessKept remark",
+    "responsibility": "Replace the sentence at ~:203 ('%ProgramData% and %ProgramFiles%, which UAC file virtualization also covers, are unmeasured and not corrected') with the measured statement, in the remark's existing style.\n- On Windows 11 26200, for a non-elevated scan, a kept child folder does not move its parent in %ProgramData% or %ProgramFiles%, so those locations are deliberately not corrected.\n- In %ProgramFiles% a standard user's keep-open is refused almost everywhere, so few folders are counted kept there.\n- Windows 10 (Q-205) and elevated scans are unmeasured.\n- See docs/design/SL-097-last-access-outside-the-windows-folder.md.\nOnly the comment changes. Behaviour does not, and nothing about re-scans is added.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/ScanResult.cs",
+    "key_interactions": "Documents the early return at Scanner.CountListingOpen :340, which stays as it is. Before editing, grep tests/ and .taad/fitness.yaml for any pin on the old wording, and for any including_comments rule over Scanning/** that the new words could trip."
+   },
+   {
+    "name": "SL-096 limits paragraph",
+    "responsibility": "Rewrite lines 89-90 ('not measured and not corrected. Windows 10 is unmeasured') to say: measured by SL-097 on Windows 11 26200, non-elevated; no parent move in %ProgramData% or %ProgramFiles(x86)%, and none in the one write-grantable %ProgramFiles% folder; so not corrected. Windows 10 (Q-205) and elevated scans remain unmeasured. Add a pointer to the SL-097 doc. Add nothing about re-scans.",
+    "lives_at": "docs/design/SL-096-last-access-under-windows-temp.md"
+   },
+   {
+    "name": "SL-097 measurement record",
+    "responsibility": "A short doc that holds the numbers so the two edits above can stay terse.\n- Environment: Win11 Pro 26200.9457, luafv Running/Automatic, DisableLastAccess=2, not elevated, TEMP=C:\\WINDOWS\\TEMP.\n- Method: mask 0x101, parents not re-listed, read-attribute opens as a control, 'Luaf' pool-tag deltas.\n- Results, each sample set on its own and never summed, because the survey's and the investigation's candidates came from the same walk:\n  - %ProgramData% fresh trees through the real Scanner: 0 of 9 parents.\n  - %ProgramData% existing folders: 0 of at least 34 distinct parents (investigation) and 0 of 20 (survey).\n  - %ProgramFiles(x86)%: 0 of 21 (investigation) and 0 of 20 (survey).\n  - %ProgramFiles%: 0 of 1, the only write-grantable folder among 10,442 walked to depth 3.\n  - Positive control: C:\\Windows\\Temp 'moved: <root>, plain, links' in every run.\n- What was not measured, and why: Windows 10 (no machine); an elevated scan (needs an administrator); a fresh tree in Program Files (a standard user cannot create one); the Sandbox (EnableLUA=0, luafv refused to load with error 1275).\n- Spike #3 falsified the investigation's re-scan under-count, so that limit is deliberately not written.\n- Spike #1 showed first-open.ps1 does see parent moves of 58-172 ms right after a listing. The 'confounded, cannot show anything' verdict on the scratch probe was reasoning, not a measurement.\n- One line, without acting on it: the investigation's C:\\Windows-outside-Temp data (7 of 12 parents moved; Tasks and tracing did not) is evidence for the still-open Q-208.\n- The Windows 10 person-run command.",
+    "lives_at": "docs/design/SL-097-last-access-outside-the-windows-folder.md"
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Keep the SL-096 correction at or under %SystemRoot%. Scanner.cs does not change, and %ProgramData% and %ProgramFiles% are not added to the correction.",
+    "reversibility": "cheap",
+    "rationale": "Measured on this PC: %ProgramData% 0 of 9 parents on fresh trees through the real Scanner, and 0 of at least 34 distinct existing parents. %ProgramFiles(x86)% 0 of 21. %ProgramFiles% 0 of 1. Each was taken with the C:\\Windows\\Temp control moving in the same session. Widening the correction would make LastAccessKept under-count there. This follows the investigation's fix direction."
+   },
+   {
+    "decision": "Pin the %ProgramData% result with one never-skipped [Fact] in the existing LastAccessUnderSystemRootTests class. It asserts asked == 7, kept == 7 and still-old == kept, each with its own message. There is no new test file, project or Trait.",
+    "reversibility": "cheap",
+    "rationale": "This is the brief's imported pattern: one deliberate test in the hostile location keeps the behaviour visible instead of leaving a stale 'unmeasured' sentence. Spike #2 ran exactly this, 3 of 3 clean. The class already owns the tree, the back-dating and the reporter. The existing filter, and so the Windows 10 hand-off, picks the Fact up with no new command. A red is a real over-count in product code, which is why it never skips (Q-210's ruling, applied by analogy)."
+   },
+   {
+    "decision": "%ProgramFiles% and %ProgramFiles(x86)% get no fixture and no standing probe. Their non-elevated verdict is recorded from the existing-folder measurements.",
+    "reversibility": "cheap",
+    "rationale": "A standard user cannot create a tree there. A standing probe of existing folders would move real install folders' last-access times on every run. The consequence is bounded: 1 of 10,442 folders to depth 3 in Program Files is write-grantable, so a non-elevated scan's keep-open is refused there and those folders are never counted kept."
+   },
+   {
+    "decision": "Windows 10 (C3) and the elevated scan are filed for the person, and nothing is built to judge them. The Windows 10 ask is the existing filter, which now includes the ProgramData Fact. No question is raised: Q-205 already records Windows 10 as UNVERIFIED.",
+    "reversibility": "cheap",
+    "rationale": "The build-check marks C3 checked_by person. No machine here runs Windows 10. The Sandbox is Win11 26100 with EnableLUA=0 and refuses to load luafv (1275). The loop cannot be an administrator. Per the SL-096 and SL-091 lessons, a person-only must-verify left aimed at validate halts validate, so it is filed now."
+   },
+   {
+    "decision": "Do not write the investigation's 're-scan within minutes under-counts' limit into ScanResult.cs or either doc's limits, and add no re-scan test.",
+    "reversibility": "cheap",
+    "rationale": "Spike #3 was a no-go. Re-back-dated re-scans at +180 s and +20 min moved root, plain and links again, with kept 4 equal to still-old 4. At +30 s without re-back-dating nothing moved and there was no under-count. Its own falsifier says the limit is not to be written."
+   },
+   {
+    "decision": "Record the verdict by editing the two 'unmeasured' sentences in place (the ScanResult.cs remark and SL-096 doc :89-90). The numbers live in one new SL-097 doc, reported per sample set and never summed across overlapping sets.",
+    "reversibility": "cheap",
+    "rationale": "C4 asks for the verdict where the tree now says 'unmeasured'. The survey's samples and the investigation's first-open samples came from the same 11:01 walk, so the proposal's sums ('0 of at least 54', '0 of 41') could double-count. Reporting each set on its own is the honest form."
+   },
+   {
+    "decision": "Resolve the test root with Environment.GetFolderPath(SpecialFolder.CommonApplicationData). Never read the ProgramData, ALLUSERSPROFILE or ProgramFiles environment variables. A blank, unqualified or under-Windows result is a named refusal.",
+    "reversibility": "cheap",
+    "rationale": "Agent-host shells on this OS build strip these variables (cited vscode#332707), and tox needed passenv for them (cited distutils 267dbd2). The engine runs under such a host. If the known-folder call ever returns nothing, the Fact goes red with a cause, never green."
+   },
+   {
+    "decision": "Leave the empty <CommonApplicationData>\\fsa-tests parent in place; only the per-test <guid> tree is removed, by TempTree.Dispose. Do not commit or delete .taad-scratch (first-open.ps1, win10-check.ps1 and their results). Add no fitness rule.",
+    "reversibility": "cheap",
+    "rationale": "This matches the class's other roots, and a fixed name keeps leftovers findable in one place. The scratch probe is a measuring rig that belongs to the spike, and spike #1 has already validated it. It is not this slice's code to maintain. A path-confinement rule would guard tidiness, not a defect (see coherence_check)."
+   },
+   {
+    "decision": "No KnownWorkarounds entry and no setting.",
+    "reversibility": "cheap",
+    "rationale": "This slice adds no step-around of an outside defect. It decides not to extend an internal counter correction. LastAccessKept is internal (Q-159), so no result a user sees changes. Whether SL-096's own correction belongs in the list is SL-096's decision, not reopened here."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal, taken whole with four corrections:\n- Sample sets are not summed across overlapping candidates.\n- The person-only Windows 10 invariant moves out of must-verify into filed_for_later.\n- The positive control is an explicit case, so a 'moved: none' result is never read without it.\n- 'Core.Tests already asserts non-elevation (Q-059)' carries no weight: Q-059 is an open question.\nIts over_engineering_flag (no CI matrix, no committed probe kit, no path-fence rule) is honoured."
+   }
+  ],
+  "coherence_check": "One proposal (practice). There is no composition to check, and nothing in this design has yet survived a disagreement. The critique is the first thing to argue with it.\n\nIn place of a seam check, the proposal was held against what was measured, and four things changed:\n1. Sample sets are reported one by one. The proposal summed '0 of at least 54' (%ProgramData%) and '0 of 41' (%ProgramFiles(x86)%). The survey drew its candidates from the same 11:01 walk the investigation's first-open used, so those sets may overlap.\n2. The proposal's cross-domain invariant 'the Fact is a valid instrument on Windows 10' was must-verify. Only a person can verify it, and the SL-096 and SL-091 lessons measured that such an invariant becomes a validate-aimed obligation that halts validate. It is removed from the invariants and filed for the person.\n3. The Fact asserts that the counter is truthful. Reading its 'moved: none' as 'luafv does not move parents in %ProgramData%' needs the same run's Windows\\Temp 'moved: <root>, plain, links'. With luafv stopped or last-access updates off, the ProgramData line is vacuously 'moved: none'. That control is now case 2.\n4. The proposal and the measurements agree on the re-scan limit: it stays out (spike #3 no-go). The survey's 'confounded, cannot show anything' verdict on the scratch probe rested on a recalled NTFS one-hour rule, and spike #1 contradicted it (moves of 58-172 ms right after a listing). The SL-097 doc does not repeat it.\n\nRecords against decisions:\n- Q-206 (question-answerer) says docs/design/SL-096-last-access-under-windows-temp.md exists nowhere. The survey measured it in the tree at :89-90 after SL-096 merged (989c119). The answer predates the merge. The measurement wins, and the edit targets the file that exists.\n- Q-210 (human) ruled that the Windows-folder Facts stay red, never skipped, and asked for a named create refusal. Applying that to a %ProgramData% Fact is this design's extension by analogy, not the person's ruling. Flagged for critique.\n- Q-207 and Q-159 are consistent with leaving %ProgramData% and %ProgramFiles% uncorrected and the counter internal.\n- The stack line 'counting-rule tests build real NTFS trees in %TEMP%' is not crossed. This is a last-access counter test, and SL-096 already put this class's trees outside %TEMP% on purpose.\n\narchitecture_rules is empty on purpose:\n- The design adds no dependency and no production code.\n- The one invariant it settles, no last-access correction for %ProgramData%, is pinned behaviourally by the new Fact: widening Scanner.cs:340 turns it red at 'kept 4 of 7'. That is stronger than a regex.\n- A regex for 'nothing corrects outside %SystemRoot%' or 'no other test roots under CommonApplicationData' would have to tell the defect apart from correct code that probably names CommonApplicationData or %ProgramData% already (the Containers\\Layers refusal, Q-179/Q-182; not measured). No corpus has been measured to tell them apart.\n- A confinement rule for %ProgramData% test roots would guard tidiness: a second test there would leak small trees, but would not fail anything.",
+  "cases": [
+   {
+    "behaviour": "count kept folders in a scan of a %ProgramData% tree",
+    "shape": "a fresh nested 7-folder tree under <CommonApplicationData>\\fsa-tests\\<guid>, back-dated 48 h, every keep-open granted",
+    "why": "Scanner.CountListingOpen :340 returns before any correction for every folder outside %SystemRoot%, so LastAccessKept is truthful there only if no parent moves. Nothing in the suite feeds that branch a location luafv covers. Without this, a platform change in %ProgramData% is an invisible over-count.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter 'FullyQualifiedName~LastAccessUnderSystemRootTests.InProgramDataNoKeptFolderMovesItsParent' --logger 'console;verbosity=detailed'. Expect exit 0, 1 passed, and the line 'kept 7 of 7; 7 of 7 folders still at least 47 h old; moved: none'.",
+    "material": true
+   },
+   {
+    "behaviour": "read the %ProgramData% result as a no-move measurement",
+    "shape": "the same invocation also scans the C:\\Windows\\Temp trees (positive control) and the %LOCALAPPDATA% tree (negative control)",
+    "why": "On a machine with luafv stopped or last-access updates off, the ProgramData line reads 'moved: none' whatever the truth. Only a same-run Windows\\Temp 'moved: <root>, plain, links' makes it a result. This is what spike #2's VOID conditions guarded.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter 'FullyQualifiedName~LastAccessUnderSystemRootTests' --logger 'console;verbosity=detailed' | Tee-Object -Variable out; $code=$LASTEXITCODE. Expect $code 0. ($out | Select-String 'moved:') must show the C:\\WINDOWS\\Temp\\fsa-tests lines with 'moved: <root>, plain, links' for all 3 spellings, the %LOCALAPPDATA% line with 'moved: none', and the ProgramData line with 'moved: none'.",
+    "material": true
+   },
+   {
+    "behaviour": "count kept folders in a scan of a %ProgramData% tree",
+    "shape": "the suite inherits TEMP=C:\\WINDOWS\\TEMP (the engine) against TEMP=%LOCALAPPDATA%\\Temp (the owner)",
+    "why": "SL-096 measured this as the most discriminating check in this area. The new Fact must take its root from the known folder, never from TEMP, and print the same line under both.",
+    "check": "Run the case-1 command twice. First with $env:TEMP=$env:TMP='C:\\WINDOWS\\TEMP'. Then with $env:TEMP=$env:TMP=(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Temp'). Both must exit 0 with 'kept 7 of 7 ... moved: none' and a ProgramData path in the line.",
+    "material": true
+   },
+   {
+    "behaviour": "count kept folders in a scan of a %ProgramData% tree",
+    "shape": "three runs in a row on a live machine (Defender or the indexer may touch a fresh tree in a machine-wide folder between back-dating and the scan)",
+    "why": "A touch would move a folder and turn the Fact red for a reason that is not the scanner. Spike #2 was clean 3 of 3. The SL-044 lesson: repeat any pass at least 3 times before recording it.",
+    "check": "1..3 | ForEach-Object { pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter 'FullyQualifiedName~LastAccessUnderSystemRootTests.InProgramDataNoKeptFolderMovesItsParent'; if ($LASTEXITCODE -ne 0) { throw \"run $_ failed\" } }",
+    "material": true
+   },
+   {
+    "behaviour": "clean up after the %ProgramData% Fact",
+    "shape": "a machine-wide tests root that persists across boots, is visible to every user and is shared with other worktrees",
+    "why": "A leaked <guid> tree stays in C:\\ProgramData and is counted by later real scans of C:\\ProgramData (SL-087 lesson). TempTree.Dispose must remove it.",
+    "check": "$p=Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'fsa-tests'; $b=@(Get-ChildItem -LiteralPath $p -Force -ErrorAction SilentlyContinue).Name; <case-1 command>; $a=@(Get-ChildItem -LiteralPath $p -Force -ErrorAction SilentlyContinue).Name; expect no name in $a that is not in $b (@($a | Where-Object { $_ -notin $b }).Count -eq 0).",
+    "material": true
+   },
+   {
+    "behaviour": "state the measured limit where the tree said 'unmeasured' (C4)",
+    "shape": "the ScanResult.cs LastAccessKept remark and the SL-096 doc's limits paragraph",
+    "why": "Later slices read these two sentences. Left as they are, they keep a question open that is answered for Windows 11 non-elevated, and they hide that Windows 10 and elevated scans are the parts still open.",
+    "check": "Select-String -LiteralPath src/FsAnalyser.Core/Scanning/ScanResult.cs,docs/design/SL-096-last-access-under-windows-temp.md -SimpleMatch 'are unmeasured and not corrected','not measured and not corrected' returns nothing. Select-String -SimpleMatch 'SL-097' matches in both files. Test-Path docs/design/SL-097-last-access-outside-the-windows-folder.md is True. Select-String -SimpleMatch 'Windows 10' matches in ScanResult.cs.",
+    "material": true
+   },
+   {
+    "behaviour": "keep the architecture rules and the full suite green beside the new Fact",
+    "shape": "a Core test rooted neither in TempTree's default nor in %SystemRoot%\\Temp, plus new comment text in Scanning/ScanResult.cs",
+    "why": "The exact globs of SL-096's location rules, and any including_comments rule over Scanning/**, were not handed to this design. Fitness matches the whole file while the xUnit twins match line by line (SL-087).",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx: all tests pass (one more than the 789 baseline). Fitness op=check on the slice worktree: no violation. pwsh -NoProfile -File eng/rules-parity.ps1 and powershell.exe -NoProfile -File eng/rules-parity.ps1 both print AGREE.",
+    "material": true
+   },
+   {
+    "behaviour": "guard against widening the correction",
+    "shape": "Scanner.cs:340 widened to also correct folders under %ProgramData%",
+    "why": "This proves assertion (2) bites. SL-020's lesson is that a test here can pass without the rule it names.",
+    "material": false,
+    "check": "Done once at validate, not standing: apply the scratch edit, run the case-1 command and expect red with 'kept 4 of 7', then git checkout the file and touch it or build with --no-incremental (the SL-042/SL-096 restore trap). Not material, because committing a mutant runner for one Fact is the over-built answer the SL-033 and SL-053 lessons describe."
+   },
+   {
+    "behaviour": "resolve the %ProgramData% tests root",
+    "shape": "CommonApplicationData is blank, not fully qualified, or at or under the Windows folder",
+    "why": "Not material. GetFolderPath resolves it through the known-folder API. A bad value can only end in a named refusal, which is red, never a skip and never a pass. Feeding it would need a seam that exists only for this one-line guard."
+   },
+   {
+    "behaviour": "create the %ProgramData% tests root",
+    "shape": "CreateDirectory under C:\\ProgramData is refused by its ACL",
+    "why": "Not material. Feeding it means changing C:\\ProgramData's ACL, which no stage may do. Spike #2 measured that the default ACL lets a standard user create a tree there. A refusal is a named red (Q-210's pattern), never a false green.",
+    "material": false
+   },
+   {
+    "behaviour": "count kept folders in %ProgramFiles% and %ProgramFiles(x86)%",
+    "shape": "a folder a standard user can write-open there",
+    "why": "Not material. A standard user cannot create a fixture there. A standing probe of existing folders would move real install folders' last-access times on every run. The verdict is recorded from the investigation's measurements, and its consequence is bounded: 1 of 10,442 folders is write-grantable in Program Files.",
+    "material": false
+   },
+   {
+    "behaviour": "count kept folders on a re-scan of the same C:\\Windows\\Temp tree",
+    "shape": "a re-scan within minutes, with or without re-back-dating",
+    "why": "Not material. Spike #3 measured kept == still-old at +30 s without re-back-dating, and at +180 s and +20 min with it. This slice changes nothing the result depends on, and the falsified limit is deliberately not written.",
+    "material": false
+   }
+  ],
+  "contracts": [
+   {
+    "name": "Default suite, and the Windows 10 person-run filter",
+    "kind": "cli",
+    "notes": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter 'FullyQualifiedName~LastAccessUnderSystemRootTests|FullyQualifiedName~LastAccessTests|FullyQualifiedName~HeldOpenTreeTests' --logger 'console;verbosity=detailed'.\nOn this PC: the Windows\\Temp lines show 'moved: <root>, plain, links'; the LOCALAPPDATA line and the new ProgramData line show 'kept 7 of 7; 7 of 7 ...; moved: none'.\nThe same command is the Windows 10 ask (Q-205), filed for the person. Nothing new is built to judge it.\nOn Windows 10:\n- A red ProgramData line is a scanner over-count, to be fixed in a new slice.\n- A red Windows\\Temp line is Q-210's intended signal.",
+    "error_cases": "The ProgramData Fact's possible reds, each with its own message:\n- keep-open not asked for every folder (asked below 7);\n- keep-open refused, or a correction fired outside %SystemRoot% (kept below 7);\n- parents moved (kept != still-old, with the list);\n- named refusal: the tests root cannot be created, or CommonApplicationData is blank, unqualified or under the Windows folder.\nNone of these skip.",
+    "auth_model": "Ordinary user, not elevated."
+   },
+   {
+    "name": "ScanResult.LastAccessKept semantics",
+    "kind": "function",
+    "notes": "Unchanged. Kept folders at or under %SystemRoot% are counted out once per moved parent. Everywhere else, LastAccessKept equals the number of folders whose last access the scan did not move. That is now measured to hold in %ProgramData% and %ProgramFiles% for non-elevated scans on Win11 26200, and the new Fact pins it for %ProgramData%. Still internal (Q-159).",
+    "error_cases": "- Under-counts if a %SystemRoot% subfolder does not move its parent. That is open Q-208, not this slice; the investigation saw Tasks and tracing not move.\n- Over-counts in %ProgramData% if Windows 10, an elevated scan or a later build moves parents there. The new Fact goes red on that machine."
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Test tooling on shared or service machines (pytest's per-user basetemp, CI agents running as LocalSystem)",
+   "pattern": "Two patterns from the same domain.\n1. Keep one deliberate test in the hostile or unusual location, so its behaviour stays visible instead of turning into folklore or 'known noise'. Here it is applied to a negative result: a characterization Fact in %ProgramData% pins that no parent moves, so the uncorrected branch is truthful. A platform change then shows up as a named red, not as a stale 'unmeasured' sentence.\n2. Never resolve machine locations from inherited environment variables. The root comes from the known-folder API.",
+   "transfer_found": true,
+   "rationale": "The open question is environmental (OS build, location, elevation). That kind of fact rots in prose, and the source domain answers it with a standing test, not a document. The transfer fits because spike #2 already ran this exact test in this location on this machine, 3 of 3, with valid positive and negative controls. The env-var lesson applies directly: this engine runs inside an agent host, and vscode#332707 documents such a host stripping ProgramData and ProgramFiles on Windows 11 26200. The Windows 10 leg of the transfer cannot be verified by any stage, so it is filed for the person and is not carried here as an invariant.",
+   "invariants": [
+    {
+     "precondition": "A standard user can create, back-date and remove a nested folder tree under C:\\ProgramData from the test process",
+     "status": "holds",
+     "evidence": "Spike #2 created 3 trees and removed them with TempTree.Dispose and a non-recursive Directory.Delete ('tests-root folder gone: True' x3), with 0 fsa-spike-* left. The Sandbox's default ACL is BUILTIN\\Users:(CI)(WD,AD,WEA,WA)."
+    },
+    {
+     "precondition": "The scanner's keep-open (0x101) is granted for every folder of a user-created tree there, so the uncorrected branch at Scanner.cs:340 is actually exercised",
+     "status": "holds",
+     "evidence": "Spike #2: asked = kept = 7 on all 3 trees."
+    },
+    {
+     "precondition": "Back-dating sticks in %ProgramData% between the back-date and the scan",
+     "status": "holds",
+     "evidence": "Spike #2: '7 of 7 folders still at least 47 h old' in 3 of 3 trees. Case 4 repeats it 3 times."
+    },
+    {
+     "precondition": "No fitness rule (SL-096's location rules, TempTree redirect rule 2, any including_comments rule over Scanning/**) fires on the new Fact or on the reworded remark",
+     "status": "must-verify",
+     "evidence": "Their exact globs were not handed to this design. Machine-checked by case 7 (Fitness op=check and rules-parity in both shells). If a rule fires, the Fact moves to its own class file; the rule is not edited."
+    },
+    {
+     "precondition": "GetFolderPath(CommonApplicationData) returns a fully qualified path inside the engine's agent shell",
+     "status": "must-verify",
+     "evidence": "Recalled: .NET resolves it through SHGetKnownFolderPath, not through %ProgramData%. Machine-checked by the first run of case 1 in the engine shell. A blank result is a named refusal."
+    }
+   ]
+  },
+  "channeled_experts": [
+   "Michael Feathers (characterization tests that pin current behaviour)",
+   "Raymond Chen (OS behaviour is per-build; measure, don't infer)",
+   "Mark Russinovich (luafv / UAC virtualization internals)"
+  ],
+  "outside_claims": [
+   {
+    "claim": "On this PC (Win11 Pro 26200.9457, non-elevated, luafv Running, last-access updates enabled), the scanner's keep-open of child folders in a fresh tree under C:\\ProgramData moves no parent's last-access time. The same scan under C:\\Windows\\Temp moves root, plain and links.",
+    "evidence": "measured",
+    "source": "risk spike programdata-fresh-tree-through-real-scanner (3 trees, kept 7 of 7, moved none; control 'moved: <root>, plain, links')",
+    "if_wrong": "The new Fact is red on this PC, and the reworded remark and the SL-097 doc state the opposite of the truth."
+   },
+   {
+    "claim": "The first write-class open (0x101) of existing child folders moves no parent in %ProgramData% (0 of at least 34 distinct parents; survey 0 of 20), %ProgramFiles(x86)% (0 of 21; survey 0 of 20) or %ProgramFiles% (0 of 1). Under C:\\Windows outside Temp it moved 7 of 12.",
+    "evidence": "measured",
+    "source": "survey C1/C2 host probe; investigation first-open and la-probe2 (.taad-scratch fo-*.json, w10run)",
+    "if_wrong": "The C2 verdict recorded in the remark and the docs is wrong for %ProgramFiles%, and the decision not to correct there would under-state the move."
+   },
+   {
+    "claim": "A standard user can write-open 1 of 10,442 folders to depth 3 in Program Files, and 1,193 of 10,648 in Program Files (x86)",
+    "evidence": "measured",
+    "source": "investigation AccessCheck walk (this PC, non-elevated)",
+    "if_wrong": "The bounded-consequence argument for giving %ProgramFiles% no fixture weakens, and a fixture or probe might be owed."
+   },
+   {
+    "claim": "A re-back-dated re-scan of the same C:\\Windows\\Temp tree moves root, plain and links again at +180 s and +20 min. A +30 s re-scan without re-back-dating moves nothing and shows no under-count.",
+    "evidence": "measured",
+    "source": "risk spike rescan-same-windows-temp-tree-moves-again (no-go)",
+    "if_wrong": "A re-scan limit would be owed in the remark and the docs."
+   },
+   {
+    "claim": "luafv's parent move becomes visible within 58-172 ms after a listing has set the parent's last access to now. A recently updated last-access time does not gate it.",
+    "evidence": "measured",
+    "source": "risk spike win10-probe-sees-known-windows-temp-move (3 runs)",
+    "if_wrong": "The SL-097 doc would have to keep the survey's confound verdict on the scratch probe."
+   },
+   {
+    "claim": "NTFS writes a new last-access time only when the stored one is more than an hour old",
+    "evidence": "recalled",
+    "source": "memory (the survey's basis for calling the scratch probe confounded)",
+    "if_wrong": "Nothing in this design depends on it. Spike #1 shows the luafv move is not gated by it, so the doc does not repeat the confound verdict."
+   },
+   {
+    "claim": "The luafv driver is present and live on Windows 10 1607, 1809, 21H2 and 22H2, so the Windows 10 question concerns a component that really runs there",
+    "evidence": "cited",
+    "source": "https://www.sentinelone.com/vulnerability-database/cve-2026-27929/",
+    "if_wrong": "The Windows 10 ask is moot. The Windows\\Temp Facts would be red there by Q-210's ruling, and the ProgramData Fact green."
+   },
+   {
+    "claim": "Environment.GetFolderPath(SpecialFolder.CommonApplicationData) resolves through the known-folder API and not through the process environment, so it survives a host that strips ProgramData",
+    "evidence": "recalled",
+    "source": "memory",
+    "if_wrong": "In a stripped shell the root comes back blank. The Fact then fails with a named refusal: red, never a false pass."
+   },
+   {
+    "claim": "Agent-host shells on Windows 11 26200 can run commands without ProgramData, ProgramFiles or LOCALAPPDATA in the environment",
+    "evidence": "cited",
+    "source": "https://github.com/microsoft/vscode/issues/332707",
+    "if_wrong": "Nothing breaks. Choosing the known-folder API is merely defensive."
+   },
+   {
+    "claim": "The Windows Sandbox here (Win11 Ent 26100, EnableLUA=0) refuses to load luafv (error 1275), so it cannot stand in for the luafv-on condition or for Windows 10",
+    "evidence": "measured",
+    "source": "survey Sandbox runs 1 and 2",
+    "if_wrong": "The Sandbox could discharge part of C3 or the elevated leg unattended, and those filed items would become cases."
+   },
+   {
+    "claim": "Hosted Windows CI images run builds as an administrator with UAC effectively off, so they cannot reproduce luafv's standard-user condition",
+    "evidence": "recalled",
+    "source": "memory (practice proposal)",
+    "if_wrong": "A hosted Windows 10 runner might discharge C3 without a person. That would change only the filed item, not this design."
+   },
+   {
+    "claim": "The documented UAC file-virtualization namespace (%ProgramFiles%, %ProgramData%, %SystemRoot% minus some subfolders) does not predict where the parent move happens on this PC",
+    "evidence": "measured",
+    "source": "investigation: moves under C:\\Windows (7 of 12), none in %ProgramData% or %ProgramFiles%. The namespace itself is recalled from Windows Internals.",
+    "if_wrong": "Nothing here depends on the documentation. The design rests on the measurements."
+   }
+  ],
+  "decidable_disagreements": [
+   {
+    "question": "Does the %ProgramData% Fact stay stable in the default suite, so that nothing else (Defender, the indexer) touches a fresh tree in a machine-wide folder between back-dating and the scan?",
+    "positions": "Practice proposal: a standing default-suite Fact. Spike #2 was clean 3 of 3, and case 4 repeats it 3 times. The losing answer is a flaky red in every slice's suite run. The Fact would then have to become an opt-in Trait (FsaDefaultTestFilter clause plus the OptInTraitTests pin), or the result would drop to a doc-only record.",
+    "would_force_resynthesis": true
+   }
+  ],
+  "taste_disagreements": [
+   "Where the Fact lives: inside LastAccessUnderSystemRootTests, whose name says SystemRoot, so it reuses the class's helpers and the existing filter. The alternative is its own class (e.g. LastAccessOutsideTheWindowsFolderTests), which reads more honestly but needs the filter widened and the helpers shared.",
+   "Root shape: a fixed <CommonApplicationData>\\fsa-tests parent left in place (this design, consistent with the class's other roots). Spike #2's measured alternative is a unique per-run fsa-tests-<guid> parent, removed with a non-recursive Directory.Delete, which leaves nothing permanent in a machine-wide folder.",
+   "Whether the SL-097 doc records the investigation's C:\\Windows-outside-Temp data (7 of 12 parents moved; Tasks and tracing did not) as evidence beside the open Q-208, or leaves it to whichever slice takes Q-208.",
+   "Whether the numbers belong in a new SL-097 doc or are folded into the SL-096 doc's limits section."
+  ],
+  "filed_for_later": [
+   {
+    "what": "Windows 10 (C3). On a Windows 10 PC with luafv running and last-access updates on, as a non-elevated user, run the contract's filter command and report every 'moved:' line.\n- Windows\\Temp and ProgramData lines as on Windows 11: removes Q-205's caveat for those locations.\n- A red ProgramData line: a scanner over-count, to be fixed in a new slice.\n- A red Windows\\Temp line: Q-210's intended signal.\n%ProgramFiles% on Windows 10 is not covered by this filter. Its consequence is bounded, because a standard user's keep-open is refused almost everywhere there.",
+    "why": "No machine here runs Windows 10, and the Sandbox is Windows 11 with luafv blocked from loading. The build-check marks C3 checked_by person. Q-205 already records it UNVERIFIED.",
+    "who": "person"
+   },
+   {
+    "what": "Elevated scan with luafv loaded, in %ProgramData% and %ProgramFiles%: does an administrator's keep-open move parents there? It matters only if LastAccessKept stops being internal (Q-159), or if the person runs the app elevated.",
+    "why": "It needs administrator rights on this PC. The Sandbox cannot load luafv (EnableLUA=0, error 1275). The app's constraint is to run as an ordinary user.",
+    "who": "person"
+   }
+  ],
+  "prior_art": [
+   {
+    "pattern": "LUAFV is a live driver on Windows 10 1607, 1809, 21H2 and 22H2, so the Windows 10 question concerns a component that really runs there",
+    "where": "https://www.sentinelone.com/vulnerability-database/cve-2026-27929/",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2026-05-14"
+   },
+   {
+    "pattern": "Agent-host shells on Windows 11 26200 run commands with ProgramData, ProgramFiles, LOCALAPPDATA and similar variables stripped, so machine locations come from the known-folder API",
+    "where": "https://github.com/microsoft/vscode/issues/332707",
+    "authority": "official",
+    "basis": "cited",
+    "source_date": "2026-08-26"
+   },
+   {
+    "pattern": "tox clean environments drop PROGRAMDATA and PROGRAMFILES, breaking Windows test runs until they are passed through. Tests should not depend on inherited location variables.",
+    "where": "https://github.com/pypa/distutils/commit/267dbd25ac",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2022-03-19"
+   },
+   {
+    "pattern": "Windows location variable names get re-cased when a runtime filters the environment (PROGRAMFILES vs ProgramFiles), another way an env-var location lookup goes wrong",
+    "where": "https://github.com/NousResearch/hermes-agent/pull/49684",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-06-20"
+   },
+   {
+    "pattern": "A per-user test base directory chosen by the tool instead of an inherited TEMP: the origin of the brief's imported pattern",
+    "where": "pytest tmp_path_factory / basetemp",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Characterization tests pin what the system does today, so a change shows up as a failing test rather than silent drift",
+    "where": "Michael Feathers, Working Effectively with Legacy Code",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "The UAC file-virtualization namespace is %ProgramFiles%, %ProgramData% and %SystemRoot% minus some subfolders. Measured here, it does not predict the parent move.",
+    "where": "Windows Internals (Russinovich et al.), UAC file virtualization",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Hosted Windows CI images run builds as an administrator with UAC effectively off",
+    "where": "GitHub Actions / Azure Pipelines hosted Windows images",
+    "authority": "community",
+    "basis": "recalled"
+   }
+  ],
+  "whats_new": [
+   "One [Fact] InProgramDataNoKeptFolderMovesItsParent in tests/FsAnalyser.Core.Tests/LastAccessUnderSystemRootTests.cs. It builds the class's 7-folder tree under <CommonApplicationData>\\fsa-tests\\<guid> and asserts asked == 7, kept == 7 and still-old == kept, each with its own message. A tests root that cannot be created, or a bad known-folder value, is a named refusal.",
+   "The LastAccessKept remark in src/FsAnalyser.Core/Scanning/ScanResult.cs (~:203), reworded: measured and deliberately not corrected in %ProgramData% and %ProgramFiles% on Win11 26200 non-elevated; Windows 10 and elevated scans unmeasured.",
+   "The limits at lines 89-90 of docs/design/SL-096-last-access-under-windows-temp.md, rewritten to point at SL-097.",
+   "docs/design/SL-097-last-access-outside-the-windows-folder.md: environment, method, per-set counts with controls, what was not measured and why, the Windows 10 person-run command, the falsified re-scan limit kept out on purpose, and the C:\\Windows-outside-Temp data as evidence for open Q-208."
+  ],
+  "whats_reused": [
+   "LastAccessUnderSystemRootTests' tree builder, 48 h deepest-first back-dating, still-old check and 'kept K of 7; ...; moved:' reporter",
+   "TempTree(string testsRoot) with its NTFS and compression refusals, and TempTree.Dispose's [IO.Directory]::Delete cleanup",
+   "Scanner.Scan and Scanner.CountListingOpen unchanged; the Fact exercises the no-correction branch at :340",
+   "Spike #2's ProgramDataSpikeTests procedure as the template, with its VOID conditions turned into assertions",
+   "The existing filtered test command as the Windows 10 hand-off (Q-205), with no new script",
+   "Q-210's named-refusal pattern for a tests root that cannot be created",
+   "The fitness rule that keeps LastAccessUnderSystemRootTests never skipped, which now covers the new Fact"
+  ],
+  "stack_chosen": [],
+  "architecture_rules": [],
+  "open_questions": []
+ }
+}

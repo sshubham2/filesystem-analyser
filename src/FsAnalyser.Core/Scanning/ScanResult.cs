@@ -200,9 +200,12 @@ public sealed class ScanResult
     /// (attributed to UAC file virtualization, luafv.sys). The scan does not prevent it; this count says it. Known gaps:
     /// a parent is counted out even when nothing moved (its time within NTFS's hour, or last-access updates off); one is
     /// not counted out when a child's write-attributes open succeeded but its -1 set failed, though that open moved it;
-    /// %ProgramData% and %ProgramFiles%, which UAC file virtualization also covers, are unmeasured and not corrected; and the
-    /// Windows folder is matched by how the root is spelled, so a root reaching it through a subst drive, a junction or a
-    /// volume path is not corrected. The root's own parent, outside the scan, moves too and is never counted.
+    /// and the Windows folder is matched by how the root is spelled, so a root reaching it through a subst drive, a junction
+    /// or a volume path is not corrected. The root's own parent, outside the scan, moves too and is never counted.
+    /// Outside the Windows folder nothing is corrected, deliberately and as measured (SL-097,
+    /// docs/design/SL-097-last-access-outside-the-windows-folder.md): on Windows 11 26200, in a non-elevated scan, a kept child
+    /// folder moved no parent in %ProgramData% or %ProgramFiles%, and in %ProgramFiles% a standard user's keep-open is refused
+    /// almost everywhere, so few folders are counted kept there. Windows 10 (Q-205) and elevated scans are unmeasured.
     /// Internal: the window never shows it (Q-103, Q-159).
     /// </remarks>
     internal int LastAccessKept { get; init; }

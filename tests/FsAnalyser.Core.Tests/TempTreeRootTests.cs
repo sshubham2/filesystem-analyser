@@ -64,6 +64,44 @@ public class TempTreeRootTests
         Assert.Equal(@"C:\Temp\fsa-tests", TempTree.ChooseTestsRoot(@"C:\Temp\", "", LocalAppData));
     }
 
+    /// <summary>The deliberate %ProgramData% tests root (SL-097) is the known folder's, with its own name under it.</summary>
+    [Theory]
+    [InlineData(@"C:\ProgramData", @"C:\ProgramData\fsa-tests")]
+    [InlineData(@"D:\ProgramData\", @"D:\ProgramData\fsa-tests")]
+    [InlineData(@"C:\WindowsData", @"C:\WindowsData\fsa-tests")] // shares the Windows folder's name, is not in it
+    public void TheProgramDataTestsRootIsTheKnownFoldersOwn(string commonAppData, string expected)
+    {
+        Assert.Equal(expected, TempTree.ChooseProgramDataTestsRoot(commonAppData, Windows));
+    }
+
+    /// <summary>A known folder that is blank, relative, drive-relative or in the Windows folder is refused by name, not skipped.</summary>
+    [Theory]
+    [InlineData("", "it is blank")]
+    [InlineData("   ", "it is blank")]
+    [InlineData("ProgramData", "it is not fully qualified")]
+    [InlineData(@"C:ProgramData", "it is not fully qualified")]
+    [InlineData(@"C:\Windows", "it is at or under the Windows folder (C:\\WINDOWS)")]
+    [InlineData(@"c:\windows\ServiceProfiles\LocalService\AppData\Local", "it is at or under the Windows folder (C:\\WINDOWS)")]
+    [InlineData(@"C:\WINDOWS\System32\config", "it is at or under the Windows folder (C:\\WINDOWS)")]
+    public void AProgramDataThatIsNotUsableIsRefusedByName(string commonAppData, string cause)
+    {
+        var refused = Assert.Throws<InvalidOperationException>(() => TempTree.ChooseProgramDataTestsRoot(commonAppData, Windows));
+
+        Assert.Contains($"resolved to '{commonAppData}', and {cause}", refused.Message);
+        Assert.Contains("refused, not skipped", refused.Message);
+    }
+
+    /// <summary>With no Windows folder to tell it from, the %ProgramData% root is refused too, not taken on trust.</summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData(@"Windows")]
+    public void AProgramDataRootIsRefusedWhenTheWindowsFolderCannotBeTold(string windowsDir)
+    {
+        var refused = Assert.Throws<InvalidOperationException>(() => TempTree.ChooseProgramDataTestsRoot(@"C:\ProgramData", windowsDir));
+
+        Assert.Contains("the Windows folder is", refused.Message);
+    }
+
     /// <summary>This process's own trees, whatever TEMP it was started with, are outside the Windows folder.</summary>
     [Fact]
     public void ThisRunsTreesAreBuiltOutsideTheWindowsFolder()

@@ -17,7 +17,7 @@ namespace FsAnalyser.Core.Tests;
 /// the trees go to the user's own %LOCALAPPDATA%\Temp\fsa-tests instead (<see cref="ChooseTestsRoot"/>). Under the
 /// Windows folder, opening a child with write access moves its parent's last-access time (SL-096), so a fixture there
 /// passes or fails on that, not on what it tests. Only LastAccessUnderSystemRootTests builds there, on purpose, through
-/// the constructor that takes its root.
+/// the constructor that takes its root, and in %ProgramData% too (<see cref="ChooseProgramDataTestsRoot"/>, SL-097).
 /// </remarks>
 internal sealed class TempTree : IDisposable
 {
@@ -67,6 +67,30 @@ internal sealed class TempTree : IDisposable
         return Path.Combine(target, "fsa-tests");
     }
 
+    /// <summary>
+    /// Where the deliberate %ProgramData% tree goes (SL-097): <paramref name="commonAppData"/>\fsa-tests, as the known-folder
+    /// call gives it and never the ProgramData variable, which a host that runs the tests may strip. Refused by name when it
+    /// is blank, not fully qualified or at or under <paramref name="windowsDir"/> (the other deliberate location, which this
+    /// one must stay apart from), or when the Windows folder itself cannot be told: red with a cause, never a pass.
+    /// </summary>
+    internal static string ChooseProgramDataTestsRoot(string commonAppData, string windowsDir)
+    {
+        string? problem =
+            string.IsNullOrWhiteSpace(windowsDir) || !Path.IsPathFullyQualified(windowsDir) ? $"the Windows folder is '{windowsDir}', which is blank or not fully qualified, so it cannot be told apart from %ProgramData%"
+            : string.IsNullOrWhiteSpace(commonAppData) ? "it is blank"
+            : !Path.IsPathFullyQualified(commonAppData) ? "it is not fully qualified"
+            : UnderWindows(commonAppData, windowsDir) ? $"it is at or under the Windows folder ({windowsDir})"
+            : null;
+        if (problem is not null)
+        {
+            throw new InvalidOperationException(
+                $"The known folder CommonApplicationData (%ProgramData%) resolved to '{commonAppData}', and {problem}. The %ProgramData% " +
+                "last-access test builds its tree there on purpose (SL-097) and has nowhere else to go, so it is refused, not skipped. " +
+                "Run the tests as an ordinary user on a machine with a normal %ProgramData%.");
+        }
+        return Path.Combine(commonAppData, "fsa-tests");
+    }
+
     private static bool UnderWindows(string path, string windowsDir) =>
         Scanner.IsAtOrUnder(LongPath.NormalizeRoot(path).Win32, LongPath.NormalizeRoot(windowsDir).Win32);
 
@@ -75,9 +99,23 @@ internal sealed class TempTree : IDisposable
     // refusal names the folder the root was made in, which carries the attribute (fsa-tests, made compressed under a
     // compressed %TEMP% and left so), and the one remedy measured to clear it and all it holds: compact /u /s:"folder".
     // Plain compact /u, or /u /s "folder", clears that folder's own attribute only (SL-073 review, R2-m2).
+    // A root this user may not make is refused by name too (Q-210): the tests that build in the Windows folder's Temp and in
+    // %ProgramData% do so on purpose and are never skipped, so a bare access-denied would read as noise. Only the creation
+    // is wrapped, so the compression refusal below stays as it is.
     internal static void CreateRoot(string root)
     {
-        Directory.CreateDirectory(root);
+        try
+        {
+            Directory.CreateDirectory(root);
+        }
+        catch (Exception e) when (e is UnauthorizedAccessException or IOException)
+        {
+            throw new InvalidOperationException(
+                $"Could not create {root} ({e.GetType().Name}: {e.Message}). Every counting-rule tree is built in a folder of its own " +
+                $"under {Path.GetDirectoryName(root)}. A test whose point is a location that may refuse this user (the Windows folder's " +
+                "Temp, %ProgramData%) needs to create it there and is never skipped. Let this user create folders in that location, " +
+                "or run the tests as one who can.", e);
+        }
         if (System.IO.File.GetAttributes(root).HasFlag(FileAttributes.Compressed))
         {
             Directory.Delete(root);

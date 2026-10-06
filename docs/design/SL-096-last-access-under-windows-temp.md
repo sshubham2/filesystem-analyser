@@ -86,8 +86,11 @@ All on this PC, Windows 11 Pro 10.0.26200, not elevated.
 
 ## Limits, not measured
 
-- Only C:\Windows\Temp on Windows 11 26200. %ProgramData% and %ProgramFiles%, also in luafv's namespace as recalled from
-  Russinovich, are not measured and not corrected. Windows 10 is unmeasured (Q-192, Q-205).
+- This slice measured only C:\Windows\Temp on Windows 11 26200. SL-097 measured %ProgramData% and %ProgramFiles%, also in
+  luafv's namespace as recalled from Russinovich, on the same build as a non-elevated user: no parent moved in
+  %ProgramData% or %ProgramFiles(x86)%, nor in the one write-grantable %ProgramFiles% folder, so they are not corrected
+  (docs/design/SL-097-last-access-outside-the-windows-folder.md). Windows 10 (Q-192, Q-205) and elevated scans are
+  unmeasured.
 - The rule counts a parent out by structure. It is wrong when nothing moved (the parent's time within NTFS's hour, or
   updates off), and it misses a parent whose child's write-attributes open succeeded but whose -1 set failed.
 - The Windows folder is matched by how the root is spelled: a subst letter, junction, mount point or volume path to a

@@ -10,7 +10,8 @@ namespace FsAnalyser.Core.Tests;
 /// scan's keep-open of each child folder is such an open. TempTree builds every other tree outside the Windows folder, so
 /// these are the default-suite tests that keep that side effect, and whether the count tells the truth about it, in
 /// every run. They are never skipped and carry no trait: .taad/fitness.yaml says so, and LastAccessRuleCorpusTests checks
-/// it by reflection too.
+/// it by reflection too, test by test, so a Fact added here is red there until it is pinned. One more tree is built in
+/// %ProgramData% on purpose (SL-097), where the scanner does not correct and none moved, so that stays measured.
 /// </summary>
 /// <remarks>
 /// Each tree is back-dated 48 h deepest first, so no back-dating moves a folder already back-dated, and every entry is
@@ -94,6 +95,38 @@ public class LastAccessUnderSystemRootTests(ITestOutputHelper output)
 
             int n = NestedFolders.Length;
             Assert.Equal((n, n, n), (scanned.Result.LastAccessAsked, scanned.Result.LastAccessKept, scanned.StillOld));
+        });
+    }
+
+    /// <summary>
+    /// The uncorrected branch is truthful in %ProgramData% (SL-097): Scanner.CountListingOpen corrects only at or under the
+    /// Windows folder, and there a kept child folder's keep-open moved no parent (docs/design/SL-097-...md), so every kept
+    /// folder is still old. The root is the known folder, never the ProgramData variable. Read its 'moved: none' line only
+    /// beside the same run's Windows-folder lines ('moved: &lt;root&gt;, plain, links'): where parents do not move at all,
+    /// those are red and this one is green. Red here is an over-count in product code (a Windows version, an elevated scan or a
+    /// later build that moves parents here): investigate it, and do not make it opt-in or loosen it (Q-210).
+    /// </summary>
+    [Fact]
+    public void InProgramDataNoKeptFolderMovesItsParent()
+    {
+        string testsRoot = TempTree.ChooseProgramDataTestsRoot(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows));
+        InTree(new TempTree(testsRoot), tree =>
+        {
+            BuildNested(tree);
+
+            Scanned scanned = BackDateAndScan(tree, tree.Root, NestedFolders, NestedFiles.Select(f => f.Path).ToArray(), exempt: []);
+
+            int n = NestedFolders.Length;
+            int asked = scanned.Result.LastAccessAsked;
+            int kept = scanned.Result.LastAccessKept;
+            Assert.True(asked == n, $"the keep-open was not asked for every folder: asked {asked} of {n} under {tree.Root}");
+            Assert.True(kept == n,
+                $"kept {kept} of {n} under {tree.Root}: the keep-open was refused, or a correction fired outside %SystemRoot%");
+            Assert.True(scanned.StillOld == kept,
+                $"parents moved in %ProgramData%: {(scanned.Moved.Count == 0 ? "none" : string.Join(", ", scanned.Moved))}; " +
+                $"LastAccessKept ({kept}) over-counts here because Scanner.CountListingOpen corrects only at or under %SystemRoot%");
         });
     }
 
