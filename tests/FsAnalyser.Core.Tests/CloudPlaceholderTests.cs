@@ -279,6 +279,10 @@ public class CloudPlaceholderTests(ITestOutputHelper output)
         public SyncRootRig(ITestOutputHelper output)
         {
             _output = output;
+            // The temp folder as inherited, not TempTree's choice: under a TEMP in the Windows folder (the engine's) this rig
+            // still lands there, and its sweep there is denied (SL-096 spike 4). Exempt by name from the .taad/fitness.yaml
+            // rule 'no Core test builds a fixture in %SystemRoot%\Temp except the deliberate one' until the filed slice
+            // that routes SyncRootRig and CloudRig through TempTree's root choice removes the exemption.
             string temp = Path.GetTempPath();
             List<string> swept = CloudRig.Sweep(temp, CloudRig.IsRunning, Unregister, output.WriteLine);
             if (swept.Count > 0)

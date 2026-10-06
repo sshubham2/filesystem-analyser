@@ -1,0 +1,548 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-096",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-10-06T03:22:52.448Z",
+ "head": "16ef2c089f4fe2d3439ed90787d826527f37d446",
+ "run_id": 2687,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "reason": "One proposal (practice), selected as the core. It was checked against the survey, the investigation and five spikes, and one seam was changed: the counter correction is keyed on the child's successful keep-open, because spike 1 measured that a rule keyed on attempted opens under-counts. The report was only a title. This design assumes the slice must (1) commit a measured verdict for each of the three tests, (2) make `eng/dotnet.ps1 test FsAnalyser.slnx` green under the engine's TEMP=C:\\WINDOWS\\TEMP, and (3) keep any last-access side effect visible in the routine suite. These are the build check's three derived criteria. The acceptance command is the engine's bug project exiting 0.",
+  "selection_rationale": "Each piece was chosen against what was measured, not against taste.\n\n1. The verdict is 'both', and the evidence is measured. All three red tests are an environment fault. The engine's TEMP is C:\\WINDOWS\\TEMP, where a write-class open of a child moves the parent's last access, and the fixtures back-date each parent before its children:\n   - 20/23 pass vs 23/23.\n   - 689/692 pass vs 692/692.\n   - DisableLastAccess=2 is ENABLED in both locations, so that setting is not the cause.\n   Underneath the fault is one real defect in this project. The scanner's own keep-open of each child folder moves the parent there, yet LastAccessKept still counts the parent as kept: (7,7) against 4 unmoved, in 5 of 5 trees.\n\n2. Product fix: the counter only. Spike 1 rejected the attempted-open rule (tree d: kept 0, truth 1). Its step 6 showed that a refused child open does not move the parent, so the rule is keyed on the child's successful keep-open. The plain-open alternative was never run. It was predicted to move about 6 of 7 folders and to give up the children's own kept times, so it was not chosen. The counters are internal (Q-103, Q-159), so making them true is the whole product fix.\n\n3. TempTree redirect: from spike 4 (conditional). Under the engine's TEMP it measured 23/23 three times and 692/692, with nothing created under C:\\Windows\\Temp\\fsa-tests. Its constraints are honoured: the opt-in cloud rigs are not redirected, and this design says so. The engine-side fix (spike 5, a go) lives in taad_v3's launch.py, outside this repository, and would leave any other launcher red. It is filed for the person, not built.\n\n4. Deepest-first back-dating: from spike 2. It was a no-go as the only fix, but it is kept because it moves any future failure in luafv's location from a precondition that hides the cause to the scan assertion that names it. That shift was measured: :68/:96 became :78/:87.\n\n5. New Facts: spike 3 was the go. With the correction it reported kept 4 of 7, and without it the Fact failed 3 of 3 (7 vs 4). The Facts are the only thing that keeps the side effect in front of the routine suite once the redirect exists.\n\nThe practice designer raised its own over_engineering_flag, and that is honoured. Not built:\n   - a read-back pass after the walk;\n   - luafv detection in Core;\n   - a KnownWorkarounds entry for an internal counter;\n   - a set of every kept folder;\n   - edits to the engine.\n\nThe one addition over the proposal is a pure TempTree root-choice function. It gives the redirect's four branches a machine check without changing the process environment.",
+  "components": [
+   {
+    "name": "Scanner kept-counter correction",
+    "responsibility": "CountListingOpen (Scanner.cs:311-318) gains the folder's path, and both callers pass it: ListRoot (:235, win32Root) and the walk (:182-193).\n\nWhen io.KeptLastAccess is true:\n1. _lastAccessKept++ as today.\n2. If the folder is at or under %SystemRoot%, add its path to a per-scan HashSet<string>(OrdinalIgnoreCase), trimmed of trailing separators. The location test reuses Scanner's existing IsAtOrUnder, the sync-root test used by KeepsLastAccess, against Environment.GetFolderPath(SpecialFolder.Windows) computed once per scan.\n3. Derive the parent with plain string operations: trim trailing separators, then cut at the last separator. This keeps the form CountListingOpen received.\n4. If set.Remove(parent) succeeds, _lastAccessKept--.\n\nRemoving from the set is what makes each parent come out at most once.\n\nThe correction fires only on a child whose keep-open SUCCEEDED, never on an attempted or refused one.\n\nWhat does not change:\n- no new opens and no change to any access mask;\n- no change to which folders are asked;\n- no change to SynchronousIoCancel.\n\nThe root's parent lies outside the scan, is never in the set, and is never touched.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "key_interactions": "Reads SynchronousIoCancel.KeptLastAccess. It is set at Open (SynchronousIoCancel.cs:488-543) and is still readable after DirectoryReader.Read closes the handle, which is how today's counter already works.\n\nReachable only behind the existing DecideLastAccess/KeepsLastAccess gates: local NTFS, not remote, not cloud, not a sync root. The InsideExcludedStore branch stays uncounted and opens nothing.\n\nRuns on the single scan thread, where a parent is counted before any of its children is opened (SL-042). ProbePass and SizeProbe file opens are read-class and were measured not to move anything (plain\\sub and links\\b-second never moved)."
+   },
+   {
+    "name": "LastAccessKept contract text",
+    "responsibility": "Rewrite the doc comment at ScanResult.cs:190-194. It currently assumes that a successful -1 set means the time stayed.\n\nNew text: kept = asked folders whose keep-open succeeded, minus folders at or under %SystemRoot% whose last access the scan's own later keep-open of a child folder moved. That move was measured in %SystemRoot%\\Temp and is attributed to UAC file virtualization. It is a stated limit of the scan, not something it prevents.\n\nThe counters stay internal (Q-103, Q-159), and the App shows nothing.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/ScanResult.cs",
+    "key_interactions": "Read by LastAccessTests :85, HeldOpenTreeTests :82-83, the SL-096 bug test :139 and LastAccessUnderSystemRootTests."
+   },
+   {
+    "name": "TempTree root choice and explicit-root constructor",
+    "responsibility": "The TestsRoot initialiser (TempTree.cs:17) calls a pure internal static ChooseTestsRoot(string tempPath, string windowsDir, string localAppData), passing GetTempPath(), GetFolderPath(Windows) and GetFolderPath(LocalApplicationData).\n\nRules:\n- If GetFullPath(tempPath) is at or under windowsDir (case-insensitive, separator boundary), the root is localAppData\\Temp\\fsa-tests.\n- Otherwise the root is tempPath\\fsa-tests.\n- If the redirect target is itself at or under windowsDir (a SYSTEM or service-profile run), it throws with a named cause, the way TempTree already refuses FAT32 and compressed folders.\n\nThe NTFS and compression refusals (:25-31) apply to whichever root is chosen.\n\nA new internal TempTree(string testsRoot) constructor lets the Windows-folder Facts reuse PathOf, the SDDL deny helper and Dispose. Dispose clears deny ACEs before deleting with .NET Directory.Delete; PowerShell's Remove-Item is denied in C:\\Windows\\Temp.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/TempTree.cs",
+    "key_interactions": "Every TempTree-based test, including the counting-rule tests. They stay real NTFS trees and are never skipped. Under a machine TEMP they now sit in the user's own TEMP (the HKCU value, measured as %LOCALAPPDATA%\\Temp), where SL-089 already put the window cases."
+   },
+   {
+    "name": "HeldOpenTreeTests deepest-first back-dating",
+    "responsibility": "Spike 2's one-line edit at :235: `foreach (string path in Enumerable.Reverse(Observed).Append(Path.Combine(control, \"c.txt\")).Append(control))`.\n\nObserved itself keeps its order, so the snapshot pairing is unchanged. If the fixture ever lands where luafv acts, it fails at the metadata diff (:78), not at the 'was not back-dated' preconditions (:68, :96-97).",
+    "lives_at": "tests/FsAnalyser.Core.Tests/HeldOpenTreeTests.cs"
+   },
+   {
+    "name": "LastAccessTests deepest-first back-dating",
+    "responsibility": "Spike 2's one-line edit at :69: `string[] kept = [tree.PathOf(\"open\"), tree.PathOf(@\"refusing\\sub\"), tree.Root];`. Root is back-dated last. The (4,3) assertion at :85 is unchanged.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/LastAccessTests.cs"
+   },
+   {
+    "name": "LastAccessUnderSystemRootTests",
+    "responsibility": "Facts in the default suite that are never skipped and carry no excluded Trait. Each builds through new TempTree(Path.Combine(GetFolderPath(Windows), \"Temp\", \"fsa-tests\")).\n\n(1) AScanUnderTheWindowsTempFolderCountsAsKeptOnlyTheFoldersThatStayedOld\n- A Theory over how the root is spelled: as-is, lower-case, trailing separator.\n- Tree: the 7-folder, 4-file nested tree (root, plain, plain\\sub, plain\\empty, links, links\\a-first, links\\b-second).\n- Back-dated deepest-first to 48 h.\n- Precondition: every entry reads at least 47 h old, and any that does not is named.\n- Runs the real Scanner.Scan.\n- Asserts: Completed; LastAccessAsked == 7; LastAccessKept == the number of tree folders still at least 47 h old.\n\n(2) AChildThatRefusesWriteAttributesLeavesItsParentCountedAsKept\n- Tree: R\\refusing\\x.bin.\n- Setup order: deny FILE_WRITE_ATTRIBUTES on `refusing` (no inheritance), then back-date x.bin, then back-date R last.\n- `refusing` is exempt from the precondition, because setting the ACE moves its time and the deny stops it being back-dated.\n- Asserts: asked 2, and kept == the number of folders still old (predicted 1).\n\n(3) OutsideTheWindowsFolderEveryKeptFolderStaysKept\n- Tree (1) under TempTree's default root.\n- Asserts kept == asked == unmoved == 7.\n\nEvery case asserts its tree is gone after Dispose: this user cannot list C:\\Windows\\Temp, so a leftover could never be found.\n\nFailure messages give (asked, kept), the folders that moved, and what each direction means:\n- over-count: the correction is missing, or the location list is too narrow;\n- under-count: the rule is keyed wrongly, or luafv no longer moves parents on this machine.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/LastAccessUnderSystemRootTests.cs",
+    "key_interactions": "Keeps the real side effect, and the truth of the counters, in the routine `eng/dotnet.ps1 test FsAnalyser.slnx`. The bug project is outside FsAnalyser.slnx and cannot do this job."
+   },
+   {
+    "name": "TempTreeRootTests",
+    "responsibility": "InlineData rows over ChooseTestsRoot:\n- TEMP under %SystemRoot% in any letter case is redirected;\n- the user's own TEMP is unchanged;\n- a TEMP that only shares the name prefix (C:\\WindowsTemp, C:\\Windows.old\\Temp) is unchanged;\n- a redirect target that is itself under %SystemRoot% throws the named refusal.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/TempTreeRootTests.cs"
+   },
+   {
+    "name": "SL-096 acceptance bug test (unchanged)",
+    "responsibility": "The engine's reproduction. It builds its own tree under GetFolderPath(Windows)\\Temp\\fsa-sl096-<guid> and asserts LastAccessKept <= unmoved. The correction makes it 4 <= 4. It stays out of FsAnalyser.slnx: it takes the assembly name FsAnalyser.Core.Tests, which would collide.",
+    "lives_at": "tests/bugs/SL-096-LastAccessUnderWindowsTemp/LastAccessUnderWindowsTempTests.cs"
+   },
+   {
+    "name": "Triage record",
+    "responsibility": "Records the verdict for each test, with the measured numbers.\n\n(a) APlainListingOfTheControlFolderMovesItsLastAccessTime: environment only. Parent-first back-dating in luafv's location resets the control. No scan side effect.\n\n(b) TheScanChangesNoEntrysMetadata: the same environment fault hid a real side effect. Under %SystemRoot%\\Temp the scan's child keep-opens move root, plain and links (5 of 5 trees), and the counter over-reported (7,7) against 4 unmoved. That is now fixed in the counter, and stated as a limit of the scan.\n\n(c) AFolderThatRefusesWriteAttributesIsListedPlainlyAndCountedInFull: fixture order plus the same side effect. Spike 2 saw Root move during Scans.Run.\n\nAlso records:\n- ruled out: DisableLastAccess=2 (ENABLED); the kernel-memory lead (Luaf freed 59 of 60).\n- not measured: %ProgramData%, %ProgramFiles%, Windows 10, whether luafv itself is the cause (needs an administrator), and the root's own parent.\n\nThis is the measured triage Q-190 asks for. Closing that question stays with a person.",
+    "lives_at": "docs/design/SL-096-last-access-under-windows-temp.md"
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Verdict: both. All three red tests are an environment fault: the engine's TEMP=C:\\WINDOWS\\TEMP puts the fixtures where a write-class child open moves the parent's last access, and the fixtures back-date parents first. Beneath that is one real defect of this project: LastAccessKept over-reports in that location. DisableLastAccess=2 is ruled out.",
+    "reversibility": "cheap",
+    "rationale": "Measured in every layer:\n- 20/23 vs 23/23 and 689/692 vs 692/692, depending only on TEMP;\n- fsutil reports ENABLED in both locations;\n- the real Scanner gives (7,7) with 3 of 7 folders moved, 5 of 5 trees;\n- parent-first back-dating reset 6 of 8 folders, deepest-first reset 0."
+   },
+   {
+    "decision": "Fix the counter, not the opens. When a child folder's keep-open succeeds (io.KeptLastAccess true), take its parent out of LastAccessKept once, if that parent is at or under %SystemRoot% and was counted kept.",
+    "reversibility": "cheap",
+    "rationale": "Spike 1: the attempted-open rule is a no-go (tree d: kept 0, truth 1). Its step 6 showed a refused child open leaves the parent unmoved.\n\nOn tree (b) the successful-open rule equals spike 3's measured patch, which gave kept 4 of 7.\n\nOpening children without write-attributes was never run, and was predicted to move about 6 of 7 folders. The counter is internal (Q-103, Q-159), so making it true is the entire product fix."
+   },
+   {
+    "decision": "The affected location is %SystemRoot% only. It is tested with Scanner's existing IsAtOrUnder against GetFolderPath(Windows), held in one place.",
+    "reversibility": "cheap",
+    "rationale": "Only C:\\Windows\\Temp was measured. %ProgramData% and %ProgramFiles% are recalled from the luafv namespace and not measured, and writing there is the person's step. Widening is one line.\n\nReusing the sync-root comparison keeps one rule for case and separator boundaries in Scanner, instead of a second path comparison."
+   },
+   {
+    "decision": "Track only kept folders at or under %SystemRoot%, in a per-scan OrdinalIgnoreCase HashSet keyed by the path as CountListingOpen received it, trimmed of trailing separators. Derive the parent with string operations.",
+    "reversibility": "cheap",
+    "rationale": "Spike 1 tracked every kept folder, which on a whole-C: scan (about 920k folders) costs on the order of 100 MB against a 1 GB budget where 731 MiB is already measured.\n\nUnder C:\\Windows, write-attributes is refused for most folders (Q-103's figure, recalled), so the set stays small.\n\nString-only derivation keeps the parent in exactly the form its own count used. It also avoids depending on whether TheScannerMakesNoBclFileSystemCalls admits System.IO.Path."
+   },
+   {
+    "decision": "Do not try to stop the side effect itself. The scan keeps its opens and masks, and the move is stated as a limit in ScanResult's contract text and the triage record.",
+    "reversibility": "cheap",
+    "rationale": "The parent's own -1 handle is closed before its children are opened, and the -1 suppression covers only operations through that handle (recalled), so nothing in the scanner's current shape can prevent another component's open of the parent from stamping it.\n\nAvoiding the move would need a product-level choice (plain-open children, holding handles), which nobody has measured. Q-159 defers last-access work until file-age features are designed. Filed as later work."
+   },
+   {
+    "decision": "Under a machine TEMP, TempTree roots fixtures in %LOCALAPPDATA%\\Temp\\fsa-tests:\n- through a pure ChooseTestsRoot;\n- with a named refusal if that target is also under %SystemRoot%;\n- with the NTFS and compression refusals unchanged.\nThe engine-side HKCU TEMP fix is not built here.",
+    "reversibility": "cheap",
+    "rationale": "Spike 4: 23/23 three times and 692/692 under C:\\WINDOWS\\TEMP, with 0 directories created under C:\\Windows\\Temp\\fsa-tests. This fix holds whatever launches the suite.\n\nSpike 5's fix lives in taad_v3's launch.py, outside this repo. HKCU TEMP was measured to be %LOCALAPPDATA%\\Temp, so the counting-rule tests still run in the user's own %TEMP%."
+   },
+   {
+    "decision": "Both fixtures back-date deepest-first.",
+    "reversibility": "cheap",
+    "rationale": "Back-dating parents first is a fixture bug wherever luafv acts. Spike 2 measured that, with the reorder, the failures move from the preconditions (:68, :96) to the scan assertions (:78, :87), which name the real cause.\n\nUnder user TEMP all 23 still pass, so the reorder does not break the fixtures."
+   },
+   {
+    "decision": "Add never-skipped Facts in Core.Tests that build in %SystemRoot%\\Temp on purpose and assert kept == unmoved, not <=.",
+    "reversibility": "cheap",
+    "rationale": "The redirect alone would turn this slice's defect back into silence. Equality catches both directions:\n- over-count (the defect; spike 3: 7 vs 4 without the correction, 3 of 3);\n- under-count (spike 1's wrong rule: 0 vs 1).\n\nA future write-class open added to the scan would also show up, as kept > unmoved.\n\nThey fail loudly, never skip, which is the project's habit for tests on real trees."
+   },
+   {
+    "decision": "No KnownWorkarounds entry and no in-app notice.",
+    "reversibility": "cheap",
+    "rationale": "The workaround rule covers the app stepping around an outside defect by skipping, refusing, rerouting or retrying. This slice does none of that:\n- the scan does exactly what it did;\n- the correction fixes this project's own false count;\n- the redirect lives in test fixtures, not in the app.\n\nAn off switch would only bring the false number back, and nobody sees that number (Q-103, Q-159). If file-age features ever surface last access, the luafv limit becomes a notice question for that slice."
+   },
+   {
+    "decision": "The opt-in Cloud=CF-SYNC-ROOT rigs (SyncRootRig/CloudRig use GetTempPath directly) are not redirected. This is recorded as a limit and filed.",
+    "reversibility": "cheap",
+    "rationale": "They are outside the three tests and outside the default filter, and nobody has measured them with a redirect. Spike 4's constraint allows keeping them opt-in as long as that is said."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal. Taken almost whole. Changes:\n- the location test reuses Scanner's existing IsAtOrUnder;\n- the parent is derived with string operations in the counted form;\n- ChooseTestsRoot is made pure, with its own InlineData Facts;\n- the Windows-folder Facts get a root-spelling Theory, an outside-%SystemRoot% case and a tree-gone assertion.\nIts over_engineering_flag was honoured: nothing it listed as over-built is built."
+   }
+  ],
+  "coherence_check": "There was one proposal, so there is no composition to check. Nothing in this design has yet survived a disagreement, and the reviewer is the first to argue with it.\n\nEach seam was checked against the measurements instead:\n\n1. Spike 3's 'go' ran experiment 1's patch, which is the attempted-open rule spike 1 measured under-counting on tree (d). This design keys on the child's successful keep-open instead. On tree (b) every child keep-open succeeds, so the two rules are identical and spike 3's kept 4 of 7 and 693/693 carry over. On tree (d) only the prediction exists (kept 1 == truth 1). It is a material case owed to build, not a claim.\n\n2. Redirect vs criterion 3. The TempTree redirect alone would hide the side effect from the routine suite. It is kept only paired with never-skipped Facts that build in %SystemRoot%\\Temp on purpose. Architecture rule 1 keeps them from being skipped or traited out.\n\n3. Reorder vs redirect. Deepest-first back-dating acts only where the redirect does not reach. They do not interact.\n\n4. Two assertion strengths. The bug test asserts kept <= unmoved and the new Facts assert kept == unmoved. With the correction both hold (4 == 4), and nothing contradicts.\n\n5. Contract vs decided questions. The ScanResult text changes meaning, but the counters stay internal (Q-103, Q-159). So there is no KnownWorkarounds entry and no notice, and Q-186's workaround list is untouched.\n\n6. Spike 4's constraints:\n   - the cloud rigs stay unredirected, and that is said and filed;\n   - the shared %LOCALAPPDATA%\\Temp\\fsa-tests is separated by per-tree GUID folders;\n   - its 4 stale directories are left alone.\n\n7. What was redesigned at the seams:\n   - the Scanner's location test reuses the existing sync-root IsAtOrUnder, not a second comparison with its own case and boundary rules;\n   - the parent is derived by string from the form CountListingOpen received, normalised for a trailing separator. This is tested by the trailing-separator spelling case;\n   - ChooseTestsRoot takes its inputs, so its branches have a machine check.\n\nArchitecture rules: two, both over tests. The production change is a few lines inside Scanner and constrains nothing about which project may depend on which.\n\nRule 2's patterns have not been run against the existing Core.Tests files. If one fires on a test that only uses 'C:\\Windows\\Temp' as a sample string and builds nothing there, that file goes into except_files at build. The rule is not to be deleted.",
+  "cases": [
+   {
+    "behaviour": "count the folders whose last access the scan kept",
+    "shape": "a nested 7-folder tree under %SystemRoot%\\Temp, back-dated deepest-first, where root, plain and links each have two child folders",
+    "why": "This is the defect: (7,7) against 4 unmoved. Per-child removal would give 1, not 4, so this also exercises removal at most once. The root goes through ListRoot's own count path.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-096-LastAccessUnderWindowsTemp/SL-096-LastAccessUnderWindowsTemp.Tests.csproj exits 0; and with $env:TEMP=$env:TMP='C:\\WINDOWS\\TEMP', eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests --filter \"FullyQualifiedName~LastAccessUnderSystemRootTests.AScanUnderTheWindowsTempFolderCountsAsKeptOnlyTheFoldersThatStayedOld\" passes, reporting kept 4 of 7",
+    "material": true
+   },
+   {
+    "behaviour": "count the folders whose last access the scan kept",
+    "shape": "a kept folder whose only child folder refuses FILE_WRITE_ATTRIBUTES (deny ACE, no inheritance), under %SystemRoot%\\Temp",
+    "why": "Spike 1 measured that a rule keyed on attempted opens gives kept 0 while R still reads 48 h old (truth 1). A refused child open does not move the parent (step 6). The successful-open rule is predicted to give 1, but has never been run.",
+    "check": "$env:TEMP=$env:TMP='C:\\WINDOWS\\TEMP'; eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests --filter \"FullyQualifiedName~LastAccessUnderSystemRootTests.AChildThatRefusesWriteAttributesLeavesItsParentCountedAsKept\" passes with asked 2, kept 1",
+    "material": true
+   },
+   {
+    "behaviour": "count the folders whose last access the scan kept",
+    "shape": "the scan root is spelled in lower case (c:\\windows\\temp\\fsa-tests\\<guid>)",
+    "why": "GetFolderPath returns C:\\WINDOWS. A case-sensitive comparison, in IsAtOrUnder or in the set, would miss and over-count (7 vs 4). Spike 1 measured that luafv acts under both spellings.",
+    "check": "the lower-case InlineData row of LastAccessUnderSystemRootTests.AScanUnderTheWindowsTempFolderCountsAsKeptOnlyTheFoldersThatStayedOld, under TEMP=C:\\WINDOWS\\TEMP",
+    "material": true
+   },
+   {
+    "behaviour": "count the folders whose last access the scan kept",
+    "shape": "the scan root is given with a trailing backslash",
+    "why": "The set holds the root as ListRoot passed it. If the children's parent string is not normalised the same way, the root is never taken out and kept reads 5 against 4.",
+    "check": "the trailing-separator InlineData row of LastAccessUnderSystemRootTests.AScanUnderTheWindowsTempFolderCountsAsKeptOnlyTheFoldersThatStayedOld, under TEMP=C:\\WINDOWS\\TEMP",
+    "material": true
+   },
+   {
+    "behaviour": "count the folders whose last access the scan kept",
+    "shape": "the same nested tree outside %SystemRoot% (TempTree's default root)",
+    "why": "The correction must never fire outside %SystemRoot%. Spike 1 under user TEMP gave kept == asked == old, and the existing counter assertions (LastAccessTests :85 (4,3), HeldOpenTreeTests :82-83) depend on it.",
+    "check": "eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests --filter \"FullyQualifiedName~LastAccessUnderSystemRootTests.OutsideTheWindowsFolderEveryKeptFolderStaysKept|FullyQualifiedName~LastAccessTests|FullyQualifiedName~HeldOpenTreeTests\" passes, once with TEMP=C:\\WINDOWS\\TEMP and once with TEMP=%LOCALAPPDATA%\\Temp",
+    "material": true
+   },
+   {
+    "behaviour": "run the whole suite as the engine runs it",
+    "shape": "TEMP=TMP=C:\\WINDOWS\\TEMP",
+    "why": "This is the slice's criterion 2. It was 689/692 with exactly the three named tests failing.",
+    "check": "$env:TEMP=$env:TMP='C:\\WINDOWS\\TEMP'; pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx exits 0 with Failed: 0 (expected total 692 plus the new cases)",
+    "material": true
+   },
+   {
+    "behaviour": "run the whole suite as the person runs it",
+    "shape": "TEMP=TMP is the user's own (%LOCALAPPDATA%\\Temp)",
+    "why": "The redirect must not fire, the counting-rule tests still run in %TEMP%\\fsa-tests, and the Windows-folder Facts still build in C:\\Windows\\Temp whatever TEMP says.",
+    "check": "$env:TEMP=$env:TMP=\"$env:LOCALAPPDATA\\Temp\"; pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx exits 0 with Failed: 0",
+    "material": true
+   },
+   {
+    "behaviour": "choose where test trees are built",
+    "shape": "TEMP is at or under %SystemRoot%, in any letter case (C:\\WINDOWS\\TEMP\\, c:\\windows\\temp)",
+    "why": "This is the redirect branch. Spike 4 measured redirect=True with root=C:\\Users\\sshub\\AppData\\Local\\Temp\\fsa-tests.",
+    "check": "eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests --filter \"FullyQualifiedName~TempTreeRootTests\" passes (redirect rows)",
+    "material": true
+   },
+   {
+    "behaviour": "choose where test trees are built",
+    "shape": "TEMP shares %SystemRoot%'s name prefix but lies outside it (C:\\WindowsTemp\\, C:\\Windows.old\\Temp\\)",
+    "why": "A prefix comparison without a separator boundary would redirect wrongly. The same boundary rule guards the Scanner, through IsAtOrUnder.",
+    "check": "eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests --filter \"FullyQualifiedName~TempTreeRootTests\" passes (prefix rows return tempPath\\fsa-tests)",
+    "material": true
+   },
+   {
+    "behaviour": "choose where test trees are built",
+    "shape": "the redirect target is itself under %SystemRoot% (a SYSTEM or service profile, e.g. C:\\Windows\\System32\\config\\systemprofile\\AppData\\Local)",
+    "why": "Without the named refusal, such a run would land back in luafv's namespace and reproduce the three red tests silently.",
+    "check": "eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests --filter \"FullyQualifiedName~TempTreeRootTests\" passes (refusal row asserts the exception and its named cause)",
+    "material": true
+   },
+   {
+    "behaviour": "clean up a test tree built in C:\\Windows\\Temp",
+    "shape": "the tree holds a folder with a deny FILE_WRITE_ATTRIBUTES ACE, inside a folder this user cannot list",
+    "why": "Remove-Item was denied there, and the survey already left an unfindable folder behind. A failed cleanup cannot be found or removed without an administrator.",
+    "check": "every LastAccessUnderSystemRootTests case asserts Directory.Exists(tree root) is false after Dispose; it runs in the filter above under TEMP=C:\\WINDOWS\\TEMP",
+    "material": true
+   },
+   {
+    "behaviour": "keep an over-reporting regression visible in the routine suite",
+    "shape": "the Scanner correction is reverted",
+    "why": "This is criterion 3: a Fact that passes without the fix proves nothing. Spike 3's first revert was silently skipped by MSBuild timestamps.",
+    "check": "revert the Scanner.cs correction hunk in a scratch copy, touch Scanner.cs, run eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests --filter \"FullyQualifiedName~LastAccessUnderSystemRootTests\" under TEMP=C:\\WINDOWS\\TEMP: it must fail, reporting kept 7 against 4",
+    "material": true
+   },
+   {
+    "behaviour": "back-date a fixture before judging the scan",
+    "shape": "HeldOpenTreeTests or LastAccessTests trees placed in %SystemRoot%\\Temp after the deepest-first reorder",
+    "why": "Not owed a new test. Spike 2 measured 3 of 3 runs failing at the scan assertions (:78, :87) instead of the preconditions. Under the redirect TempTree never lands there, so checking this unattended would need a location override for these two classes, which is not worth building. The Windows-folder Facts cover the effect in that location.",
+    "check": "none: settled by spike 2's record (deepest-first-backdating-under-windows-temp)",
+    "material": false
+   },
+   {
+    "behaviour": "count the folders whose last access the scan kept",
+    "shape": "a folder that is never asked (an SMB share, a cloud placeholder or sync root, the excluded container store) or a scan that is cancelled",
+    "why": "Not owed a new test. The correction runs only after io.KeptLastAccess is true, which needs the existing local-NTFS, non-cloud gates, so nothing new branches there. Cancelled counters were already partial. The SMB check (O-029: LastAccessAsked == 0) is still owed by SL-056, not by this slice.",
+    "check": "none: no new branch; existing gate tests",
+    "material": false
+   }
+  ],
+  "architecture_rules": [
+   {
+    "name": "the Windows-folder last-access tests are never skipped or filtered out of the default suite",
+    "files": "tests/FsAnalyser.Core.Tests/LastAccessUnderSystemRootTests.cs",
+    "must_not_match": [
+     "Skip\\s*=",
+     "Assert\\.Skip(When|Unless)?\\s*\\(",
+     "Skippable(Fact|Theory)",
+     "Trait\\(\\s*\"(Network|Cloud)\""
+    ],
+    "because": "Once TempTree redirects out of %SystemRoot%, these are the only default-suite tests that run where the scan's side effect exists. Skipping them, or tagging them with a Trait the default VSTestTestCaseFilter excludes, puts the over-reporting counter back into silence. That is the 'regression hides in the noise' this slice exists to end."
+   },
+   {
+    "name": "no Core test builds a fixture in %SystemRoot%\\Temp except the deliberate one",
+    "files": "tests/FsAnalyser.Core.Tests/**/*.cs",
+    "must_not_match": [
+     "SpecialFolder\\.Windows\\s*\\)\\s*,\\s*\"Temp\"",
+     "(?i)\"C:\\\\{1,2}Windows\\\\{1,2}Temp",
+     "(?i)%(SystemRoot|windir)%\\\\{1,2}Temp"
+    ],
+    "except_files": [
+     "tests/FsAnalyser.Core.Tests/LastAccessUnderSystemRootTests.cs",
+     "tests/FsAnalyser.Core.Tests/TempTreeRootTests.cs",
+     "tests/FsAnalyser.Core.Tests/TempTree.cs"
+    ],
+    "because": "In %SystemRoot%\\Temp a folder's last access moves whenever one of its children is opened with a write-class access, so a fixture placed there passes or fails on that driver behaviour rather than on what it tests. That is how the three tests went red unnoticed through six validations. Also, this user cannot list that folder, so a tree that a failed cleanup leaves there can be neither found nor removed without an administrator."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "ScanResult.LastAccessKept (internal counter)",
+    "kind": "function",
+    "auth_model": "Ordinary user, in-process. Visible only to assemblies granted InternalsVisibleTo (FsAnalyser.Core.Tests, ScanArm).",
+    "error_cases": "No new error paths.\n- A refused write-attributes open still falls back to the plain open and counts as asked but not kept, and it never takes a parent out.\n- A cancelled scan leaves partial counters, as now.",
+    "notes": "New meaning: asked folders whose keep-open succeeded, minus folders at or under %SystemRoot% that the scan's own later successful keep-open of a child folder moved.\n\nInvariants: 0 <= kept <= asked; no folder is counted twice or taken out twice; outside %SystemRoot% the meaning is exactly as before.\n\nThe App never shows it (Q-103, Q-159)."
+   },
+   {
+    "name": "TempTree.ChooseTestsRoot(tempPath, windowsDir, localAppData)",
+    "kind": "function",
+    "auth_model": "Test process, ordinary user",
+    "error_cases": "Throws with a named cause when the redirect target is itself at or under windowsDir. The NTFS and compression refusals still apply to the chosen root.",
+    "notes": "- tempPath at or under windowsDir (case-insensitive, separator boundary): localAppData\\Temp\\fsa-tests.\n- Otherwise: tempPath\\fsa-tests.\n\nEngine-TEMP and user-TEMP runs share the same folder and are kept apart by per-tree GUID folders."
+   },
+   {
+    "name": "TempTree(string testsRoot)",
+    "kind": "function",
+    "auth_model": "Test process, ordinary user",
+    "error_cases": "The same NTFS and compression refusals as the default constructor. Dispose clears deny ACEs, then deletes with .NET Directory.Delete.",
+    "notes": "Internal. Used only by LastAccessUnderSystemRootTests."
+   },
+   {
+    "name": "Acceptance: SL-096 bug project",
+    "kind": "cli",
+    "notes": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-096-LastAccessUnderWindowsTemp/SL-096-LastAccessUnderWindowsTemp.Tests.csproj must exit 0. The project stays outside FsAnalyser.slnx."
+   },
+   {
+    "name": "Full suite under the engine's TEMP",
+    "kind": "cli",
+    "notes": "$env:TEMP=$env:TMP='C:\\WINDOWS\\TEMP'; pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx must exit 0 with Failed: 0. The same command under the user's TEMP gives the same result. The opt-in Cloud=CF-SYNC-ROOT and Network traits are not covered: they still fail 4/4 under the engine's TEMP (filed)."
+   },
+   {
+    "name": "Mutation check of the Windows-folder Facts",
+    "kind": "cli",
+    "notes": "In a scratch copy:\n- With the correction hunk reverted (touch Scanner.cs before rebuilding), the nested-tree Fact must fail with kept 7 against 4.\n- With the rule keyed on attempted rather than successful child opens, the refusing-child Fact must fail with kept 0 against 1."
+   }
+  ],
+  "outside_claims": [
+   {
+    "claim": "In C:\\Windows\\Temp on this PC, opening a child file or folder with a write-class access (FILE_WRITE_ATTRIBUTES, WRITE_DATA, DELETE, WRITE_DAC and others) and OPEN_EXISTING moves the parent folder's last-access time to now, synchronously inside the child's CreateFile. Read-class opens do not. In %LOCALAPPDATA%\\Temp on the same NTFS volume nothing moves.",
+    "evidence": "measured",
+    "source": "survey probe #2; investigation rounds 1-2 (10/10 at open, 0 at close); probe11 (30/30 vs 0/30 vs 0/30)",
+    "if_wrong": "The correction would take out parents that did not move, so kept would under-count. The equality Facts would fail and name it."
+   },
+   {
+    "claim": "A refused write-attributes open of a child folder does not move its parent.",
+    "evidence": "measured",
+    "source": "spike kept-counter-uncounts-parent-of-child-keep-open-under-system, step 6 (tree d, R unmoved in both locations and both spellings)",
+    "if_wrong": "The rule would have to key on attempted opens, and the refusing-child Fact would fail."
+   },
+   {
+    "claim": "The component that moves the parent is luafv.sys (UAC File Virtualization).",
+    "evidence": "measured",
+    "source": "probe11: pool tag 'Luaf' made 2 allocations per triggering open and none otherwise. This is correlation only; fltmc and tracing need an administrator.",
+    "if_wrong": "Only the attribution in the triage record and doc comment would be wrong. The rule is keyed on location, not on the driver."
+   },
+   {
+    "claim": "luafv's namespace is %ProgramFiles%, %ProgramData% and %SystemRoot%, excluding some subdirectories.",
+    "evidence": "recalled",
+    "source": "Russinovich, as quoted by the investigation from github.com/danzek/annotationis UACVirtualization.md. Not in this run's fetched block.",
+    "if_wrong": "The scope may be too narrow: kept still over-counts in writable folders under %ProgramData%/%ProgramFiles%. Widening is one line."
+   },
+   {
+    "claim": "The effect occurs although the process token has UAC virtualization disabled (VirtualizationEnabled=0, not elevated, medium IL), so the token's virtualization state does not predict it.",
+    "evidence": "measured",
+    "source": "investigation round 2 token query",
+    "if_wrong": "A token check could gate the correction. The design uses none, so nothing breaks."
+   },
+   {
+    "claim": "DisableLastAccess=2 resolves to 'System Managed, Last Access Time Updates ENABLED' on this PC and is not the cause.",
+    "evidence": "measured",
+    "source": "fsutil behavior query disablelastaccess in the survey and in both step-3 runs",
+    "if_wrong": "The triage verdict for the setting would be wrong. The fix is unaffected."
+   },
+   {
+    "claim": "NTFS records a last-access update only when the stored value is more than about an hour older than now, so fixtures must back-date (48 h) to observe a move.",
+    "evidence": "recalled",
+    "source": "stated by the investigation; no page fetched",
+    "if_wrong": "The 47 h threshold stays conservative. Only 'nothing moved' conclusions could hide a move."
+   },
+   {
+    "claim": "SetFileInformationByHandle(FileBasicInfo) with LastAccessTime = -1 suppresses last-access updates only for operations through that handle. Another component's open of the same folder can still stamp it.",
+    "evidence": "recalled",
+    "source": "memory; consistent with the measured fact that parents move",
+    "if_wrong": "Holding the parent's -1 handle open across its children's opens might avoid the side effect. That is a product-level alternative this design does not take."
+   },
+   {
+    "claim": "Environment.GetFolderPath(SpecialFolder.Windows) returns C:\\WINDOWS here, while TEMP is C:\\WINDOWS\\TEMP and the bug test's root is spelled C:\\WINDOWS\\Temp.",
+    "evidence": "measured",
+    "source": "spike temptree-redirect-out-of-systemroot roots log; repro message",
+    "if_wrong": "Nothing breaks, as long as every comparison is case-insensitive."
+   },
+   {
+    "claim": "HKCU\\Environment TEMP and TMP are REG_EXPAND_SZ %USERPROFILE%\\AppData\\Local\\Temp, which expands to %LOCALAPPDATA%\\Temp.",
+    "evidence": "measured",
+    "source": "spike engine-passes-user-temp-from-hkcu",
+    "if_wrong": "The redirect target would not be 'the user's own TEMP'. The trees stay on NTFS either way."
+   },
+   {
+    "claim": "This ordinary user can create, write and delete (via [IO.Directory]::Delete) under C:\\Windows\\Temp, set a DACL on folders they created there, but cannot list C:\\Windows\\Temp, read its ACL, or delete with PowerShell Remove-Item.",
+    "evidence": "measured",
+    "source": "survey probes #1-#2 and Get-Acl; spikes 1 and 3 built and removed trees there",
+    "if_wrong": "The Windows-folder Facts fail at setup. They never skip."
+   },
+   {
+    "claim": "For an ordinary user, FILE_WRITE_ATTRIBUTES is refused on about 99% of system folders, so few folders under %SystemRoot% are ever counted kept.",
+    "evidence": "recalled",
+    "source": "Q-103's recorded figure; not measured by this slice",
+    "if_wrong": "The per-scan set could approach C:\\Windows's ~157,748 folders (tens of MB against the 1 GB budget). Then key it on folder identity instead of path."
+   },
+   {
+    "claim": ".NET Directory/File.SetLastAccessTimeUtc open the target with FILE_WRITE_ATTRIBUTES, so back-dating parents first resets them under luafv.",
+    "evidence": "measured",
+    "source": "investigation step 1: fixture order reset 6 of 8 folders in C:\\WINDOWS\\TEMP, deepest-first 0, user TEMP 0",
+    "if_wrong": "The reorder would not be needed. It would still be harmless."
+   },
+   {
+    "claim": "MSBuild's incremental build can skip recompiling a reverted source file whose timestamp is older than its output.",
+    "evidence": "measured",
+    "source": "spike combined-redirect-deepest-first-counter-fix, invalid runs c1-c3",
+    "if_wrong": "Nothing breaks. The mutation check touches the file anyway."
+   }
+  ],
+  "prior_art": [
+   {
+    "pattern": "A last-access test that depends on the environment gets labelled 'Known Build Error' and stays open for years. This is the 'known red' failure this slice avoids by diagnosing and pinning instead.",
+    "where": "https://github.com/dotnet/runtime/issues/97020",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2024-01-16 (updated 2026-04-08)"
+   },
+   {
+    "pattern": "A Windows last-access test passed or failed depending on the machine's NtfsDisableLastAccessUpdate value. That setting is the usual first suspect; here it was measured not to be the cause.",
+    "where": "https://lists.llvm.org/pipermail/llvm-commits/Week-of-Mon-20200810/818208.html",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2020-08-12"
+   },
+   {
+    "pattern": "DisableLastAccess=2 ('System Managed') makes last-access behaviour depend on the machine and its conditions, which is why fixtures back-date and assert a precondition before judging the scan.",
+    "where": "https://www.kazamiya.net/en/NTFS_Timestamps",
+    "authority": "community",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Classify a red test as environment drift or a defect before fixing it, and record the alternatives that were rejected.",
+    "where": "https://tessl.io/registry/testland/ci-failure-triage",
+    "authority": "community",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Mock file systems do not keep directory LastAccessTime, which supports keeping last-access tests on real NTFS trees.",
+    "where": "https://github.com/TestableIO/System.IO.Abstractions/issues/839",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2022-04-29"
+   },
+   {
+    "pattern": "Test frameworks root temporary fixtures in a per-user base folder they choose themselves, not straight in an inherited shared temp folder.",
+    "where": "pytest tmp_path_factory",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "CI agents and services running as LocalSystem inherit TEMP=C:\\Windows\\Temp, a well-known source of tests that fail only on build machines.",
+    "where": "Windows service / CI agent environments",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "UAC file virtualization (luafv) covers %ProgramFiles%, %ProgramData% and %SystemRoot%.",
+    "where": "Mark Russinovich, UAC internals article (quoted by the investigation, not in this run's search block)",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Test tooling on shared or service machines (pytest's per-user tmp base, CI agents running as LocalSystem)",
+   "pattern": "Do not trust an inherited TEMP for fixtures: root them in a per-user base you choose. Keep one deliberate test in the hostile location so its behaviour stays visible and does not get filed as known noise.",
+   "transfer_found": true,
+   "rationale": "The project's failure is exactly the CI-agent one: the engine's shell inherits the machine TEMP. The usual cure, a per-user base, would on its own hide a real product effect that exists only in that location. So the transfer is taken only paired with explicit Facts in that location, protected by architecture rule 1.",
+   "invariants": [
+    {
+     "precondition": "%LOCALAPPDATA%\\Temp is outside luafv's reach and on NTFS, on the same volume",
+     "status": "holds",
+     "evidence": "Probe #2: user Temp moved in 0 of 4 cases. Spike 4: 692/692 with redirect=True; the NTFS check passes."
+    },
+    {
+     "precondition": "LocalApplicationData resolves to the ordinary user's profile in the engine's shell",
+     "status": "holds",
+     "evidence": "Spike 4 roots log: GetTempPath=C:\\WINDOWS\\TEMP\\, root=C:\\Users\\sshub\\AppData\\Local\\Temp\\fsa-tests"
+    },
+    {
+     "precondition": "The redirect does not hide the side effect: a default-suite test in %SystemRoot%\\Temp fails without the counter fix",
+     "status": "holds",
+     "evidence": "Spike 3 (c), runs d1-d3: exit 1, 'kept 7 of 7; 4 of 7 folders still at least 47 h old'"
+    },
+    {
+     "precondition": "The successful-keep-open rule matches the truth when a child refuses write-attributes (tree d)",
+     "status": "must-verify",
+     "evidence": "Not run. Spike 1 step 6 showed a refused child open leaves R unmoved, which predicts kept 1 == truth 1. The attempted-open variant measured kept 0. This is material case 2."
+    },
+    {
+     "precondition": "A parent is counted before any of its children is opened, and the counters change on one thread",
+     "status": "holds",
+     "evidence": "The survey's read of the walk (Scanner.cs:182-193). SL-042: the listing walk is single-threaded. ProbePass only probes files."
+    },
+    {
+     "precondition": "luafv moves the parent the same way on Windows 10, and in %ProgramData% and %ProgramFiles%",
+     "status": "must-verify",
+     "evidence": "Unmeasured. Only C:\\Windows\\Temp on Windows 11 26200 was measured. Filed for a person."
+    },
+    {
+     "precondition": "%SystemRoot%\\Temp can be written by the ordinary user, and luafv is running",
+     "status": "holds",
+     "evidence": "The survey and spikes 1 and 3 created and deleted trees there. sc query luafv: RUNNING. EnableLUA=1."
+    }
+   ]
+  },
+  "channeled_experts": [
+   "Mark Russinovich (UAC file virtualization internals)",
+   "Michael Feathers (characterization tests that pin current behaviour)",
+   "Martin Fowler (eradicating non-deterministic and 'known' red tests)"
+  ],
+  "taste_disagreements": [
+   "Where the TEMP problem is fixed:\n- TempTree redirect (chosen; works whatever launches the suite);\n- the engine launching with the HKCU TEMP (spike 5 go; outside this repo);\n- TempTree refusing a %SystemRoot% TEMP outright (keeps the suite red under the engine).",
+   "Whether 'Counting-rule tests build real NTFS trees in %TEMP%' is honoured by %LOCALAPPDATA%\\Temp when the process TEMP is the machine's. This design reads it as the user's own TEMP (the HKCU value, measured). A stricter reader may disagree.",
+   "kept == unmoved (chosen; also catches under-counting, and trips if luafv stops acting) vs kept <= unmoved (the bug test's weaker form, which would not trip on a machine without luafv).",
+   "Whether default-suite Facts should write into C:\\Windows\\Temp at all, a folder this user cannot list, so a failed cleanup there is unrecoverable without an administrator.",
+   "Whether the counter correction deserves a KnownWorkarounds checkbox. This design says no: it changes no scan behaviour and corrects this project's own false count.",
+   "Parent identity in the correction: path text in a per-scan set (chosen) vs a per-folder flag or index carried by the walk (no path handling, but it changes the walk's work items)."
+  ],
+  "whats_new": [
+   "Scanner.cs: CountListingOpen takes the folder's path; a per-scan set of kept folders at or under %SystemRoot%; a parent taken out of LastAccessKept once when a child folder's keep-open succeeds",
+   "ScanResult.cs:190-194: LastAccessKept contract text restated, with the %SystemRoot% limit",
+   "TempTree.cs: pure ChooseTestsRoot redirect out of %SystemRoot%, a named refusal for a target that is also under it, and an internal TempTree(string testsRoot) constructor",
+   "HeldOpenTreeTests.cs:235 and LastAccessTests.cs:69: back-date the deepest entries first",
+   "tests/FsAnalyser.Core.Tests/LastAccessUnderSystemRootTests.cs: nested tree in three root spellings, refusing child, and the same tree outside %SystemRoot%, each asserting kept == unmoved and the tree removed",
+   "tests/FsAnalyser.Core.Tests/TempTreeRootTests.cs: InlineData rows over the redirect branches",
+   "docs/design/SL-096-last-access-under-windows-temp.md: the verdict for each test, the measured mechanism, what was ruled out, and the scope nobody has measured",
+   "Two architecture rules over Core.Tests: the Windows-folder Facts are never skipped or traited out; no other Core test builds in %SystemRoot%\\Temp"
+  ],
+  "whats_reused": [
+   "SynchronousIoCancel.KeptLastAccess and TryOpenKeepingLastAccess, unchanged",
+   "Scanner's DecideLastAccess/KeepsLastAccess gates and its existing IsAtOrUnder comparison (the sync-root rule)",
+   "TempTree's NTFS and compression refusals, SDDL deny helper and Dispose cleanup",
+   "Spike 4's redirect shape, spike 2's two reorder lines, spike 3's Fact shape and tree",
+   "The engine's untracked SL-096 bug test as the acceptance check, unchanged and kept out of FsAnalyser.slnx",
+   "SL-089's precedent of rooting window cases under %LOCALAPPDATA%\\Temp in engine shells",
+   "eng/dotnet.ps1 with the repo-local 10.0.401 SDK"
+  ],
+  "filed_for_later": [
+   {
+    "what": "Remove the survey's leftover folder C:\\Windows\\Temp\\fsa-sl096survey-<8 hex>\\ (an empty child\\ and a 10-byte f.txt).",
+    "why": "This user cannot list C:\\Windows\\Temp, so the folder's name cannot be recovered. Only an administrator can find and remove it.",
+    "who": "person"
+   },
+   {
+    "what": "Confirm that luafv.sys is what moves the parent: fltmc instances, a driver trace, or a run with luafv stopped.",
+    "why": "Each of these needs an administrator. The design keys on location and does not depend on which driver it is.",
+    "who": "person"
+   },
+   {
+    "what": "Measure whether a write-class child open moves the parent in %ProgramData% and %ProgramFiles% too. If it does, widen the Scanner's location list (one line).",
+    "why": "It means writing outside a temp folder, which is the person's step. Nothing there has been measured.",
+    "who": "person"
+   },
+   {
+    "what": "Run LastAccessUnderSystemRootTests and the 23 last-access tests on Windows 10.",
+    "why": "Windows 10 is a supported target (Q-192, Q-199), but no Windows 10 machine exists.",
+    "who": "person"
+   },
+   {
+    "what": "Decide whether Q-190 is closed by docs/design/SL-096-last-access-under-windows-temp.md.",
+    "why": "Closing a project question is a person's decision. This slice supplies the measured triage.",
+    "who": "person"
+   },
+   {
+    "what": "Make the engine launch test runs with the user's HKCU TEMP/TMP (spike 5 measured the stand-in: 23/23).",
+    "why": "That code is taad_v3's launch.py, the person's tooling outside this repository.",
+    "who": "person"
+   },
+   {
+    "what": "Route SyncRootRig/CloudRig (opt-in Cloud=CF-SYNC-ROOT) through TempTree's root choice so they pass under the engine's TEMP.",
+    "why": "Spike 4 found they fail 4/4 there (UnauthorizedAccess at CloudRig.cs:73 sweeping C:\\WINDOWS\\TEMP). They are outside the three tests and outside the default filter.",
+    "who": "slice"
+   },
+   {
+    "what": "Decide whether the scan should avoid moving last access in luafv's namespace, rather than only report it truthfully. Candidates are plain-open children under %SystemRoot%, or holding parent handles. Include the root's own parent, which also moves and is uncounted.",
+    "why": "This is product-level work. The plain-open experiment was never run, and Q-159 defers last-access work until file-age features are designed.",
+    "who": "slice"
+   }
+  ]
+ }
+}

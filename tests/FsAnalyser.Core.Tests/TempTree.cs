@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
+using FsAnalyser.Core.Native;
+using FsAnalyser.Core.Scanning;
 
 namespace FsAnalyser.Core.Tests;
 
@@ -10,25 +12,63 @@ namespace FsAnalyser.Core.Tests;
 /// Windows' own error text; nothing is skipped. Dispose removes deny ACEs first, then links, then the
 /// trees, and throws if anything was left behind.
 /// </summary>
+/// <remarks>
+/// A %TEMP% at or under the Windows folder (a shell that inherited the machine's TEMP, as the engine's does) is not used:
+/// the trees go to the user's own %LOCALAPPDATA%\Temp\fsa-tests instead (<see cref="ChooseTestsRoot"/>). Under the
+/// Windows folder, opening a child with write access moves its parent's last-access time (SL-096), so a fixture there
+/// passes or fails on that, not on what it tests. Only LastAccessUnderSystemRootTests builds there, on purpose, through
+/// the constructor that takes its root.
+/// </remarks>
 internal sealed class TempTree : IDisposable
 {
     public const long MiB = 1024 * 1024;
 
-    private static readonly string TestsRoot = Path.Combine(Path.GetTempPath(), "fsa-tests");
+    private readonly string _testsRoot;
     private readonly string _id = Guid.NewGuid().ToString("N");
     private readonly List<(string Path, bool IsDirectory, string Sddl)> _denied = [];
     private readonly List<(string Path, bool IsDirectory)> _links = [];
     private readonly List<string> _outside = [];
 
     public TempTree()
+        : this(ChooseTestsRoot(Path.GetTempPath(), Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)))
     {
-        string temp = Path.GetTempPath();
-        string format = new DriveInfo(Path.GetPathRoot(temp)!).DriveFormat;
+    }
+
+    /// <summary>A tree under <paramref name="testsRoot"/>, refused the same way: NTFS only, never compressed.</summary>
+    internal TempTree(string testsRoot)
+    {
+        string format = new DriveInfo(Path.GetPathRoot(testsRoot)!).DriveFormat;
         if (format != "NTFS")
-            throw new InvalidOperationException($"%TEMP% ({temp}) is on {format}. The counting-rule tests need NTFS.");
-        Root = Path.Combine(TestsRoot, _id);
+            throw new InvalidOperationException($"{testsRoot} is on {format}. The counting-rule tests need NTFS.");
+        _testsRoot = testsRoot;
+        Root = Path.Combine(testsRoot, _id);
         CreateRoot(Root);
     }
+
+    /// <summary>
+    /// Where the trees go: <paramref name="tempPath"/>\fsa-tests, unless <paramref name="tempPath"/> is at or under
+    /// <paramref name="windowsDir"/> (without case, at a separator, as the scanner compares), when it is the user's own
+    /// <paramref name="localAppData"/>\Temp\fsa-tests. Refused by name when that is under the Windows folder too.
+    /// </summary>
+    internal static string ChooseTestsRoot(string tempPath, string windowsDir, string localAppData)
+    {
+        if (string.IsNullOrWhiteSpace(windowsDir) || !Path.IsPathFullyQualified(windowsDir) || !UnderWindows(tempPath, windowsDir))
+            return Path.Combine(tempPath, "fsa-tests");
+        string target = string.IsNullOrWhiteSpace(localAppData) ? "" : Path.Combine(localAppData, "Temp");
+        if (target.Length == 0 || !Path.IsPathFullyQualified(target) || UnderWindows(target, windowsDir))
+        {
+            throw new InvalidOperationException(
+                $"%TEMP% ({tempPath}) is under the Windows folder ({windowsDir}), where opening a child with write access moves its " +
+                "parent's last-access time (SL-096), so the tests build their trees in the user's own %LOCALAPPDATA%\\Temp instead. " +
+                $"Here that is '{target}', which is not outside the Windows folder either: this process runs under a system or " +
+                "service profile. Run the tests as an ordinary user, or point TEMP and TMP at a folder outside the Windows folder.");
+        }
+        return Path.Combine(target, "fsa-tests");
+    }
+
+    private static bool UnderWindows(string path, string windowsDir) =>
+        Scanner.IsAtOrUnder(LongPath.NormalizeRoot(path).Win32, LongPath.NormalizeRoot(windowsDir).Win32);
 
     // A folder made under an NTFS-compressed one is compressed too, and there TextFile compresses with no Compress():
     // every on-disk and probe count would shift with no cause named (HF-027). Refused by name, and removed again. The
@@ -60,7 +100,7 @@ internal sealed class TempTree : IDisposable
     /// <summary>A folder beside the tree, outside its root, removed with it.</summary>
     public string Outside(string name)
     {
-        string path = Path.Combine(TestsRoot, $"{_id}-{name}");
+        string path = Path.Combine(_testsRoot, $"{_id}-{name}");
         Directory.CreateDirectory(path);
         _outside.Add(path);
         return path;

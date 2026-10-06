@@ -1127,3 +1127,32 @@ rules:
     - '(?m)(?i)\bCreateSubKey[ \t]*\([^\r\n]*Explorer\\{1,2}Advanced'
     - '(?m)\b(RegSetValue|RegSetKeyValue|SHSetValue|SHRegSetUSValue)\w*'
     because: 'Only a person may change Explorer''s Hidden setting (SL-091). R-003 asserts refusals through the hook''s hide-only injection precisely so that nothing unattended needs the real setting changed; a case that set Hidden=2 itself would change the owner''s desktop, and if killed mid-run would leave it changed. The patterns name the write spellings a window script or the hook reaches for, closed as a class (review n2) in tests/FsAnalyser.Core.Tests/ExplorerSettingsWriteCorpus.json, whose test reads these patterns from this entry: an ItemProperty cmdlet on Explorer\Advanced, or one naming Hidden or ShowSuperHidden with -Name wherever the path is held, reg.exe add and delete, a key''s SetValue of either value in either quote, the static ::SetValue, a writable OpenSubKey and any CreateSubKey of Explorer\Advanced, the shell call with its set flag true, and the Win32 and shlwapi registry writes. Settled rather than twinned: it guards test tooling that validate''s Fitness check reads, and the hook is outside FsAnalyser.slnx. Fitness blanks # comments in .ps1 and // and /* */ in .cs (review m5), so a commented example cannot trip it. A positional -Name, or a key path held in a variable with no value name on the same line, passes it, as the corpus records.'
+
+  # settled by SL-096
+  - name: the Windows-folder last-access tests are never skipped or filtered out of the default suite
+    files: tests/FsAnalyser.Core.Tests/LastAccessUnderSystemRootTests.cs
+    must_not_match:
+    - '\bSkip\w*\s*='
+    - 'Assert\.Skip(When|Unless)?\s*\('
+    - 'Skippable(Fact|Theory)'
+    - '\bTrait(Attribute)?\s*\('
+    - '[\[,]\s*(?!Fact\b|Theory\b)\w+(Fact|Theory)\b'
+    - ':\s*(FactAttribute|TheoryAttribute)\b'
+    because: 'Once TempTree redirects out of %SystemRoot%, these are the only default-suite tests that run where the scan''s side effect exists. Skipping them, or tagging them with any Trait (the default VSTestTestCaseFilter excludes the opt-in ones), puts the over-reporting counter back into silence. That is the ''regression hides in the noise'' this slice exists to end. Closed as a class (review m2) in tests/FsAnalyser.Core.Tests/WindowsFolderFactSkipCorpus.json, whose test reads these patterns from this entry together with CountingRuleTestsAreNeverSkipped''s: a Skip-family property on any attribute, the dynamic skips, any Trait, and any attribute other than the stock Fact and Theory that ends in Fact or Theory, or a class deriving from them, which is how the SL-096 bug test skips itself. What no line pattern sees (the class made non-public, a [Fact] deleted, a default filter clause by name) LastAccessRuleCorpusTests.TheWindowsFolderFactsRunInTheDefaultSuite checks by reflection.'
+  - name: no Core test builds a fixture in %SystemRoot%\Temp except the deliberate one
+    files: tests/FsAnalyser.Core.Tests/**/*.cs
+    must_not_match:
+    - '(?i)SpecialFolder\.Windows\s*\)\s*[,+]\s*@?"(\\{1,2})?Temp\b'
+    - '(?i)"[A-Z]:[\\/]{1,2}Windows[\\/]{1,2}Temp\b'
+    - '(?i)%(SystemRoot|windir)%[\\/]{1,2}Temp\b'
+    - 'Path\.GetTemp(Path|FileName)\s*\('
+    - 'Directory\.CreateTempSubdirectory\s*\('
+    - '(?i)GetEnvironmentVariable\s*\(\s*"(TEMP|TMP|SystemRoot|windir)"'
+    - '(?i)ExpandEnvironmentVariables\s*\(\s*@?"%(TEMP|TMP|SystemRoot|windir)%'
+    because: 'In %SystemRoot%\Temp a folder''s last access moves whenever one of its children is opened with a write-class access, so a fixture placed there passes or fails on that driver behaviour rather than on what it tests. That is how the three tests went red unnoticed through six validations. The route that put them there was not a spelling of the Windows folder but an inherited TEMP: the engine''s shells carry TEMP=C:\WINDOWS\TEMP, and only TempTree moves its trees out of it, so every other way to the process''s temp folder is banned with the literal ones (review M1). Closed as a class in tests/FsAnalyser.Core.Tests/SystemRootTempRouteCorpus.json, whose test reads these patterns from this entry. TempTree.cs is the one route; LastAccessUnderSystemRootTests.cs builds there on purpose and TempTreeRootTests.cs only names such paths; FailCriticalErrorsTests.cs takes only the drive root of the temp path; CloudPlaceholderTests.cs (the opt-in Cloud=CF-SYNC-ROOT rig, SyncRootRig) still roots its sync root in the temp folder, until the filed slice that routes SyncRootRig and CloudRig through TempTree removes that exemption. A folder left directly in %SystemRoot%\Temp cannot be listed by this user, so a failed cleanup there can be found only by its name.'
+    except_files:
+    - tests/FsAnalyser.Core.Tests/LastAccessUnderSystemRootTests.cs
+    - tests/FsAnalyser.Core.Tests/TempTreeRootTests.cs
+    - tests/FsAnalyser.Core.Tests/TempTree.cs
+    - tests/FsAnalyser.Core.Tests/FailCriticalErrorsTests.cs
+    - tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs

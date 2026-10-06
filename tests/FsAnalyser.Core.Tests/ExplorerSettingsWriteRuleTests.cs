@@ -106,7 +106,7 @@ public class ExplorerSettingsWriteRuleTests
     /// a line of its own under the entry's must_not_match key, '' read as one quote, compiled as the xUnit copies of the
     /// twinned rules are, with RegexOptions.Multiline.
     /// </summary>
-    private static List<Regex> SettledPatterns(string name)
+    internal static List<Regex> SettledPatterns(string name)
     {
         string[] lines = File.ReadAllLines(Path.Combine(FailCriticalErrorsTests.FindRepo(), @".taad\fitness.yaml"));
         int entry = Array.FindIndex(lines, l => l.TrimEnd() == "  - name: " + name);

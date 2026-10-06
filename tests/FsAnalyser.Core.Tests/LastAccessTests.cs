@@ -64,9 +64,10 @@ public class LastAccessTests
         tree.Deny(refusing, 0x100); // FILE_WRITE_ATTRIBUTES, no inheritance: only this folder refuses
         // Back-dated after the deny, whose inheritance propagation (SetNamedSecurityInfo) lists the folders below it.
         // refusing itself cannot be back-dated now, so whether its own time moved is not what shows the fallback:
-        // the counters below are.
+        // the counters below are. The root goes last, after its children (SL-096): where a child's write-attributes open moves
+        // its parent's last-access time, as under the Windows folder, back-dating them would reset it.
         DateTime old = DateTime.UtcNow.AddHours(-48);
-        string[] kept = [tree.Root, tree.PathOf("open"), tree.PathOf(@"refusing\sub")];
+        string[] kept = [tree.PathOf("open"), tree.PathOf(@"refusing\sub"), tree.Root];
         foreach (string keeping in kept)
             Directory.SetLastAccessTimeUtc(keeping, old);
 
