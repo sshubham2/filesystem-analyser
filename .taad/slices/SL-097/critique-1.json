@@ -1,0 +1,115 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-097",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-10-06T17:48:50.982Z",
+ "head": "2fc73e1c4fa7f8d33b3580f3f76323d7ad2b70a2",
+ "run_id": 3000,
+ "summary": "The design is lean, and its main claim is measured. Spike #2 ran the exact Fact: kept 7 of 7 and nothing moved in %ProgramData%, against a Windows\\Temp control that showed the move. Both cited sources check out: vscode#332707 lists ProgramData, ProgramFiles, LOCALAPPDATA and ALLUSERSPROFILE as stripped on 10.0.26200, and the SentinelOne page lists LUAFV on Windows 10 1607, 1809, 21H2 and 22H2. Four problems need fixing, two of them major.\n\n1. The design misreads spike #3. Its +30 s re-scan without re-back-dating moved nothing (every delta 0.000 s), yet the scanner still counted 3 folders out (Kept=4). By the design's own contract wording, that is a 3-folder under-count. It is also exactly the gap the ScanResult remark (:201) and the SL-096 doc (:91-92) already record, and the design leaves both of those in place. Writing 'falsified' into the SL-097 doc would plant a false record next to a true one.\n2. The design says the existing guards now cover the new Fact. They do not. The reflection guard TheWindowsFolderFactsRunInTheDefaultSuite checks a hard-coded list of three method names. The 'never skipped' rule is settled, so only Fitness runs it, not dotnet test.\n3. The fallback in the decidable disagreement (make the Fact opt-in with a Trait) cannot be done in this file: a settled SL-096 rule forbids any Trait here.\n4. The Q-210 named-refusal wrap is conditional on 'if SL-096 built one'. It did not. As designed, only the new ProgramData root would get Q-210's refusal, and the Windows\\Temp root Q-210 actually ruled on would not.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The design is lean, and its main claim is measured. Spike #2 ran the exact Fact: kept 7 of 7 and nothing moved in %ProgramData%, against a Windows\\Temp control that showed the move. Both cited sources check out: vscode#332707 lists ProgramData, ProgramFiles, LOCALAPPDATA and ALLUSERSPROFILE as stripped on 10.0.26200, and the SentinelOne page lists LUAFV on Windows 10 1607, 1809, 21H2 and 22H2. Four problems need fixing, two of them major.\n\n1. The design misreads spike #3. Its +30 s re-scan without re-back-dating moved nothing (every delta 0.000 s), yet the scanner still counted 3 folders out (Kept=4). By the design's own contract wording, that is a 3-folder under-count. It is also exactly the gap the ScanResult remark (:201) and the SL-096 doc (:91-92) already record, and the design leaves both of those in place. Writing 'falsified' into the SL-097 doc would plant a false record next to a true one.\n2. The design says the existing guards now cover the new Fact. They do not. The reflection guard TheWindowsFolderFactsRunInTheDefaultSuite checks a hard-coded list of three method names. The 'never skipped' rule is settled, so only Fitness runs it, not dotnet test.\n3. The fallback in the decidable disagreement (make the Fact opt-in with a Trait) cannot be done in this file: a settled SL-096 rule forbids any Trait here.\n4. The Q-210 named-refusal wrap is conditional on 'if SL-096 built one'. It did not. As designed, only the new ProgramData root would get Q-210's refusal, and the Windows\\Temp root Q-210 actually ruled on would not.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "nature": "defect",
+    "claim": "The design says spike #3 'falsified the investigation's re-scan under-count'. It plans to write that into the SL-097 doc and uses it to justify adding nothing about re-scans. Its outside_claims entry adds that the '+30 s re-scan without re-back-dating moves nothing and shows no under-count'. That reading is wrong.\n- Case (a) is the only run shaped like a real re-scan, because nobody back-dates between scans. In it, all 7 folders had a delta of 0.000 s: the scan moved none of them. Yet LastAccessKept was 4, so 3 folders were counted out.\n- The design's own contract says LastAccessKept 'equals the number of folders whose last access the scan did not move'. By that wording (a) is an under-count of 3.\n- The spike author called (a) clean by comparing kept with 'still old'. That yardstick does not fit a re-scan whose parents were already recent before it started.\n- (b) and (c) moved again only because every folder had been artificially re-back-dated.\n- The tree already states this gap in two places, and the design leaves both untouched: the remark sentence directly above the one it edits, and SL-096 doc :91-92 ('It is wrong when nothing moved (the parent's time within NTFS's hour...)').\n\nThe SL-097 doc would therefore contradict both of them. That matters because Q-159 says LastAccessKept must be settled before file-age features rely on it, and these records are what a later slice will read. Re-reading spike #3 as recorded settles this; no new run is needed.",
+    "evidence": "Spike rescan-same-windows-temp-tree-moves-again: '(a) +30 s, NOT re-back-dated: Kept=4 Asked=7; ... All 7 folders had delta 0.000 s'. Design key_decision 'Do not write the investigation's re-scan within minutes under-counts limit', rationale 'At +30 s without re-back-dating nothing moved and there was no under-count'. SL-097 doc component: 'Spike #3 falsified the investigation's re-scan under-count'. Contract 'ScanResult.LastAccessKept semantics': 'Kept folders at or under %SystemRoot% are counted out once per moved parent'. docs/design/SL-096-last-access-under-windows-temp.md:91-92.",
+    "quote": {
+     "path": "src/FsAnalyser.Core/Scanning/ScanResult.cs",
+     "line": 201,
+     "text": "    /// a parent is counted out even when nothing moved (its time within NTFS's hour, or last-access updates off); one is"
+    },
+    "fix": "In the SL-097 doc, report spike #3 as measured:\n- Re-back-dated re-scans at +180 s and +20 min moved root, plain and links again, and kept equalled the truth.\n- An un-back-dated re-scan at +30 s moved nothing, yet kept counted 3 out. That confirms, for a re-scan, the existing 'counted out even when nothing moved' gap.\n\nDrop the word 'falsified', both there and in the outside_claims line. Keep ScanResult.cs:201 and SL-096 doc :91-92 as they are. No test or code change is needed: LastAccessKept is internal (Q-159)."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "claim": "The design says the existing guard 'which now covers the new Fact' (whats_reused). It does not, and this is an invariant that holds only if someone remembers it.\n- In-suite, the class is guarded only by LastAccessRuleCorpusTests.TheWindowsFolderFactsRunInTheDefaultSuite. That test checks a hard-coded list of exactly three method names, so InProgramDataNoKeptFolderMovesItsParent is outside it.\n- The fitness rule 'the Windows-folder last-access tests are never skipped' is settled, not twinned. Only Fitness runs it against the file, and the SL-071 lesson says the build stage cannot run Fitness. dotnet test feeds those patterns only to the corpus rows, never to the file.\n- The rule's own because-text hands 'the class made non-public, a [Fact] deleted' to that reflection test.\n\nSo the one deliberate hostile-location test that C1's machine check rests on could be deleted or made non-public, and dotnet test would stay green. That is the 'regression hides in the noise' failure the brief's imported pattern exists to prevent. If the Fact moves to its own class (the taste alternative), neither guard reaches it at all.",
+    "evidence": "tests/FsAnalyser.Core.Tests/LastAccessRuleCorpusTests.cs:90-95 (the pinned tests array) and :96-110. .taad/fitness.yaml:1132-1141 (settled by SL-096; files: LastAccessUnderSystemRootTests.cs only). Design whats_reused: 'The fitness rule that keeps LastAccessUnderSystemRootTests never skipped, which now covers the new Fact'.",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/LastAccessRuleCorpusTests.cs",
+     "line": 94,
+     "text": "            nameof(LastAccessUnderSystemRootTests.OutsideTheWindowsFolderEveryKeptFolderStaysKept),"
+    },
+    "fix": "Add nameof(LastAccessUnderSystemRootTests.InProgramDataNoKeptFolderMovesItsParent) to the pinned array. Also make the test assert that the set of methods on the type carrying a Fact or Theory attribute equals that array exactly. Then the next added Fact fails the test until it is pinned, rather than relying on someone remembering. List both edits in whats_new, and list LastAccessRuleCorpusTests.cs among the files the slice touches."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "claim": "The only decidable disagreement names a fallback: if the ProgramData Fact flakes in the default suite, it becomes 'an opt-in Trait (FsaDefaultTestFilter clause plus the OptInTraitTests pin)'. That cannot be done while the Fact lives in LastAccessUnderSystemRootTests.cs.\n- The settled SL-096 rule over that file forbids any Trait.\n- The reflection test asserts that the class's tests carry only stock attributes (Fact, Theory, InlineData).\n\nTaking the losing branch would therefore also mean moving the Fact to a new class, sharing the private BackDateAndScan and BuildNested helpers, and widening the Windows 10 hand-off filter. None of that is named, so the 'would force resynthesis' cost is understated.",
+    "evidence": "Design decidable_disagreements[0].positions; .taad/fitness.yaml:1132-1138; LastAccessRuleCorpusTests.cs:104 (Assert.All(Foreign(attributes), a => Assert.Contains(a.GetType(), stock))).",
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1138,
+     "text": "    - '\\bTrait(Attribute)?\\s*\\('"
+    },
+    "fix": "Restate the losing branch: move the Fact to its own class (for example LastAccessOutsideTheWindowsFolderTests) with the Trait, a FsaDefaultTestFilter clause and an OptInTraitTests pin, and add that class to the Windows 10 filter. Or say that a flaky red here is a finding to investigate, not something to make opt-in."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "under-engineering",
+    "nature": "defect",
+    "claim": "The design says 'Reuse the class's wrap if SL-096 built one; otherwise add the same wrap for this root'. SL-096 built none.\n- The Windows\\Temp Facts call new TempTree(WindowsTempTests) with nothing around it.\n- TempTree.CreateRoot calls Directory.CreateDirectory bare.\n- A grep of tests/FsAnalyser.Core.Tests finds no named refusal for a tests root that cannot be created.\n\nAs designed, the new ProgramData root gets Q-210's named refusal, while the C:\\Windows\\Temp\\fsa-tests root, which Q-210 (human) actually ruled on, keeps a bare access-denied. Every later deliberate root would then have to remember to add its own wrap.",
+    "evidence": "Q-210 (human): 'wrap the CreateDirectory under the Windows folder with a message saying the Windows-folder last-access tests need to create C:\\Windows\\Temp\\fsa-tests'. TempTree.cs:78-80 (CreateRoot → Directory.CreateDirectory(root)). Design component '%ProgramData% kept-folder Fact'.",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/LastAccessUnderSystemRootTests.cs",
+     "line": 43,
+     "text": "        InTree(new TempTree(WindowsTempTests), tree =>"
+    },
+    "fix": "Put the refusal in the seam: in TempTree(string testsRoot), catch UnauthorizedAccessException and IOException from CreateRoot and rethrow an InvalidOperationException naming testsRoot and saying that the deliberate last-access tests need to create it. Both deliberate roots then get Q-210's refusal by construction, and no per-root wrap is written in the test class. The design's 'TempTree(string) used unchanged' becomes one small change."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M1: the design misreads spike #3 (a), where the scan moved nothing yet 3 folders were counted out, as 'no under-count'.\n\nThe two must-verify preconditions, and what breaks if each fails:\n1. That no fitness rule fires. Checked here:\n   - Rule 2 exempts LastAccessUnderSystemRootTests.cs by name.\n   - Rule 1's patterns stay quiet on a stock [Fact].\n   - The twinned rules over Scanning/**/*.cs match comments too: TheScannerMakesNoBclFileSystemCalls '\\b(File|Directory|...)\\.', PathOpensGoOnlyThroughTheGuardedOpen 'GetFileAttributes(Ex)?[AW]?\\s*\\(' and 'CreateFile...\\s*\\(', and TheScannerListsDirectoriesOnlyThroughDirectoryReader 'Directory\\.GetDirectories'. So the reworded ScanResult remark must not copy the survey's method wording ('GetFileAttributesExW (', 'Directory.GetDirectories'). Because those rules are twinned, dotnet test would catch it.\n2. That GetFolderPath(CommonApplicationData) resolves in the engine shell. The tests already resolve Windows and LocalApplicationData through GetFolderPath in the engine's shell (789/789). If it returned blank, the Fact would be red in every engine stage for every later slice until fixed, and build's first run would show it.\n\nOther recalled claims:\n- GetFolderPath going through the known-folder API is consistent with how the runtime works; not web-checked.\n- 'Hosted CI runs as admin with UAC off' only affects a filed item.\n- The NTFS one-hour rule: spike #3 (a) delta 0.000 at +30 s is consistent with some gating of the luafv move after a previous move. So outside_claims #5 ('a recently updated last-access time does not gate it') holds only for a time set by a listing, as spike #1 measured."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "No finding. A run killed between TempTree's constructor and Dispose leaves an 11-entry <guid> tree in machine-wide C:\\ProgramData\\fsa-tests. Later real scans of C:\\ProgramData or C:\\ would count it (SL-087 lesson). The same leak already exists in %LOCALAPPDATA%\\Temp\\fsa-tests: spike #2 found 4 leftover folders there. The ProgramData leak is listable and tiny, and case 5 covers normal runs."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "m2: Q-210's named refusal belongs in TempTree(string), so every deliberate root gets it without anyone remembering. Otherwise the design adds no production code, and the Fact pins the no-correction branch at Scanner.cs:340 by behaviour, so an empty architecture_rules is justified."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "None. The design is one Fact, two sentence edits and one doc, with no CI matrix, committed probe kit or path rule. Case 2's Select-String reading is partly redundant: the Windows\\Temp Theory already fails when no parent moves, because kept == stillOld with the correction implies exactly 3 moved. It is harmless."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "m1: the opt-in-Trait fallback is impossible in this file under the settled SL-096 rule. The CLI contract and the Windows 10 hand-off filter match the class's name and the existing filter. The LastAccessKept contract wording is also what M1 measures against."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "No finding. Traced (CC-005):\n- A blank CommonApplicationData gives Path.Combine('', 'fsa-tests') = 'fsa-tests'. new DriveInfo(Path.GetPathRoot(...)) in TempTree's constructor would then throw ArgumentException before any named refusal. The guard must run before new TempTree, which the design's wording allows.\n- A refused CreateDirectory surfaces from CreateRoot (TempTree.cs:80) as a bare UnauthorizedAccessException unless it is wrapped (see m2).\n- Dispose throws if the tree is left behind, and InTree asserts it is gone."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "No blocking drift. Two notes:\n- Adding the Fact to LastAccessUnderSystemRootTests leaves its summary (:8-14, 'under the Windows folder, built there on purpose') and SL-096 doc :63-64 describing the class as Windows\\Temp only. The design does not list those edits; this is cosmetic and part of the taste disagreement.\n- Q-206's 'the SL-096 doc exists nowhere' is superseded by the merge (989c119). The file exists at docs/design/SL-096-last-access-under-windows-temp.md with the text at :89-90, so the design rightly edits it."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "M2: the reflection guard pins three names, and the settled rule runs only under Fitness.\n- CC-006: it names %ProgramData% as outside stage write permissions, which the design does not discuss. Spike #2, an engine stage, measured that writes from the dotnet test process succeed. The classifier refused only shell Remove-Item on system paths, and case 5 uses Get-ChildItem only, so the default suite remains runnable by every stage.\n- CC-004: every material case carries a runnable command.\n- CC-002: not triggered, because no fitness rule is added or edited."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "C1 is pinned by a never-skipped Fact with three ordered assertions. The widening mutation (case 8) is a one-off at validate and not material. That is acceptable for one Fact, given the SL-033 and SL-053 lessons. C2 (%ProgramFiles%) has no fixture, which is justified: a standard user cannot create a tree there, and 1 of 10,442 folders is write-grantable. C3 is correctly filed for a person. The gap is M2: the Fact has no in-suite guard against deletion or being made non-public."
+   },
+   {
+    "dimension": "security",
+    "result": "No finding. The fixed parent C:\\ProgramData\\fsa-tests uses a name any local user can create first, because Users hold add-subdirectory rights on ProgramData. Another account could plant it as a junction or with a denying ACL. On this one-person PC (project constraint) the threat is negligible, and the worst outcome is a named red or a <guid> tree created and removed at the junction target. The taste alternative, a per-run fsa-tests-<guid> parent, would remove it."
+   }
+  ]
+ }
+}

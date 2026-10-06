@@ -48,6 +48,24 @@ public class TempTreeTests
         Assert.False(File.GetAttributes(root).HasFlag(FileAttributes.Compressed));
     }
 
+    // Q-210, built at the seam (SL-097 review m2): a tests root this user may not make is refused by name, whichever test asked
+    // for it. Fed with a root whose parent is a file, which no ACL change is needed to make unwritable; the compression
+    // refusal above is a different exception and passes through unwrapped.
+    [Fact]
+    public void ATestsRootThatCannotBeCreatedIsRefusedByName()
+    {
+        using var tree = new TempTree();
+        string file = tree.File("a-file", 1);
+        string testsRoot = Path.Combine(file, "fsa-tests");
+
+        var refused = Assert.Throws<InvalidOperationException>(() => new TempTree(testsRoot).Dispose());
+
+        Assert.Contains("Could not create", refused.Message);
+        Assert.Contains(testsRoot, refused.Message);
+        Assert.Contains("never skipped", refused.Message);
+        Assert.IsAssignableFrom<IOException>(refused.InnerException);
+    }
+
     // One line through cmd.exe, as a person would paste it.
     private static (int Exit, string Output) Cmd(string line)
     {

@@ -1,0 +1,97 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-097",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-10-06T18:26:19.572Z",
+ "head": "c6b0871d91ba384252a95357b5a2ef58348b895b",
+ "run_id": 3009,
+ "summary": "SL-097 was a verify-only follow-up (SL-096's O-015). It measured whether luafv moves a parent's last-access time in %ProgramData% and %ProgramFiles% on Windows 11 26200, non-elevated. It found no move, so Scanner.cs:340 still corrects only at or under %SystemRoot%. It shipped test, comment and doc changes only: the %ProgramData% Fact InProgramDataNoKeptFolderMovesItsParent, a named create-refusal in TempTree.CreateRoot, a wider reflection guard, the reworded ScanResult.cs remark and the new SL-097 doc. Windows 10 (C3) and the elevated scan were filed for a person, as the build-check had already marked them. Most of the rework was the same misreading of spike #3 passing through three stages.",
+ "payload": {
+  "status": "complete",
+  "reason": "Slice shipped through validate with one build attempt. Reflection recorded; no candidates raised because the slice was a follow-up two deep.",
+  "summary": "SL-097 was a verify-only follow-up (SL-096's O-015). It measured whether luafv moves a parent's last-access time in %ProgramData% and %ProgramFiles% on Windows 11 26200, non-elevated. It found no move, so Scanner.cs:340 still corrects only at or under %SystemRoot%. It shipped test, comment and doc changes only: the %ProgramData% Fact InProgramDataNoKeptFolderMovesItsParent, a named create-refusal in TempTree.CreateRoot, a wider reflection guard, the reworded ScanResult.cs remark and the new SL-097 doc. Windows 10 (C3) and the elevated scan were filed for a person, as the build-check had already marked them. Most of the rework was the same misreading of spike #3 passing through three stages.",
+  "learned": [
+   {
+    "kind": "codebase",
+    "lesson": "The counter correction stays location-keyed. On Win11 26200, non-elevated, a kept child folder moves no parent in %ProgramData%, %ProgramFiles(x86)% or %ProgramFiles%, but does move parents under C:\\Windows. Do not widen Scanner.cs:340 without a measured Windows 10 or elevated move. InProgramDataNoKeptFolderMovesItsParent is the tripwire: widening the correction turned it red at 'kept 4 of 7', and it prints 'moved: none' beside the same run's Windows\\Temp 'moved: <root>, plain, links'. luafv's documented 'virtualization namespace' does not predict where the move happens.",
+    "evidence": "Spike #2: 3 fresh %ProgramData% trees, kept 7 of 7, none moved. Investigation, existing folders: %ProgramData% 0 of at least 34 parents, %ProgramFiles(x86)% 0 of 21, %ProgramFiles% 0 of 1 (the only write-grantable folder of 10,442 walked to depth 3), C:\\Windows 7 of 12 moved. Survey: 0 of 20 in %ProgramData% and 0 of 20 in %ProgramFiles(x86)%. The investigation and survey candidates came from the same 11:01 walk, so the sets overlap and must not be summed. Detail is in docs/design/SL-097-last-access-outside-the-windows-folder.md."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "Adding a Fact to LastAccessUnderSystemRootTests now has a price. Its name must go into the pinned array in LastAccessRuleCorpusTests.TheWindowsFolderFactsRunInTheDefaultSuite, which now asserts the class's Fact/Theory set equals that array. The settled SL-096 rule (.taad/fitness.yaml:1132-1141) forbids any Trait in that file. An opt-in fallback therefore means a new class, a FsaDefaultTestFilter clause, an OptInTraitTests pin, shared BackDateAndScan/BuildNested helpers and a wider Windows 10 filter. That is a re-design, not a build edit.",
+    "evidence": "Critique M2 and m1; the guard edit in the build (c6b0871d); LastAccessRuleCorpusTests.cs:90-110; O-011's 'must not add' list."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "TempTree.CreateRoot now turns UnauthorizedAccessException and IOException from Directory.CreateDirectory into an InvalidOperationException 'Could not create ...' for every caller, including the default TempTree(), not only the two deliberate roots. The compression refusal passes through unwrapped. The ACL (UnauthorizedAccessException) branch that Q-210 named has no test, so a mutant narrowing the filter to IOException survives. This is waived to SC-185.",
+    "evidence": "TempTree.cs:~111; TempTreeTests refusal test feeds only a parent that is a file. Validate probed the ACL shape by hand with a deny-CreateDirectories rule in %LOCALAPPDATA%\\Temp and got the named exception wrapping UnauthorizedAccessException."
+   },
+   {
+    "kind": "risk",
+    "lesson": "Spike #3's verdict compared LastAccessKept with the count of 'still old' folders. That yardstick cannot show an under-count on a re-scan whose parents were already recent. The +30 s un-back-dated re-scan had every delta 0.000 s (nothing moved) yet Kept=4, so 3 folders were counted out; the person's pass note and the design both turned that into 'falsified / no under-count'. Judge any future re-scan spike by the number of folders the scan moved (the deltas), not by still-old. The correct record is that the existing 'counted out although none moved' gap holds on a re-scan.",
+    "evidence": "Spike rescan-same-windows-temp-tree-moves-again: (a) +30 s Kept=4, Asked=7, all deltas 0.000 s; (b) +180 s and (c) +20 min re-back-dated, moved root, plain, links, kept equal to the truth. Critique M1; risk-spike #2 pass note; SL-097 doc; ScanResult.cs:201 and SL-096 doc :91-92 already state the gap."
+   },
+   {
+    "kind": "process",
+    "lesson": "A person's proceed-note on a halted spike becomes the design's brief, and the designer copies its wording. Here the note said the re-scan limit 'is false and is not to be written', and the design carried 'falsified' into its rationale, outside_claims and doc plan. Before designing from such a note, re-read the spike's raw evidence lines. The same misreading then cost a critique round (M1) and a prose-pin test that banned only that one word (R2-m2).",
+    "evidence": "risk-spike #2 pass note vs spike #3 evidence line (a); critique M1; code-review round 2 finding R2-m2, waived to SC-186."
+   },
+   {
+    "kind": "process",
+    "lesson": "The 'NTFS updates last access only when it is over an hour old' rule is recalled, never measured here, and it was applied inconsistently. The build-check used it to call the scratch probe confounded; spike #1 contradicted it (luafv moves show 58-172 ms after a listing). Validate then used it anyway to skip the fresh %ProgramFiles% re-measure (parents 0.60 h old). The %ProgramFiles% verdict therefore rests only on earlier-today survey data, 0 of 1 write-grantable folder. A re-measure should list parents freshly and not skip on the hour rule.",
+    "evidence": "Build-check survey text; spike #1 (first-open.ps1 moved 3/3 under C:\\Windows\\Temp with la_before set by its own walk); validate 'not reached' item on %ProgramFiles%; design outside_claims row 'NTFS writes a new last-access time only when...' marked recalled."
+   },
+   {
+    "kind": "process",
+    "lesson": "Do not open another Windows 10 slice until a person supplies a machine. Windows 10 and the elevated scan were the title's C3 and the filed items. They were not dischargeable by the loop in SL-096 (as O-015) or in SL-097. The Windows Sandbox cannot stand in: it is Win11 Enterprise 26100 with EnableLUA=0 and luafv refuses to load (error 1275). The hand-off is the filtered test command in the SL-097 doc, tied to Q-205.",
+    "evidence": "Build-check marked C3 checked_by person; survey Sandbox runs 1 and 2 (0 of 28 parents moved as SYSTEM, C:\\Windows\\Temp included); validate 'not reached' list."
+   },
+   {
+    "kind": "process",
+    "lesson": "For a measurement slice that needs a tree under C:\\ProgramData or C:\\Windows\\Temp, route creation and cleanup through TempTree / [IO.Directory]::Delete. The engine blocks Remove-Item on system paths ('system path /'), and a non-elevated Remove-Item -Recurse in C:\\Windows\\Temp is access-denied. The survey lost its like-for-like fresh-tree control twice to this, while spike #2 and the build did it cleanly through TempTree.Dispose.",
+    "evidence": "Survey: two refused host probes with 'Remove-Item on system path / is blocked'. Spike #1 side observation (Remove-Item -Recurse denied; [IO.Directory]::Delete(\\\\?\\path, true) worked). C:\\ProgramData\\fsa-tests had 0 entries after every build and validate run."
+   },
+   {
+    "kind": "estimate",
+    "lesson": "Treat 'one Fact' framing as an undercount. The design said one Fact with TempTree(string) unchanged; the build touched 5 test files, the ScanResult.cs remark and 2 docs, and added 15 tests. Critique found the design had not read LastAccessRuleCorpusTests.cs:90-95 or TempTree.CreateRoot (TempTree.cs:78-80). Medium size held, with one build attempt and no loop, but the risk was lower than 'medium': no product code and Scanner.cs byte-identical. The cost went to three halted gates, each needing a disposition. Slices that add a test to a class under a settled SL-096 rule should hand the designer the class's guard test and the TempTree seam.",
+    "evidence": "Full suite 789 to 804 (+15) under TEMP=C:\\WINDOWS\\TEMP (build and validate runs); git diff 2fc73e1c4..c6b0871d9 file list; critique M2 and m2 findings."
+   }
+  ],
+  "candidates": [],
+  "missed": [
+   {
+    "gate": "critique",
+    "dimension": "test-coverage",
+    "severity": "minor",
+    "what": "The design's case for a tests root refused by its ACL was marked not material on the premise that feeding it 'means changing C:\\ProgramData's ACL'. Critique 1 and 2 accepted that premise, and critique 2 asked only for the create-refusal wrap in the seam. They did not ask for a test that raises UnauthorizedAccessException, which Q-210 named and which the existing TempTree.Deny(path, 0x4) (TempTree.cs:281) can raise inside a test's own temp tree with no system ACL change. The build's refusal test fed only an IOException (a parent that is a file), so a mutant narrowing CreateRoot's catch to IOException survives the suite.",
+    "caught_by": "code-review round 1 (finding m1), then validate's hand probe; waived to backlog SC-185 (O-016)"
+   },
+   {
+    "gate": "code-review",
+    "dimension": "test-coverage",
+    "severity": "minor",
+    "what": "Round 1 confirmed the prose pin TheMeasuredLastAccessLimitIsWrittenWhereTheTreeSaidUnmeasured. It checked that the pinned phrases were new in the diff and sat on one line, but not what spellings of the retracted claim it still allowed. The pin bans only 'falsified' and requires 'Windows 10'. M1's wrong wording was 'shows no under-count', so a record that restates that, says 'disproved', or drops the +30 s re-scan section stays green. The builder's 'A test pins all of it' rested on a mutant that inserted exactly the banned word.",
+    "caught_by": "code-review round 2 (finding R2-m2); waived to backlog SC-186 (O-017)"
+   }
+  ],
+  "estimate_error": "Medium size held: one build attempt, no send-back loop, and the diff was 5 test files, one comment and 2 docs. The 'one Fact, TempTree(string) unchanged' framing understated the work by about 15 tests (789 to 804), because critique M2 and m2 pulled the reflection guard, TempTree.CreateRoot and a prose pin into scope. The medium risk tier was too high for the diff itself (no product code; Scanner.cs byte-identical). The risk showed up as 3 halted gates and 3 stages re-run (risk-spike, critique and code-review each ran twice), not as defects. The slice was also sized as a bug fix and opened with C3 (Windows 10) as a criterion the loop could never discharge, so it could only close 3 of its 4 derived criteria.",
+  "what_went_wrong": [
+   "Risk-spike halted with 2 held and 1 no-go, and needed a person pass. The no-go was on the investigation's re-scan hypothesis, which the design never intended to build. The spike's yardstick (kept vs still-old) could not detect an under-count on a re-scan, so its own 'no under-count' reading was wrong.",
+   "The person's proceed-note ('limit is false and is not to be written') over-stated spike #3. The design copied 'falsified' into its rationale, outside_claims and doc plan. Critique M1 (major) had to re-read the raw evidence to correct it. The built SL-097 doc was fixed, but the guard test for it banned only that one word (R2-m2, waived to SC-186). One misreading cost the spike, the design, the critique and a second code-review round.",
+   "The design stated two false things about the tree: that the existing guard 'now covers the new Fact' (LastAccessRuleCorpusTests.cs:90-95 pins three names) and that SL-096 had built a create-refusal wrap (TempTree.CreateRoot was bare). Both were critique majors/minors (M2, m2). The designer had not been handed the guard test or the TempTree seam.",
+   "Critique ran twice: round 1 halted with 4 findings, all later accepted as real, then a model disposed of them. Code review also ran twice. Round 1 let the narrow prose pin through (R2-m2). The ACL refusal gap (SC-185) was found by code review and validate, not by the critique that had ruled the case not material.",
+   "The build-check's 'confounded by the NTFS one-hour rule' verdict on the scratch probe was reasoning, not measurement, and spike #1 contradicted it. Validate then applied the same rule to skip the fresh %ProgramFiles% re-measure, so that verdict still rests on 0 of 1 earlier survey folder.",
+   "The survey lost its like-for-like fresh %ProgramData% control twice because the engine refuses Remove-Item on system paths. It had to fall back to existing-folder probes, whose candidate sets overlap with the investigation's and cannot be summed.",
+   "Q-206 (answered: the SL-096 doc 'exists nowhere') predated the SL-096 merge (989c119) and was wrong by the time this slice ran. The design caught it and the answer still stands uncorrected on the question list.",
+   "Windows 10 and the elevated scan are still unmeasured after two slices. This slice delivered the Win11 non-elevated verdict and the hand-off command only."
+  ],
+  "unknowns": [
+   "Does Windows 10 move a child folder's parent in C:\\Windows\\Temp, %ProgramData% or %ProgramFiles%? If it does not move them in Windows\\Temp, the five SL-096 Facts go red by Q-210's ruling because the structural correction would under-count. If it moves them in %ProgramData%, InProgramDataNoKeptFolderMovesItsParent goes red and the scanner over-counts. Only a person with a Windows 10 PC can run the SL-097 doc's command (Q-205).",
+   "Does an elevated scan with luafv loaded move parents in %ProgramData% or %ProgramFiles%? This matters only if LastAccessKept stops being internal (Q-159) or the app is run elevated. The Sandbox cannot answer it (luafv blocked, error 1275).",
+   "Q-208: under C:\\Windows outside Temp, 7 of 12 pre-existing parents moved, but Tasks and tracing did not. The correction fires for all of %SystemRoot%, so LastAccessKept can still under-count there. The data is recorded in the SL-097 doc for whoever takes Q-208.",
+   "Is InProgramDataNoKeptFolderMovesItsParent stable against Defender or the indexer over days and weeks? Only about 9 clean runs on one machine today (3 in a row, 2 TEMP values, the full suite, validate). A touch on the tree between back-dating and the scan would show as a red in the default suite.",
+   "Is the %ProgramFiles% non-elevated verdict real beyond one folder? One of 10,442 folders (depth 3 AccessCheck walk) was write-grantable, EaseUS Data Recovery Wizard\\ensdata, and its parent did not move. Validate's fresh re-measure was skipped on the unproven one-hour rule."
+  ]
+ }
+}

@@ -11,7 +11,9 @@ namespace FsAnalyser.Core.Tests;
 /// skipped together with the twinned CountingRuleTestsAreNeverSkipped. Both settled rules are read from .taad/fitness.yaml,
 /// their only copy, so a change there reaches the corpus. Each row also says what the patterns the design declared did with
 /// it, kept here as they were handed to build: the rows they let through and the guards now catch are the ones the fixes
-/// closed. What no line pattern can see, <see cref="TheWindowsFolderFactsRunInTheDefaultSuite"/> checks by reflection.
+/// closed. What no line pattern can see, <see cref="TheWindowsFolderFactsRunInTheDefaultSuite"/> checks by reflection,
+/// the class's whole set of tests included (SL-097). <see cref="TheMeasuredLastAccessLimitIsWrittenWhereTheTreeSaidUnmeasured"/>
+/// holds the two records that name the limits to SL-097's measurement.
 /// </summary>
 public class LastAccessRuleCorpusTests
 {
@@ -92,7 +94,21 @@ public class LastAccessRuleCorpusTests
             nameof(LastAccessUnderSystemRootTests.AScanUnderTheWindowsTempFolderCountsAsKeptOnlyTheFoldersThatStayedOld),
             nameof(LastAccessUnderSystemRootTests.AChildThatRefusesWriteAttributesLeavesItsParentCountedAsKept),
             nameof(LastAccessUnderSystemRootTests.OutsideTheWindowsFolderEveryKeptFolderStaysKept),
+            nameof(LastAccessUnderSystemRootTests.InProgramDataNoKeptFolderMovesItsParent),
         ];
+
+        // The list is the class's whole set: a Fact deleted from it is caught below by name, and one added to it is caught
+        // here until it is pinned (SL-097 review M2), instead of relying on somebody remembering to.
+        string[] carryingAFact = type
+            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
+            .Where(m => m.GetCustomAttributes<FactAttribute>(inherit: true).Any())
+            .Select(m => m.Name)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        Assert.True(carryingAFact.SequenceEqual(tests.Order(StringComparer.Ordinal)),
+            $"the methods of {type.Name} that carry a Fact or Theory are [{string.Join(", ", carryingAFact)}], and this list pins " +
+            $"[{string.Join(", ", tests.Order(StringComparer.Ordinal))}]: a test was added or removed without being pinned here");
+
         foreach (string name in tests)
         {
             MethodInfo method = type.GetMethod(name, BindingFlags.Public | BindingFlags.Instance)
@@ -117,6 +133,34 @@ public class LastAccessRuleCorpusTests
             Assert.False(property is "FullyQualifiedName" or "Name" or "ClassName" or "DisplayName",
                 $"the default test filter picks tests by name ({clause.Trim()}): it could leave {type.Name} out of every routine run");
         }
+    }
+
+    /// <summary>
+    /// SL-097 measured the parent move outside the Windows folder, so the two places that called it unmeasured say what was
+    /// measured, and the SL-097 record exists. The known gap SL-096 wrote about a re-scan, a parent counted out although
+    /// nothing moved, stays written where it was: the record may not call it falsified (review M1).
+    /// </summary>
+    [Fact]
+    public void TheMeasuredLastAccessLimitIsWrittenWhereTheTreeSaidUnmeasured()
+    {
+        string repo = FailCriticalErrorsTests.FindRepo();
+        string remark = File.ReadAllText(Path.Combine(repo, @"src\FsAnalyser.Core\Scanning\ScanResult.cs"));
+        string triage = File.ReadAllText(Path.Combine(repo, @"docs\design\SL-096-last-access-under-windows-temp.md"));
+        string recordPath = Path.Combine(repo, @"docs\design\SL-097-last-access-outside-the-windows-folder.md");
+        Assert.True(File.Exists(recordPath), $"{recordPath} is not there");
+        string record = File.ReadAllText(recordPath);
+
+        Assert.DoesNotContain("are unmeasured and not corrected", remark);
+        Assert.Contains("SL-097", remark);
+        Assert.Contains("Windows 10", remark);
+        Assert.Contains("counted out even when nothing moved", remark);
+
+        Assert.DoesNotContain("not measured and not corrected", triage);
+        Assert.Contains("SL-097", triage);
+        Assert.Contains("It is wrong when nothing moved", triage);
+
+        Assert.Contains("Windows 10", record);
+        Assert.DoesNotContain("falsified", record, StringComparison.OrdinalIgnoreCase);
     }
 
     // Every attribute that is not the compiler's or the runtime's own.
