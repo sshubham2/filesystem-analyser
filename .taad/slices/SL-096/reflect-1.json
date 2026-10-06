@@ -1,0 +1,114 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-096",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-10-06T04:38:52.196Z",
+ "head": "e885d7da8c93106e30e8c4f052e2ea2c13cadc22",
+ "run_id": 2705,
+ "summary": "SL-096 triaged the three red last-access tests as one environment fault. The engine's TEMP=C:\\WINDOWS\\TEMP sits where luafv moves a parent's last access when a child is opened with write access. Underneath it was one real defect: the scan's own child keep-open moved parents that LastAccessKept still counted as kept. The product change is a few lines in Scanner.CountListingOpen (Scanner.cs:332-347). The bulk of the diff is a TempTree redirect out of %SystemRoot%, deepest-first back-dating, five default-suite Facts that build in C:\\Windows\\Temp\\fsa-tests on purpose, and two fitness rules hardened with JSON corpora. The suite went from 692 to 789 and is green under both TEMPs.",
+ "payload": {
+  "status": "complete",
+  "reason": "Reflection on SL-096 written from the full record. All stages ran to a pass except reflect and commit. validate-slice #2 passed with O-015 still open.",
+  "summary": "SL-096 triaged the three red last-access tests as one environment fault. The engine's TEMP=C:\\WINDOWS\\TEMP sits where luafv moves a parent's last access when a child is opened with write access. Underneath it was one real defect: the scan's own child keep-open moved parents that LastAccessKept still counted as kept. The product change is a few lines in Scanner.CountListingOpen (Scanner.cs:332-347). The bulk of the diff is a TempTree redirect out of %SystemRoot%, deepest-first back-dating, five default-suite Facts that build in C:\\Windows\\Temp\\fsa-tests on purpose, and two fitness rules hardened with JSON corpora. The suite went from 692 to 789 and is green under both TEMPs.",
+  "estimate_error": "Opened as medium size and medium risk, by a person. The product tier was about right: the behavioural fix is tiny and was measured before it was built. The size was understated. Accepting critique findings M1 and m2 as \"close the class\" turned a counter fix plus a redirect into guard-rail infrastructure, and the build record shows 20 files changed. The suite grew from 692 (survey) to 789 (build). At least 75 of the 97 new tests are corpus rows: the mutation runs show 34 rows in the route-corpus test and 41 in the skip-corpus test. The rest are the Windows-folder Facts, the TempTreeRootTests rows and a reflection check. The risk tier was right for a different reason than the design gave. The default suite now writes into a folder this user cannot list, and three stages leaked unrecoverable folders there while working. Rule 2 still shipped with six known spellings let through (SC-177).",
+  "learned": [
+   {
+    "kind": "codebase",
+    "lesson": "Before diagnosing any 'pre-existing' red test in this project, run the same filter twice: once with TEMP=TMP=C:\\WINDOWS\\TEMP (the engine's inherited value) and once with TEMP set to %LOCALAPPDATA%\\Temp. This is the single most discriminating check. It explained three tests that stayed red through six SL-095 validations. A mismatch means the location is the cause, not DisableLastAccess=2, which reads ENABLED in both.",
+    "evidence": "Survey and investigation: 20/23 vs 23/23 on the LastAccessTests and HeldOpenTreeTests filter, and 689/692 vs 692/692 on FsAnalyser.slnx. fsutil printed 'DisableLastAccess = 2 (System Managed, Last Access Time Updates ENABLED)' in both runs."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "The TempTree redirect and fitness rule 2 guard only tests/FsAnalyser.Core.Tests/**/*.cs. Everything else that reads the inherited TEMP still lands in C:\\WINDOWS\\TEMP, where children cannot be listed and Remove-Item is denied. That covers tests/rules/RuleCases.ps1 (New-TempDir at :71, cleanups at :182 and :859), the engine's acceptance bug project and any new .ps1 probe. A slice that adds a fixture or probe outside Core.Tests must choose its own root and delete with [IO.Directory]::Delete.",
+    "evidence": "Code review ran RuleCases -Case C-003 under the engine TEMP: checks printed ok, then 'Access is denied' at :859 and exit 1, with the scratch folder left behind. C-001 exits 0. The bug test builds directly at C:\\Windows\\Temp\\fsa-sl096-<guid> and is excluded from rule 2 and from TempTree."
+   },
+   {
+    "kind": "process",
+    "lesson": "Loop stages leak folders into C:\\Windows\\Temp that nobody without admin rights can find. Only C:\\Windows\\Temp\\fsa-tests is listable by this user, so a leftover check works only there. Any survey probe, review script or mutation re-run of the engine's bug test should root in C:\\Windows\\Temp\\fsa-tests\\<guid> or in the user's temp, and say so in its record.",
+    "evidence": "Survey left C:\\Windows\\Temp\\fsa-sl096survey-<8 hex> (certain). The code review's C-003 run probably left fsa-parity-case-<10 hex>. Validate re-ran the bug test twice for mutations A and B, and its cleanup is unverifiable ('not-run' in validate #2). All three are filed as person/admin work."
+   },
+   {
+    "kind": "process",
+    "lesson": "After restoring a mutated source file, touch it or force a rebuild before reading the next result. A restore by Copy-Item or git checkout keeps the old timestamp, MSBuild skips the compile, and the DLL keeps the mutated code. A red right after a mutation run is first suspected to be this trap, not the fix. The design had already recorded this trap as a measured claim, yet the build's own script hit it. The engine's mutation runner in taad_v3 has no touch step.",
+    "evidence": "Spike 3 discarded runs c1-c3 as invalid. In the build, the bug test went red and the first full-suite attempt showed 3 failed until Scanner.cs was touched. The design's outside claim read 'Nothing breaks. The mutation check touches the file anyway.'"
+   },
+   {
+    "kind": "estimate",
+    "lesson": "When a critique finding is accepted as 'close the class', size the slice for a corpus, a test harness and a rule rewrite, not for the original one-line fix. In this repo that meant JSON corpus files fed by a Theory, SettledPatterns made internal, and fitness.yaml entries reformatted. A medium bug fix became 20 files and about +97 tests.",
+    "evidence": "Build record: 20 files changed, e885d7da8. Suite 692 to 789. LastAccessRuleCorpusTests has 34 route-rule rows and 41 skip-rule rows (mutation runs '4 of 34 failed' and '4 of 41 failed')."
+   },
+   {
+    "kind": "design",
+    "lesson": "Regexes that a critique proposes as the fix for a fitness-rule finding must be run against a corpus before they go to the builder. This repo writes paths in \\\\?\\ extended form everywhere (LongPath.ToExtended, TempTree.ExtendedRoot, Scanner.IsAtOrUnder), and a pattern that requires a quote straight before the drive letter misses it. Seed any path-rule corpus with those spellings plus Path.Combine split arguments, the GetFolderPath(SpecialFolder.Windows, SpecialFolderOption.X) overload, and %SystemDrive%.",
+    "evidence": "M1's proposed Path.GetTempPath pattern was incomplete. m2's proposed `\\[\\s*Trait\\s*\\(` missed `[Fact, Trait(...)]`, `[TraitAttribute(...)]` and SkipWhen/SkipUnless, which the builder had to fix (corpus rows S18/S19, S27, S05). Code review round 2 then found six more spellings of the Windows Temp folder quiet against rule 2 (SC-177)."
+   },
+   {
+    "kind": "process",
+    "lesson": "A must-verify precondition that the design itself files for a person (a Windows 10 machine, writing to %ProgramData%, an administrator) cannot be discharged by any automated stage. Waive or file it at critique time. Left aimed at validate, it halted validate #1 and cost a second lap that learned nothing.",
+    "evidence": "O-015 was filed for a person in the design's filed_for_later and also raised as an obligation. validate-slice #1 halted 'O-015 aimed at this stage is still open'. validate #2 passed with O-015 still open, and the validator wrote 'A revalidation would learn nothing'."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "The kept-counter correction is coded for the whole Windows folder (Scanner.WindowsFolderFromEnvironment) but was measured only in %SystemRoot%\\Temp. The Scanner class remarks (Scanner.cs:22-26) claim the move 'under the Windows folder' in general, while ScanResult.LastAccessKept states the limit precisely. A writable subfolder elsewhere under C:\\Windows where luafv does not move the parent (luafv excludes some subdirectories) would under-count, and none of the == tests reach it.",
+    "evidence": "Code-review drift note on Scanner.cs:22-26. Real scans of C:\\Windows\\Web (asked 14, kept 0) and C:\\Windows\\Fonts (asked 1, kept 0) never populate the set, so no real input has exercised the correction outside Temp."
+   },
+   {
+    "kind": "process",
+    "lesson": "Close waived findings at the end of the build if the same slice's structure fixed them. m7 was waived to SC-174, then the build made TempTree's root an instance field and Outside() build beside it, which is exactly m7's fix. The build left 'SC-174 can likely close' as prose, so the backlog still carries a done item.",
+    "evidence": "Build deviation note on the TempTree root, and its LEFT OPEN line 'SC-174 (m7) can likely close: TempTree.Outside() now builds under the root the tree was given'."
+   }
+  ],
+  "candidates": [
+   {
+    "title": "Root tests/rules/RuleCases.ps1 scratch folders outside C:\\WINDOWS\\TEMP and delete them with [IO.Directory]::Delete",
+    "urgency": "soon",
+    "why": "Review finding m1 was deferred with the reason that a later slice would cover it. The filed slice is 'route SyncRootRig/CloudRig through TempTree' and its text does not mention RuleCases, so the item can be lost. Measured by the code review: `RuleCases.ps1 -Case C-003` under TEMP=TMP=C:\\WINDOWS\\TEMP prints its checks ok, then throws 'Access is denied' at tests/rules/RuleCases.ps1:859 (Remove-Item in the finally) and exits 1. It leaves C:\\WINDOWS\\TEMP\\fsa-parity-case-<10 hex>, which this user cannot list or remove. Breakdown: New-TempDir at :71 uses [IO.Path]::GetTempPath(). The Remove-Item cleanups are at :182 and :859. C-001 exits 0 under both TEMPs (AGREE: 18 facts, 22 twinned, 48 patterns, 65 settled). C-007..C-014 need the real engine and build (Q-084) and were not run under the engine TEMP, so whether they hit the same fault is unmeasured. Q-132 records 851 fsa-* scratch dirs already leaked in the user's temp from the same script. Fix shape: reuse TempTree.ChooseTestsRoot's rule (%LOCALAPPDATA%\\Temp when GetTempPath() is at or under %SystemRoot%) and record a failed delete instead of throwing. Also grep the other .ps1 under tests/ and eng/ for GetTempPath and $env:TEMP, because rule 2 covers only Core.Tests *.cs."
+   }
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "what": "The critique filed M1 on architecture rule 2 and proposed adding `Path\\.GetTempPath\\s*\\(`. It checked only that the rule's patterns matched nothing in Core.Tests today. It never fed the patterns this repo's own path spellings. Pattern 2 needs a `\"` straight before the drive letter and pattern 1 needs `)` straight after SpecialFolder.Windows. That lets through `@\"\\\\?\\C:\\Windows\\Temp\\...\"` (the extended form used in LongPath.ToExtended and TempTree.ExtendedRoot), `Path.Combine(@\"C:\\\", \"Windows\", \"Temp\")`, %SystemDrive%\\Windows\\Temp, and the GetFolderPath(SpecialFolder.Windows, SpecialFolderOption.X) overload. A check would be to run the proposed rule over a corpus of each spelling the codebase already uses before calling the class closed.",
+    "caught_by": "code-review, second adversarial round (R2-M1-2). Waived to SC-177, so rule 2 ships with the holes."
+   },
+   {
+    "gate": "critique",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "what": "The critique's own proposed fix for m2 was incomplete. `\\[\\s*Trait\\s*\\(` misses `[Fact, Trait(\"Network\", ...)]` and `[TraitAttribute(...)]`. `Skip\\s*=` misses SkipWhen and SkipUnless on data rows. The custom-attribute pattern must also start at `,`, not only `[`, to catch `[Fact, WindowsTempFact]`. The critique did not try its regexes against the bug test's own [WindowsTempFact] or any xUnit v3 skip form.",
+    "caught_by": "build. The builder found it through corpus rows S05, S18/S19, S23 and S27 and recorded it as a deviation."
+   },
+   {
+    "gate": "critique",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "what": "The design carried 'luafv moves the parent the same way on Windows 10, and in %ProgramData% and %ProgramFiles%' as a must-verify precondition and also filed it for a person. The critique did not ask which stage could discharge it. The answer was none: no Windows 10 machine exists, writing to ProgramData is outside what stages may touch, and Program Files needs an administrator. The obligation was aimed at validate and cost a halted validate #1 and a second lap.",
+    "caught_by": "validate-slice #1 (halted on O-015); waived to SC-180 only after the lap."
+   },
+   {
+    "gate": "critique",
+    "severity": "minor",
+    "dimension": "drift-from-design",
+    "what": "The design records 'Only C:\\Windows\\Temp was measured' and still decides the correction's scope is all of %SystemRoot%, and writes Scanner's class remarks as 'under the Windows folder' in general. The critique did not ask what happens in a writable subfolder of C:\\Windows other than Temp where luafv may not move the parent. The correction would under-count there, and the == Facts cover only Temp.",
+    "caught_by": "code-review, as comment drift only (Scanner.cs:22-26 looser than ScanResult.LastAccessKept). The behavioural scope was not challenged."
+   }
+  ],
+  "unknowns": [
+   "Does a successful child keep-open move its parent in writable folders under C:\\Windows other than Temp (for example Tasks, Tracing, Registration\\CRMLog)? Russinovich's quote says luafv excludes 'some specific subdirectories'. The correction fires for all of %SystemRoot% on a structural rule, so if the parent does not move there, kept under-counts. Settle this before Q-159 is reopened for file-age features, because that is when LastAccessKept stops being internal.",
+   "Can an administrator confirm with fltmc or a trace that luafv.sys is the component that stamps the parent? So far this rests on correlation with the 'Luaf' pool tag (2 allocations per write-class open, none otherwise). The code is keyed on location, not driver, but the triage doc, the ScanResult remarks and the Scanner remarks all name luafv.",
+   "Do the five default-suite Windows-folder Facts stay green on a machine where the user cannot create folders under C:\\Windows\\Temp\\fsa-tests, or where luafv does not move parents (Windows 10, Q-205)? The Facts assert kept == still-old and never skip, so they would go red on both. Nobody has said whether a red there is the intended signal or an environmental false alarm."
+  ],
+  "what_went_wrong": [
+   "Rule 2 was recorded as closed as a class (O-016, a 34-row corpus), but the code review's second adversarial round found six spellings of the Windows Temp folder quiet against it. The finding was waived to SC-177 as 'does not weigh a lap on its own'. The default-suite guard rail therefore ships claiming more than it covers.",
+   "Two of the critique's proposed fix patterns (M1, m2) were wrong or incomplete and reached the builder as the fix. The builder had to deviate on rule 1 and the code review found the rule 2 gap. No gate ran the proposed regexes against a corpus first, and critique-review was sized away for this medium, single-designer slice.",
+   "validate-slice ran twice. O-015 was aimed at validate although the design had already filed it for a person, and the second pass learned nothing new.",
+   "The stale-DLL trap after restoring a mutated file hit twice. Spike 3 threw away three runs (c1-c3). In the build, the bug test and the first full-suite attempt went red spuriously. The design had already recorded the trap as a measured claim, with 'Nothing breaks'.",
+   "Loop stages left unrecoverable folders in C:\\Windows\\Temp: the survey's fsa-sl096survey-<8 hex>, the code review's probable fsa-parity-case-<10 hex>, and validate's two bug-test mutation runs (cleanup unverifiable). All need an administrator.",
+   "Five minor findings were waived or carried (SC-173 to SC-177). m7 (SC-174) was then fixed incidentally by the build, so the backlog holds a stale item. The deferred RuleCases finding points at a follow-up slice whose text does not mention RuleCases.",
+   "The bug report was only a title. The three build-check criteria were derived from that title, and the only contract was the engine's reproduction test."
+  ]
+ }
+}
