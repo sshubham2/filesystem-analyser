@@ -93,7 +93,11 @@
 # trees. R-002 is the reveal at 161, 300 and 1000 characters, into folders this user cannot open, timed from the click,
 # and refused with nothing opened when the item's folder was deleted after the scan; -Step a,b,... runs some of its
 # steps only (see Test-R002). Its steps f and g (SL-089) reveal denied folders of 300 and 1000 characters from the
-# unreadable folders' panel.
+# unreadable folders' panel. R-003 (SL-091) is the reveal of an item Explorer's own view settings hide: refused, the
+# setting named, nothing opened. It clicks only reveals whose expectation is a refusal, Windows' defaults injected
+# through the hook (FSA_HOOK_EXPLORER_VIEW, which can only hide) or the settings in force read from HKCU, so it opens no
+# Explorer window and runs unattended; a reveal expected to land is reported owed to a person. Nothing in these cases
+# changes Explorer's settings: only a person may.
 #
 # N-005, N-006, T-009 and W-001 (SL-089) read the unreadable folders' panel row by row. The schema-1 report carries no row
 # and never a path (Q-016), so the hook's rows mode writes the panel's rows to its log at shutdown (FSA_HOOK_ROWS=1,
@@ -108,7 +112,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
         'L-001', 'L-002', 'L-003', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'N-001', 'N-002', 'N-003', 'N-004',
-        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002',
+        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003',
         'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-001', 'X-002', 'X-003', 'X-004', 'X-005', 'X-006', 'N-005', 'N-006', 'W-001')]
     [string] $Case,
     [switch] $IncludeNetwork,
@@ -140,9 +144,10 @@ $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_H
     'FSA_HOOK_SLOW_REFRESH_MS', 'FSA_HOOK_MISSING', 'FSA_HOOK_EXPAND', 'FSA_HOOK_MINSIZE', 'FSA_HOOK_DRIVES',
     'FSA_HOOK_WALK', 'FSA_HOOK_RECYCLE', 'FSA_HOOK_MULTIPLY', 'FSA_HOOK_SELECT', 'FSA_HOOK_RELEASE', 'FSA_HOOK_GAP', 'FSA_HOOK_HEIGHT', 'FSA_HOOK_REVEAL', 'FSA_HOOK_STATUS',
     'FSA_HOOK_MAXIMIZE', 'FSA_HOOK_BACK', 'FSA_HOOK_READABLE', 'FSA_HOOK_BEFORE', 'FSA_HOOK_AFTER', 'FSA_HOOK_RENAMED', 'FSA_HOOK_RENDER', 'FSA_HOOK_FAIL_LISTING', 'FSA_HOOK_REVEAL_GATE',
-    'FSA_HOOK_AT_FOLDERS', 'FSA_HOOK_PAST', 'FSA_HOOK_PAST_FOLDERS', 'FSA_HOOK_AT_SIZED', 'FSA_HOOK_TRIGGER_DEADLINE_S', 'FSA_HOOK_ANSWER', 'FSA_HOOK_ROWS'
+    'FSA_HOOK_AT_FOLDERS', 'FSA_HOOK_PAST', 'FSA_HOOK_PAST_FOLDERS', 'FSA_HOOK_AT_SIZED', 'FSA_HOOK_TRIGGER_DEADLINE_S', 'FSA_HOOK_ANSWER', 'FSA_HOOK_ROWS',
+    'FSA_HOOK_EXPLORER_VIEW'
 $HookedCases = 'C-002', 'C-006', 'C-012', 'C-013', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
-    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002',
+    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003',
     'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005', 'N-005', 'N-006', 'W-001'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004', 'N-005'
 $CloudCases = 'N-006'
@@ -1943,14 +1948,26 @@ function CheckDrives($log, [int] $extra) {
 
 # The hook put the reveal status line on screen as the drive buttons came in (FSA_HOOK_STATUS, SL-047 B3-4), ahead of
 # the report: the line was visible, and one line tall, inside the 24 px with its 6 px margin that the window's minimum
-# height budgets for it (MainWindow.xaml).
+# height budgets for it (MainWindow.xaml). SL-091 (review n4): what of the text shows, the hook's measure of its
+# untrimmed width against the line's and how many characters come before the ellipsis, is printed for the record; a
+# refusal's outcome comes first on the line, so at least "Nothing was opened: Explorer hides '" must show.
 function CheckStatusShown($log) {
     $drives = @($log | Where-Object { $_.StartsWith('drives in ') })
     $line = if ($drives.Count -eq 1) { $drives[0] } else { '' }
     $height = 0.0
     $parsed = [double]::TryParse("$(Field $line 'statusHeight')", [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$height)
     Check ((Field $line 'status') -ceq 'True' -and $parsed -and $height -gt 0 -and $height + 6 -le 24) "the reveal status line was on screen, one line of $height px ($(Show ($drives -join ' | ')))"
+    $fits = Field $line 'statusFits'
+    Write-Output "        the status line's text is $(Field $line 'statusTextWidth') px untrimmed in a line of $(Field $line 'statusWidth') px: its first $fits of $(Field $line 'statusChars') characters show"
+    Check ($null -ne $fits -and [int]$fits -ge $RefusalLead.Length) "the refusal's outcome shows before the ellipsis (the first $(Show $fits) characters, of which $($RefusalLead.Length) are $(Show $RefusalLead))"
 }
+
+# The longest reveal status line (SL-091): a refusal naming both settings, for a Hidden+System item with a 200-character
+# name, as MainWindow.FormatRevealStatus words it. B-007, B-008, S-001 and S-006 put it on screen through FSA_HOOK_STATUS
+# at the window's minimum size, and R-003 reads the same text from a real reveal of an item of that name.
+$LongLeaf = ('l' * 196) + '.sys'
+$RefusalLead = "Nothing was opened: Explorer hides '"
+$RevealStatusText = "$RefusalLead$LongLeaf' (Don't show hidden files, folders, or drives; Hide protected operating system files)."
 
 # More drive buttons than Windows has drive letters, fed in beside the ready ones (O-028): the pickers must
 # take the same height with them as without.
@@ -2147,9 +2164,10 @@ function Test-B007 {
                 }
             }
         }
-        $statusMsg = "'pagefile.sys' is hidden, so Explorer only highlights it if it is set to show hidden files (and protected operating system files, for system items)."
+        $statusMsg = $RevealStatusText
         # The reveal status line on screen at the minimum size (SL-047, B3-4), after the Completed ending with the
-        # folder tree, where its height is taken from the tree's row, and after the Cancelled one.
+        # folder tree, where its height is taken from the tree's row, and after the Cancelled one. The longest the line
+        # says (SL-091): a refusal naming both settings, for a 200-character name.
         Write-Output "  Completed, the unreadable folders opened, at minimum size with reveal status visible"
         $variables = @{ FSA_HOOK_DRIVES = "$ExtraDrives"; FSA_HOOK_MINSIZE = '1'; FSA_HOOK_STATUS = $statusMsg }
         $run = Invoke-WithHook 'expand' $HookDll { Read-Window $root } $variables
@@ -2203,7 +2221,7 @@ function Test-B008 {
             $texts = $report.window.OutcomeTexts
             Check ($texts.extentHeight -gt $texts.actualHeight) "at this size the texts are taller than their row and scroll ($($texts.extentHeight) px in $($texts.actualHeight) px)"
         }
-        $statusMsg = "'pagefile.sys' is hidden, so Explorer only highlights it if it is set to show hidden files (and protected operating system files, for system items)."
+        $statusMsg = $RevealStatusText
         Write-Output "  Cancelled, the unreadable folders opened, at minimum size with reveal status visible"
         Invoke-StoppedEnding $case $root $true $true $ExtraDrives $statusMsg
     }
@@ -3367,8 +3385,9 @@ function Test-K003 {
     }
 }
 
-function Invoke-RevealRun([string] $root, [string] $revealTargets, [int] $timeoutSec = 60) {
-    $variables = @{ FSA_HOOK_REVEAL = $revealTargets }
+# $more holds any other hook variables (SL-091: FSA_HOOK_EXPLORER_VIEW), set and removed as Invoke-WithHook does.
+function Invoke-RevealRun([string] $root, [string] $revealTargets, [int] $timeoutSec = 60, [hashtable] $more = @{}) {
+    $variables = @{ FSA_HOOK_REVEAL = $revealTargets } + $more
     $run = Invoke-WithHook 'reveal' $HookDll { Wait-App (Start-App (Format-AppArgument $root)) $timeoutSec } $variables
     $lines = @(Read-HookJson $run.Log)
     # Every menu the hook opened acted on the row the app's own Opened handler captured: the hook reads the menu's
@@ -3643,8 +3662,36 @@ function Watch-ExplorerUnchanged($before, [int] $ms) {
     $seen.ToArray()
 }
 
+# Explorer's view settings as HKCU holds them (SL-091), read here and never written: Hidden 1 shows hidden files (2, or
+# no value, does not), and ShowSuperHidden 1 shows protected operating system files (0, or no value, does not).
+function Read-ExplorerSettings {
+    $advanced = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -ErrorAction SilentlyContinue
+    $hidden = if ($null -ne $advanced -and $null -ne $advanced.Hidden) { [int]$advanced.Hidden } else { 2 }
+    $super = if ($null -ne $advanced -and $null -ne $advanced.ShowSuperHidden) { [int]$advanced.ShowSuperHidden } else { 0 }
+    [pscustomobject]@{ Hidden = $hidden; ShowSuperHidden = $super; ShowsHidden = ($hidden -eq 1); ShowsProtected = ($super -eq 1) }
+}
+
+# The settings that keep Explorer from listing an item of these attributes under that view, as the hook logs a
+# reveal's hiddenBy (SL-091): 'None' when Explorer lists it, and a reveal of it lands.
+function Expected-HiddenBy([bool] $hidden, [bool] $system, [bool] $showsHidden, [bool] $showsProtected) {
+    $by = @()
+    if ($hidden -and -not $showsHidden) { $by += 'HiddenFiles' }
+    if ($hidden -and $system -and -not $showsProtected) { $by += 'ProtectedFiles' }
+    if ($by.Count -eq 0) { 'None' } else { $by -join ', ' }
+}
+
+# The status line of a reveal those settings refuse (SL-091), as MainWindow.FormatRevealStatus words it: the Folder
+# Options settings, hidden files first.
+function Expected-RefusalText([string] $leaf, [string] $hiddenBy) {
+    $labels = @()
+    if ($hiddenBy -match 'HiddenFiles') { $labels += "Don't show hidden files, folders, or drives" }
+    if ($hiddenBy -match 'ProtectedFiles') { $labels += 'Hide protected operating system files' }
+    "$RefusalLead$leaf' ($($labels -join '; '))."
+}
+
 # R-001 (SL-047): reveals items from all results surfaces in Windows Explorer, asserting selection, the refusal of
-# an unaddressable name (SL-088: it opened its folder instead until then), hidden file note, and proper command binding.
+# an unaddressable name (SL-088: it opened its folder instead until then), hidden items as Explorer's settings in force
+# decide (SL-091: refused, naming the setting, or landing with nothing on the status line), and proper command binding.
 # Every landing is Find-Landing's: resolved long paths, and the target as the only selected item (SL-088).
 function Test-R001 {
     Initialize-RevealWin32
@@ -3688,6 +3735,9 @@ function Test-R001 {
         $hs = Join-Path $root 'hs_file.sys'
         New-File $hs $KiB64
         [System.IO.File]::SetAttributes($hs, [System.IO.FileAttributes]'Hidden, System')
+        $h = Join-Path $root 'h_file.dat'
+        New-File $h $KiB64
+        [System.IO.File]::SetAttributes($h, [System.IO.FileAttributes]::Hidden)
 
         $outside = Join-Path $case 'outside'
         [void][System.IO.Directory]::CreateDirectory($outside)
@@ -3772,14 +3822,37 @@ function Test-R001 {
         $rSel = Wait-ExplorerSelection (Split-Path -Parent $root) (Split-Path -Leaf $root)
         Check $rSel.Matched 'root selected in Explorer'
 
-        # 5. tree: hs_file.sys (C-008: hidden+system)
-        & $closeNewWindows
-        $runHs = Invoke-RevealRun $root 'tree:hs_file.sys'
-        CheckEqual '0' $runHs.Exit 'hs_file.sys run exit code'
-        $hsRow = $runHs.Lines | Where-Object name -eq 'hs_file.sys'
-        Check ($null -ne $hsRow) 'hs_file.sys was logged'
-        CheckEqual 'Exact' $hsRow.kind 'hs_file.sys kind'
-        Check ($hsRow.status -match "is hidden, so Explorer only highlights it") "hs_file.sys status note shown ($($hsRow.status))"
+        # 5. tree: hs_file.sys (C-008: hidden+system) and h_file.dat (hidden). SL-091: what each gives follows Explorer's
+        # settings in force, read from HKCU and never changed: refused, naming the settings that hide it, with no window
+        # opened or changed (under this PC's Hidden=1 ShowSuperHidden=0, hs_file.sys for the protected-files setting), or,
+        # where every setting shows it, landing on it with nothing on the status line (here h_file.dat).
+        $settings = Read-ExplorerSettings
+        Write-Output "        Explorer's settings in force: Hidden=$($settings.Hidden) ShowSuperHidden=$($settings.ShowSuperHidden)"
+        foreach ($hiddenItem in @([pscustomobject]@{ Name = 'hs_file.sys'; System = $true }, [pscustomobject]@{ Name = 'h_file.dat'; System = $false })) {
+            $name = $hiddenItem.Name
+            $by = Expected-HiddenBy $true $hiddenItem.System $settings.ShowsHidden $settings.ShowsProtected
+            & $closeNewWindows
+            $beforeHidden = Get-ExplorerState
+            $runHidden = Invoke-RevealRun $root "tree:$name"
+            CheckEqual '0' $runHidden.Exit "$name run exit code"
+            $hiddenRow = $runHidden.Lines | Where-Object name -eq $name
+            Check ($null -ne $hiddenRow) "$name was logged"
+            if ($null -eq $hiddenRow) { continue }
+            CheckEqual $by $hiddenRow.hiddenBy "$name hiddenBy under the settings in force"
+            if ($by -ceq 'None') {
+                CheckEqual 'Exact' $hiddenRow.kind "$name kind: every setting that would hide it shows it"
+                CheckEqual '' $hiddenRow.status "$name lands with nothing on the status line"
+                $hiddenSel = Wait-ExplorerSelection $root $name
+                Check $hiddenSel.Matched "$name selected in Explorer"
+            }
+            else {
+                CheckEqual 'Failed' $hiddenRow.kind "$name kind: Explorer's settings hide it"
+                CheckEqual 'HiddenByExplorerSettings' $hiddenRow.reason "$name reason"
+                CheckEqual (Expected-RefusalText $name $by) $hiddenRow.status "$name status names the settings and says nothing was opened"
+                $hiddenChanges = @(Watch-ExplorerUnchanged $beforeHidden 2000)
+                Check ($hiddenChanges.Count -eq 0) "no Explorer window opened or changed for $name ($($hiddenChanges -join '; '))"
+            }
+        }
 
         # 6. tree: junc (C-009: junction)
         & $closeNewWindows
@@ -4349,6 +4422,172 @@ function Test-R002 {
     }
 }
 
+# R-003's checks on one reveal the settings refuse (SL-091): the hook logged it, refused for the settings that hide the
+# item, with the status line naming them, nothing opened (Shown empty, S_OK) and the view it was decided under.
+function CheckRefused($lines, [string] $name, [string] $by, [string] $view, $injected) {
+    $leaf = $name
+    $row = @($lines | Where-Object { $_.name -ceq $name })
+    Check ($row.Count -eq 1) "$(Show $leaf) was revealed and logged once ($($row.Count))"
+    if ($row.Count -ne 1) { return }
+    $row = $row[0]
+    $bad = [System.Collections.Generic.List[string]]::new()
+    if ($row.kind -cne 'Failed') { $bad.Add("kind $(Show $row.kind)") }
+    if ($row.reason -cne 'HiddenByExplorerSettings') { $bad.Add("reason $(Show $row.reason)") }
+    if ($row.hiddenBy -cne $by) { $bad.Add("hiddenBy $(Show $row.hiddenBy)") }
+    if ([string]$row.shown -cne '' -or [int]$row.hresult -ne 0) { $bad.Add("shown $(Show $row.shown), hresult $($row.hresult)") }
+    if ($row.view -cne $view) { $bad.Add("view $(Show $row.view)") }
+    if ($row.injected -cne $injected) { $bad.Add("injected $(Show $row.injected)") }
+    Check ($bad.Count -eq 0) "$(Show $leaf) is refused for $by under the view $view, nothing opened ($(Show ($bad -join '; ')))"
+    CheckEqual (Expected-RefusalText $leaf $by) $row.status "$(Show $leaf)'s status line names the settings and says nothing was opened"
+}
+
+# The hook's log of an injected run (SL-091) starts with the view it armed before the app's Main. Prints the hook's lines
+# and the exit code when it did not, and returns whether it did: a run whose view was not armed clicked nothing. What it
+# prints goes to the host, as Invoke-RevealRun's does, so that the one thing it returns is that answer.
+function CheckInjected($run, [string] $view) {
+    $log = @($run.Log)
+    $armed = @($log | Where-Object { $_.StartsWith('explorer-view') })
+    $ok = $armed.Count -eq 1 -and $armed[0] -ceq "explorer-view-injected injected=$view" -and $log[0] -ceq $armed[0]
+    Check $ok "the hook armed the injected view $view before the app's Main, its first line ($(Show ($armed -join ' | ')))" | Out-Host
+    if (-not $ok) {
+        foreach ($line in $log) { "        hook: $line" | Out-Host }
+        "        exit $(Show-Exit $run.Exit)" | Out-Host
+    }
+    $ok
+}
+
+# R-003 (SL-091): a reveal of an item Explorer's own view settings hide is refused, names the setting, and opens nothing:
+# Explorer's open returns S_OK for such an item and selects nothing (0 of 13 at Windows' defaults, run 2285; 0 of 8
+# Hidden+System items under this PC's settings, SL-088), which the app reported as a landing until SL-091. Only the
+# item's own attributes decide. Every reveal clicked here is expected to be refused, so no step opens an Explorer
+# window, and nothing here changes Explorer's settings:
+#   (a) Windows' defaults injected (FSA_HOOK_EXPLORER_VIEW=0|0, which Core ANDs with the real view, so it can only hide):
+#       a Hidden file and folder refused for hidden files alone, a Hidden+System file and folder for both settings, and a
+#       Hidden+System file of a 200-character name, the longest line B-007, B-008, S-001 and S-006 lay out. No Explorer
+#       window opens or changes.
+#   (b) a malformed injection: the hook refuses it before the app's Main ("explorer-view refused reason=format"), the
+#       app ends there, and nothing is revealed. A missing OverrideExplorerView is WindowMutants' NoExplorerViewMember.
+#   (c) the system drive's own Hidden+System *.sys, the paging file first, from the results list of a scan of the drive
+#       stopped once its root listing shows the file (never a completed scan of the drive, review n3), under 0|0.
+#   (d) the settings in force, read from HKCU before and after (a run whose settings changed between is void): each
+#       temp target's expectation derived from them, the refusals clicked, and every target expected to land reported
+#       owed to a person, never clicked (a landing opens Explorer; R-001 holds those).
+function Test-R003 {
+    Initialize-RevealWin32
+    $case = New-CaseFolder
+    $caseRoots = @($case)
+    try {
+        $root = Join-Path $case 'reveal-root'
+        [void][System.IO.Directory]::CreateDirectory($root)
+        $targets = @(
+            [pscustomobject]@{ Name = 'h_file.dat'; Folder = $false; Hidden = $true; System = $false }
+            [pscustomobject]@{ Name = 'h_dir'; Folder = $true; Hidden = $true; System = $false }
+            [pscustomobject]@{ Name = 'hs_file.sys'; Folder = $false; Hidden = $true; System = $true }
+            [pscustomobject]@{ Name = 'hs_dir'; Folder = $true; Hidden = $true; System = $true }
+            [pscustomobject]@{ Name = $LongLeaf; Folder = $false; Hidden = $true; System = $true }
+        )
+        # The 200-character name puts its path past MAX_PATH, which .NET's file calls take as they are.
+        foreach ($t in $targets) {
+            $path = Join-Path $root $t.Name
+            if ($t.Folder) { [void][System.IO.Directory]::CreateDirectory($path) } else { [System.IO.File]::WriteAllBytes($path, [byte[]]::new($KiB64)) }
+            $attributes = if ($t.System) { [System.IO.FileAttributes]'Hidden, System' } else { [System.IO.FileAttributes]::Hidden }
+            [System.IO.File]::SetAttributes($path, [System.IO.File]::GetAttributes($path) -bor $attributes)
+        }
+
+        Write-Output "  (a) Windows' defaults injected (FSA_HOOK_EXPLORER_VIEW=0|0)"
+        $before = Get-ExplorerState
+        $run = Invoke-RevealRun $root (($targets | ForEach-Object { "tree:$($_.Name)" }) -join ',') 60 @{ FSA_HOOK_EXPLORER_VIEW = '0|0' }
+        if (CheckInjected $run '0|0') {
+            CheckEqual '0' $run.Exit 'exit code'
+            foreach ($t in $targets) {
+                CheckRefused $run.Lines $t.Name (Expected-HiddenBy $t.Hidden $t.System $false $false) '0|0' '0|0'
+                if ($t.Name -ceq $LongLeaf) {
+                    $row = @($run.Lines | Where-Object { $_.name -ceq $t.Name })
+                    Check ($row.Count -eq 1 -and $row[0].status -ceq $RevealStatusText) "the 200-character name's status line is the one B-007, B-008, S-001 and S-006 lay out at the window's minimum size"
+                }
+            }
+            $changes = @(Watch-ExplorerUnchanged $before 2000)
+            Check ($changes.Count -eq 0) "no Explorer window opened or changed for the refused reveals ($($changes -join '; '))"
+        }
+
+        # Its target is the Hidden+System file, which only (1,1) would let land: were the hook ever to carry on unarmed,
+        # the reveal would still be refused under any other settings in force, so even that failure opens nothing.
+        Write-Output '  (b) a malformed injection (FSA_HOOK_EXPLORER_VIEW=2|x)'
+        $before = Get-ExplorerState
+        $bad = Invoke-RevealRun $root 'tree:hs_file.sys' 60 @{ FSA_HOOK_EXPLORER_VIEW = '2|x' }
+        $log = @($bad.Log)
+        Check ($log.Count -ge 1 -and $log[0].StartsWith('explorer-view refused reason=format ')) "the hook refused the value before the app's Main, its first line ($(Show ($log -join ' | ')))"
+        Check (@($bad.Lines).Count -eq 0) "nothing was revealed: no reveal record ($(@($bad.Lines).Count))"
+        Check (@($log | Where-Object { $_.StartsWith('loaded ') }).Count -eq 0) 'the hook never started its reveal driver'
+        CheckEqual '-532462766' $bad.Exit "the app ended before its Main, on the hook's exception ($(Show-Exit $bad.Exit))"
+        $changes = @(Watch-ExplorerUnchanged $before 1000)
+        Check ($changes.Count -eq 0) "no Explorer window opened or changed ($($changes -join '; '))"
+
+        $drive = [System.IO.Path]::GetPathRoot([Environment]::SystemDirectory)
+        $options = [System.IO.EnumerationOptions]::new()
+        $options.AttributesToSkip = 0
+        $options.IgnoreInaccessible = $true
+        $hs = [System.IO.FileAttributes]'Hidden, System'
+        $sys = @([System.IO.Directory]::EnumerateFiles($drive, '*.sys', $options) |
+                Where-Object { ([System.IO.File]::GetAttributes($_) -band $hs) -eq $hs } |
+                Sort-Object { if ([System.IO.Path]::GetFileName($_) -ieq 'pagefile.sys') { 0 } else { 1 } })
+        if ($sys.Count -eq 0) {
+            Write-Output "  (c) no Hidden+System *.sys at $drive, so nothing to reveal there (ShellRevealTests asserts System Volume Information)"
+        }
+        else {
+            $file = [System.IO.Path]::GetFileName($sys[0])
+            Write-Output "  (c) $file from the results list of a scan of $drive stopped after its root listing, under 0|0"
+            $before = Get-ExplorerState
+            $run = Invoke-RevealRun $drive "top:$file" 90 @{ FSA_HOOK_EXPLORER_VIEW = '0|0' }
+            if (CheckInjected $run '0|0') {
+                CheckEqual '0' $run.Exit 'exit code'
+                CheckRefused $run.Lines $file 'HiddenFiles, ProtectedFiles' '0|0' '0|0'
+                $changes = @(Watch-ExplorerUnchanged $before 2000)
+                Check ($changes.Count -eq 0) "no Explorer window opened or changed for $file ($($changes -join '; '))"
+            }
+        }
+
+        Write-Output "  (d) the settings in force, read from HKCU"
+        $settings = Read-ExplorerSettings
+        $view = "$([int]$settings.ShowsHidden)|$([int]$settings.ShowsProtected)"
+        Write-Output "        Hidden=$($settings.Hidden) ShowSuperHidden=$($settings.ShowSuperHidden): the view $view"
+        $refused = @()
+        foreach ($t in $targets) {
+            if ($t.Name -ceq $LongLeaf) { continue }
+            $by = Expected-HiddenBy $t.Hidden $t.System $settings.ShowsHidden $settings.ShowsProtected
+            if ($by -ceq 'None') {
+                Write-Output "  owed to a person: $($t.Name) is expected to land under these settings, and a landing opens Explorer, so it is not clicked here (R-001 step 5)"
+            }
+            else {
+                $refused += [pscustomobject]@{ Name = $t.Name; By = $by }
+            }
+        }
+        if ($refused.Count -eq 0) {
+            Write-Output '        no target is refused under these settings: nothing clicked'
+        }
+        else {
+            $before = Get-ExplorerState
+            $run = Invoke-RevealRun $root (($refused | ForEach-Object { "tree:$($_.Name)" }) -join ',')
+            $after = Read-ExplorerSettings
+            if ($after.Hidden -ne $settings.Hidden -or $after.ShowSuperHidden -ne $settings.ShowSuperHidden) {
+                Inconclusive "R-003 (d): Explorer's settings changed during the run (Hidden $($settings.Hidden) to $($after.Hidden), ShowSuperHidden $($settings.ShowSuperHidden) to $($after.ShowSuperHidden)): void"
+            }
+            else {
+                CheckEqual '0' $run.Exit 'exit code'
+                Check (@($run.Log | Where-Object { $_.StartsWith('explorer-view') }).Count -eq 0) 'no view was injected: the settings in force decided'
+                foreach ($r in $refused) { CheckRefused $run.Lines $r.Name $r.By $view $null }
+                $changes = @(Watch-ExplorerUnchanged $before 2000)
+                Check ($changes.Count -eq 0) "no Explorer window opened or changed for the refused reveals ($($changes -join '; '))"
+            }
+        }
+    }
+    finally {
+        $left = @(Close-CaseWindows $caseRoots)
+        if ($left.Count -gt 0) { Check $false "R-003 opened Explorer windows on its own tree, closed now or reported: $($left -join '; ')" }
+        Remove-CaseFolder $case
+    }
+}
+
 # ---- The outcome's sections (SL-065) ----
 
 # MainWindow.xaml's fit at the window's minimum size: the outcome's texts capped at 76 px while a section is shown, and
@@ -4357,7 +4596,6 @@ function Test-R002 {
 $TextsCap = 76
 $TabsMinHeight = 154
 $FitSpare = 10
-$RevealStatusText = "'pagefile.sys' is hidden, so Explorer only highlights it if it is set to show hidden files (and protected operating system files, for system items)."
 
 # 104 non-empty files, 26 in each of 4 folders, and $denied folders the scan cannot open: the largest files list full at
 # 100 rows beside the unreadable folders. Returns the denied folders, for the caller to give back.
@@ -6003,7 +6241,7 @@ function Test-W001 {
 
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'T-009', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005') + $NetworkCases + $CloudCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'T-009', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005') + $NetworkCases + $CloudCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })

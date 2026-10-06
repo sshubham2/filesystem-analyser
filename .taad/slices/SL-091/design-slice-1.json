@@ -1,0 +1,536 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-091",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-10-05T20:48:07.738Z",
+ "head": "36b461d34f7f669bfed0e3b8a0111270043494f8",
+ "run_id": 2612,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "Only one proposal (practice) was submitted. I took it as the core and checked each piece against what the build check measured in the tree and against the person's decisions on record.\n\n**Why it fits the real code**\n- It extends `ShellReveal.Walk` through the seam that already exists. Walk takes injected parse/pathOf/open/free delegates (ShellReveal.cs:211) and is unit-tested through them. One more delegate lets every attribute × settings cell run on real %TEMP% files without changing this PC's Explorer settings, which no engine stage may change.\n- It copies a pattern the code already has. `Failed` + `NoLongerExists` already means \"nothing was opened, and the App words the reason\". The new reason works the same way, so `RevealKind` keeps its two values.\n- It copies an existing fitness rule. .taad/fitness.yaml:599-612 already confines `SHOpenFolderAndSelectItems` and `SHParseDisplayName` to ShellReveal.cs.\n- It reads the settings with the call Q-175 named. The build check confirmed on this PC that `SHGetSetSettings` answers unelevated and agrees with the registry.\n\n**Why it is the decision on record**\n- It builds Q-175, which a person decided: refuse, add a new RevealReason, name the Explorer option.\n- The predicate is now fixed by the person's 0-of-13 measurement at Hidden=2 together with SL-088's 0/8 and 5/5 at Hidden=1.\n\n**Why it is the simplest thing that works**\n- One read-only P/Invoke per hidden reveal, one predicate, one reason, one status-line branch.\n- No COM automation of Explorer (Q-169 and Q-175 rule it out), no settings cache, no ancestor walk.\n- The proposal's `over_engineering_flag` was false, and the components agree with it.\n\n**What I changed, against the record**\n- **Which setting to name is decided in Core.** Core now computes `HiddenBy` flags, so the App only maps flags to labels. In the proposal the App would have re-derived this from `View` and `System`.\n- **A hook failpoint was added**, following the existing `FSA_HOOK_FAIL_LISTING` precedent. Without it, the Windows-default status text could only be checked by a person who changes Explorer's settings.\n- **A wrong claim in the proposal is corrected.** It said only one unmeasured cell predicts a landing. There are three: Hidden+System with both settings on, System-only at Hidden=2, and non-hidden items under hidden ancestors at Hidden=2.\n- **The window-case rule allows for how fitness treats PowerShell.** Fitness does not blank `#` comments in .ps1 files, so that rule's patterns are anchored so a comment cannot trigger them.\n\n**Baseline for validate**\n- The full suite already fails 3 last-access tests (Q-190, unrelated to reveal).\n- Reveal should be judged by the ShellReveal filter, which passes 52/52 today, plus the new tests.",
+  "components": [
+   {
+    "name": "Visibility gate in ShellReveal.Walk",
+    "responsibility": "A new step after the resolve-back check (ShellReveal.cs:230-231) and before the open (:233).\n1. Read the target's attributes with the existing `File.GetAttributes(\\\\?\\ path)`, moved up from :243-259. The volume-root exemption is unchanged, and if the read throws, Hidden and System are both false, as today.\n2. Only if the target is Hidden and not a volume root, call the injected explorer delegate once.\n3. Compute HiddenBy:\n   - HiddenFiles when Hidden && !ShowsHidden;\n   - ProtectedFiles when Hidden && System && !ShowsProtected.\n4. If HiddenBy is not None, return Failed / HiddenByExplorerSettings with HResult 0 and Hidden, System, HiddenBy and View filled in. `open` is never called.\n5. Otherwise open as today and return Exact.",
+    "lives_at": "src/FsAnalyser.Core/Native/ShellReveal.cs",
+    "key_interactions": "The refusal returns inside the existing try, so the finally block at :237-241 still frees the pidl exactly once.\n\nPrecedence, first match wins:\n1. NameUnaddressable\n2. Parse failure (NoLongerExists / None)\n3. ParsedAsAnotherItem\n4. HiddenByExplorerSettings (new)\n5. Open failure\n6. Exact\n\nRevealAsync passes `() => override ?? ReadExplorerView()` as the delegate."
+   },
+   {
+    "name": "ExplorerView, ExplorerHides and the settings reader",
+    "responsibility": "- `readonly record struct ExplorerView(bool ShowsHidden, bool ShowsProtected)`, with a pure `Hides(bool hidden, bool system) -> ExplorerHides`.\n- `ExplorerHides` is a [Flags] enum: None = 0, HiddenFiles = 1, ProtectedFiles = 2.\n- `FromShellState(uint firstDword)` reads bit 0 (fShowAllObjects) and bit 15 (fShowSuperHidden) and ignores every other bit.\n- `ReadExplorerView()` P/Invokes shell32 `SHGetSetSettings` with a zeroed buffer of at least 64 bytes, mask SSF_SHOWALLOBJECTS | SSF_SHOWSUPERHIDDEN (0x00040001) and bSet = false, then decodes the first DWORD. It caches nothing and has no write path.",
+    "lives_at": "src/FsAnalyser.Core/Native/ShellReveal.cs",
+    "key_interactions": "This is the only call site of SHGetSetSettings in src, which fitness rule 1 enforces. It runs on the reveal's background STA thread, once per hidden reveal."
+   },
+   {
+    "name": "RevealReason / RevealOutcome additions",
+    "responsibility": "- `RevealKind` stays {Exact, Failed} (ShellReveal.cs:8-12).\n- `RevealReason` (:14-20) gains `HiddenByExplorerSettings`.\n- `RevealOutcome` gains:\n  - `ExplorerHides HiddenBy`: which Explorer setting or settings hide the item, decided in Core;\n  - `ExplorerView? View`: null when it wasn't read, kept for the hook's log so a person-run check can see which view the app read.",
+    "lives_at": "src/FsAnalyser.Core/Native/ShellReveal.cs",
+    "key_interactions": "MainWindow.FormatRevealStatus reads `HiddenBy` only. The window hook's reveal record logs `kind`, `reason`, `hiddenBy` and `view`."
+   },
+   {
+    "name": "Hook failpoint for Explorer's view",
+    "responsibility": "- `ShellReveal.OverrideExplorerView(ExplorerView? view)` replaces the real read for the rest of the process; null clears it.\n- The window hook sets it only when FSA_HOOK_MODE is set and FSA_HOOK_EXPLORER_VIEW='<0|1>|<0|1>' (showsHidden|showsProtected), and logs an 'explorer-view-injected' line.\n- The product never reads that variable.",
+    "lives_at": "tests/window/FsaWindowHook",
+    "key_interactions": "It is reached the same way the hook reaches SynchronousIoCancel.FailListingOf for FSA_HOOK_FAIL_LISTING (SL-082). The new variable goes into the hook's variable lists, the ones touched by 47d7154 and acf169e, and the mode check at StartupHook.cs:197-200 and :278.\n\nWindow cases may use an injected view only to assert a refusal, never a landing: Explorer itself still follows the real settings."
+   },
+   {
+    "name": "Reveal status line",
+    "responsibility": "FormatRevealStatus (MainWindow.xaml.cs:856-869):\n- **New branch** for HiddenByExplorerSettings, placed before the generic 'Couldn't show' fallthrough. Each HiddenBy flag maps to its Folder Options label ('Don't show hidden files, folders, or drives'; 'Hide protected operating system files'). The sentence also names the leaf and says nothing was opened.\n- **Exact** now always gives an empty string, so the line collapses (:832). The old blanket hidden note (case 1) is deleted.\n- NoLongerExists and 'Couldn't show…' are unchanged.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "key_interactions": "It only maps flags to text. It does not read View, Hidden or System to decide anything."
+   },
+   {
+    "name": "Core unit tests for the gate",
+    "responsibility": "1. **Theory** over real %TEMP% items (plain, S-only, H-only, H+S; files and folders) × the four ExplorerView cells. It asserts that:\n   - Kind, Reason and HiddenBy match the predicate;\n   - open is called only for Exact;\n   - free is called exactly once on every path;\n   - the delegate is called only for Hidden targets.\n2. **Real-system-item Fact**: C:\\System Volume Information and C:\\pagefile.sys, through injected parse/pathOf/open and view (true, false). It must read Hidden|System and refuse without calling open.\n3. **Volume root (C:\\)**: the delegate is never called and the result stays Exact.\n4. **Precedence Facts** on hidden targets: NoLongerExists, ParsedAsAnotherItem and NameUnaddressable still win, and the delegate is not called.\n5. **FromShellState decode**: 0x0, 0x1, 0x8000, 0x8001 and 0x5.\n6. **Read-only real-call Fact**: ReadExplorerView agrees with HKCU Explorer\\Advanced Hidden==1 and ShowSuperHidden==1. Absent values are read as Windows' defaults.\n\nThe theory replaces Walk_HiddenAndSystemAttributes_DetectedOnExactItem (ShellRevealTests.cs:222-245).",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ShellRevealTests.cs",
+    "key_interactions": "Uses the existing injected-delegate seam plus the new explorer delegate. No test writes Explorer settings; fitness rule 4 enforces that."
+   },
+   {
+    "name": "Window reveal cases",
+    "responsibility": "1. **Re-pin the old note.** Rewrite the pagefile.sys text pins at WindowCases.ps1:2150, 2206 and 4360, and the hs_file.sys kind and text pins at :3781-3782.\n2. **Derive expectations from the settings in force.** Each case reads HKCU Explorer\\Advanced Hidden and ShowSuperHidden read-only at start and works out each target's expected kind, reason, hiddenBy and text from the same predicate. The registry is read on purpose rather than SHGetSetSettings, so the oracle is independent of the app's decode.\n3. **New R-series refusal case**, using the next free R- id (written R-003 below):\n   - **Settings-in-force step**: an H+S temp file at the owner's (1,0) expects Failed / HiddenByExplorerSettings, the protected-files text, and no new Shell.Application window.\n   - **Injected-defaults step**: FSA_HOOK_EXPLORER_VIEW=0|0 with an H-only target and an H+S target that has a 200-character leaf, window at its minimum size. It expects the hidden-files text and the both-settings text, no Explorer window, every list keeping one full row, and a case line saying the view was injected.\n4. **The Exact-control step** (H-only selected in a real Explorer window at (1,0)) reuses R-002's Shell.Application reading. It is person-run.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "Reuses R-002's window reading, the leaf / GetLongPathName matching and Close-CaseWindows. The run is void if the registry values change mid-run. A case that would need the settings changed stops and reports itself owed to a person."
+   },
+   {
+    "name": "Settled fitness rules",
+    "responsibility": "Four rules appended under '# settled by SL-091'. They are settled, not twinned, so the literal twinned counts in RuleCases.ps1 and SettledCountProbe.ps1 do not move. See architecture_rules.",
+    "lives_at": ".taad/fitness.yaml",
+    "key_interactions": "Rule 1 is modelled on the shell-call rule at :599-612. Rule 3's .ps1 patterns are line-anchored because fitness blanks only // and /* */ comments (SL-065)."
+   },
+   {
+    "name": "SL-091 design note",
+    "responsibility": "Records:\n- the predicate table, marking which cells are measured and which predicted;\n- the person's 0/13 evidence, and that the script it names is not on this machine;\n- that SL-091 is the Q-175 follow-on (no other backlog row exists to merge into);\n- that SL-088's design doc lines 50-55 ('the known gap a follow-on slice owes') are closed;\n- the person-run checks still owed;\n- replacement text for C-004's reveal clause, for a person to apply (Q-125).",
+    "lives_at": "docs/design/SL-091-hidden-reveal-refuses.md",
+    "key_interactions": "This is where the next slice finds the unmeasured cells."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "When Explorer's settings hide the item, the reveal is refused: Walk opens nothing and the status line names the setting or settings. This is used instead of the brief's 'parent-only' outcome and the derived C2 and C4 wording ('Explorer opened the parent without selecting the item').",
+    "reversibility": "cheap",
+    "rationale": "Q-175 is a person's decision and names this slice: 'Walk refuses without opening a window. It uses a new RevealReason, and the status line names the Explorer option that hides the item.' It outranks:\n- Q-169, a model decision to say the parent was opened;\n- the brief's parent-only wording, which is an 'Assumed:' line and not a decision;\n- the build check's derived criteria.\n\nNothing measured contradicts refusing. The parent did open in all 13 cases, so parent-only was achievable; that is a should, not a fact.\n\nValidate should judge:\n- C2 and C3 as 'not reported as landing';\n- C4 as 'the status line names the hiding setting(s) and says nothing was opened, only when the settings in force hide the item'.\n\nVisible change on the owner's PC: revealing pagefile.sys, hiberfil.sys, System Volume Information or $Recycle.Bin now opens nothing. It used to open C:\\ and falsely report Exact; 0/8 were selected.\n\nTo reverse: call open on that branch and change three sentences."
+   },
+   {
+    "decision": "The predicate uses only the item's own attributes, and volume roots are exempt. Explorer hides the item when it is Hidden and hidden files aren't shown, or when it is Hidden+System and protected operating system files are hidden.",
+    "reversibility": "cheap",
+    "rationale": "Q-175 deferred the exact predicate until the Hidden=2 result.\n\n**Measured**\n- At (Hidden=1, SSH=0):\n  - plain and System-only items are selected (spike cell 0, 8/8);\n  - Hidden-only items are selected (SL-088 5/5; harness check);\n  - Hidden+System items are not (0/8).\n- At (2, 0): Hidden and Hidden+System are not selected (0/13, by hand); the plain control lands (4/4).\n\n**Unmeasured, predicting refusal**: Hidden+System at (2, 1).\n\n**Unmeasured, predicting Exact** (corrected from the proposal's 'only one cell'):\n- Hidden+System at (1, 1);\n- System-only at Hidden=2;\n- non-hidden items under hidden ancestors at Hidden=2.\n\nThese are filed for a person. Every one except the ancestor case is a one-row change to the table."
+   },
+   {
+    "decision": "Explorer's view is read with SHGetSetSettings: read-only, never cached, and only for Hidden, non-root targets.",
+    "reversibility": "cheap",
+    "rationale": "Q-175 names this call. The build check and two spikes saw it agree with the registry on this PC.\n- Reading only for Hidden targets keeps today's non-hidden path free of the new call.\n- Not caching avoids building a staleness bug on purpose.\n\nIf a person's mid-session toggle run shows stale values, only `ReadExplorerView`'s body changes, to a read-only HKCU read. The delegate contract stays the same."
+   },
+   {
+    "decision": "Core decides everything, including which setting or settings to name, and returns them as HiddenBy flags. The App only maps flags to Folder Options labels.",
+    "reversibility": "cheap",
+    "rationale": "In the proposal, the App would have chosen which setting to name from View and System. That would put a second copy of the predicate in a project with no App test project. As flags from Core, every naming cell is covered by xUnit, and the App's text is a fixed mapping. This follows the project's line that the App never decides an outcome kind."
+   },
+   {
+    "decision": "Outcome shape:\n- RevealKind keeps two values;\n- one new reason, HiddenByExplorerSettings, with HResult 0;\n- RevealOutcome gains `HiddenBy` and a nullable `View`.",
+    "reversibility": "cheap",
+    "rationale": "Q-175 asks for one new reason, not a new kind. The NoLongerExists precedent already means 'Failed, nothing opened, a reason the App words'.\n\nThe consumers are MainWindow, the hook's reveal record and the in-repo tests.\n\nView is nullable so that 'not read' cannot be mistaken for Hidden=2/SSH=0, which is what `default(ExplorerView)` would decode as."
+   },
+   {
+    "decision": "Delete the blanket Exact+Hidden note. Exact now means Explorer will select the item, so the status line collapses.",
+    "reversibility": "cheap",
+    "rationale": "The build check measured that the note appears for every hidden item whatever the settings, including on this PC, where Hidden-only items are selected. C4 asks for a statement only when the settings in force mean the item is hidden. The refusal text now does that job."
+   },
+   {
+    "decision": "If the attribute read throws, the item is treated as not hidden (fail-open), as it is today.",
+    "reversibility": "cheap",
+    "rationale": "This keeps SL-088's behaviour on a rare path. The risk is concentrated on the items this slice exists for (pagefile.sys, held open by the system; System Volume Information, which the user can't open). So a material case reads their real attributes through Walk. Switching to fail-closed would need its own evidence."
+   },
+   {
+    "decision": "Add a hook failpoint, FSA_HOOK_EXPLORER_VIEW → ShellReveal.OverrideExplorerView. It may be used only to assert refusals.",
+    "reversibility": "cheap",
+    "rationale": "The slice exists because of Windows defaults, yet no engine stage may set Hidden=2. Injecting the view through the hook makes the defaults status text and the no-window refusal checkable unattended through the shipped exe. It follows the FailListingOf / FSA_HOOK_FAIL_LISTING precedent and the Q-195 convention that the case says it injected.\n\nA landing can never be asserted under an injected view, because Explorer follows the real settings.\n\nFitness rule 1 keeps product code from calling the override."
+   },
+   {
+    "decision": "This is not a KnownWorkarounds entry.",
+    "reversibility": "cheap",
+    "rationale": "Explorer not listing hidden items while 'show hidden files' is off is Explorer honouring the user's own setting, not a defect outside the project. The defect was this app's: it reported Exact for an item Explorer would not select. A bug in this project's own code is fixed, not toggled.\n\nAn 'off' position would bring back that false success. The user's real control is Explorer's own setting, which the status line names."
+   },
+   {
+    "decision": "Two choices about enforcement and test expectations:\n- 'Read-only, ShellReveal.cs only' and 'tests never change Explorer's settings' are settled fitness rules, not twinned ones.\n- Window cases derive their expectations from the HKCU values in force, read-only, instead of pinning (1,0) results.",
+    "reversibility": "cheap",
+    "rationale": "Settled rules leave alone the twinned counts pinned literally across RuleCases.ps1 and SettledCountProbe.ps1, which no gate runs (SL-053, SL-085).\n\nDeriving expectations from the registry has two benefits:\n- it gives an oracle independent of the app's SHELLSTATE decode;\n- the same steps become the person's Hidden=2 check with no new tooling.\n\nPinning (1,0) results would make the pins wrong on any machine at Windows defaults."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "Only proposal. Taken as the core: refusal, predicate, injected delegate, uncached SHGetSetSettings read, removal of the blanket note, settled fitness rule, window cases derived from the settings in force.\n\nChanged at seams:\n- HiddenBy flags are computed in Core; the App no longer derives which setting to name from View and System.\n- Added a hook failpoint so the defaults text is machine-checkable.\n- Corrected the claim that only one unmeasured cell predicts Exact (there are three).\n- Added rules forbidding writes to Explorer settings from src and from tests, with .ps1 patterns anchored against fitness matching # comments."
+   }
+  ],
+  "coherence_check": "There was one proposal, so no pieces from different proposals had to be fitted together. Nothing here has survived a disagreement; the reviewer is the first to argue with it.\n\nWhat I checked against the record, and what I changed:\n\n1. **Decisions on record.** Q-175 (a person) says refuse and open nothing. Q-169 (a model) and the brief / build-check derived C2 and C4 say open the parent and report parent-only. These cannot both ship. I kept Q-175 and restated how C2-C4 are met. I did not build both.\n\n2. **Who decides.** The proposal had Core decide whether to refuse while the App decided which setting to name, by reading View and System: two owners of one predicate. I moved the naming into Core as HiddenBy flags, so the App only maps flags to labels.\n\n3. **Failpoint vs. landing assertions.** An injected Explorer view and a real Explorer landing contradict each other, because Explorer follows the real settings. So the injected view is allowed only for refusal assertions, and every landing step runs at the real settings and is person-run.\n\n4. **The proposal's safety claim.** It said every unmeasured cell except Hidden+System at (1,1) errs toward refusal. That is false. System-only at Hidden=2 and non-hidden items under hidden ancestors at Hidden=2 also predict Exact without a measurement. Corrected in key_decisions and in the transfer invariants.\n\n5. **Moving the attribute read ahead of the open.** It still sits inside the try, so the finally block frees the pidl once. The volume-root exemption and the fail-open on exceptions are kept. Precedence keeps NoLongerExists ahead of the refusal, so a vanished hidden item still says 'rescan'.\n\n6. **Existing pins.** WindowCases.ps1:2150, 2206 and 4360 (pagefile.sys text) and :3781-3782 (hs_file.sys kind='Exact'), plus ShellRevealTests.cs:222-245 (Kind=Exact for H+S), contradict the new behaviour. All are re-pinned. They are not left beside it.\n\n7. **Fitness and .ps1 comments.** Fitness does not blank # comments in .ps1, so a commented example would trip the window-case rule. Its patterns are anchored to lines with no # before the command.\n\n8. **Workaround list.** The KnownWorkarounds rule was checked and does not apply: the defect was this project's own false success report.\n\n9. **Baselines, not regressions.** The three failing last-access tests (Q-190) are unrelated to reveal.",
+  "architecture_rules": [
+   {
+    "name": "only ShellReveal.cs reads Explorer's view settings or overrides them",
+    "files": "src/**/*.cs",
+    "must_not_match": [
+     "\\bSHGetSetSettings\\b",
+     "\\bSHGetSettings\\b",
+     "\\bOverrideExplorerView\\b"
+    ],
+    "except_files": [
+     "src/FsAnalyser.Core/Native/ShellReveal.cs"
+    ],
+    "because": "Breaking this lets two pieces of code decide whether a reveal is refused:\n- A second reader elsewhere would give a second, independently decoded answer, and the App's status line would drift from Core's verdict.\n- A product call to the hook failpoint would let something other than the shell's own state decide the refusal.\n\nThe shell-call rule at .taad/fitness.yaml:599-612 already holds the same line for SHOpenFolderAndSelectItems and SHParseDisplayName."
+   },
+   {
+    "name": "the app never writes Explorer's settings",
+    "files": "src/**/*.cs",
+    "must_not_match": [
+     "SHGetSetSettings\\s*\\([^;]*\\btrue\\b",
+     "(?i)\\bCreateSubKey\\s*\\([^;]*Explorer\\\\+Advanced",
+     "(?i)\\bOpenSubKey\\s*\\([^;]*Explorer\\\\+Advanced[^;]*,\\s*(?:true|RegistryKeyPermissionCheck\\.ReadWriteSubTree)",
+     "(?i)\\bRegistry\\.SetValue\\s*\\([^;]*Explorer\\\\+Advanced"
+    ],
+    "because": "The project promises the app never changes anything, and SL-088's go verdict and Q-175 both say it never changes Explorer's settings to make a reveal land. SHGetSetSettings with bSet=TRUE, or a writable open of HKCU Explorer\\Advanced, would silently change how the user's Explorer shows every folder."
+   },
+   {
+    "name": "the window cases never change the person's Explorer settings",
+    "files": "tests/window/**/*.ps1",
+    "must_not_match": [
+     "(?im)^[^#\\r\\n]*\\b(?:Set|New|Remove|Clear)-ItemProperty\\b[^#\\r\\n]*Explorer\\\\+Advanced",
+     "(?im)^[^#\\r\\n]*\\b(?:Set|New)-ItemProperty\\b[^#\\r\\n]*-Name\\s+['\"]?(?:Hidden|ShowSuperHidden)\\b",
+     "(?im)^[^#\\r\\n]*\\breg(?:\\.exe)?\\s+(?:add|delete|import)\\b[^#\\r\\n]*Explorer\\\\+Advanced",
+     "(?im)^[^#\\r\\n]*SHGetSetSettings\\s*\\([^#;\\r\\n]*\\btrue\\b"
+    ],
+    "because": "These cases now read Hidden and ShowSuperHidden to derive their expectations, and the build and validate stages run them unattended. Changing Explorer's settings is a machine-setting change only the person may make (build check; all three risk spikes stopped for it). A case that flips Hidden to 2 to 'test the defaults' would change the owner's desktop without asking. Patterns are line-anchored because fitness does not blank # comments in .ps1."
+   },
+   {
+    "name": "the Core tests never change the person's Explorer settings",
+    "files": "tests/**/*.cs",
+    "must_not_match": [
+     "SHGetSetSettings\\s*\\([^;]*\\btrue\\b",
+     "(?i)\\bCreateSubKey\\s*\\([^;]*Explorer\\\\+Advanced",
+     "(?i)\\bOpenSubKey\\s*\\([^;]*Explorer\\\\+Advanced[^;]*,\\s*(?:true|RegistryKeyPermissionCheck\\.ReadWriteSubTree)",
+     "(?i)\\bRegistry\\.SetValue\\s*\\([^;]*Explorer\\\\+Advanced"
+    ],
+    "because": "ShellRevealTests gains a real-call Fact that reads HKCU Explorer\\Advanced and SHGetSetSettings. A test that set the values to cover the other cells would change the owner's Explorer on every unattended `dotnet test`. The other cells are covered by the injected delegate instead."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "reveal an item",
+    "shape": "the item is not Hidden: a plain file or folder, or a System-only one",
+    "why": "Walk branches on Hidden alone.\n- A non-hidden item must skip the settings read and keep today's Exact path.\n- System-only items are predicted visible (measured selected 8/8 at the owner's 1/0), so a predicate that refuses on System alone would refuse reveals that land.",
+    "check": "ShellRevealTests visibility theory, rows plain and S-only (file and folder) × all four ExplorerView cells. Expects Kind=Exact, open called once, explorer delegate never called.\npwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~ShellReveal\""
+   },
+   {
+    "behaviour": "reveal an item",
+    "shape": "a Hidden-only item while Explorer shows hidden files (the owner's PC: ShowsHidden=true, ShowsProtected=false)",
+    "why": "This is the C5 regression guard. Hidden-only items land 5/5 here. A gate that refuses on Hidden alone would break the owner's everyday reveals of AppData-style items, and the status line must now be empty.",
+    "check": "ShellRevealTests visibility theory, rows H-only file and folder at view (true, false). Expects Exact, HiddenBy=None, open called once, free called once.\npwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~ShellReveal\""
+   },
+   {
+    "behaviour": "reveal an item",
+    "shape": "a Hidden-only item while Explorer hides hidden files (Windows default: ShowsHidden=false)",
+    "why": "The measured 0/13: the parent opens with nothing selected and S_OK is returned, so today's code reports Exact. This is C2.",
+    "check": "ShellRevealTests visibility theory, rows H-only at views (false, false) and (false, true). Expects Failed / HiddenByExplorerSettings, HiddenBy=HiddenFiles, HResult 0, open never called, free called exactly once.\npwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~ShellReveal\""
+   },
+   {
+    "behaviour": "reveal an item",
+    "shape": "a Hidden+System item while hidden files are shown but protected files are hidden (the owner's PC)",
+    "why": "This is the false success affecting the owner today: SL-088 selected 0 of 8 here and still reported Exact. It is C3. The status line must name only the protected-files setting, because hidden files are already shown.",
+    "check": "ShellRevealTests visibility theory, rows H+S file and folder at view (true, false). Expects Failed / HiddenByExplorerSettings, HiddenBy=ProtectedFiles only, open never called, free called once.\npwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~ShellReveal\""
+   },
+   {
+    "behaviour": "reveal an item",
+    "shape": "a Hidden+System item with both settings hiding it (Windows default)",
+    "why": "Both flags must be reported. Naming one would send the user to flip one box and still find nothing selected.",
+    "check": "ShellRevealTests visibility theory, rows H+S at view (false, false). Expects HiddenBy=HiddenFiles|ProtectedFiles, open never called.\npwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~ShellReveal\""
+   },
+   {
+    "behaviour": "reveal an item",
+    "shape": "a Hidden+System item with hidden files and protected files both shown",
+    "why": "This is the only H+S cell the predicate lets through, and it is unmeasured (spike cell 1 not run). Pinning it means a person's cell-1 result changes exactly one row instead of hiding in a formula.",
+    "check": "ShellRevealTests visibility theory, rows H+S at view (true, true). Expects Exact, open called once.\npwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~ShellReveal\""
+   },
+   {
+    "behaviour": "reveal an item",
+    "shape": "the item is one Windows protects: C:\\System Volume Information (a folder the user cannot open) and C:\\pagefile.sys (held open by the system, error 32 on any open)",
+    "why": "The attribute read moves ahead of the open. If it throws on these items, they count as not hidden and the false landing returns for exactly the items this slice exists for. Temp plants cannot reproduce either refusal: NTFS grants read-attributes through the parent's list right (U-107), and no user process can hold a file the way the paging file is held.",
+    "check": "ShellRevealTests real-system-item Fact, read-only. It uses the real paths with injected parse/pathOf/open and view (true, false), opens no window, and expects Hidden=System=true, HiddenBy=ProtectedFiles, open never called.\npwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~ShellReveal\""
+   },
+   {
+    "behaviour": "reveal an item",
+    "shape": "the target is a volume root (C:\\), whose directory carries Hidden|System",
+    "why": "The root exemption must hold in the new gate. Otherwise every drive-root reveal is refused at Windows defaults.",
+    "check": "ShellRevealTests volume-root Fact with view (false, false). Expects Exact and the explorer delegate never called.\npwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~ShellReveal\""
+   },
+   {
+    "behaviour": "reveal an item",
+    "shape": "a Hidden+System target that fails earlier: it no longer exists, it parses as another item, or its name is unaddressable",
+    "why": "Precedence: the refusal must not mask 'no longer exists, rescan' or the name diagnostics, and the pidl must still be freed once.",
+    "check": "ShellRevealTests precedence Facts on hidden targets with view (false, false). Expect NoLongerExists / ParsedAsAnotherItem / NameUnaddressable unchanged, delegate never called, free called once where a pidl exists.\npwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~ShellReveal\""
+   },
+   {
+    "behaviour": "read Explorer's view settings",
+    "shape": "the first SHELLSTATE DWORD is 0x0, 0x1, 0x8000, 0x8001, or 0x5 (an unrelated bit set, as the build check saw)",
+    "why": "Bit 15 (fShowSuperHidden) has never been seen at 1 on this PC, and other bits must be ignored. A mis-decode silently changes which H+S items are refused.",
+    "check": "ShellRevealTests FromShellState Facts: (0,0), (1,0), (0,1), (1,1), and 0x5 → (1,0).\npwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~ShellReveal\""
+   },
+   {
+    "behaviour": "read Explorer's view settings",
+    "shape": "the real SHGetSetSettings call on this PC",
+    "why": "Proves the P/Invoke buffer, mask and decode against the live shell, with the registry as an independent oracle.",
+    "check": "ShellRevealTests real-call Fact, read-only. ReadExplorerView().ShowsHidden == (HKCU Explorer\\Advanced Hidden == 1) and ShowsProtected == (ShowSuperHidden == 1); absent values are read as 2 and 0.\npwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --filter \"FullyQualifiedName~ShellReveal\""
+   },
+   {
+    "behaviour": "show a refused reveal on the status line",
+    "shape": "the settings actually in force on this PC (Hidden=1, ShowSuperHidden=0), with a Hidden+System temp file revealed through the shipped exe",
+    "why": "Checks the real settings read end to end. The old pins (WindowCases.ps1:2150, 2206, 4360, 3781-3782) expect Exact and the old note, and the refusal must open no Explorer window.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-003 (new refusal case, next free R- id; settings-in-force step). Expects a hook record of Failed / HiddenByExplorerSettings / hiddenBy=ProtectedFiles, the protected-files text, and no new Shell.Application window."
+   },
+   {
+    "behaviour": "show a refused reveal on the status line",
+    "shape": "Explorer's view injected as Windows defaults (FSA_HOOK_EXPLORER_VIEW=0|0), with a Hidden-only target and a Hidden+System target with a 200-character leaf, window at its minimum size",
+    "why": "This is the only unattended way to see the defaults texts (hidden-files only, and both settings) through the shipped exe. The longest new text must not take a list's last full row (Q-049's rule).",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case R-003 (injected-defaults step). Expects:\n- the hidden-files text for the H-only target;\n- the both-settings text for the H+S target;\n- no new Shell.Application window;\n- an 'explorer-view-injected' hook line;\n- every list inView with at least one full row at 560x644."
+   },
+   {
+    "behaviour": "reveal an item",
+    "shape": "the attribute read throws (the item is removed between the resolve-back and the read)",
+    "why": "It is a race only. Fail-open keeps SL-088's behaviour unchanged, and the next reveal reports NoLongerExists. Testing it would need a new race seam in Walk for a path no real input reaches deliberately.",
+    "material": false
+   }
+  ],
+  "contracts": [
+   {
+    "name": "ShellReveal.Walk(plan, requested, parse, pathOf, open, free, explorer)",
+    "kind": "function",
+    "notes": "New parameter: `Func<ExplorerView> explorer`.\n- It is called at most once, only after the resolve-back succeeds, and only for a Hidden target that is not a volume root.\n- When `view.Hides(hidden, system)` is not None, Walk returns Failed / HiddenByExplorerSettings with HResult 0 and Hidden, System, HiddenBy and View set. `open` is never called.\n- All other outcomes are unchanged.",
+    "error_cases": "- Attribute read throws: Hidden = System = false, and the Exact path is taken (unchanged).\n- NameUnaddressable, parse failure (NoLongerExists / None) and ParsedAsAnotherItem keep precedence, and the delegate is not called.\n- Open fails after a visible verdict: Failed / None with that hr (unchanged).\n- On every path the pidl is freed exactly once.",
+    "auth_model": "Ordinary user, no elevation. Reads attributes and shell state only."
+   },
+   {
+    "name": "ExplorerView, ExplorerHides, ReadExplorerView(), FromShellState(uint)",
+    "kind": "function",
+    "notes": "- `ExplorerView(bool ShowsHidden, bool ShowsProtected)`.\n- `Hides(hidden, system)` = (hidden && !ShowsHidden ? HiddenFiles : 0) | (hidden && system && !ShowsProtected ? ProtectedFiles : 0).\n- `ReadExplorerView` calls `SHGetSetSettings(zeroed buffer ≥ 64 bytes, 0x00040001, bSet: false)`. ShowsHidden is bit 0 and ShowsProtected is bit 15 of the first DWORD; other bits are ignored.\n- It is read fresh at each hidden reveal and never written. Fitness rules 1 and 2 enforce the call site and the read-only call.",
+    "error_cases": "The API returns void, so there is no failure value. If bit 15 is mis-decoded as always 0, H+S items are refused even when the user shows protected files: lost reach, not a false report.",
+    "auth_model": "Per-user HKCU shell state, read-only."
+   },
+   {
+    "name": "RevealOutcome additions",
+    "kind": "function",
+    "notes": "- `RevealReason.HiddenByExplorerSettings`.\n- `ExplorerHides HiddenBy` ([Flags]: None = 0, HiddenFiles = 1, ProtectedFiles = 2).\n- `ExplorerView? View`: null when it wasn't read.\n- RevealKind stays {Exact, Failed}.\n\nConsumers: MainWindow.FormatRevealStatus (HiddenBy only), the hook's reveal record (kind, reason, hiddenBy, view), and ShellRevealTests."
+   },
+   {
+    "name": "Reveal status line text",
+    "kind": "ui",
+    "notes": "- **Exact**: empty, so the line collapses. The old \"'<leaf>' is hidden, so Explorer only highlights it if…\" note is removed.\n- **HiddenByExplorerSettings** must name each flagged Folder Options setting, name the leaf, and say nothing was opened. Defaults:\n  - HiddenFiles: \"Explorer is set to 'Don't show hidden files, folders, or drives', which hides '<leaf>', so nothing was opened.\"\n  - ProtectedFiles: \"Explorer is set to 'Hide protected operating system files', which hides '<leaf>', so nothing was opened.\"\n  - Both: \"Explorer is set to 'Don't show hidden files, folders, or drives' and 'Hide protected operating system files', which hide '<leaf>', so nothing was opened.\"\n- NoLongerExists and 'Couldn't show…' are unchanged.\n\nThe labels are recalled; the builder checks them on Windows 11 26200.",
+    "error_cases": "With a long leaf, the both-settings text must still leave every list one full row at 560x644. Case R-003's injected step checks this."
+   },
+   {
+    "name": "FSA_HOOK_EXPLORER_VIEW hook failpoint",
+    "kind": "cli",
+    "notes": "FSA_HOOK_EXPLORER_VIEW='<0|1>|<0|1>' (showsHidden|showsProtected). It requires FSA_HOOK_MODE, like FSA_HOOK_FAIL_LISTING. The hook calls ShellReveal.OverrideExplorerView once at start and logs 'explorer-view-injected' with the values. The product never reads the variable.",
+    "error_cases": "- A malformed value: the hook refuses to start the case and says why.\n- An injected view may be used only to assert a refusal. A case that would expect Exact under an injected view is a test defect, because Explorer follows the real settings."
+   },
+   {
+    "name": "Window-case reveal expectations",
+    "kind": "cli",
+    "notes": "- WindowCases.ps1 reads HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced Hidden and ShowSuperHidden read-only at start, treating absent values as 2 and 0.\n- It derives each target's expected kind, reason, hiddenBy and text from the same predicate.\n- A refusal step asserts that no new Shell.Application window appears.\n- An Exact step asserts the parent window and the selected leaf, as R-002 does, and is person-run.",
+    "error_cases": "- If the registry values change mid-run, the run is void and the case says so.\n- A step that needs other settings stops and reports itself owed to a person. It never writes them; fitness rule 3 enforces that.",
+    "auth_model": "Never writes Explorer settings. Changing them is the person's to do."
+   }
+  ],
+  "outside_claims": [
+   {
+    "claim": "At Hidden=2 / ShowSuperHidden=0, SHParseDisplayName + SHOpenFolderAndSelectItems on a Hidden or Hidden+System item returns S_OK, opens the right parent and selects nothing, with no dialog and no elevation. This held for short and >260-character temp items and for real items including C:\\System Volume Information. The plain control lands 4/4.",
+    "evidence": "measured",
+    "source": "The person's hand run, 2026-09-29T16:23Z (run 2285), quoted in the brief. Its script is not on this machine (build check: Test-Path False), so the claim is 'unknown' to the loop and its re-measurement is filed for the person.",
+    "if_wrong": "If Hidden-only items were in fact selected at Hidden=2, the design refuses reveals that would have landed. That costs reach, not honesty."
+   },
+   {
+    "claim": "At Hidden=1 / ShowSuperHidden=0:\n- Hidden-only items are selected (SL-088 5/5; risk-spike harness check across 21 targets);\n- Hidden+System items are not (0/8; harness check, including the four real H+S items);\n- plain and System-only items are selected (cell 0, 8/8, short and >260 characters).",
+    "evidence": "measured",
+    "source": "SL-088 risk spike; SL-091 spike 'hidden-system-selection-rule-showsuperhidden-cells' (cell 0 and the harness check at current settings)",
+    "if_wrong": "This is the predicate's basis at the owner's settings. If Hidden-only items were not selected here, the owner would still see false Exact for them."
+   },
+   {
+    "claim": "SHGetSetSettings answers for an ordinary unelevated user on this PC, and agrees with HKCU Explorer\\Advanced at Hidden=1 / ShowSuperHidden=0. The build check saw flags 0x5; spikes 1 and 2 saw 0x1.",
+    "evidence": "measured",
+    "source": "Build-check read-only probe; spikes 1 and 2 (baseline readings)"
+   },
+   {
+    "claim": "SHELLSTATE layout and the call:\n- bit 0 of the first DWORD is fShowAllObjects and bit 15 is fShowSuperHidden;\n- SSF_SHOWALLOBJECTS = 0x1 and SSF_SHOWSUPERHIDDEN = 0x40000;\n- the function returns void, and bSet=FALSE never writes or broadcasts;\n- the structure fits in 64 bytes.",
+    "evidence": "recalled",
+    "source": "Memory of shlobj_core.h and Microsoft Learn SHGetSetSettings / SHELLSTATE. Spike 2 used the same layout; bit 0 agreed with the registry. Bit 15 has only ever read 0.",
+    "if_wrong": "If bit 15 reads 0 regardless, H+S items are refused even when the user shows protected files (lost reach). If it reads 1 wrongly, H+S items at the owner's settings report a false Exact. The FromShellState and real-call cases catch the decode only at values this PC has."
+   },
+   {
+    "claim": "SHGetSetSettings returns the current values in a long-running WPF process after the person changes Hidden items or 'Hide protected operating system files' in Explorer, without a restart or SHSettingsChanged.",
+    "evidence": "recalled",
+    "source": "Memory. Spike 'shgetsetsettings-tracks-midsession-toggle' is undecided: harness proven at baseline only, and it needs a person to toggle four times.",
+    "if_wrong": "A toggle made while the app is open is ignored until restart, in either direction. ReadExplorerView's body switches to a read-only HKCU read; the delegate contract is unchanged."
+   },
+   {
+    "claim": "Explorer's 'Hide protected operating system files' hides only items that are both Hidden and System. System-only items are always listed, including at Hidden=2.",
+    "evidence": "recalled",
+    "source": "Memory. Measured only at Hidden=1/SSH=0, where System-only items were selected 8/8 (spike cell 0).",
+    "if_wrong": "At Windows defaults, System-only reveals report a false Exact. Fixing it is a one-row predicate change."
+   },
+   {
+    "claim": "With both settings on (Hidden=1, ShowSuperHidden=1), Explorer selects Hidden+System items, including the real C:\\System Volume Information, pagefile.sys and hiberfil.sys.",
+    "evidence": "recalled",
+    "source": "Prediction. Spike cell 1 has not been run; it needs a person.",
+    "if_wrong": "That cell reports a false Exact. The predicate becomes 'H+S always refused', a one-row change."
+   },
+   {
+    "claim": "Explorer's hidden filter applies to the item's own attributes only. A Hidden or Hidden+System ancestor (AppData, ProgramData, a +H temp folder) does not stop a non-hidden child being selected at Hidden=2.",
+    "evidence": "recalled",
+    "source": "Memory. Spike 'hidden-ancestor-does-not-block-selection-at-defaults' measured 13/13 at Hidden=1 only; its Hidden=2 run needs a person.",
+    "if_wrong": "Every reveal under AppData or ProgramData at Windows defaults reports a false Exact. Walk would need an ancestor-attribute walk and a status line naming the hidden ancestor (see decidable_disagreements)."
+   },
+   {
+    "claim": ".NET File.GetAttributes on a \\\\?\\ path returns the attributes of C:\\pagefile.sys (refused with a sharing violation on any open) and C:\\System Volume Information by falling back to a directory-listing read.",
+    "evidence": "recalled",
+    "source": "Memory of the .NET FileSystem attribute fallback. Supported by the repo's existing pagefile.sys hidden-note pins (WindowCases.ps1:2150/2206/4360), which can only appear if Hidden was read as true. The spike's FindFirstFileW read SVI as 0x16 and pagefile.sys as 0x26.",
+    "if_wrong": "The read throws, the item counts as not hidden, and the false landing returns for exactly these items. The real-system-item case catches it."
+   },
+   {
+    "claim": "Windows' defaults are Hidden=2 and ShowSuperHidden=0, and an absent Hidden value behaves as 2.",
+    "evidence": "recalled",
+    "source": "The brief states the defaults; the absent-value behaviour is from memory.",
+    "if_wrong": "On a fresh profile the window case derives the wrong expectation and the real-call Fact compares against the wrong oracle. Core behaviour is unaffected."
+   },
+   {
+    "claim": "On Windows 11 26200 and Windows 10, Folder Options > View labels these settings 'Don't show hidden files, folders, or drives' and 'Hide protected operating system files (Recommended)'.",
+    "evidence": "recalled",
+    "source": "memory",
+    "if_wrong": "The status line names a setting the user cannot find. Fixing it is a text change."
+   }
+  ],
+  "decidable_disagreements": [
+   {
+    "question": "At Windows defaults (Hidden=2, ShowSuperHidden=0), does a Hidden or Hidden+System ancestor stop Explorer selecting a non-hidden item inside it? Examples: AppData\\Local, ProgramData\\Microsoft, files under %LOCALAPPDATA%\\Temp.",
+    "positions": "- This design assumes only the item's own attributes matter. It was measured 13/13 at Hidden=1 only.\n- The alternative: Walk reads every ancestor's attributes, and the refusal names the hidden ancestor instead of the leaf.\n\nSpike 'hidden-ancestor-does-not-block-selection-at-defaults' has a harness ready. It needs a person to set 'Don't show hidden files' and run it.",
+    "would_force_resynthesis": true
+   }
+  ],
+  "filed_for_later": [
+   {
+    "what": "Re-measure at Windows defaults (Hidden=2, ShowSuperHidden=0) with the shipped exe, then restore Hidden=1. Expected results:\n- Hidden-only and Hidden+System items (short, >260 characters, C:\\System Volume Information, pagefile.sys, hiberfil.sys) are refused with the hidden-files text, or both texts for H+S, and no Explorer window opens.\n- C:\\Program Files\\WindowsApps (Hidden-only) is refused.\n- Plain and System-only items still land in their parent within 1 s.",
+    "why": "It needs Explorer's setting changed, which only the person may do. The script behind the claimed 0/13 is not on this machine, and the build check left the measurement 'unknown, checked_by person'.",
+    "who": "person"
+   },
+   {
+    "what": "Run the prepared spike cells 1 and 2 (Hidden=1/SSH=1 and Hidden=2/SSH=1) with the spike's guided.ps1 and Harness.exe. This settles whether H+S is selected at (1,1), whether bit 15 decodes as 1 when protected files are shown, and whether H+S stays unselected at (2,1).",
+    "why": "It needs two Folder Options checkboxes changed by a person. It pins the only H+S cell the predicate lets through.",
+    "who": "person"
+   },
+   {
+    "what": "Run spike 'shgetsetsettings-tracks-midsession-toggle': run.ps1, then four clicks in Explorer. If the WPF-process poller stays stale, change ReadExplorerView's body to a read-only HKCU read.",
+    "why": "It needs a person clicking in Explorer, which no stage may drive.",
+    "who": "person"
+   },
+   {
+    "what": "Run spike 'hidden-ancestor-does-not-block-selection-at-defaults' at Hidden=2 (run.ps1, then verify.ps1). A NO-GO reopens this design for an ancestor walk.",
+    "why": "It needs Hidden=2 set by a person. The loss would change Walk's inputs and the status-line contract.",
+    "who": "person"
+   },
+   {
+    "what": "The Exact-control step of the R-003 reveal case. A Hidden-only temp item revealed at the owner's Hidden=1/SSH=0 must be selected in its parent's real Explorer window within 1 s, with no dialog. This is the real-Explorer half of C5.",
+    "why": "It opens real Explorer windows. SL-088's lesson makes R-001/R-002-style steps person-run, and Q-176's unattended exception names SL-089 only.",
+    "who": "person"
+   },
+   {
+    "what": "On a Windows 10 machine, check the SHGetSetSettings decode and Explorer's hidden filter (H-only and H+S at both Hidden values).",
+    "why": "Q-192 keeps Windows 10 supported, and every measurement so far is from Windows 11 26200. No Windows 10 machine is available.",
+    "who": "person"
+   },
+   {
+    "what": "Apply the replacement text for C-004's reveal clause, recorded in docs/design/SL-091-hidden-reveal-refuses.md, to the engine's architecture record. The clause adds: 'when Explorer's own settings hide the item (Hidden while hidden files are not shown, or Hidden+System while protected operating system files are hidden; volume roots exempt), it says so on the status line, naming the setting, and opens nothing'.",
+    "why": "No stage can edit the engine's architecture record (Q-125).",
+    "who": "person"
+   }
+  ],
+  "stack_chosen": [],
+  "taste_disagreements": [
+   "Whether the refusal text should also tell the user how to change the setting (for example 'View > Show > Hidden items', or 'Folder Options > View'), or only name it as Q-175 asks.",
+   "Who picks which setting to name: Core, as HiddenBy flags (chosen), or the App from View and System (as the proposal had it).",
+   "Whether a hook failpoint that overrides Explorer's view belongs in the product at all, or whether the defaults text should be left to a person-run check at Hidden=2.",
+   "Whether Explorer not selecting hidden items is an outside defect deserving a KnownWorkarounds checkbox. Judged no: it is the user's own setting working, and the bug fixed was this app's false success report.",
+   "Fail-open (treat as not hidden) versus fail-closed (refuse) when the attribute read throws.",
+   "Folder Options labels versus Windows 11's command-bar wording ('Hidden items') in the status line."
+  ],
+  "whats_new": [
+   "RevealReason.HiddenByExplorerSettings, refused with HResult 0 and nothing opened",
+   "ExplorerView(ShowsHidden, ShowsProtected) with Hides(hidden, system), and an ExplorerHides [Flags] enum (HiddenFiles, ProtectedFiles)",
+   "A read-only SHGetSetSettings P/Invoke (mask 0x00040001, zeroed buffer of at least 64 bytes) and FromShellState, which decodes bits 0 and 15 of the first DWORD",
+   "Walk's new explorer delegate; the attribute read moved ahead of the open; a refusal path that never calls open",
+   "RevealOutcome.HiddenBy and a nullable RevealOutcome.View",
+   "ShellReveal.OverrideExplorerView, set only by the window hook from FSA_HOOK_EXPLORER_VIEW, used only for refusal assertions",
+   "A FormatRevealStatus branch mapping HiddenBy flags to the Folder Options labels, and removal of the blanket Exact+Hidden note",
+   "A ShellRevealTests theory: real temp plain / S-only / H-only / H+S files and folders × four view cells",
+   "ShellRevealTests real-system-item Fact (C:\\System Volume Information, C:\\pagefile.sys), plus decode Facts and a read-only registry cross-check Fact",
+   "WindowCases.ps1 expectations derived from HKCU values read-only; old pins at :2150, :2206, :4360 and :3781-3782 rewritten",
+   "New R-003 refusal case: a settings-in-force step and an injected-defaults step at minimum window size, both asserting no Explorer window",
+   "Four settled fitness rules: Explorer's view is read and overridden only in ShellReveal.cs; neither src nor tests write Explorer's settings",
+   "docs/design/SL-091-hidden-reveal-refuses.md: measured and predicted cells, person-run checks owed, and C-004 replacement text"
+  ],
+  "whats_reused": [
+   "ShellReveal.Walk's injected-delegate seam and its precedence order (ShellReveal.cs:211-261)",
+   "The existing \\\\?\\ File.GetAttributes read, its volume-root exemption and its fail-open on exceptions (ShellReveal.cs:243-259), moved earlier",
+   "The finally-block pidl free (ShellReveal.cs:237-241)",
+   "RevealKind {Exact, Failed} and the pattern NoLongerExists set: Failed with a reason, nothing opened",
+   "FormatRevealStatus's switch and its 'Couldn't show…' / NoLongerExists texts (MainWindow.xaml.cs:856-881)",
+   "The shell-calls-only-in-ShellReveal.cs fitness rule (.taad/fitness.yaml:599-612) as the model for rule 1",
+   "The hook-driven failpoint precedent: SynchronousIoCancel.FailListingOf via FSA_HOOK_FAIL_LISTING (SL-082), and Q-195's 'states it injected' convention",
+   "R-002's Shell.Application window reading, leaf / GetLongPathName matching and Close-CaseWindows hygiene",
+   "SL-088's AST-plus-fake-Shell.Application idiom for testing WindowCases logic under pwsh 7 and PS 5.1",
+   "The risk spikes' person-guided harnesses (guided.ps1 / Harness.exe, poller run.ps1, ancestor run.ps1 / verify.ps1) for the cells owed to a person",
+   "Q-175's land-or-refuse rule and Q-169's 'one attribute read, the shell's own settings call, no COM automation'"
+  ],
+  "prior_art": [
+   {
+    "pattern": "A Tauri app replaced the opener plugin's SHOpenFolderAndSelectItems reveal with `explorer /select`, spawned without checking the exit code ('explorer returns non-zero even on success'). That makes the reveal fire-and-forget with no success signal. U-114 measured /select silently misrouting at 300+ characters, so this is the path to avoid.",
+    "where": "https://github.com/ai4s-research/open-science/commit/2a8babdbbea8ed3a74127a85460c0ef1fd48ae04",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-07-09"
+   },
+   {
+    "pattern": "'Reveal in Explorer' silently opened the parent folder instead of selecting the file, with no error or dialog, because of argument quoting. Nobody noticed until users reported it. It is the same silent-parent symptom this slice stops reporting as success.",
+    "where": "https://github.com/Technarion-Oy/thaw/pull/841",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-07-22"
+   },
+   {
+    "pattern": "reveal_item_in_dir canonicalizes the path and calls the platform reveal, with no check of the target's visibility or the shell's hidden-file settings.",
+    "where": "https://docs.rs/tauri-plugin-opener/latest/src/tauri_plugin_opener/reveal_item_in_dir.rs.html",
+    "authority": "oss",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Chromium's Windows ShowItemInFolder: SHParseDisplayName + SHOpenFolderAndSelectItems, falling back to opening the containing folder. There is no hidden-setting check. This is the 'open the parent anyway' behaviour Q-175 chose not to ship.",
+    "where": "Chromium chrome/browser/platform_util_win.cc",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "SHGetSetSettings with SSF_SHOWALLOBJECTS | SSF_SHOWSUPERHIDDEN filling SHELLSTATE.fShowAllObjects / fShowSuperHidden is the documented read of Explorer's hidden-item view state. Registry Advanced\\Hidden is the backing store, not the contract.",
+    "where": "Microsoft Learn: SHGetSetSettings / SHELLSTATE (shlobj_core.h)",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Before a dispatch that gives no failure signal, ask the dispatcher's own resolution rule whether it will succeed (canOpenURL / resolveActivity).",
+    "where": "iOS UIApplication.canOpenURL; Android PackageManager.resolveActivity",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Mobile intent and URL dispatch (iOS canOpenURL, Android resolveActivity)",
+   "pattern": "Query before dispatch. When the side-effecting call reports success whatever happens (SHOpenFolderAndSelectItems returns S_OK with nothing selected), ask the target system's own filter, through its own documented API, whether the action will do what the user expects. Dispatch only if it will; otherwise say why and do nothing.\n\nThe known failure mode is drift between query and dispatcher: the query says yes and the dispatch still does nothing. It is guarded three ways:\n- the query is the shell's own state;\n- the window cases check against an independent oracle (the registry);\n- every cell where query and dispatcher could disagree, and that predicts a landing, is filed for a person to measure.",
+   "transfer_found": true,
+   "rationale": "The product may not confirm the landing after the fact (Q-169 and Q-175 ban COM automation of Explorer). When a call reports success either way, a preflight against the target's own rule is the only honest option left. The analogy also brings over the right worry, query/dispatch drift, which is why most invariants are must-verify.",
+   "invariants": [
+    {
+     "precondition": "Explorer's hidden-item filter is the global setting SHGetSetSettings reports, not a per-folder view state.",
+     "status": "holds",
+     "evidence": "Every measured cell matches:\n- at (1,0): Hidden-only 5/5 selected, H+S 0/8; plain and System-only 8/8; the harness check over 21 targets selected plain, H and S but not H+S;\n- at (2,0): H and H+S 0/13, control 4/4.\nSHGetSetSettings agreed with the registry on this PC."
+    },
+    {
+     "precondition": "The query is fresh in a long-running WPF process after the person changes the setting in Explorer.",
+     "status": "must-verify",
+     "evidence": "Spike 'shgetsetsettings-tracks-midsession-toggle': harness proven at baseline only."
+    },
+    {
+     "precondition": "Bit 15 of SHELLSTATE's first DWORD is fShowSuperHidden and reads 1 when protected files are shown.",
+     "status": "must-verify",
+     "evidence": "Only ever seen as 0 (ShowSuperHidden=0 on this PC)."
+    },
+    {
+     "precondition": "Only the item's own attributes decide selection; a hidden ancestor does not block it.",
+     "status": "must-verify",
+     "evidence": "13/13 at Hidden=1 (spike 3 dry run). Not run at Hidden=2."
+    },
+    {
+     "precondition": "Where an unmeasured cell predicts refusal, a wrong prediction costs reach, not honesty.",
+     "status": "holds",
+     "evidence": "By construction: H+S at (2,1) refuses, and the likely bit-15 mis-decode (always 0) refuses."
+    },
+    {
+     "precondition": "No unmeasured cell predicts a landing. This was the proposal's claim that only H+S at (1,1) does.",
+     "status": "fails",
+     "evidence": "Three unmeasured cells predict Exact: H+S at (1,1); System-only at Hidden=2; non-hidden items under hidden ancestors at Hidden=2. All three are filed for a person; the ancestor case is a decidable disagreement that would force a re-design."
+    }
+   ]
+  },
+  "channeled_experts": [
+   "Raymond Chen (Old New Thing): shell state, and never changing the user's Explorer settings for them",
+   "Chromium platform_util_win maintainers (ShowItemInFolder and its parent-folder fallback)",
+   "Microsoft shell docs authors for SHGetSetSettings / SHELLSTATE"
+  ],
+  "open_questions": []
+ }
+}

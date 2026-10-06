@@ -28,11 +28,14 @@
 #                     more than once; the rows' order may fail besides, since Q and P then keep a page each.
 #   NoFailListingMember  Core's FailListingOf renamed, so the hook's reflection finds nothing to arm (SL-082). The
 #                     hook refuses and the app ends before its Main, so T-007 fails on its first check.
+#   NoExplorerViewMember  Core's OverrideExplorerView renamed, so the hook cannot inject Explorer's view (SL-091). The
+#                     hook refuses and the app ends before its Main, so no reveal is clicked under the real view: R-003
+#                     fails on its armed check in each injected step, (a) and (c), and on nothing else.
 
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'CancelThrows', 'HookFailsAfterActing', 'HookCompileError', 'HookLocked', 'EndingObeysSkip',
-        'ListingFailsAnyFolder', 'NoFailListingMember')]
+        'ListingFailsAnyFolder', 'NoFailListingMember', 'NoExplorerViewMember')]
     [string] $Mutant
 )
 
@@ -43,6 +46,7 @@ $MainWindow = 'src\FsAnalyser.App\MainWindow.xaml.cs'
 $App = 'src\FsAnalyser.App\App.xaml.cs'
 $HookSource = 'tests\window\FsaWindowHook\StartupHook.cs'
 $IoCancel = 'src\FsAnalyser.Core\Scanning\SynchronousIoCancel.cs'
+$ShellReveal = 'src\FsAnalyser.Core\Native\ShellReveal.cs'
 $HookProject = 'tests\window\FsaWindowHook\FsaWindowHook.csproj'
 $HookOut = 'artifacts\window-hook'
 $script:Failures = [System.Collections.Generic.List[string]]::new()
@@ -102,6 +106,12 @@ $CaseMutants = @{
         File = $IoCancel; Find = [regex]::Escape('internal static void FailListingOf('); Replace = 'internal static void FailListingOfRenamed('
         Case = 'T-007'; Fail = '^  FAIL  the hook armed the listing failpoint for P before the app''s Main, its first line '
         Expect = '^        hook: fail-listing refused reason=MissingMethodException: ', '^        exit -532462766 \(0xE0434352\)$'
+    }
+    NoExplorerViewMember = @{
+        File = $ShellReveal; Find = [regex]::Escape('internal static void OverrideExplorerView('); Replace = 'internal static void OverrideExplorerViewRenamed('
+        Case = 'R-003'
+        Fail = '^  FAIL  the hook armed the injected view 0\|0 before the app''s Main, its first line ', '^  FAIL  the hook armed the injected view 0\|0 before the app''s Main, its first line '
+        Expect = '^        hook: explorer-view refused reason=member MissingMethodException: ', '^        exit -532462766 \(0xE0434352\)$'
     }
 }
 
@@ -272,7 +282,7 @@ function Test-HookLocked {
 
 # ---- Run ----
 
-$names = if ($Mutant -eq 'All') { 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'CancelThrows', 'HookFailsAfterActing', 'HookCompileError', 'HookLocked', 'EndingObeysSkip', 'ListingFailsAnyFolder', 'NoFailListingMember' } else { @($Mutant) }
+$names = if ($Mutant -eq 'All') { 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'CancelThrows', 'HookFailsAfterActing', 'HookCompileError', 'HookLocked', 'EndingObeysSkip', 'ListingFailsAnyFolder', 'NoFailListingMember', 'NoExplorerViewMember' } else { @($Mutant) }
 Use-RepoSdk
 $failed = @()
 foreach ($name in $names) {

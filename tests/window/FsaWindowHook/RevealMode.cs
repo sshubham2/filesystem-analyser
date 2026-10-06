@@ -460,6 +460,13 @@ internal static class RevealMode
         string reason = outcome?.GetType().GetProperty("Reason")?.GetValue(outcome)?.ToString() ?? "";
         int hresult = outcome?.GetType().GetProperty("HResult")?.GetValue(outcome) as int? ?? 0;
         string requested = outcome?.GetType().GetProperty("Requested")?.GetValue(outcome)?.ToString() ?? "";
+        // SL-091: the settings that hid the item ("None", "HiddenFiles", "ProtectedFiles" or both), and the Explorer
+        // view the reveal was decided under, as <hidden>|<protected>, null when none was read; beside the view this
+        // run injected (FSA_HOOK_EXPLORER_VIEW), null when none was.
+        string hiddenBy = outcome?.GetType().GetProperty("HiddenBy")?.GetValue(outcome)?.ToString() ?? "";
+        object? view = outcome?.GetType().GetProperty("View")?.GetValue(outcome);
+        string? effective = view is null ? null : $"{Bit(view, "ShowsHidden")}|{Bit(view, "ShowsProtected")}";
+        string? injected = Environment.GetEnvironmentVariable("FSA_HOOK_EXPLORER_VIEW") is { Length: > 0 } armed ? armed : null;
 
         if (string.IsNullOrEmpty(requested) && container != null)
         {
@@ -482,10 +489,16 @@ internal static class RevealMode
             ["reason"] = reason,
             ["hresult"] = hresult,
             ["status"] = status,
+            ["hiddenBy"] = hiddenBy,
+            ["view"] = effective,
+            ["injected"] = injected,
             ["revealStartQpc"] = Interlocked.Read(ref _revealStartQpc),
             ["qpcFrequency"] = Stopwatch.Frequency
         };
     }
+
+    private static string Bit(object view, string property) =>
+        view.GetType().GetProperty(property)?.GetValue(view) is true ? "1" : "0";
 
     private static FrameworkElement? FindContainer(Window window, string surface, string name)
     {
