@@ -109,6 +109,47 @@ public class CloudRigTests
         Assert.False(Directory.Exists(tree.PathOf(stale)));
     }
 
+    /// <summary>
+    /// The folder the rig's roots go in is made before it is swept, sits where TempTree puts its trees, and is outside the
+    /// Windows folder: under any temp folder, the engine's (which this user cannot list) included, where a sweep of the
+    /// temp folder itself was denied before anything was made (SL-098). Everything counts as running for the real folder,
+    /// so a root of another run is never touched by a test; the sweep itself is fed a folder of a tree's own.
+    /// </summary>
+    [Fact]
+    public void TheRigsParentIsMadeBeforeItIsSweptAndSitsWhereTheTreesDo()
+    {
+        (string parent, List<string> none) = CloudRig.PrepareParent(_ => true, _ => throw new InvalidOperationException("nothing is stale"), _ => Assert.Fail("nothing to log"));
+        Assert.Equal(TempTree.DefaultTestsRoot(), parent);
+        Assert.True(Directory.Exists(parent));
+        Assert.Empty(none);
+        string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        Assert.False(Path.TrimEndingDirectorySeparator(parent).StartsWith(Path.TrimEndingDirectorySeparator(windows) + @"\", StringComparison.OrdinalIgnoreCase),
+            $"the rig's parent {parent} is in the Windows folder {windows}");
+
+        using var tree = new TempTree();
+        string made = tree.PathOf("rig-parent");
+        Assert.Throws<DirectoryNotFoundException>(() => CloudRig.Sweep(made, CloudRig.IsRunning, _ => { }, _ => { })); // the order this method fixes
+        string stale = CloudRig.RootName(ExitedProcessId(), Guid.NewGuid());
+        string live = CloudRig.RootName(Environment.ProcessId, Guid.NewGuid());
+        tree.Folder($@"rig-parent\{stale}");
+        tree.File($@"rig-parent\{stale}\ok.txt", 10);
+        tree.Folder($@"rig-parent\{live}");
+        tree.File($@"rig-parent\{live}\in-use.txt", 10);
+        var unregistered = new List<string>();
+
+        (string prepared, List<string> swept) = CloudRig.PrepareParent(made, CloudRig.IsRunning, unregistered.Add, _ => Assert.Fail("nothing to log"));
+
+        Assert.Equal(made, prepared);
+        Assert.Equal([stale], swept);
+        Assert.Equal([Path.Combine(made, stale)], unregistered);
+        Assert.False(Directory.Exists(Path.Combine(made, stale)));
+        Assert.True(File.Exists(Path.Combine(made, live, "in-use.txt")), "the sweep removed a root of a run that is still going");
+
+        string later = tree.PathOf(@"not\yet\made");
+        Assert.Empty(CloudRig.PrepareParent(later, CloudRig.IsRunning, _ => { }, _ => { }).Swept);
+        Assert.True(Directory.Exists(later));
+    }
+
     [Fact]
     public void IsRunningTellsThisProcessFromOneThatHasExited()
     {

@@ -33,17 +33,24 @@ $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $CasesRel = 'tests\rules\RuleCases.ps1'
 $script:Failures = [System.Collections.Generic.List[string]]::new()
-$Base = Join-Path ([System.IO.Path]::GetTempPath()) ('fsa-sl076-' + [guid]::NewGuid().ToString('N').Substring(0, 10))
 $Given = $EnginePython
 # An account name with a non-ASCII letter, built from [char] so the file stays ASCII under either shell.
 $Jose = 'Jos' + [char]0xE9 + ' Smith'
 
-# RuleCases.ps1's own Invoke-HarnessRaw, taken from its source rather than copied. It reads $EnginePython,
-# $EngineRoot and $Harness from this script, which each shape sets.
-$raw = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $Repo $CasesRel), [ref]$null, [ref]$null).Find({
-        param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Invoke-HarnessRaw' }, $true)
-if (-not $raw) { throw "test setup: no function Invoke-HarnessRaw in $CasesRel" }
-. ([scriptblock]::Create($raw.Extent.Text))
+# RuleCases.ps1's own Invoke-HarnessRaw, taken from its source rather than copied, and the Remove-ScratchDir it removes
+# the kept folder with (SL-098). It reads $EnginePython, $EngineRoot and $Harness from this script, which each shape sets.
+$cases = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $Repo $CasesRel), [ref]$null, [ref]$null)
+foreach ($name in 'Invoke-HarnessRaw', 'Remove-ScratchDir', 'Get-ScratchParent') {
+    $found = $cases.Find({
+            param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
+    if (-not $found) { throw "test setup: no function $name in $CasesRel" }
+    . ([scriptblock]::Create($found.Extent.Text))
+}
+
+# Where the shapes' folders are made: the temp folder, or the user's own LocalAppData\Temp when that is at or under the
+# Windows folder (the engine's shells), by RuleCases' own rule. A folder made directly in the engine's TEMP cannot be listed
+# by this user, so the 8.3 shape finds no short name there and Remove-Item is denied on it (SL-098).
+$Base = Join-Path (Get-ScratchParent) ('fsa-sl076-' + [guid]::NewGuid().ToString('N').Substring(0, 10))
 
 # ---- Checks ----
 
@@ -229,7 +236,7 @@ try {
     }
 }
 finally {
-    Remove-Item -LiteralPath $Base -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-ScratchDir $Base | Out-Host
 }
 
 Write-Output ''

@@ -61,6 +61,23 @@ internal static partial class CloudRig
     }
 
     /// <summary>
+    /// The folder the rig's roots go in, made ready: <see cref="TempTree.DefaultTestsRoot"/> (listable by this user and
+    /// outside the Windows folder under any temp folder), created, then swept. In that order and in this one place:
+    /// the folder does not exist until something makes it, and <see cref="Sweep"/> of a missing or unlistable folder
+    /// throws, which is what stopped every Fact of the rig under the engine's temp folder (SL-098).
+    /// </summary>
+    /// <returns>The folder, and the names of the roots the sweep removed.</returns>
+    public static (string Parent, List<string> Swept) PrepareParent(Func<int, bool> isRunning, Action<string> unregister, Action<string> log) =>
+        PrepareParent(TempTree.DefaultTestsRoot(), isRunning, unregister, log);
+
+    /// <summary><see cref="PrepareParent(Func{int, bool}, Action{string}, Action{string})"/> for a folder of the caller's choosing.</summary>
+    public static (string Parent, List<string> Swept) PrepareParent(string parent, Func<int, bool> isRunning, Action<string> unregister, Action<string> log)
+    {
+        Directory.CreateDirectory(parent);
+        return (parent, Sweep(parent, isRunning, unregister, log));
+    }
+
+    /// <summary>
     /// Removes each folder directly in <paramref name="parent"/> that <see cref="IsStaleRoot"/> names: first
     /// <paramref name="unregister"/>, then the folder and everything in it. Nothing else in the parent is
     /// touched, nor is a link that happens to carry a root's name. Best effort: each failure goes to

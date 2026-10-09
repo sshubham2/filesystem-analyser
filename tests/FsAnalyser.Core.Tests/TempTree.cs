@@ -30,10 +30,18 @@ internal sealed class TempTree : IDisposable
     private readonly List<string> _outside = [];
 
     public TempTree()
-        : this(ChooseTestsRoot(Path.GetTempPath(), Environment.GetFolderPath(Environment.SpecialFolder.Windows),
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)))
+        : this(DefaultTestsRoot())
     {
     }
+
+    /// <summary>
+    /// <see cref="ChooseTestsRoot"/> for this process: its temp folder, the Windows folder and the user's LocalAppData as
+    /// the system gives them. The one place those three are read, so a fixture that is not a tree (the opt-in cloud rig's
+    /// sync roots, SL-098) lands where the trees do. It creates nothing.
+    /// </summary>
+    internal static string DefaultTestsRoot() =>
+        ChooseTestsRoot(Path.GetTempPath(), Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
 
     /// <summary>A tree under <paramref name="testsRoot"/>, refused the same way: NTFS only, never compressed.</summary>
     internal TempTree(string testsRoot)

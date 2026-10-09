@@ -31,6 +31,8 @@ $Utf8 = [System.Text.UTF8Encoding]::new($false)
 $Shells = @('powershell.exe', 'pwsh')
 $script:Failures = [System.Collections.Generic.List[string]]::new()
 $script:Temps = [System.Collections.Generic.List[string]]::new()
+# The folder every New-TempDir folder is made in, made on first use (Get-ScratchParent) and removed last.
+$script:ScratchRoot = $null
 # The counts the AGREE line carries, worked out from this tree's own two files on first use (Get-RuleCounts,
 # Get-ExpectedSettled) and kept for the run. No count is written in this file.
 $script:Counts = $null
@@ -67,11 +69,106 @@ function CheckRun($run, [int] $exit, [string] $what, [string[]] $contains = @())
 
 # ---- Temporary trees ----
 
+# Where this run's scratch root is made, by the rule of TempTree.ChooseTestsRoot (tests/FsAnalyser.Core.Tests/TempTree.cs):
+# the temp folder itself, unless that is at or under the Windows folder (compared without case, at a separator), when it is
+# the user's own LocalAppData\Temp. The engine's shells carry TEMP=C:\WINDOWS\TEMP, where an ordinary user may create folders
+# but not list them (BUILTIN\Users get only (CI)(S,WD,AD,X)); a killed run's leftovers there cannot be found by name, so the
+# root goes where they can. Refused by name when LocalAppData\Temp is not outside the Windows folder either. It lists and
+# creates nothing. It runs under Windows PowerShell 5.1 as well as pwsh 7 (SettledCountProbe and the SL-069 test run copies
+# of this file under both), so it uses no API that only .NET Core has: a pattern stands in for IsPathFullyQualified.
+function Get-ScratchParent(
+    [string] $TempPath = [System.IO.Path]::GetTempPath(),
+    [string] $WindowsDir = [Environment]::GetFolderPath('Windows'),
+    [string] $LocalAppData = [Environment]::GetFolderPath('LocalApplicationData')) {
+    $qualified = { param([string] $p) $p -match '^([A-Za-z]:[\\/]|[\\/]{2}[^\\/])' }
+    $under = {
+        param([string] $path, [string] $folder)
+        $a = [System.IO.Path]::GetFullPath($path).TrimEnd('\', '/')
+        $b = [System.IO.Path]::GetFullPath($folder).TrimEnd('\', '/')
+        $a.Equals($b, [StringComparison]::OrdinalIgnoreCase) -or $a.StartsWith($b + '\', [StringComparison]::OrdinalIgnoreCase)
+    }
+    if (-not $WindowsDir.Trim() -or -not (& $qualified $WindowsDir) -or -not (& $under $TempPath $WindowsDir)) { return $TempPath }
+    $target = if ($LocalAppData.Trim()) { [System.IO.Path]::Combine($LocalAppData, 'Temp') } else { '' }
+    if (-not $target -or -not (& $qualified $target) -or (& $under $target $WindowsDir)) {
+        throw "RuleCases needs a temp folder outside the Windows folder: TEMP is '$TempPath', LOCALAPPDATA\Temp is '$target', the Windows folder is '$WindowsDir'"
+    }
+    $target
+}
+
+# Every folder a case makes is made inside one root of the run, fsa-rulecases-<10 hex>, directly in the parent that
+# Get-ScratchParent names (no shared base folder, which an unlistable TEMP would keep). The root is made on first use, so a
+# run that makes no scratch (C-001) makes none, and its path is printed once. Write-Host, not Write-Output: this function's
+# output is the folder it returns. The harness child keeps the TEMP it inherited, so what it makes (fsa-rules-*) is in that.
 function New-TempDir([string] $prefix) {
-    $dir = Join-Path ([System.IO.Path]::GetTempPath()) ($prefix + [guid]::NewGuid().ToString('N').Substring(0, 10))
+    if (-not $script:ScratchRoot) {
+        $root = [System.IO.Path]::Combine((Get-ScratchParent), 'fsa-rulecases-' + [guid]::NewGuid().ToString('N').Substring(0, 10))
+        [void][System.IO.Directory]::CreateDirectory($root)
+        $script:ScratchRoot = $root
+        Write-Host "scratch: $root (TEMP $([System.IO.Path]::GetTempPath()))"
+    }
+    $dir = Join-Path $script:ScratchRoot ($prefix + [guid]::NewGuid().ToString('N').Substring(0, 10))
     New-Item -ItemType Directory -Path $dir | Out-Null
     $script:Temps.Add($dir)
     $dir
+}
+
+# The only way this script removes a folder (SL-098). PowerShell's own cmdlet for it opens a folder by first listing its
+# PARENT (the file system provider's IsReparsePointLikeSymlink runs FindFirstFileEx on the folder's own path), and when the
+# parent cannot be listed, as C:\WINDOWS\TEMP cannot be by an ordinary user, it throws a terminating Win32Exception(5)
+# that -ErrorAction does not suppress: the case stops, and a failure in a finally ends the script before its summary. That
+# is a defect of PowerShell's provider, outside this project (github.com/PowerShell/PowerShell/issues/16804), with no
+# upstream fix for access denied. [System.IO.Directory]::Delete lists only the folder's own contents, so it works there.
+# It stops on a read-only file, which the cmdlet with -Force did not: the fallback clears ReadOnly on every entry, by
+# explicit path (attrib /s lists the parent and finds nothing there), walking by hand and removing each link as a link,
+# never following it (Delete's own handling of a junction is not relied on: dotnet/runtime#86249), pauses for a scanner
+# or indexer holding a file, and deletes once more. What is still there is a counted FAIL; this never throws. No-op when
+# the folder is gone. Windows PowerShell 5.1 and pwsh 7: attributes only, no LinkTarget or EnumerationOptions.
+function Remove-ScratchDir([string] $Path) {
+    $state = @{ Last = $null }
+    $reparse = [System.IO.FileAttributes]::ReparsePoint
+    $readOnly = [System.IO.FileAttributes]::ReadOnly
+    function Clear-ReadOnly([string] $item, [System.IO.FileAttributes] $attributes) {
+        if (($attributes -band $readOnly) -ne 0) { [System.IO.File]::SetAttributes($item, $attributes -band (-bnot $readOnly)) }
+    }
+    function Open-Tree([System.IO.DirectoryInfo] $folder) {
+        foreach ($entry in $folder.GetFileSystemInfos()) {
+            try {
+                if (($entry.Attributes -band $reparse) -ne 0) {
+                    if ($entry -is [System.IO.DirectoryInfo]) { [System.IO.Directory]::Delete($entry.FullName) } else { [System.IO.File]::Delete($entry.FullName) }
+                }
+                elseif ($entry -is [System.IO.DirectoryInfo]) {
+                    Open-Tree $entry
+                    Clear-ReadOnly $entry.FullName $entry.Attributes
+                }
+                else { Clear-ReadOnly $entry.FullName $entry.Attributes }
+            }
+            catch { $state.Last = $_.Exception }
+        }
+    }
+    try {
+        if (-not [System.IO.Directory]::Exists($Path)) { return }
+        try { [System.IO.Directory]::Delete($Path, $true) } catch { $state.Last = $_.Exception }
+        if ([System.IO.Directory]::Exists($Path)) {
+            $top = [System.IO.DirectoryInfo]::new($Path)
+            $recurse = ($top.Attributes -band $reparse) -eq 0
+            try {
+                if ($recurse) {
+                    Open-Tree $top
+                    Clear-ReadOnly $Path $top.Attributes
+                }
+            }
+            catch { $state.Last = $_.Exception }
+            Start-Sleep -Milliseconds 250
+            try { [System.IO.Directory]::Delete($Path, $recurse) } catch { $state.Last = $_.Exception }
+        }
+        if ([System.IO.Directory]::Exists($Path)) {
+            $why = if ($state.Last) { if ($state.Last.InnerException) { $state.Last.InnerException.Message } else { $state.Last.Message } } else { 'it is still there' }
+            Check $false "cleanup: ${Path}: $why"
+        }
+    }
+    catch {
+        Check $false "cleanup: ${Path}: $($_.Exception.Message)"
+    }
 }
 
 function Copy-RepoFile([string] $root, [string] $rel) {
@@ -136,7 +233,7 @@ function Get-LineOf([string] $root, [string] $rel, [string] $needle, [switch] $E
 function New-RowsFile([string] $name, [string] $id, [scriptblock] $change) {
     $data = [System.IO.File]::ReadAllText((Join-Path $Repo "eng\rules-harness\$name"), $Utf8) | ConvertFrom-Json
     $row = @($data.rows | Where-Object { $_.id -eq $id })[0]
-    & $change $row
+    & $change $row | Out-Null
     $path = Join-Path (New-TempDir 'fsa-rows-case-') $name
     [System.IO.File]::WriteAllText($path, ($data | ConvertTo-Json -Depth 10), $Utf8)
     $path
@@ -162,7 +259,8 @@ function Test-Parity([string] $what, [scriptblock] $mutate, [int] $exit, [string
 
 function Invoke-HarnessRaw([string[]] $arguments) {
     if (-not $EnginePython -or -not $EngineRoot) {
-        Check $false 'harness cases need -EnginePython and -EngineRoot'
+        # Out-Host: the FAIL line is printed and counted here, and the caller gets the one object, not an array of both.
+        Check $false 'harness cases need -EnginePython and -EngineRoot' | Out-Host
         return [pscustomobject]@{ Exit = -1; Output = '' }
     }
     $ErrorActionPreference = 'Continue'
@@ -177,10 +275,8 @@ function Invoke-HarnessRaw([string[]] $arguments) {
     $kept = [regex]::Match($output, '(?m)^harness: scratch kept at .*[\\/](fsa-rules-[A-Za-z0-9_]+)\s*$')
     if ($kept.Success) {
         foreach ($folder in @([System.IO.Path]::GetTempPath(), $env:TEMP) | Where-Object { $_ }) {
-            $dir = [System.IO.Path]::Combine($folder, $kept.Groups[1].Value)
-            if (Test-Path -LiteralPath $dir -PathType Container) {
-                Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
-            }
+            # Out-Host: a cleanup FAIL is printed and counted here, and this function still returns the one object.
+            Remove-ScratchDir ([System.IO.Path]::Combine($folder, $kept.Groups[1].Value)) | Out-Host
         }
     }
     [pscustomobject]@{ Exit = $exit; Output = $output.Trim() }
@@ -856,7 +952,9 @@ try {
     }
 }
 finally {
-    foreach ($dir in $script:Temps) { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+    # None of these can throw, so the summary below always runs; the root goes last.
+    foreach ($dir in $script:Temps) { Remove-ScratchDir $dir }
+    if ($script:ScratchRoot) { Remove-ScratchDir $script:ScratchRoot }
 }
 
 Write-Output ''

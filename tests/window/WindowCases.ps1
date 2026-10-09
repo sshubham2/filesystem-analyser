@@ -2207,7 +2207,11 @@ function Test-B008 {
     $case = New-CaseFolder
     $denied = @()
     try {
-        $root = Join-Path $case ('long-path-' * 14)
+        # Padded so the root is exactly 250 characters whatever %TEMP% is (SL-098): 'long-path-' * 14 followed the case folder,
+        # which is 18 characters shorter under the engine's TEMP, and the title and detail came to 384 against the 400 below.
+        $pad = 250 - $case.Length - 1
+        if ($pad -lt 1) { throw "case setup: B-008 case folder too long for a 250-character root: $case" }
+        $root = Join-Path $case (('long-path-' * 30).Substring(0, $pad))
         $denied = New-TopsTree $root
         foreach ($opened in $false, $true) {
             Write-Output "  Cancelled, the unreadable folders $(if ($opened) { 'opened' } else { 'closed' }), at the window's minimum size, a root of $($root.Length) characters, $ExtraDrives drive buttons added"

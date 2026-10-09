@@ -1149,10 +1149,22 @@ rules:
     - 'Directory\.CreateTempSubdirectory\s*\('
     - '(?i)GetEnvironmentVariable\s*\(\s*"(TEMP|TMP|SystemRoot|windir)"'
     - '(?i)ExpandEnvironmentVariables\s*\(\s*@?"%(TEMP|TMP|SystemRoot|windir)%'
-    because: 'In %SystemRoot%\Temp a folder''s last access moves whenever one of its children is opened with a write-class access, so a fixture placed there passes or fails on that driver behaviour rather than on what it tests. That is how the three tests went red unnoticed through six validations. The route that put them there was not a spelling of the Windows folder but an inherited TEMP: the engine''s shells carry TEMP=C:\WINDOWS\TEMP, and only TempTree moves its trees out of it, so every other way to the process''s temp folder is banned with the literal ones (review M1). Closed as a class in tests/FsAnalyser.Core.Tests/SystemRootTempRouteCorpus.json, whose test reads these patterns from this entry. TempTree.cs is the one route; LastAccessUnderSystemRootTests.cs builds there on purpose and TempTreeRootTests.cs only names such paths; FailCriticalErrorsTests.cs takes only the drive root of the temp path; CloudPlaceholderTests.cs (the opt-in Cloud=CF-SYNC-ROOT rig, SyncRootRig) still roots its sync root in the temp folder, until the filed slice that routes SyncRootRig and CloudRig through TempTree removes that exemption. A folder left directly in %SystemRoot%\Temp cannot be listed by this user, so a failed cleanup there can be found only by its name.'
+    because: 'In %SystemRoot%\Temp a folder''s last access moves whenever one of its children is opened with a write-class access, so a fixture placed there passes or fails on that driver behaviour rather than on what it tests. That is how the three tests went red unnoticed through six validations. The route that put them there was not a spelling of the Windows folder but an inherited TEMP: the engine''s shells carry TEMP=C:\WINDOWS\TEMP, and only TempTree moves its trees out of it, so every other way to the process''s temp folder is banned with the literal ones (review M1). Closed as a class in tests/FsAnalyser.Core.Tests/SystemRootTempRouteCorpus.json, whose test reads these patterns from this entry. TempTree.cs is the one route; LastAccessUnderSystemRootTests.cs builds there on purpose and TempTreeRootTests.cs only names such paths; FailCriticalErrorsTests.cs takes only the drive root of the temp path. The opt-in Cloud=CF-SYNC-ROOT rig (SyncRootRig) takes its parent from TempTree like every other fixture (SL-098), and this rule, which the default suite runs, is what holds it there, since the rig itself runs only when a person asks. A folder left directly in %SystemRoot%\Temp cannot be listed by this user, so a failed cleanup there can be found only by its name.'
     except_files:
     - tests/FsAnalyser.Core.Tests/LastAccessUnderSystemRootTests.cs
     - tests/FsAnalyser.Core.Tests/TempTreeRootTests.cs
     - tests/FsAnalyser.Core.Tests/TempTree.cs
     - tests/FsAnalyser.Core.Tests/FailCriticalErrorsTests.cs
-    - tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs
+
+  # settled by SL-098
+  - name: RuleCases removes nothing with Remove-Item
+    files: tests/rules/RuleCases.ps1
+    must_not_match:
+    - (?mi)^[^#\n]*\bremove-item\b
+    because: Remove-Item on a folder whose parent cannot be listed (the engine's C:\WINDOWS\TEMP,
+      or any create-but-not-list TEMP) throws a terminating Win32Exception(5) from IsReparsePointLikeSymlink.
+      -ErrorAction SilentlyContinue does not suppress it, so a case stops and the finally ends
+      the script before its summary line. Every scratch removal goes through Remove-ScratchDir.
+      Aliases (rm, ri, rd, del) are a known gap in this tripwire. Fitness blanks the comments
+      of a .ps1 file unless including_comments is true, so the line anchor is defence in depth,
+      not what keeps a comment line out; set including_comments if this rule ever has to read them.
