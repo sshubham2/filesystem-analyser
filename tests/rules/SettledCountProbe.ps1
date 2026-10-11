@@ -36,10 +36,16 @@ $script:Counts = $null
 
 # RuleCases.ps1's own Get-RuleCounts (SL-069), taken from its source rather than copied, so the line this
 # probe expects carries this tree's Facts, twinned entries and patterns as C-001 recounts them.
-$recount = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $Repo $CasesRel), [ref]$null, [ref]$null).Find({
-        param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-RuleCounts' }, $true)
-if (-not $recount) { throw "probe setup: no function Get-RuleCounts in $CasesRel" }
-. ([scriptblock]::Create($recount.Extent.Text))
+$cases = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $Repo $CasesRel), [ref]$null, [ref]$null)
+# Also its Get-ScratchParent and Remove-ScratchDir (SL-098): under the engine's TEMP (C:\WINDOWS\TEMP) a folder made directly in
+# it cannot be listed by this user, and the cmdlet that removes folders is denied there, so the copies go to the parent
+# RuleCases.ps1 picks and are removed the way it removes its own.
+foreach ($name in 'Get-RuleCounts', 'Get-ScratchParent', 'Remove-ScratchDir') {
+    $found = $cases.Find({
+            param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
+    if (-not $found) { throw "probe setup: no function $name in $CasesRel" }
+    . ([scriptblock]::Create($found.Extent.Text))
+}
 
 # ---- Checks ----
 
@@ -63,7 +69,7 @@ function CheckRun($run, [int] $exit, [string] $what, [string[]] $contains = @())
 # ---- The copy ----
 
 function New-Scratch {
-    $root = Join-Path ([System.IO.Path]::GetTempPath()) ('fsa-settled-probe-' + [guid]::NewGuid().ToString('N').Substring(0, 10))
+    $root = Join-Path (Get-ScratchParent) ('fsa-settled-probe-' + [guid]::NewGuid().ToString('N').Substring(0, 10))
     New-Item -ItemType Directory -Path $root | Out-Null
     $script:Temps.Add($root)
     foreach ($rel in $Copied) {
@@ -291,7 +297,7 @@ try {
     }
 }
 finally {
-    foreach ($dir in $script:Temps) { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+    foreach ($dir in $script:Temps) { Remove-ScratchDir $dir }
 }
 
 Write-Output ''

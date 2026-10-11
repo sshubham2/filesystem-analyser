@@ -1,0 +1,196 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-098",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-10-08T23:45:03.716Z",
+ "head": "88e0824ca4effe93352c06e4d673365d62eeb220",
+ "run_id": 3150,
+ "summary": "The core fix is sound and backed by measurements: a .NET delete with a read-only fallback, the B-008 pad, and SyncRootRig routed through TempTree. Tracing the acceptance test through the design, it passes: the run root sits directly in the unlistable TEMP and is removed without listing the parent. Five problems need fixing first. (1) The Get-CloudRigParent component and its WindowCases rule come from a misreading. WindowCases.ps1:5680 and :5747 are Get-CloudCaseBase and Clear-StaleCloudRoots. They already apply the Windows-folder rule and list N-006's own roots in fsa-window-cloud. Wiring them to the rig's new parent, as the contract says, would aim N-006's sweep, which has no liveness check, at SyncRootRig's roots. (2) The design never mentions tests/bugs/SL-076-ScratchKeptPath.Tests.ps1, which extracts Invoke-HarnessRaw alone and would turn red once that function calls Remove-ScratchDir. (3) SettledCountProbe and the SL-069 sibling test run RuleCases.ps1 under powershell.exe 5.1, but the design only plans checks under pwsh 7. (4) The two `-Case All` check commands put `$env:` inside double quotes, so they can pass while running under the wrong TEMP. (5) Q-086 (decided by a person) already allows validate to run the opt-in cloud rig on this PC, yet the design leaves the new SyncRootRig code unexecuted before merge. Two smaller points: a recalled .NET claim is contradicted by dotnet/runtime#86249, and a claim marked measured, about how fitness blanks comments in .ps1 files, contradicts the repo's own record.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The core fix is sound and backed by measurements: a .NET delete with a read-only fallback, the B-008 pad, and SyncRootRig routed through TempTree. Tracing the acceptance test through the design, it passes: the run root sits directly in the unlistable TEMP and is removed without listing the parent. Five problems need fixing first. (1) The Get-CloudRigParent component and its WindowCases rule come from a misreading. WindowCases.ps1:5680 and :5747 are Get-CloudCaseBase and Clear-StaleCloudRoots. They already apply the Windows-folder rule and list N-006's own roots in fsa-window-cloud. Wiring them to the rig's new parent, as the contract says, would aim N-006's sweep, which has no liveness check, at SyncRootRig's roots. (2) The design never mentions tests/bugs/SL-076-ScratchKeptPath.Tests.ps1, which extracts Invoke-HarnessRaw alone and would turn red once that function calls Remove-ScratchDir. (3) SettledCountProbe and the SL-069 sibling test run RuleCases.ps1 under powershell.exe 5.1, but the design only plans checks under pwsh 7. (4) The two `-Case All` check commands put `$env:` inside double quotes, so they can pass while running under the wrong TEMP. (5) Q-086 (decided by a person) already allows validate to run the opt-in cloud rig on this PC, yet the design leaves the new SyncRootRig code unexecuted before merge. Two smaller points: a recalled .NET claim is contradicted by dotnet/runtime#86249, and a claim marked measured, about how fitness blanks comments in .ps1 files, contradicts the repo's own record.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "nature": "defect",
+    "claim": "The Get-CloudRigParent component, its contract, its case, its check in TempRoots.Tests.ps1, and the appended rule 'WindowCases never enumerates the temp folder itself' all rest on the investigation's account of WindowCases.ps1:5680 and :5747, and that account is wrong. :5680 is the first line of Get-CloudCaseBase, which already applies TempTree's Windows-folder rule and returns <TEMP or LOCALAPPDATA\\Temp>\\fsa-window-cloud. :5747 is Clear-StaleCloudRoots, which lists N-006's own sync roots (fsa-cf-<32 hex>) in that folder, after an Exists guard. Neither lists GetTempPath(), neither is denied under C:\\WINDOWS\\TEMP, and neither looks for SyncRootRig's roots. Built as the contract says (':5680 and :5747 listings call it'), Clear-StaleCloudRoots would unregister and delete every fsa-cf-* folder in %LOCALAPPDATA%\\Temp\\fsa-tests, which is SyncRootRig's new home, with no pid-liveness check, so a live root of a concurrent opt-in run would go too. N-006's own leftovers would stop being swept. And if Get-CloudCaseBase itself were rerouted, N-006 would create its roots in fsa-tests, and its empty-base delete at :5995 would race TempTree over the shared base. The appended rule's pattern cannot fire either: no line WindowCases has ever had passes GetTempPath() straight into a listing (:4091 and :5747 list through variables), so it guards nothing. The design's escape hatch ('if they turn out not to look for SyncRootRig's roots, they are left alone') applies, which leaves the contract, the case, the rule and whats_new contradicting it.",
+    "evidence": "tests/window/WindowCases.ps1:5677-5686 (Get-CloudCaseBase) and :5744-5752 (Clear-StaleCloudRoots), :5775 (N-006 creates its roots under Get-CloudCaseBase), :5995 (deletes the base when empty). The rule is already appended at .taad/fitness.yaml:1170-1177 (git status: M .taad/fitness.yaml), and its `because` names Get-CloudRigParent.",
+    "fix": "Drop Get-CloudRigParent, its contract, its case 'find the cloud rig's roots from WindowCases', its TempRoots check, and the WindowCases architecture rule. Delete the appended entry at fitness.yaml:1170-1177; an engine-appended rule survives a re-design (lesson SL-091). In WindowCases, change only the B-008 pad. Give the freed TempRoots slot to Get-ScratchParent: AST-extract it and check the branch under a Windows-folder TEMP and under an outside TEMP.",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 5744,
+     "text": "function Clear-StaleCloudRoots {\n    $base = Get-CloudCaseBase\n    if (-not [System.IO.Directory]::Exists($base)) { return }\n    foreach ($root in [System.IO.Directory]::GetDirectories($base, 'fsa-cf-*')) {"
+    }
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "claim": "An existing regression test runs Invoke-HarnessRaw on its own, and the design breaks it without naming it. tests/bugs/SL-076-ScratchKeptPath.Tests.ps1 extracts only the Invoke-HarnessRaw FunctionDefinitionAst from RuleCases.ps1, dot-sources it, and defines Check. Once Invoke-HarnessRaw calls Remove-ScratchDir, every SL-076 shape (Space, TempNotTmp, ShortName, NonAscii, Refused) stops with a 'Remove-ScratchDir is not recognized' error, so HF-026's guard turns red. This is the same blind spot that left C-001/C-003 red unseen (Q-085), and the footprint undercount lesson #388 warns about. No check in the design runs SL-076.",
+    "evidence": "tests/bugs/SL-076-ScratchKeptPath.Tests.ps1:41-46; design component 'Invoke-HarnessRaw harness-scratch cleanup' (replaces :181-182 with Remove-ScratchDir).",
+    "fix": "Either make SL-076's setup also extract and define Remove-ScratchDir (its shapes then still hold: [IO.Directory]::Exists accepts the 8.3 and non-ASCII spellings), or keep Invoke-HarnessRaw self-contained. In both cases, add `pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-076-ScratchKeptPath.Tests.ps1` to the cases, run under both TEMPs.",
+    "quote": {
+     "path": "tests/bugs/SL-076-ScratchKeptPath.Tests.ps1",
+     "line": 43,
+     "text": "$raw = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $Repo $CasesRel), [ref]$null, [ref]$null).Find({\n        param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Invoke-HarnessRaw' }, $true)\nif (-not $raw) { throw \"test setup: no function Invoke-HarnessRaw in $CasesRel\" }\n. ([scriptblock]::Create($raw.Extent.Text))"
+    }
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "claim": "The contract for Remove-ScratchDir and Get-ScratchParent says 'measured under pwsh 7', but RuleCases.ps1 itself runs under Windows PowerShell 5.1 as well. SettledCountProbe.ps1 and tests/bugs/SL-069-EveryCaseFollowsCounts.Tests.ps1 run copies of RuleCases.ps1 under powershell.exe and pwsh ($Shells = @('powershell.exe', 'pwsh')) and compare what the two shells expect. Get-ScratchParent's 'LOCALAPPDATA not fully qualified' refusal is a mirror of TempTree.ChooseTestsRoot, whose natural spelling is [IO.Path]::IsPathFullyQualified. That API is .NET Core-only, so under 5.1 it throws 'method not found' in the Windows-folder branch, which is exactly the branch the engine's TEMP takes. The same holds for FileSystemInfo.LinkTarget and EnumerationOptions in the fallback walk. No check in the design runs those consumers, so a 5.1 break would ship green.",
+    "evidence": "tests/rules/SettledCountProbe.ps1:1-3; tests/bugs/SL-069-EveryCaseFollowsCounts.Tests.ps1:53 and :263; TempTree.cs:59 (Path.IsPathFullyQualified); design contract 'Remove-ScratchDir([string]$Path)': 'measured under pwsh 7'.",
+    "fix": "State in both contracts that the functions must run under Windows PowerShell 5.1 and pwsh 7. Use only APIs that exist on .NET Framework 4.x: test qualification with IsPathRooted plus a drive or UNC check; test for reparse points through Attributes. Add `pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/SettledCountProbe.ps1 -Shape BothShells`, run under TEMP=C:\\WINDOWS\\TEMP and under %LOCALAPPDATA%\\Temp, to the cases.",
+    "quote": {
+     "path": "tests/rules/SettledCountProbe.ps1",
+     "line": 1,
+     "text": "# The settled count that RuleCases C-001 and C-003 expect (SL-053). Each shape copies the four files those\n# cases read into %TEMP%, changes one thing there, runs that copy's RuleCases.ps1 under both Windows\n# PowerShell 5.1 and pwsh 7, and checks its exit code and what it said:"
+    }
+   },
+   {
+    "id": "M4",
+    "severity": "major",
+    "dimension": "test-coverage",
+    "nature": "defect",
+    "claim": "The two `-Case All` check commands can pass while having run under the wrong TEMP. Both are spelled `pwsh -NoProfile -Command \"$env:TEMP=$env:TMP='C:\\WINDOWS\\TEMP'; pwsh ... RuleCases.ps1 -Case All ...\"`. Run from PowerShell, the primary shell here, the outer shell expands $env:TEMP and $env:TMP inside the double quotes before the child sees them. The first statement becomes a bareword such as 'C:\\WINDOWS\\TEMP=C:\\WINDOWS\\TEMP=...', which fails as a non-terminating command-not-found error. -Command then goes on to the second statement, so RuleCases runs under whatever TEMP the validator's shell inherited, and pwsh exits with that run's status. In an engine stage shell (TEMP=C:\\WINDOWS\\TEMP), the 'ordinary TEMP' run, which is Derived 3's non-regression, silently runs under C:\\WINDOWS\\TEMP and passes. The planned 'scratch:' location check cannot tell the difference, because under both TEMPs the root lands in %LOCALAPPDATA%\\Temp\\fsa-rulecases-<hex>.",
+    "evidence": "Design cases 'run every RuleCases case under the engine's TEMP' and 'run every RuleCases case with an ordinary TEMP' (their check strings). Get-ScratchParent's contract gives %LOCALAPPDATA%\\Temp both when TEMP is under Windows and when TEMP is %LOCALAPPDATA%\\Temp itself.",
+    "fix": "Single-quote the -Command text, or set $env:TEMP and $env:TMP in the validator's own session and then run `pwsh -File`. Make RuleCases print the TEMP it saw, e.g. 'scratch: <root> (TEMP <GetTempPath()>)', and have both checks assert that value, so a mis-set environment fails the check."
+   },
+   {
+    "id": "M5",
+    "severity": "major",
+    "dimension": "drift-from-design",
+    "nature": "required",
+    "claim": "The design files the opt-in Cloud=CF-SYNC-ROOT run (Derived 7) for the person, 'whether that permission extends to SL-098 is the person's call'. Q-086 (human) already decided: 'Yes: allow validate to run `eng/dotnet.ps1 test ... --filter Cloud=CF-SYNC-ROOT` three times in a row on this PC'. The rig's own remarks say validate runs the filter three times wherever that is allowed. As designed, the new SyncRootRig constructor lines (DefaultTestsRoot, then CreateDirectory, then Sweep(parent), then Root) are executed by no check before merge. The default suite only compiles them, and the fitness rule only proves the GetTempPath spelling is gone. So SC-171's 'so they pass under the engine's TEMP' has no executed evidence. The survey named this exact trap, 'a router must create the parent first', and the design leaves it as an ordering rule inline at the one call site.",
+    "evidence": "Q-086 (decided by a person); tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs:27-31; spike cloudrig-sweep-routed-root (Fact B ran that call pattern in a throwaway default-suite Fact without registering anything); survey Derived 5 ('Sweep on a not-yet-existing parent would throw DirectoryNotFoundException').",
+    "fix": "Move choose, create and sweep into one CloudRig method, for example CloudRig.PrepareParent(isRunning, unregister, log), so the order cannot be written wrong. Commit spike 5's Fact B against that method as a default-suite Fact under both TEMPs. Per Q-086, add a validate case that runs the filter three times with TEMP=TMP=C:\\WINDOWS\\TEMP, treated as #201 says: a failure not caused by the parent choice is recorded, not blamed on the routing. Afterwards check that %LOCALAPPDATA%\\Temp\\fsa-tests holds no fsa-cf-* folder, the empty-fsa-tests check from #72.",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs",
+     "line": 29,
+     "text": "/// is the only contact, and the run is never counted as a pass. Where it is allowed, validate runs the filter\n/// three times in a row: that is how the teardown after a killed provider is shown to leave nothing that stops"
+    }
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "nature": "defect",
+    "claim": "The recalled claim 'In .NET 10, Directory.Delete(path, true) removes a junction ... as a link' is contradicted by dotnet/runtime#86249: 'On Windows, when recursively deleting a directory containing a junction, Directory.Delete(String, Boolean) fails. Symbolic links work as expected.' The issue was closed with milestone 11.0.0, and pwsh 7.6 runs on .NET 10. Consequences: (a) in the junction case the first Delete throws, and removal succeeds only through the retry, not through the mechanism the design predicts. (b) The walk's 'never descends into a reparse point' guarantee is never reached by any test. Delete's first pass unlinks the junction before it throws, so the walk always runs on a tree with no junction left, and the junction check passes whatever the walk does. (c) Recursive .NET enumeration follows directory links (dotnet/runtime#52666, still open), so a walk built on the named API with AllDirectories would cross junctions, and no check would notice. If the builder uses `new EnumerationOptions`, its default AttributesToSkip (Hidden|System) would also skip read-only entries under a hidden .git.",
+    "evidence": "https://github.com/dotnet/runtime/issues/86249 (title and description as quoted; milestone 11.0.0; closed 2026-02-28); https://github.com/dotnet/runtime/issues/52666 ('symlinks to directories are currently invariably followed'); design outside_claims (recalled) and the junction case; TempTree.Dispose removes links explicitly before deleting the trees.",
+    "fix": "In the fallback, recurse by hand. Unlink each name-surrogate reparse point with a non-recursive [IO.Directory]::Delete(link) before the retry, as TempTree.Dispose does. Enumerate with no attributes skipped. Restate the junction case's expected path (the first Delete throws, the retry removes the tree, the target is untouched and still ReadOnly). Plant a junction that the first Delete cannot unlink, or test the walk on its own, so the walk's reparse rule is actually exercised.",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/TempTree.cs",
+     "line": 311,
+     "text": "        foreach ((string link, bool isDirectory) in _links)\n        {\n            Attempt(failures, $\"remove the link {link}\", () =>"
+    }
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "under-engineering",
+    "nature": "defect",
+    "class_of": "PowerShell functions that return a value while something inside them writes to the success stream",
+    "threat": "accident",
+    "claim": "The design adds output to two functions whose callers use their return value. (a) 'On its first call, New-TempDir ... prints one line scratch: <root>'. If that print uses Write-Output, the idiom of Check in this file, then New-TempDir returns @('scratch: ...', <dir>) on its first call. Join-Path and Copy-RepoFile then get an array, and that case stops. The acceptance test would not catch this, because it does not assert C-006's own checks. (b) Remove-ScratchDir reports failures through Check, which uses Write-Output, and it is called from inside Invoke-HarnessRaw, which returns a pscustomobject. On a failed cleanup the '  FAIL  cleanup:' line is captured into $run and never printed, while it still counts in the summary, and $run becomes an array. The existing early return at :164-166 already has this latent shape.",
+    "evidence": "tests/rules/RuleCases.ps1:51-59 (Check uses Write-Output), :70-75 (New-TempDir returns $dir through the pipeline), :163-166; design components 'Get-ScratchParent and the per-run root' and 'Remove-ScratchDir'.",
+    "fix": "Print the 'scratch:' line with Write-Host, or once from Main after the cases. At the Invoke-HarnessRaw call site, send Remove-ScratchDir's output to the host (`Remove-ScratchDir $dir | Out-Host`), so the FAIL line is printed and the function's return value stays a single object.",
+    "quote": {
+     "path": "tests/rules/RuleCases.ps1",
+     "line": 70,
+     "text": "function New-TempDir([string] $prefix) {\n    $dir = Join-Path ([System.IO.Path]::GetTempPath()) ($prefix + [guid]::NewGuid().ToString('N').Substring(0, 10))\n    New-Item -ItemType Directory -Path $dir | Out-Null\n    $script:Temps.Add($dir)\n    $dir\n}"
+    }
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "nature": "defect",
+    "claim": "The outside claim marked 'measured', 'The engine's fitness checker blanks only // and /* */ comments, so # and <# #> lines in .ps1 files are matched as text', rests on lesson SL-065, which was about XAML `<!-- -->`. The repo's own fitness.yaml says the opposite for .ps1 files twice: the SL-059 WindowCases entry needs including_comments: true 'without which Fitness blanks the comment', and the SL-091 entry says 'Fitness blanks # comments in .ps1'. This is harmless for the RuleCases rule, where the `^[^#\\n]*` anchor becomes redundant. But the claim is filed as measured and will be copied by the next rule that relies on comments being matched.",
+    "evidence": ".taad/fitness.yaml:811-814 (rule over tests/window/WindowCases.ps1) and :1129 ('Fitness blanks # comments in .ps1 and // and /* */ in .cs (review m5)'); design outside_claims entry citing 'Lesson SL-065'.",
+    "fix": "Correct the claim: '#' comments in .ps1 are blanked unless including_comments is true. Keep the anchor as defence in depth. If the rule's purpose ever depends on comments, set including_comments: true.",
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 812,
+     "text": "      ever serialises runs inside one sign-in session. The claim lives in comments, so every SL-059\n      entry says including_comments: true, without which Fitness blanks the comment and the rule"
+    }
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "extra",
+    "claim": "Nothing shows the new settled rule 'RuleCases removes nothing with Remove-Item' can fire. The design checks only that the fixed tree passes: harness --scenario all and rules-parity both pass on a clean tree. A settled rule whose only job is to fail when the old spelling comes back needs one observed hit. Otherwise it repeats the WindowCases rule's problem in M1, a tripwire that cannot fail.",
+    "evidence": ".taad/fitness.yaml:1160-1169; SettledCountProbe.ps1 Shape-GuardRule (:235-278) shows the repo's idiom: read the patterns from the yaml entry and assert hits and non-hits on sample lines.",
+    "fix": "Add a check to SL-098-TempRoots.Tests.ps1 in the GuardRule idiom. Read the entry's pattern from fitness.yaml and assert it hits `    foreach ($dir in $script:Temps) { Remove-Item -LiteralPath $dir -Recurse }`, misses `# Remove-Item lists the parent` and `Remove-ItemProperty`, and hits nothing in this tree's RuleCases.ps1.",
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1161,
+     "text": "  - name: RuleCases removes nothing with Remove-Item\n    files: tests/rules/RuleCases.ps1\n    must_not_match:\n    - (?mi)^[^#\\n]*\\bremove-item\\b"
+    }
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "drift-from-design",
+    "nature": "extra",
+    "claim": "After the routing, three comments go stale because they still say the rig's roots live directly in %TEMP%: CloudPlaceholderTests.cs:19 ('register a real sync root under %TEMP% (fsa-cf-<pid>-<guid>)'), CloudRig.cs:9-11 ('which folders under %TEMP% are the rig's roots') and CloudRig.cs:22. The design rewrites only the comment at :282-285 and leaves CloudRig.cs 'unchanged'. In this project comment drift has earned fitness rules of its own (SL-059).",
+    "evidence": "tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs:19; tests/FsAnalyser.Core.Tests/CloudRig.cs:9-11, :22.",
+    "fix": "In the same commit, reword those lines to 'TempTree's tests root (fsa-tests)' without spelling any pattern of the %SystemRoot%\\Temp rule.",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/CloudRig.cs",
+     "line": 22,
+     "text": "    // Strict on purpose: the sweep deletes what this matches, under the person's %TEMP%."
+    }
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M1: the WindowCases listing component rests on the investigation's misreading of :5680/:5747. m1: the recalled .NET 10 junction behaviour is contradicted by dotnet/runtime#86249 (fixed only in 11.0.0); #52666 shows recursive enumeration follows directory links. m3: the 'measured' fitness comment-blanking claim cites an XAML lesson and contradicts fitness.yaml:813 and :1129. The second must-verify precondition (no case depends on New-TempDir sitting directly in GetTempPath()) holds on reading: the only GetTempPath-relative lookup is the harness-leaf one at :179, which is unchanged. C-006's fake engine at :640-641 compares the harness's own work folder with gettempdir(), and that stays in the inherited TEMP. The recalled MSBuild-node rationale for not redirecting the child is weakened by harness.py:207 already passing --disable-build-servers, but the decision is conservative and cheap."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "Junction trees throw on the first Delete under .NET 10 (m1). EnumerationOptions' default AttributesToSkip would skip read-only entries under a hidden .git (m1 fix). If one file is held, the run counts two cleanup FAILs, one for the entry and one for the root (noise only). Moving the engine-TEMP scratch into the user profile could break C-006's 'engine root <path>' text checks on an account with a non-ASCII name; not this PC, so not filed."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "m2: output written inside value-returning functions (New-TempDir's 'scratch:' line; Check called from inside Invoke-HarnessRaw). M5: SyncRootRig's create-before-sweep rule sits inline at one call site with no executed check, where a CloudRig helper would make the wrong order unwriteable."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "Get-CloudRigParent, its sibling-test check and the WindowCases architecture rule solve a problem that does not exist (M1). The per-run root only half delivers its stated benefit: harness fsa-rules-* scratch, the heaviest leftover after a killed run, stays in C:\\WINDOWS\\TEMP. It is already listed as a taste disagreement, so not re-filed."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "M2: Invoke-HarnessRaw is used as a standalone extracted function by SL-076's test, and the new dependency breaks it. M3: the runtime contract names pwsh 7 only, but 5.1 consumers run RuleCases.ps1. The '  FAIL  cleanup:' contract is not met at the Invoke-HarnessRaw call site (m2)."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "The finally can no longer throw. A Get-ScratchParent refusal is caught per case as 'stopped:'. Walk exceptions fall inside the helper's try and become a counted FAIL. A failed Delete leaves a counted FAIL rather than a silent leftover, which is the intended change; whether idle processes hold harness folders will show in the Derived 3 run. The only error-path defect found is that the FAIL line is swallowed at the Invoke-HarnessRaw call site (m2)."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "M5: Q-086 (decided by a person) and the rig's own remarks already allow validate to run the opt-in filter on this PC; the design files it for the person, so the SyncRootRig edit runs nowhere before merge. m5: stale %TEMP% comments in CloudPlaceholderTests.cs:19 and CloudRig.cs. The engine already appended the design's two rules to fitness.yaml (uncommitted), so dropping one must also delete its entry (M1)."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "M3: two consumers run RuleCases under Windows PowerShell 5.1. CC-002: both new rules are settled and untwinned, which is the engine's practice, but neither has fire evidence (m4), and the WindowCases one cannot fire at all (M1). CC-005: the junction case does not reach the walk branch it claims to prove (m1). CC-006: the B-008 cases need the published exe and the interactive desktop, which spike 2 showed validate can provide; the opt-in cloud run is authorized by Q-086 (M5). The Windows-folder predicate now exists as several independent PowerShell copies (bug test, Get-CloudCaseBase, Get-ScratchParent) alongside TempTree's LongPath-normalised version; they are held equal by discipline, not by construction. Lessons #91 (ASCII/CRLF) and Q-114 (WindowMutants -Mutant All) are honoured."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "M2 (SL-076 breaks, and no check runs it). M4 (the -Case All commands can pass under the wrong TEMP, and the 'scratch:' location cannot tell the difference). M5 (no check executes the SyncRootRig constructor). m1 (the walk's junction rule is not exercised). m4 (the new rule is never shown to fire). The acceptance test was traced end to end: the root sits in the no-list TEMP, both call sites go through .NET Delete, and the summary is reached, so it passes, consistent with spikes 1 and 4."
+   },
+   {
+    "dimension": "security",
+    "result": "No privilege or input-trust issue. The leaf lookup accepts only a regex-restricted fsa-rules-* name directly in TMP or TEMP. Removal is confined to folders the run created. The only data-safety risk is M1: as contracted, N-006's sweep, which has no liveness check, would unregister and delete SyncRootRig's sync roots (test fixtures, accident-level). The walk writing attributes through a junction (m1) touches attributes only, never deletes."
+   }
+  ]
+ }
+}
