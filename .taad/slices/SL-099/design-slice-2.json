@@ -1,0 +1,504 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-099",
+ "stage": "design-slice",
+ "attempt": 2,
+ "at": "2026-10-11T20:50:07.541Z",
+ "head": "0feac0efb9c75c9e919a544b05306869eb99c691",
+ "run_id": 3226,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "reason": "Attempt 1 was taken back for one reason: fork O-017 needed a measurement. Spike 107 has answered it with YES on three valid Sandbox sets, so the design is rewritten on that answer and on the spike's constraints. The bug report gave only a title. The working assumption is the captured SC-130 failure, which the slice text, the build check and the repro already pin down in detail; nothing else had to be assumed. The build check said 'a person should rescope before design starts'. This design does that rescoping itself. The loop-runnable harness fix and the outcome-C record stay in this slice. Both Restart sessions go to a person, and the measurement-preparation work goes to a later slice.",
+  "selection_rationale": "There was one proposal (practice), and it is taken as the core. It was checked against what the survey and the spikes measured.\n\n1. Backlog item 3 is mostly moot in the tree. The R_start 2 GiB abort and the empty-L.json judge lived only in the scratch ScanArm/Protocol.cs, which was never committed (git ls-files and git log --diff-filter=D). The tree's PoolWatch.ps1 already has a per-arm guard: 6 GiB over the arm's own /before mark, or Available under 3 GiB. It still writes /exit and the 10-minute /settled mark after a stop (:347-365). What is left of item 3 is SC-130.\n\n2. The SC-130 fix is the reorder spike 106 proved (sc130-guard-stop-survives-interrupt-fix, go). The repro passes in Windows PowerShell 5.1 and pwsh 7, and 8 fixture cases print identical output.\n\n3. Spike 107 answered O-017 YES on A-small, A-large and FileRepository H1: warm probe repeats net NtfF +0/+0/+0, accumulation is +4/+5/+5, and the WC leak tags stay within idle. So there is no listing-only arm and no new Invoke-Protocol arm type.\n\n4. Spike 107's binding constraints are designed in:\n- NtfF counts folders, not files, so Ntff joins the deciding tags.\n- Tags are keyed case-exactly everywhere: an Ordinal Get-Net dictionary, a fitness rule, and a variant-first fixture.\n- Sandbox protocols must fit the 1,800 s ceiling; that goes to the measurement-preparation slice.\n\n5. The investigation's cause (L's growth is Windows' file-system metadata cache, about 1 per cold folder, about 0 warm) and spike 106 shape the record and the tag list:\n- A standby purge re-created 0% of NtfF on VHD.\n- Deep pressure frees the cache, but only shown at Sandbox scale.\n- The 15 named tags cover 85.4% of paged growth, under 90%, with NtFs at 5.1% unnamed.\nSo there is no purge or pressure step, more tags are recorded, and the product is not changed.\n\n6. The practice designer raised over_engineering_flag, and it is honoured. There is no judge, no tolerance row, no ScanArm and no listing arm. The record is read by a person, and fitness.yaml:1097 keeps verdict words out of the harness.\n\n7. Lessons #344 and #357: every Restart and whole-C: run is filed for a person, not built.\n\nChanges made to the proposal, each against a measurement or an answered decision:\n- WC leak tags are judged against their own idle movement only, not max(idle, 10% of F1). Spike 107's own WC criterion was idle-only, Q-178(1) says WC* +0, and lesson #349's +5 per walk has to stay visible.\n- The spike evidence goes under docs/design/SL-099-runs/. The proposal named both SL-095-runs and SL-099-runs. Q-184 keeps DONE (c) session logs alone in SL-095-runs.\n- The seven WC leak tags are appended to :66 if absent. It is not known that HEAD records WCse, WCss and WCfn, and the rule decides on them.\n- The warm set is generalised to 'the F arms after the first Completed F arm'.\n- Y3 is resolved as wanted and carried to the measurement-preparation slice.\n- guardAtStart arms are explicitly excluded from the new guard branch.\n- Every unchanged fixture's -Report output is compared with HEAD's.\n- The fitness patterns get a $null lookahead and a switch pattern, and are scoped to PoolWatch.ps1.",
+  "components": [
+   {
+    "name": "Get-Missing guard-stop branch",
+    "responsibility": "Branch order in Get-Missing:\n1. The guardAtStart branch (:459) stays first. Cascade arms also carry guardStop ('available N MB at start').\n2. Next, an arm with guardStop set and guardAtStart not set is judged by the guard branch. The interrupted branch (:460-465) comes after it.\n\nThe guard branch needs /before and /exit with non-null pagedBytes and nonpagedBytes. It prints ONE line per arm: '  MISSING arm <X>: stopped by the machine guard (<reason>): paged ±N MiB, nonpaged ±N MiB from /before to /exit'. If either mark or either field is missing, the net is replaced by 'its net at the stop is unread (no <mark> mark | <mark> <field> is null)'.\n\nIf the arm was interrupted, a suffix is worded from the marks that exist:\n- '; then interrupted before its /exit mark' when there is no /exit;\n- '; then interrupted before its /settled mark' when /exit exists and /settled does not (the repro's shape);\n- '; then interrupted after its /settled mark' when all three exist (a throw in the report read at :366-380, after /settled at :365);\n- ' and killed' is appended when killed is true.\n\nIf the arm was not interrupted, HEAD's /settled presence check and its four field checks (:466-472) still run, each with its own line.\n\nThe old guard branch at :473-478 can no longer be reached and is removed. Interrupted arms without a guardStop keep :460-465 byte for byte.",
+    "lives_at": "tests/window/PoolWatch.ps1",
+    "key_interactions": "Calls Get-Net (:512-520). Write-RunReport is unchanged: its table still shows X1 with status 'guard' and '(no net: a mark is missing)', because the table reads /before to /settled. Strings are ASCII only, and none match \\b(PASS|FAIL|VOID|OUTCOME)\\b (.taad/fitness.yaml:1097). No new function. Exit 2 for an incomplete run is unchanged."
+   },
+   {
+    "name": "Watched tags and Get-Net's dictionary",
+    "responsibility": "Append to the named tag list at :66 every name below that is not already there, checked with -ccontains at build time:\n- the seven WC leak tags: WCsc, WCse, WCss, WCfc, WCri, WCfn, FMwi;\n- MmSt, MmCa, FMsl, FIcs, NtxI, Ntfo, Ntff, NtxF, NtFs, FSim, MmSm, Ntf0, MmRe, Ntce.\n\nRead-Mark's -ccontains (:207) and Tag()'s -ceq (:242) stay as they are. Get-Net builds its result (:515-516) as New-Object System.Collections.Specialized.OrderedDictionary ([StringComparer]::Ordinal). The non-tag keys (paged, nonpaged, handles, h120089) keep HEAD's spelling. $NetTags (:67) and the -Report columns are unchanged.",
+    "lives_at": "tests/window/PoolWatch.ps1",
+    "key_interactions": "An Ordinal dictionary makes every reader's key spelling matter. The build greps every reader of Get-Net's result (Write-RunReport :559 and the guard branch) and makes their spelling match exactly. Case 8 diffs each unchanged fixture's -Report output against HEAD's to catch a miss. Marks keep NtfF and Ntff, and NtxI and NtxF, as separate entries. The committed build-2026-10-05 marks already list Ntff ahead of NtfF, so any hand reader must match case-exactly; the record says so."
+   },
+   {
+    "name": "Case-exact tag comparison rule",
+    "responsibility": "One entry over tests/window/PoolWatch.ps1 holding the four patterns under architecture_rules. It is the engine-appended attempt-1 entry at .taad/fitness.yaml:1176-1178, extended by hand into a single entry, never a second copy.\n\nCorpus:\n- Must fire: `Where-Object { $_.tag -eq $name }`, `Where-Object tag -eq $t`, `$WatchedTags.Where({ $_ }) -contains $_.tag`-style `-contains $_.tag`, `switch ($row.tag) {`.\n- Must stay quiet: `$_.tag -ceq $name`, `-ccontains $_.tag`, `$tag -eq $null`, `switch -CaseSensitive ($row.tag) {`.\n\nThe rule must report 0 hits on HEAD's PoolWatch.ps1. If it hits, the hit is either a real case-folding comparison, which this slice fixes, or a pattern defect, which is fixed before acceptance.",
+    "lives_at": ".taad/fitness.yaml",
+    "key_interactions": "Plant rows go in eng/rules-harness/plants.json if the harness can plant into a .ps1, and are run with harness.py --only <ids> (lesson SL-089). Otherwise the build runs Fitness on a scratch copy with the fire lines planted and records what it prints. The engine does not replace a same-named rule that persists across take-backs (lesson SL-091), so the build edits the file and checks that no duplicate was appended."
+   },
+   {
+    "name": "P-003 guard-and-interrupt fixture arms",
+    "responsibility": "New arms, alongside the unchanged X3, F2 and F4:\n- (b) The criterion's shape: guardStop 'available 2900 MB, pool +310 MiB over <arm>/before', exitCode -1, interrupted true, killed false, /before and /exit present, no /settled. Asserts the reason, 'paged +310 MiB' with 'from /before to /exit', and '; then interrupted before its /settled mark'.\n- (c) guardStop with interrupted true, killed true, exitCode null and no /exit mark. Asserts 'its net at the stop is unread', '; then interrupted before its /exit mark and killed', and the absence of 'from /before to /exit'.\n- (d) guardStop, not interrupted, all three marks, but /settled has pagedBytes null. Asserts the guard line with its net AND a separate line naming /settled pagedBytes.\n- (e) guardStop, interrupted true, killed false, all three marks present. Asserts '; then interrupted after its /settled mark'.",
+    "lives_at": "tests/window/PoolWatchCases.ps1"
+   },
+   {
+    "name": "P-004 tag-recording case",
+    "responsibility": "Added to the ValidateSet (:17) and the All list (:375).\n\nFixture half:\n- Two marks per arm, with Ntff listed before NtfF and NtxF before NtxI, each with a different live count. Asserts that the -Report NtfF column equals the NtfF delta.\n- Loads Get-Net through the parser AST, calls it with a $NetTags holding both NtfF and Ntff, and asserts the two values are separate and correct.\n\nLive half:\n- A literal 21-name spelling oracle (the seven WC leak tags plus the 14 names). Asserts each is -ccontains in the parsed :66 list.\n- Reads the live pool tag table once, then one Read-Mark. Asserts that every oracle name present in the live table is present in the mark with the same live count source.",
+    "lives_at": "tests/window/PoolWatchCases.ps1",
+    "key_interactions": "The live half costs about 0.4 s and almost no pool (spike 87 harness measurement). It replaces attempt 1's C-052 extension, which cost about 5 min and +0.11 GB (lesson #351). At build, a scratch copy with :242 changed to -eq is run once to show P-004 exits non-zero."
+   },
+   {
+    "name": "PoolWatchCases scratch root",
+    "responsibility": "Copy Get-ScratchParent from tests/bugs/SL-099-GuardStopSurvivesInterrupt.Tests.ps1:41-49 into PoolWatchCases.ps1 and use it at :99, :242 and :336. Every fixture is then rooted under %LOCALAPPDATA%\\Temp whenever TEMP is under the Windows folder. Each case prints 'scratch: <root> (TEMP <GetTempPath()>)', following lesson SL-098.",
+    "lives_at": "tests/window/PoolWatchCases.ps1",
+    "key_interactions": "The other scripts that lesson #391 lists keep their TEMP handling; that work stays with the SL-098-class item."
+   },
+   {
+    "name": "SC-130 acceptance test, committed",
+    "responsibility": "Commit the untracked repro unchanged. It must exit 0 in powershell.exe 5.1 and in pwsh 7.",
+    "lives_at": "tests/bugs/SL-099-GuardStopSurvivesInterrupt.Tests.ps1"
+   },
+   {
+    "name": "Spike-107 evidence, committed",
+    "responsibility": "Copy each of the three spike-107 runs into docs/design/SL-099-runs/spike-107-2026-10-12/<set>/:\n- the analysis output (analysis.txt or the analyzer's printout);\n- arms.jsonl and log.txt;\n- marks.jsonl, filtered to the tags the spike recorded;\n- for FileRepository, also roots.jsonl, H1.txt and H2.txt.\n\nSources:\n- A-large: run-20261012-002418\\out\n- FileRepository: C:\\Users\\sshub\\AppData\\Roaming\\taad3\\spikes\\8\\spike-107\\sandbox-filerepository-warm-probe-repeat-ntff-wc\\.taad-scratch\\sandbox\\run-20261012-011147\\out, which is outside the worktree\n- A-small: run-20261012-015214\\out\n\nIf a folder is already gone, the build writes a missing.txt naming it and does not invent its content. SC-230 and O-016 are discharged on the spike's engine record either way.",
+    "lives_at": "docs/design/SL-099-runs/spike-107-2026-10-12/",
+    "key_interactions": "Spike 87's pool figures became uncheckable because marks.jsonl and events.log were never committed (backlog item 4). This copy stops that happening again."
+   },
+   {
+    "name": "Outcome-C redesign record",
+    "responsibility": "The O-028 redesign for outcome C (backlog item 1, SC-128's design). Sections:\n\n(a) Outcome C stands, by pointer to SL-095 doc :11-15. The tens-of-GB report is not claimed fixed, and Q-188 stays open.\n\n(b) The cause of L's growth, as investigated. Windows keeps file-system metadata for each cold folder listed: NtfF, NtxI, Ntfo, FMfn, FMsl, FIcs, File, MmSt, MmCa.\n- About 800 B per folder over 669,824 directory opens.\n- About 0 on a warm repeat (spike 106 listing; spike 107 full probe).\n- Freed by deep memory pressure at Sandbox scale only (spike 106).\n- Not reliably freed by a standby purge: 0% of NtfF re-created on VHD (spike 106).\nMS Q&A 5966064 is quoted: about 1 KB per cold path, and 24.4 GB combined (10,786 MB nonpaged) after 47.41 h with no release. So the cache explanation does not close Q-188.\n\n(c) What the old criterion measured. T = 64 MiB and the 0.5 GB guard counted reclaimable cache. 'L stopped by the guard' does not show a leak. Spike 87's pool deltas and tag growth cannot be checked now: only L.json, dirs-count.txt and skips.log survive.\n\n(d) The reading rule for the person's session-1 logs.\n- Series: F1..F5 on the same root (Invoke-Protocol :609). The warm set is every F arm after the first one whose status is Completed. Fewer than two warm arms decides nothing.\n- Per tag, d is the live-count change from /before to /settled. Accumulation is measured from the first warm arm's /settled to the last warm arm's /settled.\n- NtfF (per folder) and Ntff (per file; spike-107 constraint): bound = max(the largest same-length |movement| over I0/I1, 10% of F1's rise).\n- WCsc, WCse, WCss, WCfc, WCri, WCfn, FMwi: bound = that tag's own largest same-length idle movement, with no F1 term.\n- A leak reading is a tag over its bound on two or more warm arms, or an accumulation over its bound.\n- Reported but not deciding: FMfn, File, MmSt, MmCa, FMsl, FIcs, NtxI, Ntfo, NtxF, NtFs, FSim, MmSm, Ntf0, MmRe, Ntce, Toke, FMfc.\n- F1's absolute cost is reported next to Q-188 and not judged against any tolerance.\n- Until the -Report reader lands, Ntff, WCse, WCss and WCfn are read case-exactly from marks.jsonl.\n\n(e) Preconditions:\n- Same workload: holds (:609).\n- A warm full-probe repeat nets about 0: holds at Sandbox scale (spike 107). SC-230 and O-016 are discharged.\n- F1 is cold: must-verify.\n- F1's cache survives until F2..F5: must-verify.\nThe record says what breaks if either must-verify fails.\n\n(f) Spike-107 limits:\n- 4 GB RAM, at most 400,000 files, ntfs.sys 10.0.26100.1;\n- I1 skipped or trimmed, so 600 s idle pairs were not measured (SC-241);\n- 0 reparse and 0 sparse files;\n- the Sandbox's C: is wcifs-backed (P1 WCsc +961).\nAn F1 WC rise on the host is not to be explained away (Q-178(1)).\n\n(g) Disposition table: one '| <id> | settled here|carried|dropped | reason |' row each.\n- Settled here: M6 and N2 (same-length idle bound), M3, N3 and X2 (no purge or pressure step; warm repeats discriminate), ScanArm (does not return).\n- Dropped: M2 (no listing arm), M4 and Y1 (unfixed afd021d arms).\n- Carried to the measurement-preparation slice: R3-1, R4-1, X5, N1, Q-185, steps 3-5, the cancel trigger, and Y3. Y3 is wanted because (d) makes a WC-within-idle claim (SC-129's condition).\n\n(h) Scope split: two person-run Restart sessions, with logs in docs/design/SL-095-runs/ per Q-184, and the measurement-preparation slice.",
+    "lives_at": "docs/design/SL-099-outcome-c-redesign.md",
+    "key_interactions": "Check: Select-String with '(?m)^\\| (R3-1|R4-1|M6|N2|X5|N1|M3|N3|X2|Y3|M2|M4|Y1|Q-185|steps 3-5|cancel trigger|ScanArm) \\| (settled here|carried|dropped) \\|' returns 17 rows. The build checks each disposition's id against SL-095 doc :219-229 and .taad/slices/SL-095/design-slice-10.json, and corrects the label where the source says otherwise."
+   },
+   {
+    "name": "SL-095 hand-off pointer",
+    "responsibility": "One line in the hand-off section (:219-229) pointing to docs/design/SL-099-outcome-c-redesign.md and its disposition table. Nothing else in that document changes.",
+    "lives_at": "docs/design/SL-095-container-layer-store.md"
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Get-Missing judges a guard stop (guardStop set, guardAtStart not set) after the guardAtStart branch and before the interrupted branch. It writes one line per arm, worded from the marks that exist. A guard-stopped arm that was not interrupted still gets HEAD's /settled checks.",
+    "reversibility": "cheap",
+    "rationale": "This is the reorder spike 106 proved: the repro passes in 5.1 and 7, and 8 fixture cases are identical. A fixed 'before its /settled mark' wording would be false for an interrupt before /exit and for a throw after /settled (:365-380). guardAtStart arms carry guardStop too, so a guard-first branch placed ahead of :459 would report every cascade arm as 'net unread'."
+   },
+   {
+    "decision": "Fork O-017 is resolved YES from spike 107. Invoke-Protocol gets no listing-only repeat arm. The measurement-preparation slice's listing-arm clause (M6) is dropped. SC-230 and O-016 are discharged with the three runs cited and committed.",
+    "reversibility": "expensive",
+    "rationale": "On all three valid sets:\n- warm P2-P4 NtfF +0/+0/+0;\n- accumulation +4/+5/+5, within b;\n- P2 at exit+600 +1 to +3;\n- WC leak tags within idle on every warm repeat.\nThis is what the fork decider's YES branch prescribes. Reversing it would mean an arm type that has to exist before the person's one-shot Restart."
+   },
+   {
+    "decision": "The reading rule decides on NtfF and Ntff with bound max(same-length idle |movement|, 10% of F1's rise). It decides on the seven WC leak tags against their own idle movement only. It reads the F arms after the first Completed F arm and needs at least two of them.",
+    "reversibility": "expensive",
+    "rationale": "Spike 107: NtfF rose once per folder (+401 for 400 folders plus the root) and had 0 allocations across 400,000 SizeProbe opens. Ntff carries the per-file state (+13,180 cold, then +48/-72/+44 against b = 1,318).\n\nThe proposal applied the 10% term to WC tags as well. That would hide a per-pass WC leak whenever F1's WC rise exceeds about 50. It contradicts spike 107's own WC criterion (idle only), Q-178(1) (WC* +0), spike 87's harness (allowance 0 for the leak tags), and lesson #349 (+5 per walk is what the rule must see).\n\nA guard-stopped F1 leaves the next arm partly cold. Changing the rule after session 1 costs another Restart."
+   },
+   {
+    "decision": "The tag list at :66 gains the 14 names and any of the seven WC leak tags that are absent. Read-Mark and Tag() stay case-exact as they are. Get-Net's result becomes an Ordinal OrderedDictionary. $NetTags and the -Report columns are unchanged.",
+    "reversibility": "cheap",
+    "rationale": "Spike 106 measured the 15 named tags covering 85.4% of paged growth, with NtFs at 5.1% unnamed, and spike 107 recorded these names. The rule decides on WCse, WCss and WCfn, which HEAD may not record. Spike 107 read NtfF 917 against Ntff 15,895 in one mark. [ordered]@{} would fold them together the moment the measurement-preparation slice adds Ntff to $NetTags."
+   },
+   {
+    "decision": "The harness's tag comparisons are guarded by one fitness entry over tests/window/PoolWatch.ps1. It has four patterns (operators on a tag, -contains/-in against a tag, $_[0] comparisons, and a switch on a tag without -CaseSensitive), a $null lookahead, a fire/quiet corpus, and a 0-hit gate on HEAD. It extends the attempt-1 entry rather than adding a copy.",
+    "reversibility": "cheap",
+    "rationale": "The entry as appended cannot see Tag()'s `$_.tag -ceq $name` turning into `-eq`, and that comparison decides the NtfF column. Lessons SL-096 and SL-075: run a corpus before trusting a regex. `$tag -eq $null` is correct code and must stay quiet. Lesson SL-091: same-named appended rules persist and are not replaced."
+   },
+   {
+    "decision": "P-004 proves tag recording with a variant-first fixture, a literal spelling oracle and one live Read-Mark. A mutation of :242 to -eq must turn it red. No C-052 run is added.",
+    "reversibility": "cheap",
+    "rationale": "Tag() returns the first match, so a fixture that lists NtfF first passes even with case folding. A misspelled watched name is absent from the live table and gets skipped silently. One live read takes about 0.4 s. C-052 costs about 5 min and +0.11 GB against the engine's 0.5 GB whole-machine guard (lesson #351)."
+   },
+   {
+    "decision": "PoolWatchCases.ps1 roots every fixture through Get-ScratchParent, so it runs under the engine's TEMP=C:\\WINDOWS\\TEMP.",
+    "reversibility": "cheap",
+    "rationale": "Lesson #391 lists PoolWatchCases.ps1 as red under C:\\WINDOWS\\TEMP, leaving folders only an administrator can list. The build check's 9-green run recorded no TEMP. This slice's P-003 and P-004 have to pass in the engine's validate."
+   },
+   {
+    "decision": "No change to src/: Scanner.cs, DirectoryReader.cs, KnownWorkarounds.cs and the precaution text stay byte-identical. No new KnownWorkarounds entry.",
+    "reversibility": "cheap",
+    "rationale": "The investigation found that L's growth is Windows' designed metadata cache, which the app does not step around: it lists each folder once, as any listing tool does. That is not an outside defect worked around, so the one-checkbox-per-bug rule adds no entry. The wcifs WC* leak is a real outside defect, and it is still answered by the existing 'wcifs-layer-store' entry (Q-186), which stays as built. Per Q-183, the Q-004 rule stays."
+   },
+   {
+    "decision": "Spike 107's evidence is committed under docs/design/SL-099-runs/. The person's DONE (c) session logs stay in docs/design/SL-095-runs/.",
+    "reversibility": "cheap",
+    "rationale": "Backlog item 4 shows what happens otherwise: spike 87's marks.jsonl and events.log were lost and its pool figures are now uncheckable. One spike-107 run folder sits outside the worktree. Q-184 puts SL-095's DONE (c) logs in SL-095-runs only."
+   },
+   {
+    "decision": "Scope split. This slice delivers the SC-130 fix, the tag recording, the guards and the record.\n\nThe measurement-preparation slice carries:\n- a -Report reader for Ntff, WCse, WCss, WCfn and the new tags;\n- Y3;\n- the Q-185 session-2 dir /a /s arm, skipping Layers;\n- a guard-trip rehearsal through Invoke-ExeArm;\n- R3-1 and R4-1;\n- X5 and N1;\n- the cancel trigger;\n- Sandbox protocols that fit the 1,800 s ceiling.\n\nBoth Restart sessions and DONE (c) are checked_by person.",
+    "reversibility": "cheap",
+    "rationale": "Lessons #344 and #357: a Restart plus whole-C: runs cannot close on loop evidence, and the engine's guard forbids them unattended. The fork no longer needs an arm before session 1, so nothing in the split waits on SC-230."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal. Selected whole, with seven seams redesigned (see coherence_check). over_engineering_flag was raised and is honoured: no judge, no tolerance row, no purge or pressure step, no listing arm, no ScanArm."
+   }
+  ],
+  "coherence_check": "There was one proposal, so there was no composition to check. Nothing in this design has yet survived a disagreement, and the reviewer should treat all of it as uncontested.\n\nThe pieces were checked against each other, against the spikes and against the answered questions. Seven seams were redesigned:\n\n1. WC bound. The proposal bounded every deciding tag by max(idle, 10% of F1). Spike 107's WC criterion was idle movement only, Q-178(1) says WC* +0, and spike 87's harness gave the leak tags an allowance of 0. Changed: WC leak tags are bounded by their own idle movement only.\n\n2. Evidence path. The proposal's component named both SL-095-runs and SL-099-runs. Changed to SL-099-runs, which also keeps Q-184's rule that DONE (c) logs live alone in SL-095-runs.\n\n3. Deciding tags that may not be recorded. The rule decides on WCse, WCss and WCfn, but HEAD's :66 is not known to record them; the survey wrote 'WC*' and review m1 said there is no WC* family. Changed: the seven WC leak tags are appended if absent, and P-004's oracle covers them.\n\n4. Key spelling. Moving Get-Net to an Ordinal dictionary makes every reader's key spelling load-bearing. Added: a diff of each unchanged fixture's -Report output against HEAD's (case 8).\n\n5. Cascade arms. guardAtStart arms also carry guardStop. Made explicit: the new branch excludes guardAtStart and runs after :459 (case 3, C-056).\n\n6. Partly cold repeats. m7's 'F3..F5 if F1 guard-stopped' is generalised to 'after the first Completed F arm, at least two'.\n\n7. Y3. SC-129's condition is resolved: the rule makes a WC-within-idle claim, so Y3 is wanted and carried, not built.\n\nContradictions checked and found consistent:\n- Q-178, Q-184 and Q-185 are compatible with the reading rule and the session split.\n- Q-183 and Q-186 are untouched, because there is no product change.\n- fitness.yaml:1097 still holds: there is no verdict word because there is no judge.\n\nA conflict between two measurements, which the design avoids rather than resolves:\n- The investigation's Sandbox standby purge freed big-folder state.\n- Spike 106's purge re-created 0% of NtfF on a VHD 400x40 set.\nThe design uses neither purge nor pressure as a discriminator.\n\nBacklog item 3's R_start abort has no counterpart in the tree; the survey measured that the faulty ScanArm was never committed. The record says so and nothing is built for it.\n\ndecidable_disagreements is empty. The one fork that could force a re-synthesis (O-017) was settled by spike 107. What remains is either cheap, so the build settles it (the 0-hit fitness gate, whether the spike folders still exist), or person-only (host-scale behaviour, filed).\n\nOne architecture rule is declared: case-exact tag comparison in PoolWatch.ps1. Its glob matches an existing file. It is to be merged into the attempt-1 entry by hand, because the engine does not replace a same-named rule (lesson SL-091).",
+  "architecture_rules": [
+   {
+    "name": "PoolWatch compares pool tags case-exactly",
+    "files": "tests/window/PoolWatch.ps1",
+    "must_not_match": [
+     "(?i)\\btag\\s+-i?(eq|ne|like|notlike|match|notmatch|in|notin|contains|notcontains)\\b(?!\\s*\\$null\\b)",
+     "(?i)-i?(contains|notcontains|in|notin)\\s+\\$[\\w.]*tag\\b",
+     "(?i)\\$_\\[0\\]\\s+-i?(eq|ne|like|match|in|notin)\\b(?!\\s*\\$null\\b)",
+     "(?i)\\bswitch\\s*\\(\\s*\\$[\\w.]*tag\\b"
+    ],
+    "because": "NtfF and Ntff, and NtxI and NtxF, differ only by case. Spike 107 read NtfF 917 against Ntff 15,895 in one mark. PowerShell's -eq, -contains, -in, -like, -match and switch fold case by default. One folded comparison puts one tag's count in the other's column, and the outcome-C reading rule decides on NtfF and Ntff. A wrong column in the person's session-1 logs costs another true Restart."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "report a guard-stopped arm",
+    "shape": "Stopped by the guard, then interrupted during its settle wait after the exe exited (exit -1, killed false). /before and /exit present, no /settled. This is the repro's X1 and P-003 arm (b).",
+    "why": "Get-Missing tests interrupted at :460-465 and continues before reaching guardStop at :473, so the guard's reason and the +310 MiB /before-to-/exit net are dropped. This is the captured failure.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-099-GuardStopSurvivesInterrupt.Tests.ps1 exits 0, and powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-099-GuardStopSurvivesInterrupt.Tests.ps1 exits 0. Also pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatchCases.ps1 -Case P-003 exits 0 (arm b).",
+    "material": true
+   },
+   {
+    "behaviour": "report a guard-stopped arm",
+    "shape": "Stopped by the guard and not interrupted, with all three marks present (the repro's control X2).",
+    "why": "Moving the guard branch ahead of the field checks could drop X2's net, split it into two lines, or skip its /settled checks.",
+    "check": "The same repro run as in case 1 (its X2 checks) exits 0. pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatchCases.ps1 -Case C-056 exits 0.",
+    "material": true
+   },
+   {
+    "behaviour": "report an arm the guard refused at start",
+    "shape": "A guardAtStart cascade arm. It also carries guardStop ('available N MB at start') and has no /exit mark.",
+    "why": "Placed ahead of :459, a guard-first branch would report every cascade arm as 'stopped by the machine guard ... its net at the stop is unread' and lose 'cascade from X'.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatchCases.ps1 -Case C-056 exits 0, and its -Report text equals the same case run on a git worktree of 0feac0e.",
+    "material": true
+   },
+   {
+    "behaviour": "report a guard-stopped arm",
+    "shape": "Stopped by the guard, then interrupted before its /exit mark, while the exe was still being killed (killed true, exitCode null).",
+    "why": "The net needs /exit. The suffix must not claim an /exit that does not exist, and the killed flag changes the wording.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatchCases.ps1 -Case P-003 exits 0, with arm (c) asserting 'its net at the stop is unread' and '; then interrupted before its /exit mark and killed', and no 'from /before to /exit'.",
+    "material": true
+   },
+   {
+    "behaviour": "report a guard-stopped arm",
+    "shape": "Stopped by the guard, all three marks written, then interrupted by a throw in the report read after /settled (:366-380).",
+    "why": "A fixed 'before its /settled mark' suffix would be false. The marks-derived suffix has a third branch.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatchCases.ps1 -Case P-003 exits 0, with arm (e) asserting '; then interrupted after its /settled mark'.",
+    "material": true
+   },
+   {
+    "behaviour": "report a guard-stopped arm",
+    "shape": "Stopped by the guard and not interrupted, but its /settled mark has a null pagedBytes.",
+    "why": "The guard branch needs only /before and /exit. Without HEAD's /settled field checks kept for non-interrupted arms, a failed reading would go unreported.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatchCases.ps1 -Case P-003 exits 0, with arm (d) asserting the guard line with its net and a separate line naming /settled pagedBytes.",
+    "material": true
+   },
+   {
+    "behaviour": "report an interrupted arm",
+    "shape": "Interrupted with no guard stop, either while the exe ran (killed) or after it exited 0 (P-003's F2 and F4).",
+    "why": "The interrupted branch must stay byte for byte for arms without a guard stop.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatchCases.ps1 -Case P-003 exits 0, and its F2/F4 lines equal the same case run on a git worktree of 0feac0e.",
+    "material": true
+   },
+   {
+    "behaviour": "print a run report",
+    "shape": "Every other fixture shape: C-053, C-054, C-055, C-027, P-001, P-002, C-011.",
+    "why": "Get-Net's Ordinal dictionary makes key spelling load-bearing. A reader that spells paged, nonpaged, handles, h120089 or a tag differently gets $null silently, and the table shifts.",
+    "check": "For each case, pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatchCases.ps1 -Case <c> keeps its exit code, and its -Report text equals the same case run on a git worktree of 0feac0e. C-011 is compared under pwsh 7 only, because it is red under 5.1 at HEAD.",
+    "material": true
+   },
+   {
+    "behaviour": "compute an arm's net",
+    "shape": "$NetTags holds both NtfF and Ntff.",
+    "why": "[ordered]@{} folds key case, so the second tag overwrites the first. The measurement-preparation slice will add Ntff.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatchCases.ps1 -Case P-004 exits 0 (fixture half: Get-Net loaded through the AST returns separate NtfF and Ntff values).",
+    "material": true
+   },
+   {
+    "behaviour": "read a tag column",
+    "shape": "A mark lists Ntff before NtfF, and NtxF before NtxI, with different live counts.",
+    "why": "Tag() returns the first match, so a fixture listing NtfF first passes even with case folding at :242.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatchCases.ps1 -Case P-004 exits 0, with the NtfF column equal to NtfF's delta. Then the same case against a scratch copy of PoolWatch.ps1 with :242's -ceq changed to -eq exits non-zero.",
+    "material": true
+   },
+   {
+    "behaviour": "record a live mark",
+    "shape": "The 21 watched names (the seven WC leak tags plus the 14 added) spelled case-exactly, some of them not live on this host.",
+    "why": "A misspelled name is absent from the live table and is skipped silently, so the rule would decide on a tag never recorded.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatchCases.ps1 -Case P-004 exits 0 (live half: literal oracle -ccontains in the parsed :66 list; every oracle name present in the live table is present in one Read-Mark).",
+    "material": true
+   },
+   {
+    "behaviour": "run the harness cases under the engine",
+    "shape": "TEMP=TMP=C:\\WINDOWS\\TEMP",
+    "why": "Lesson #391: PoolWatchCases.ps1 is red there and leaves folders only an administrator can list. P-003 and P-004 must pass in the engine's validate.",
+    "check": "In the engine stage shell (TEMP=C:\\WINDOWS\\TEMP), pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatchCases.ps1 -Case P-003 and -Case P-004 exit 0, and each printed 'scratch:' root is under %LOCALAPPDATA%\\Temp.",
+    "material": true
+   },
+   {
+    "behaviour": "guard the harness's tag comparisons",
+    "shape": "A case-folding comparison on a tag (`$_.tag -eq $name`, `-contains $_.tag`, `switch ($row.tag) {`) next to the case-exact forms and `$tag -eq $null`.",
+    "why": "The attempt-1 rule cannot see :242 turning into -eq. A pattern that fires on correct code gets deleted instead of fixed.",
+    "check": "Engine Fitness check on the tree reports the rule with 0 hits on tests/window/PoolWatch.ps1. Its fire lines planted into a scratch copy each produce a hit and its quiet lines produce none, via eng/rules-harness/harness.py --only <plant ids>, or via Fitness on the scratch copy if the harness cannot plant into a .ps1.",
+    "material": true
+   },
+   {
+    "behaviour": "record tags in a real run",
+    "shape": "A full -Rehearse run (C-052): the app published and a 30,150-folder TEMP tree walked for about 5 min.",
+    "why": "Considered: it would exercise Read-Mark on real marks. Judged not worth it: P-004's single live Read-Mark goes through the same code in about 0.4 s, and this slice does not touch Invoke-ExeArm or Invoke-Protocol. C-052 costs about +0.11 GB of the engine's 0.5 GB whole-machine guard (lesson #351).",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/PoolWatchCases.ps1 -Case C-052",
+    "material": false
+   }
+  ],
+  "contracts": [
+   {
+    "name": "PoolWatch.ps1 -Report: MISSING line for a guard-stopped arm",
+    "kind": "cli",
+    "notes": "Format: '  MISSING arm <X>: stopped by the machine guard (<reason>): paged ±N MiB, nonpaged ±N MiB from /before to /exit[; then interrupted (before its /exit mark|before its /settled mark|after its /settled mark)[ and killed]]'.\n- One line per guard-stopped arm.\n- The guardAtStart cascade line comes first and is unchanged.\n- Exit 2 for an incomplete run is unchanged.\n- No verdict words.",
+    "error_cases": "- /before or /exit missing, or one of their pool fields null: the net is replaced by 'its net at the stop is unread (<which>)'. The reason still carries 'pool +N MiB'.\n- Not interrupted, with /settled missing or a /settled field null: named on its own line, as at HEAD.\n- Interrupted with no guardStop: :460-465 unchanged.",
+    "auth_model": "Unelevated; reads JSONL only."
+   },
+   {
+    "name": "marks.jsonl tags array (Read-Mark)",
+    "kind": "event",
+    "notes": "The named list at :66 plus any absent entries from the seven WC leak tags and the 14 added names. Tags are case-exact 4-character names: NtfF/Ntff and NtxI/NtxF are separate entries. The change is additive, so older logs stay readable.",
+    "error_cases": "A watched tag absent from the system table is handled as HEAD handles the existing names. Readers of build-2026-10-05 and later logs must match case-exactly."
+   },
+   {
+    "name": "Get-Net result",
+    "kind": "function",
+    "notes": "An OrderedDictionary with [StringComparer]::Ordinal, keyed by tag name plus paged, nonpaged, handles and h120089, spelled as at HEAD. It is safe for a $NetTags holding case variants. Every reader must use the exact spelling.",
+    "error_cases": "Returns null when either mark or its pagedBytes is missing, as at HEAD."
+   },
+   {
+    "name": "PoolWatchCases.ps1 -Case P-003 / -Case P-004",
+    "kind": "cli",
+    "notes": "- P-003: fixture only, under 1 s.\n- P-004: fixture plus one live, unelevated read of the pool tag table, about 1 s.\nBoth are rooted through Get-ScratchParent, print their scratch root, and exit 0 under powershell.exe 5.1 and pwsh 7.",
+    "error_cases": "Non-zero exit, with a FAIL line naming the arm or tag. C-011 is already red under 5.1 at HEAD and is not this slice's."
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Leak testing in managed runtimes (repeat an identical workload after a warm-up and check whether retained growth scales with the number of passes)",
+   "pattern": "Tell a leak from a cache by the slope across identical warm repeats, not by one pass against an absolute tolerance. The counter being read must actually see the objects each pass creates.",
+   "transfer_found": true,
+   "rationale": "Spike 107 confirmed the slope half on the app's real Scanner with ScanOptions.Default, on three cold sets. It also showed this pattern's usual trap: a counter blind to a pass's objects reads 0 whether there is a leak or not. NtfF counts folders, so the per-file reading goes to Ntff. The forced-reclaim half does not transfer (spike 106: a purge re-created 0% of NtfF on VHD). This synthesis adds one point: a counter with a known per-pass leak signature (WC) must not be given a bound that scales with the cold pass.",
+   "invariants": [
+    {
+     "precondition": "The repetitions are the same workload.",
+     "status": "holds",
+     "evidence": "Invoke-Protocol :609 passes the same root, the exe-full type and a null hook to every F arm."
+    },
+    {
+     "precondition": "A warm full-probe repeat nets about 0 on the deciding tags, with no accumulation.",
+     "status": "holds",
+     "evidence": "Spike 107 on three valid sets: NtfF +0/+0/+0, accumulation +4/+5/+5, P2 exit+600 +1 to +3, Ntff on A-large +48/-72/+44 against b = 1,318, WC within idle on every warm repeat. Sandbox scale only: 4 GB RAM, at most 400,000 files, ntfs.sys 10.0.26100.1."
+    },
+    {
+     "precondition": "The judged counter sees the objects each pass creates.",
+     "status": "fails",
+     "evidence": "It fails for NtfF on files: +401 for 400 folders, and 0 allocations across 400,000 SizeProbe opens. Ntff is added to the rule because it churned 23-27k allocations per warm pass at a flat live count."
+    },
+    {
+     "precondition": "The bound does not grow with the cold pass for a counter whose leak signature is a small per-pass rise.",
+     "status": "holds",
+     "evidence": "In this design, WC leak tags are bounded by idle movement only (spike 107's WC criterion; Q-178(1)). Lesson #349's +5 WC per walk stays above an idle movement of 2-9."
+    },
+    {
+     "precondition": "F1 is cold.",
+     "status": "must-verify",
+     "evidence": "-Protocol refuses to start more than 30 min after boot (:690-691). Background services may warm parts of C: first, which only makes F1 look smaller."
+    },
+    {
+     "precondition": "The cache F1 builds survives to F2..F5.",
+     "status": "must-verify",
+     "evidence": "The host has about 17 GB of standby memory, and the 6 GiB per-arm guard and 3 GB floor keep the run away from deep pressure. If the cache were evicted, the warm repeats would rebuild it and read as a leak; the record says so."
+    },
+    {
+     "precondition": "A forced-reclaim step reliably frees the cache.",
+     "status": "fails",
+     "evidence": "Spike 106: a standby purge re-created 0% of NtfF on a VHD set. Deep pressure released the cache only at Sandbox scale (SC-231)."
+    }
+   ]
+  },
+  "prior_art": [
+   {
+    "pattern": "Find a pool leak by watching per-tag pool bytes and allocations over time (PoolMon).",
+    "where": "https://github.com/MicrosoftDocs/windows-driver-docs/blob/staging/windows-driver-docs-pr/debugger/using-poolmon-to-find-a-kernel-mode-memory-leak.md",
+    "authority": "official",
+    "basis": "cited",
+    "source_date": "2025-07-10"
+   },
+   {
+    "pattern": "Cold first-time opens keep about 1 KB of pool per path, and warm paths add nothing. On a 32 GB PC the same tags reached 24.4 GB combined pool (13,626 MB paged, 10,786 MB nonpaged) after 47.41 h and were cleared only by a reboot. This is evidence for the cache mechanism, and also that it can reach the size of Q-188's growth without being given back.",
+    "where": "https://learn.microsoft.com/en-nz/answers/questions/5966064/windows-11-25h2-kernel-pool-leak-fmfn-and-file-all",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2026-08-04"
+   },
+   {
+    "pattern": "Killing the triggering process tree does not release the FltMgr/File pool it caused, so a reading taken after exit measures Windows' state.",
+    "where": "https://github.com/openai/codex/issues/31212",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-07-06"
+   },
+   {
+    "pattern": "Take a baseline of normal pool usage before attributing growth to a tag.",
+    "where": "https://lokna.no/?p=1492",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2013-11-15"
+   },
+   {
+    "pattern": "Iterate an identical workload after warm-up and flag retained growth that scales with the number of iterations.",
+    "where": "LeakCanary / dotMemory Unit / Valgrind memcheck practice",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "PowerShell's -eq, -contains, switch, @{} and [ordered]@{} ignore case by default. Case-exact work needs -ceq/-ccontains, switch -CaseSensitive, or a [StringComparer]::Ordinal collection.",
+    "where": "PowerShell about_Comparison_Operators / about_Hash_Tables / about_Switch",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "outside_claims": [
+   {
+    "claim": "PowerShell's -eq, -ne, -like, -match, -contains, -in, switch, @{} and [ordered]@{} compare strings case-insensitively unless the c-prefixed operator, switch -CaseSensitive or an Ordinal comparer is used. This holds in both Windows PowerShell 5.1 and pwsh 7.",
+    "evidence": "recalled",
+    "source": "memory (about_Comparison_Operators, about_Hash_Tables, about_Switch)",
+    "if_wrong": "If PowerShell compared case-exactly by default, the fitness rule would only be noisy, and the Get-Net change would be unneeded but harmless."
+   },
+   {
+    "claim": "System.Collections.Specialized.OrderedDictionary has a constructor taking an IEqualityComparer, and New-Object ... ([StringComparer]::Ordinal) reaches it under both .NET Framework 4.x (5.1) and .NET (pwsh 7).",
+    "evidence": "recalled",
+    "source": "memory",
+    "if_wrong": "Get-Net needs another ordered Ordinal map, for example a Dictionary[string,object] with Ordinal plus a separate key list. P-004 and case 8 would show the failure at build."
+   },
+   {
+    "claim": "NtfF rises once per folder listed and does not see per-file SizeProbe opens. Per-file NTFS state shows on Ntff.",
+    "evidence": "measured",
+    "source": "spike 107 sandbox-above-cap-warm-probe-repeat-ntff: +401 for 400 folders plus the root, 0 NtfF allocations across 400,000 probes, Ntff +13,180 (Sandbox, ntfs.sys 10.0.26100.1)",
+    "if_wrong": "If host ntfs.sys 10.0.26100.9444 assigns the tags differently, the reading rule's choice of Ntff as the per-file counter is wrong. Session 1's F1 rise would show it: Ntff flat while files are probed."
+   },
+   {
+    "claim": "A warm repeat of a full default-ProbeRule scan nets about 0 on NtfF, Ntff and the WC leak tags, with no accumulation.",
+    "evidence": "measured",
+    "source": "spike 107, three valid sets (A-small, A-large, FileRepository H1)",
+    "if_wrong": "Warm repeats would not separate cache from leak, and a listing-only repeat arm would be needed before session 1 (the fork's NO branch)."
+   },
+   {
+    "claim": "A standby purge does not reliably make listed folders cold again, while memory pressure deep enough to drain the standby list releases the listing state.",
+    "evidence": "measured",
+    "source": "spike 106: sandbox-purge-repeat-attribution-combined (no-go, 0% NtfF re-created on VHD) and sandbox-deep-pressure-releases-listing-state (go, Sandbox)",
+    "if_wrong": "A purge step could become a cheaper discriminator. Nothing built here depends on it."
+   },
+   {
+    "claim": "The 15 originally named tags cover 85.4% (77.1% in run 2) of a cold listing's paged growth, with NtFs at 5.1% unnamed.",
+    "evidence": "measured",
+    "source": "spike 106 sandbox-extended-tags-attribute-cold-listing",
+    "if_wrong": "Only the reported-tag list grows. The deciding tags are unaffected."
+   },
+   {
+    "claim": "Cold first-time path operations keep about 1 KB of pool per path. The same tag family reached 24.4 GB combined after 47.41 h on a 32 GB PC and was cleared only by reboot.",
+    "evidence": "cited",
+    "source": "https://learn.microsoft.com/en-nz/answers/questions/5966064/windows-11-25h2-kernel-pool-leak-fmfn-and-file-all",
+    "if_wrong": "The record's statement that the cache explanation does not close Q-188 would lose its outside support. The design does not change."
+   },
+   {
+    "claim": "Killing the process that triggered FltMgr/File pool growth does not release that pool.",
+    "evidence": "cited",
+    "source": "https://github.com/openai/codex/issues/31212",
+    "if_wrong": "A /settled reading would partly measure the app rather than Windows. The rule's after-exit window would need rethinking."
+   },
+   {
+    "claim": "SystemPoolTagInformation and the pool counters are readable unelevated on this PC in about 0.4 s.",
+    "evidence": "measured",
+    "source": "spike 87 harness record (live unelevated reading 0.4 s; counters match CIM) and PoolWatch.ps1 in use since SL-095",
+    "if_wrong": "P-004's live half could not run unattended and would move to filed_for_later."
+   },
+   {
+    "claim": "The engine appends declared architecture_rules at design acceptance, the appended rules persist across take-backs, and a same-named rule is not replaced.",
+    "evidence": "measured",
+    "source": "lessons SL-091 and SL-055 (measured on this project's .taad/fitness.yaml)",
+    "if_wrong": "If the engine does replace the rule, the hand merge is redundant, and the build's duplicate check finds nothing."
+   }
+  ],
+  "decidable_disagreements": [],
+  "taste_disagreements": [
+   "Converting Get-Net to an Ordinal dictionary now, against doing it in the measurement-preparation slice that adds Ntff to $NetTags. Kept here because the change is a few lines, P-004 covers it, and the next slice inherits a safe seam.",
+   "Ntff alone as the per-file deciding tag, against the whole lower-case family spike 107 listed (Ntff, Ntf0, NtFs, FMfn, FMsl, NtxF, FIcs, Ntce). Chosen as the one counter the spike measured flat against a bound. The others are recorded and reported.",
+   "A fitness rule plus P-004's mutation check, against P-004 alone. Two guards on one comparison may read as duplication.",
+   "Spike-107 evidence under docs/design/SL-099-runs/ rather than SL-095-runs/.",
+   "The warm set as 'the F arms after the first Completed F arm, at least two', against the proposal's narrower 'F3..F5 if F1 was guard-stopped'.",
+   "Removing the old guard branch at :473-478 rather than leaving it as dead code."
+  ],
+  "open_questions": [],
+  "filed_for_later": [
+   {
+    "what": "Session 1, after a true Start > Restart: PoolWatch.ps1 -Prepare, Restart, then -Protocol within 30 min. Logs are committed under docs/design/SL-095-runs/ (Q-184). This includes the exit + 10 min (/settled) reading for any guard-stopped arm (backlog item 4, first half). A person reads them against the rule in docs/design/SL-099-outcome-c-redesign.md (d).",
+    "why": "It needs a true Restart and a cold whole-C: series. The engine's 0.5 GB whole-machine guard forbids it unattended (lessons #344, #357).",
+    "who": "person"
+   },
+   {
+    "what": "Session 2 for DONE (c) under Q-178, Q-184 and Q-185: a second true Restart, the same idle, and dir /a /s of each sibling root of C:, skipping the Layers store.",
+    "why": "A person's Restart and a whole-drive run. Q-185 makes it conditional on session 1.",
+    "who": "person"
+   },
+   {
+    "what": "Measurement-preparation slice, which must land before session 1:\n- a -Report reader for Ntff, WCse, WCss, WCfn and the new tags;\n- Y3, the closing layer control (wanted, because the rule makes a WC-within-idle claim);\n- the Q-185 session-2 dir arm;\n- a guard-trip rehearsal through Invoke-ExeArm, which has never tripped for real;\n- R3-1 and R4-1 (the settle gate);\n- X5 and N1;\n- calibrating the cancel trigger;\n- Sandbox protocols that fit the 1,800 s ceiling.",
+    "why": "Each is carried in the disposition table. None is needed to fix SC-130 or to write the record.",
+    "who": "slice"
+   },
+   {
+    "what": "SC-229: where NTFS's count-capped close cache levels off on this 32 GB PC. SC-231: whether deep-pressure release holds at host scale. SC-241: 600 s idle pairs for I0 and I1.",
+    "why": "They need host-scale or long-window measurements the loop cannot run inside one 1,800 s Sandbox launch or under the engine's guard.",
+    "who": "slice"
+   },
+   {
+    "what": "Q-188: the source of the tens-of-GB paged and nonpaged growth. MS Q&A 5966064 shows the same tags at 24.4 GB with no release.",
+    "why": "It is an open question, and proving a root cause is its own work, not this slice's.",
+    "who": "slice"
+   },
+   {
+    "what": "Rooting scratch outside C:\\WINDOWS\\TEMP in the remaining scripts lesson #391 lists: SL-069-EveryCaseFollowsCounts.Tests.ps1, SL-069-RuleCasesDeriveCounts.Tests.ps1, WindowMutants.ps1 and the other tests/bugs/*.ps1.",
+    "why": "This slice fixes only PoolWatchCases.ps1, which its own cases need.",
+    "who": "slice"
+   },
+   {
+    "what": "Elevated deletion of C:\\WINDOWS\\TEMP\\sl095-o003-20261004-220751 and sl095-o003-20261004-221446, the residue of spike 87's smoke runs. It joins Q-219's pile.",
+    "why": "Deleting them is access-denied without elevation, and no stage may elevate.",
+    "who": "person"
+   }
+  ],
+  "stack_chosen": [],
+  "whats_new": [
+   "Get-Missing judges a guard stop (guardStop without guardAtStart) after the cascade branch and before the interrupted branch, one line per arm",
+   "An interrupt suffix worded from the marks that exist, plus ' and killed'",
+   "HEAD's /settled checks kept for guard-stopped arms that were not interrupted",
+   "The seven WC leak tags (if absent) and 14 names appended to the :66 tag list",
+   "Get-Net's result as an Ordinal OrderedDictionary",
+   "One case-exact tag-comparison fitness entry with four patterns, a corpus and a 0-hit gate on HEAD",
+   "P-003 arms (b) to (e): interrupted before /settled, interrupted before /exit and killed, a null /settled field, interrupted after /settled",
+   "P-004: variant-first fixture, Get-Net with both NtfF and Ntff, a 21-name spelling oracle, one live Read-Mark",
+   "Get-ScratchParent in PoolWatchCases.ps1 at :99, :242 and :336, with a printed scratch root",
+   "docs/design/SL-099-outcome-c-redesign.md: cause, what the old criterion measured, reading rule, preconditions, spike limits, 17-row disposition table",
+   "A reading rule: NtfF and Ntff against max(idle, 10% of F1); WC leak tags against idle only; warm set after the first Completed F arm",
+   "Spike-107 evidence committed under docs/design/SL-099-runs/spike-107-2026-10-12/",
+   "SC-230 and O-016 discharged; the listing-only-arm clause dropped; Y3 resolved as wanted and carried",
+   "The SL-099 repro committed as the acceptance test"
+  ],
+  "whats_reused": [
+   "The spike-106 reorder of Get-Missing",
+   "Read-Mark's -ccontains (:207) and Tag()'s -ceq (:242), unchanged",
+   "Invoke-Protocol's five identical F arms (:609) as the repeat series; no new arm type",
+   "Invoke-ExeArm's 6 GiB per-arm guard, 3 GB Available floor, and /exit and /settled after a stop (:347-365), untouched",
+   "Get-ScratchParent from the slice's own repro (:41-49)",
+   "The attempt-1 engine-appended case-folding entry, extended rather than duplicated",
+   "Spike 107's bound method, max(same-length idle |d|, 10% of the cold rise), for NtfF and Ntff; its idle-only WC criterion",
+   "The fitness.yaml:1097 rule against verdict words: the harness still judges nothing",
+   "The Layers exclusion, the wcifs-layer-store KnownWorkarounds entry and its precaution text, untouched",
+   "Spike 87's committed L.json, dirs-count.txt and skips.log as the surviving record of arm L",
+   "Answered decisions Q-178, Q-183, Q-184, Q-185 and Q-186 as they stand"
+  ],
+  "channeled_experts": [
+   "NT Debugging-style kernel pool leak triage",
+   "NTFS / Cache Manager / Filter Manager internals",
+   "PowerShell test-harness maintainer (5.1 and 7)",
+   "Managed-runtime leak-test methodology"
+  ]
+ }
+}

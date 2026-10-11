@@ -1168,3 +1168,45 @@ rules:
       Aliases (rm, ri, rd, del) are a known gap in this tripwire. Fitness blanks the comments
       of a .ps1 file unless including_comments is true, so the line anchor is defence in depth,
       not what keeps a comment line out; set including_comments if this rule ever has to read them.
+
+  # settled by SL-099
+  - name: PoolWatch never compares pool tag names without regard to case
+    files: tests/window/PoolWatch.ps1
+    must_not_match:
+    - \$(WatchedTags|NetTags)\s+-i?(contains|notcontains|eq|ne|like|notlike|match|notmatch)\b
+    - -i?(in|notin)\s+\$(WatchedTags|NetTags)\b
+    - -i?(eq|ne|like|notlike|match|notmatch)\s+['"](WC|NtfF|Ntff|NtxI|NtxF|Ntfo)
+    because: 'Pool tags are case-sensitive 4-byte values, and NtfF/Ntff and NtxI/NtxF are distinct
+      live tags that move in opposite directions (Sandbox small folders: NtfF +6,981 allocations
+      while Ntff -7,226). PowerShell''s default operators fold case. Once this slice watches
+      Ntff and NtxF, a case-folding comparison silently merges them into NtfF, the column the
+      outcome-C reading decides on. The host-repeat spike already hit this merge. The c-prefixed
+      forms (-ccontains, -cin, -clike, -ceq) are the correct ones and cannot match these patterns.'
+
+  # settled by SL-099
+  - name: PoolWatch compares pool tags case-exactly
+    files: tests/window/PoolWatch.ps1
+    must_not_match:
+    - (?i)\btag\s+-i?(eq|ne|like|notlike|match|notmatch|in|notin|contains|notcontains)\b(?!\s*\$null\b)
+    - (?i)-i?(contains|notcontains|in|notin)\s+\$[\w.]*tag\b
+    - (?i)\$_\[0\]\s+-i?(eq|ne|like|match|in|notin)\b(?!\s*\$null\b)
+    - (?i)\bswitch\s*\(\s*\$[\w.]*tag\b
+    - (?i)(?<!\$null)(?<=\S)\s+-i?(eq|ne|like|notlike|match|notmatch)\s+(?:\$[\w.]*tag\b|\$_\[0\])
+    - (?i)\bGroup-Object\b(?![^\r\n]*-CaseSensitive)[^\r\n]*\btag\b
+    - (?i)\b(?:Select|Sort)-Object\b(?![^\r\n]*-CaseSensitive)(?=[^\r\n]*-Unique\b)[^\r\n]*\btag\b
+    because: NtfF and Ntff, and NtxI and NtxF, differ only by case. Spike 107 read NtfF 917
+      against Ntff 15,895 in one mark. PowerShell's -eq, -contains, -in, -like, -match and switch
+      fold case by default, and so do Group-Object and -Unique. One folded comparison puts one
+      tag's count in the other's column, and the outcome-C reading rule decides on NtfF and Ntff.
+      A wrong column in the person's session-1 logs costs another true Restart. The patterns name
+      the spellings PoolWatch's own tag lookups can take, closed as a class in
+      tests/window/PoolWatchTagCompareCorpus.json, whose test reads these patterns and the
+      neighbouring entry's from this file. They cover an operator after a tag (any variable or
+      property named tag, Where-Object's simplified syntax included), a tag after -contains or
+      -in, the raw Read-Mark row $_[0] after an operator, a switch on a tag, the operands the
+      other way round (the literal 'NtfF' before -eq and then $tag, while $null -eq $tag is a null
+      test and stays quiet), and Group-Object or -Unique on a tag. The c-prefixed operators,
+      switch -CaseSensitive, -CaseSensitive and a comparison with $null are the correct forms and
+      stay quiet. A table keyed by tag name is no comparison a line pattern can see, and
+      PoolWatchCases P-004 checks Get-Net's. Aliases (where, group, sort) are a known gap, as in
+      the RuleCases Remove-Item rule.

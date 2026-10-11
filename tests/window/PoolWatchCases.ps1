@@ -1,6 +1,9 @@
 # PoolWatch.ps1's own cases (SL-095, stack decision: a case script in the WindowCases idiom, no Pester). C-053 to C-056,
-# C-027 and P-001 to P-003 run -Report over hand-built JSONL run logs in %TEMP%: no scan, no restart, nothing read from
-# the machine. Each is the clean, complete run with one thing changed, and says what -Report must list. Across every
+# C-027 and P-001 to P-003 run -Report over hand-built JSONL run logs in a scratch folder (the temp folder, or
+# LocalAppData\Temp when TEMP is under the Windows folder: Get-ScratchParent): no scan, no restart, nothing read from
+# the machine. Each is the clean, complete run with one thing changed, and says what -Report must list. P-004 (SL-099)
+# checks how tags are recorded and keyed: a fixture whose marks list Ntff before NtfF, Get-Net loaded from PoolWatch.ps1
+# with both in its tag list, and one live reading of this PC's pool tag table (about a second, a few KB). Across every
 # fixture no output line may carry a judgement word: the narrowed slice judges no tolerance, and SC-128 does (fitness
 # rule 'PoolWatch reports completeness, never a verdict'). C-011 asks -Protocol to start on this boot, which is too old
 # for it, and checks that it refuses having written nothing. C-052 runs -Protocol -Rehearse end to end over a generated
@@ -14,7 +17,7 @@
 
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('All', 'C-011', 'C-027', 'C-052', 'C-053', 'C-054', 'C-055', 'C-056', 'P-001', 'P-002', 'P-003')]
+    [ValidateSet('All', 'C-011', 'C-027', 'C-052', 'C-053', 'C-054', 'C-055', 'C-056', 'P-001', 'P-002', 'P-003', 'P-004')]
     [string] $Case
 )
 
@@ -22,6 +25,18 @@ $ErrorActionPreference = 'Stop'
 $PoolWatch = Join-Path $PSScriptRoot 'PoolWatch.ps1'
 $script:Failures = [System.Collections.Generic.List[string]]::new()
 $Judgement = '\b(PASS|FAIL|VOID|OUTCOME)\b'
+
+# The temp folder, unless that is at or under the Windows folder (the engine's C:\WINDOWS\TEMP, which a user may create in
+# but not list or delete from, so a fixture's cleanup there is a terminating error): then LocalAppData\Temp, as
+# tests/rules/RuleCases.ps1 does. C-052 does not use it: it plants beside the scratch -Protocol -Rehearse sweeps, which is
+# under GetTempPath() (SL-099 review N8).
+function Get-ScratchParent {
+    $temp = [System.IO.Path]::GetTempPath()
+    $windows = [Environment]::GetFolderPath('Windows').TrimEnd('\')
+    $under = ($temp.TrimEnd('\') + '\').StartsWith($windows + '\', [StringComparison]::OrdinalIgnoreCase)
+    if (-not $under) { return $temp }
+    [System.IO.Path]::Combine([Environment]::GetFolderPath('LocalApplicationData'), 'Temp')
+}
 
 function Check([bool] $condition, [string] $what) {
     if ($condition) { Write-Output "  ok    $(($what -split "`n")[0])" }
@@ -35,11 +50,15 @@ function Check([bool] $condition, [string] $what) {
 function Invoke-Report([string] $dir) {
     $lines = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $PoolWatch -Report -RunDir $dir 2>&1 | ForEach-Object { "$_" })
     $exit = $LASTEXITCODE
-    foreach ($l in $lines) { Write-Output "        | $l" }
+    foreach ($l in $lines) { Write-Host "        | $l" }
     $judged = @($lines | Where-Object { $_ -cmatch $Judgement })
     Check ($judged.Count -eq 0) "no line carries a judgement word ($($judged -join ' | '))"
     [pscustomobject]@{ Exit = $exit; Lines = $lines }
 }
+
+# What a fixture is and what -Report printed for it go to the host, not down the pipeline: a function's Write-Output is
+# part of its return value, and Invoke-Report's and Invoke-Fixture's results are the report the checks read (SL-099: the
+# text is what tests/bugs/SL-099-ReportTextUnchanged.Tests.ps1 compares across commits).
 
 function Check-Incomplete($report, [string[]] $expected) {
     Check ($report.Exit -eq 2) "-Report exits 2 for an incomplete run (exit $($report.Exit))"
@@ -96,7 +115,7 @@ function Build-Clean {
 
 # Writes the run's logs, with the plan line first in arms.jsonl and an environment record, to a fresh %TEMP% folder.
 function Write-Run($run) {
-    $dir = Join-Path ([IO.Path]::GetTempPath()) ('fsa-poolwatch\case-' + [guid]::NewGuid().ToString('N').Substring(0, 12))
+    $dir = Join-Path (Get-ScratchParent) ('fsa-poolwatch\case-' + [guid]::NewGuid().ToString('N').Substring(0, 12))
     New-Item -ItemType Directory -Force -Path (Join-Path $dir 'prepare') | Out-Null
     $plan = [ordered]@{ kind = 'plan'; utc = $Start.ToString('o'); root = 'C:\'; windows = @('I0', 'I1'); arms = @('F1', 'F2', 'F3', 'F4', 'F5', 'X1', 'X2', 'X3', 'X4', 'X5'); rehearsal = $false }
     @($plan) + @($run.Arms) | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 6 } | Set-Content -LiteralPath (Join-Path $dir 'arms.jsonl') -Encoding UTF8
@@ -108,7 +127,7 @@ function Write-Run($run) {
 
 # The clean run with $change made to it, and then $files made to the folder it was written to (a paste, a torn line).
 function Invoke-Fixture([string] $what, [scriptblock] $change, [scriptblock] $files) {
-    Write-Output "    $what"
+    Write-Host "    $what"
     $run = Build-Clean
     if ($change) { & $change $run }
     $dir = Write-Run $run
@@ -239,7 +258,7 @@ function Test-C011 {
         Check $false "this boot is $uptime s old: -Protocol would start the real session here, so the case does not run it"
         return
     }
-    $dir = Join-Path ([IO.Path]::GetTempPath()) ('fsa-poolwatch\case-' + [guid]::NewGuid().ToString('N').Substring(0, 12))
+    $dir = Join-Path (Get-ScratchParent) ('fsa-poolwatch\case-' + [guid]::NewGuid().ToString('N').Substring(0, 12))
     New-Item -ItemType Directory -Force -Path (Join-Path $dir 'prepare') | Out-Null
     try {
         [ordered]@{ kind = 'prepare'; environment = [ordered]@{ os = 'fixture' } } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dir 'prepare\prepare.json') -Encoding UTF8
@@ -322,6 +341,152 @@ function Test-P003 {
     Check ((Lines-Like $r '  MISSING arm F2: mark*').Count -eq 0) 'the interrupted arm is named as interrupted, not by its missing marks'
     Check ((Lines-Like $r '  MISSING arm F4:*killed*').Count -eq 0) 'F4, whose exe had exited, is never said to have been killed'
     Check ((Lines-Like $r '  MISSING arm F4: mark*').Count -eq 0) 'F4 is named as interrupted, not by its missing /settled mark'
+
+    # SL-099 (SC-130): the same endings on an arm the machine guard had already stopped. Invoke-ExeArm's finally writes
+    # interrupted on the arm line the guard stop is on, and -Report must keep the guard's reason and the net at the stop.
+    $guard = 'available 2900 MB, pool +310 MiB over {0}/before'
+    $stopped = {
+        param($run, [string] $name)
+        $a = Arm $run $name
+        $a.guardStop = $guard -f $name; $a.exitCode = -1; $a.report = $null
+        $exit = Mark $run "$name/exit"
+        if ($exit) { $exit.pagedBytes = [long](Mark $run "$name/before").pagedBytes + 310MB }
+        $a
+    }
+    $g = Invoke-Fixture 'guard-stopped, then interrupted: X1 in its settle wait, X2 while the exe was being killed, F5 after /settled, F1 with a null reading' {
+        param($run)
+        # (b) the exe exited -1 (killed by the guard), the interrupt landed in the settle wait: /before and /exit, no /settled.
+        $x1 = & $stopped $run 'X1'; $x1.interrupted = $true; $x1.killed = $false
+        $run.Marks.Remove((Mark $run 'X1/settled')) | Out-Null
+        # (c) the interrupt landed before the kill returned: killed, no exit code, neither /exit nor /settled.
+        $x2 = & $stopped $run 'X2'; $x2.interrupted = $true; $x2.killed = $true; $x2.exitCode = $null
+        foreach ($label in 'X2/exit', 'X2/settled') { $run.Marks.Remove((Mark $run $label)) | Out-Null }
+        # (e) a throw in the report read after /settled: every mark is there, the arm line says interrupted.
+        $f5 = & $stopped $run 'F5'; $f5.interrupted = $true; $f5.killed = $false
+        # (h) interrupted before /settled, and /exit's 0x120089 reading is null: named on its own line as well.
+        $f1 = & $stopped $run 'F1'; $f1.interrupted = $true
+        $run.Marks.Remove((Mark $run 'F1/settled')) | Out-Null
+        (Mark $run 'F1/exit').system120089 = $null
+    }
+    Check-Incomplete $g @(
+        'arm X1: stopped by the machine guard (available 2900 MB, pool +310 MiB over X1/before): paged +310 MiB, nonpaged 0 MiB from /before to /exit; then interrupted before its /settled mark',
+        'arm X2: stopped by the machine guard (available 2900 MB, pool +310 MiB over X2/before): its net at the stop is unread (no X2/exit mark); then interrupted before its /exit mark and killed',
+        'arm F5: stopped by the machine guard (available 2900 MB, pool +310 MiB over F5/before): paged +310 MiB, nonpaged 0 MiB from /before to /exit; then interrupted after its /settled mark',
+        'arm F1: mark F1/exit has no system120089',
+        'arm F1: stopped by the machine guard (available 2900 MB, pool +310 MiB over F1/before): paged +310 MiB, nonpaged 0 MiB from /before to /exit; then interrupted before its /settled mark')
+    foreach ($name in 'X1', 'X2', 'F5') {
+        Check ((Lines-Like $g "  MISSING arm ${name}:*").Count -eq 1) "$name has exactly one line: the guard stop, with the interrupt as its suffix"
+    }
+    Check ((Lines-Like $g '  MISSING arm X2:*from /before to /exit*').Count -eq 0) 'X2, whose /exit mark was never written, prints no net'
+    Check ((Lines-Like $g '  MISSING arm X1: interrupted*').Count -eq 0 -and (Lines-Like $g '  MISSING arm *interrupted after FsAnalyser.exe exited*').Count -eq 0) 'no guard-stopped arm is reported only as an exe that exited'
+    Check ((Lines-Like $g '  MISSING arm *').Count -eq 5) "nothing else is missing ($((Lines-Like $g '  MISSING arm *').Count) lines for 4 arms, F1 with two)"
+
+    # The guard stop with no interrupt: the net, and the /settled mark's own reading checked as at HEAD (a missing mark, a null field).
+    $n = Invoke-Fixture 'guard-stopped, not interrupted: X4 with a null /settled pagedBytes, F3 with no /settled mark, F2 with a null /exit tags reading' {
+        param($run)
+        $x4 = & $stopped $run 'X4'
+        (Mark $run 'X4/settled').pagedBytes = $null
+        $f3 = & $stopped $run 'F3'
+        $run.Marks.Remove((Mark $run 'F3/settled')) | Out-Null
+        $f2 = & $stopped $run 'F2'
+        (Mark $run 'F2/exit').tags = $null
+    }
+    Check-Incomplete $n @(
+        'arm X4: mark X4/settled has no pagedBytes',
+        'arm X4: stopped by the machine guard (available 2900 MB, pool +310 MiB over X4/before): paged +310 MiB, nonpaged 0 MiB from /before to /exit',
+        'arm F3: mark F3/settled is missing',
+        'arm F3: stopped by the machine guard (available 2900 MB, pool +310 MiB over F3/before): paged +310 MiB, nonpaged 0 MiB from /before to /exit',
+        'arm F2: mark F2/exit has no tags',
+        'arm F2: stopped by the machine guard (available 2900 MB, pool +310 MiB over F2/before): paged +310 MiB, nonpaged 0 MiB from /before to /exit')
+    Check ((Lines-Like $n '  MISSING arm *interrupted*').Count -eq 0) 'an arm that was not interrupted is never said to have been'
+    Check ((Lines-Like $n '  MISSING arm *').Count -eq 6) "nothing else is missing ($((Lines-Like $n '  MISSING arm *').Count) lines for 3 arms, two each)"
+}
+
+# P-004 (SL-099 reviews M2, M3, M4): how tags are recorded and keyed. NtfF and Ntff, NtxI and NtxF, differ only by case and
+# move in opposite directions (spike 107: 917 against 15,895 in one mark), so a lookup or a table that folds case puts one's
+# count in the other's column. PoolWatch.ps1 is read through the parser here, never copied: its Tag, Live and Get-Net
+# functions, its $WatchedTags list, its native pool-tag reader and Read-Mark.
+function Get-PoolWatchAst {
+    $tokens = $null; $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($PoolWatch, [ref]$tokens, [ref]$errors)
+    if ($errors -and @($errors).Count) { throw "PoolWatch.ps1 does not parse: $(@($errors)[0].Message)" }
+    $ast
+}
+
+function Get-PoolWatchFunctions($ast, [string[]] $names) {
+    $found = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $names -ccontains $n.Name }, $true))
+    foreach ($name in $names) { if (@($found | Where-Object { $_.Name -ceq $name }).Count -ne 1) { throw "PoolWatch.ps1 does not define exactly one function $name" } }
+    ($found | ForEach-Object { $_.Extent.Text }) -join "`n"
+}
+
+function Get-PoolWatchAssignment($ast, [string] $variable) {
+    $found = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and $n.Left.VariablePath.UserPath -ceq $variable }, $true))
+    if ($found.Count -ne 1) { throw "PoolWatch.ps1 does not assign `$$variable exactly once ($($found.Count) times)" }
+    $found[0].Extent.Text
+}
+
+function New-TagEntry([string] $tag, [long] $live) { [ordered]@{ tag = $tag; pa = $live; pf = 0; pagedBytes = 0; na = 0; nf = 0; nonpagedBytes = 0 } }
+
+# The tag array of a mark that lists the lower-case variant first, as the committed build-2026-10-05 marks do, and
+# different live counts for each name.
+function New-VariantTags([long] $perFile, [long] $perFolder, [long] $fcbFile, [long] $fcbIndex) {
+    @((New-TagEntry 'Ntff' $perFile), (New-TagEntry 'NtfF' $perFolder), (New-TagEntry 'NtxF' $fcbFile), (New-TagEntry 'NtxI' $fcbIndex),
+        (New-TagEntry 'WCsc' 1600), (New-TagEntry 'FMfn' 900000))
+}
+
+function Test-P004 {
+    $ast = Get-PoolWatchAst
+
+    # Fixture half, through -Report: F1's NtfF column is NtfF's delta (+7), not Ntff's (+900), with Ntff listed first.
+    $r = Invoke-Fixture 'F1 marks list Ntff before NtfF and NtxF before NtxI, with different counts (NtfF +7, Ntff +900)' {
+        param($run)
+        (Mark $run 'F1/before').tags = New-VariantTags 1000 100 50 10
+        (Mark $run 'F1/exit').tags = New-VariantTags 1500 103 60 10
+        (Mark $run 'F1/settled').tags = New-VariantTags 1900 107 80 11
+    }
+    Check-Complete $r
+    $f1 = @($r.Lines | Where-Object { $_ -match '^F1\s' })
+    $cells = if ($f1.Count -eq 1) { @($f1[0].Trim() -split '\s+') } else { @() }
+    Check ($cells.Count -ge 5 -and $cells[-4] -ceq '7') "F1's NtfF column is NtfF's delta, 7, not Ntff's, 900 ($($f1 -join ' | '))"
+
+    # Fixture half, through Get-Net itself, with both names in the tag list: two separate values, and a table that keeps the case.
+    $defs = Get-PoolWatchFunctions $ast @('Tag', 'Live', 'Get-Net')
+    $program = $defs + "`n" + '$NetTags = @(''NtfF'', ''Ntff'', ''NtxI'', ''NtxF'')' + "`n" + 'Get-Net $args[0] ''A/before'' ''A/after'''
+    $before = [pscustomobject]@{ pagedBytes = 1000; nonpagedBytes = 500; systemHandles = 10; system120089 = 5; tags = @(New-VariantTags 1000 100 50 10) }
+    $after = [pscustomobject]@{ pagedBytes = 4000; nonpagedBytes = 700; systemHandles = 12; system120089 = 6; tags = @(New-VariantTags 1900 107 80 11) }
+    $net = & ([scriptblock]::Create($program)) @{ 'A/before' = $before; 'A/after' = $after }
+    Check ($null -ne $net -and $net['NtfF'] -eq 7 -and $net['Ntff'] -eq 900) "Get-Net keeps NtfF and Ntff apart (NtfF $($net['NtfF']), Ntff $($net['Ntff']))"
+    Check ($null -ne $net -and $net['NtxI'] -eq 1 -and $net['NtxF'] -eq 30) "Get-Net keeps NtxI and NtxF apart (NtxI $($net['NtxI']), NtxF $($net['NtxF']))"
+    Check ($null -ne $net -and $net['paged'] -eq 3000 -and $net['nonpaged'] -eq 200 -and $net['handles'] -eq 2 -and $net['h120089'] -eq 1) 'Get-Net still has its paged, nonpaged, handles and h120089 keys'
+    Check ($null -ne $net -and $net.Contains('Ntff') -and -not $net.Contains('ntff') -and -not $net.Contains('NTFF')) 'its table is keyed case-exactly'
+
+    # Live half: the 21 names the reading rule needs, spelled as a literal oracle (never PoolWatch's own list, in which a
+    # typo would be a name nobody looks for), against the parsed $WatchedTags, then against one reading of this PC.
+    $oracle = @('WCsc', 'WCse', 'WCss', 'WCfc', 'WCri', 'WCfn', 'FMwi',
+        'MmSt', 'MmCa', 'FMsl', 'FIcs', 'NtxI', 'Ntfo', 'Ntff', 'NtxF', 'NtFs', 'FSim', 'MmSm', 'Ntf0', 'MmRe', 'Ntce')
+    $watched = @(Invoke-Expression ((Get-PoolWatchAssignment $ast 'WatchedTags') -replace '^\$WatchedTags\s*=\s*', ''))
+    $absent = @($oracle | Where-Object { $watched -cnotcontains $_ })
+    Check ($oracle.Count -eq 21 -and $absent.Count -eq 0) "PoolWatch records all 21 names case-exactly (missing from `$WatchedTags: $($absent -join ', '))"
+
+    # An NTFS boot has these live; the table is read first, because tags appear in it and do not leave it.
+    $alwaysLive = @('NtfF', 'Ntff', 'NtxI', 'NtxF', 'Ntfo', 'MmSt', 'MmCa', 'FMsl', 'FIcs', 'File')
+    $native = $null
+    foreach ($c in @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Add-Type' }, $true))) {
+        $here = @($c.CommandElements | Where-Object { $_ -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $_.StringConstantType -eq 'SingleQuotedHereString' })
+        if ($here.Count -eq 1) { $native = $here[0].Value }
+    }
+    if ($null -eq $native) { throw 'PoolWatch.ps1 has no Add-Type here-string for PoolWatchNative' }
+    $reading = (Get-PoolWatchFunctions $ast @('Get-Boot', 'Get-Pool', 'Read-Mark')) + "`n" + (Get-PoolWatchAssignment $ast 'WatchedTags') + "`n" + '$script:Rehearsing = $false' + "`n" +
+    'if (-not (''PoolWatchNative'' -as [type])) { Add-Type -TypeDefinition $args[0] }' + "`n" +
+    '$table = @([PoolWatchNative]::PoolTags() | ForEach-Object { $_[0] })' + "`n" +
+    '$mark = Read-Mark ''P-004''' + "`n" +
+    '[pscustomobject]@{ Table = $table; Tags = @($mark.tags | ForEach-Object { $_.tag }) }'
+    $live = & ([scriptblock]::Create($reading)) $native
+    $dead = @($alwaysLive | Where-Object { $live.Table -cnotcontains $_ })
+    Check ($dead.Count -eq 0) "this PC's pool tag table holds the names an NTFS boot always has live (not in the table: $($dead -join ', '))"
+    $skipped = @($oracle | Where-Object { $live.Table -ccontains $_ -and $live.Tags -cnotcontains $_ })
+    Check ($skipped.Count -eq 0) "every one of the 21 names that is live in the table is in the mark Read-Mark wrote (live and not recorded: $($skipped -join ', '))"
+    Check (@($live.Tags | Where-Object { $_ -ceq 'NtfF' }).Count -eq 1 -and @($live.Tags | Where-Object { $_ -ceq 'Ntff' }).Count -eq 1) 'the mark holds NtfF and Ntff as two entries'
 }
 
 # C-052 (review F5): -Protocol -Rehearse end to end over a generated %TEMP% tree. -Report must read RUN COMPLETE, which
@@ -372,10 +537,12 @@ function Invoke-C052Rehearsal {
 
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-053', 'C-054', 'C-055', 'C-056', 'C-027', 'P-001', 'P-002', 'P-003', 'C-011', 'C-052') } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-053', 'C-054', 'C-055', 'C-056', 'C-027', 'P-001', 'P-002', 'P-003', 'P-004', 'C-011', 'C-052') } else { @($Case) }
 $failed = @()
 foreach ($key in $cases) {
     Write-Output $key
+    # Where a case's fixtures go, and the temp folder it was given (C-052 roots its own scratch under GetTempPath()).
+    if ($key -ne 'C-052') { Write-Output "  scratch: $(Get-ScratchParent) (TEMP $([IO.Path]::GetTempPath()))" }
     $before = $script:Failures.Count
     try { & "Test-$($key -replace '-', '')" }
     catch {
