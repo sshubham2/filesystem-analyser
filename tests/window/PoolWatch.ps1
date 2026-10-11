@@ -63,7 +63,12 @@ $Guard = @{
     PoolBytes   = 6GB
     AvailableMB = 3072
 }
-$WatchedTags = @('WCsc', 'WCfc', 'WCri', 'WCfn', 'WCse', 'WCss', 'WCce', 'WCrb', 'WCro', 'FMwi', 'FMfc', 'FMfn', 'File', 'NtfF', 'Toke')
+# Pool tags are four case-sensitive bytes: NtfF and Ntff, NtxI and NtxF, are different tags, so every comparison on a tag
+# name is case-exact (-ceq, -ccontains, an Ordinal dictionary; fitness rule 'PoolWatch compares pool tags case-exactly').
+# The second line is what SL-099 added to what SL-095 watched: the metadata cache that a cold listing leaves behind (the
+# per-file tags of the lower-case Ntf family among them), so a cold scan's growth is attributed by tag.
+$WatchedTags = @('WCsc', 'WCfc', 'WCri', 'WCfn', 'WCse', 'WCss', 'WCce', 'WCrb', 'WCro', 'FMwi', 'FMfc', 'FMfn', 'File', 'NtfF', 'Toke',
+    'MmSt', 'MmCa', 'FMsl', 'FIcs', 'NtxI', 'Ntfo', 'Ntff', 'NtxF', 'NtFs', 'FSim', 'MmSm', 'Ntf0', 'MmRe', 'Ntce')
 $NetTags = @('WCsc', 'WCfc', 'WCri', 'FMwi', 'FMfc', 'FMfn', 'File', 'NtfF', 'Toke')
 $FullArms = @('F1', 'F2', 'F3', 'F4', 'F5')
 $StopArms = @('X1', 'X2', 'X3', 'X4', 'X5')
@@ -457,6 +462,41 @@ function Get-Missing($plan, $marks, $arms) {
             continue
         }
         if ($a.guardAtStart) { $missing.Add("arm ${name}: not measured: guard already exceeded at start (cascade from $(if ($a.cascadeFrom) { $a.cascadeFrom } else { 'an earlier arm' }))"); continue }
+        # An arm the machine guard stopped is judged before the interrupted branch: Invoke-ExeArm's finally puts both flags
+        # on one arm line when Ctrl+C or an error lands in the settle wait after the kill, and the guard's reason and the
+        # net at the stop are the figures the stop exists to keep (SC-130). One line per arm; what the interrupt did is its
+        # suffix, worded from the marks that exist. A mark that is absent is named here only when the arm was not interrupted:
+        # for an interrupted arm the suffix and the net clause say so.
+        if ($a.guardStop) {
+            foreach ($need in "$name/before", "$name/exit", "$name/settled") {
+                if (-not $byLabel.ContainsKey($need)) { if (-not $a.interrupted) { $missing.Add("arm ${name}: mark $need is missing") }; continue }
+                $m = $byLabel[$need]
+                foreach ($field in 'pagedBytes', 'nonpagedBytes', 'tags', 'system120089') {
+                    if ($null -eq $m.$field) { $missing.Add("arm ${name}: mark $need has no $field") }
+                }
+            }
+            $unread = $null
+            foreach ($need in "$name/before", "$name/exit") {
+                if (-not $byLabel.ContainsKey($need)) { $unread = "no $need mark"; break }
+                foreach ($field in 'pagedBytes', 'nonpagedBytes') { if ($null -eq $byLabel[$need].$field) { $unread = "$need $field is null"; break } }
+                if ($unread) { break }
+            }
+            $where = 'its net at the stop is unread'
+            if (-not $unread) {
+                $at = Get-Net $byLabel "$name/before" "$name/exit"
+                $where = 'paged {0:+#,0;-#,0;0} MiB, nonpaged {1:+#,0;-#,0;0} MiB from /before to /exit' -f ($at.paged / 1MB), ($at.nonpaged / 1MB)
+            }
+            else { $where += " ($unread)" }
+            $then = ''
+            if ($a.interrupted) {
+                $then = if (-not $byLabel.ContainsKey("$name/exit")) { '; then interrupted before its /exit mark' }
+                elseif (-not $byLabel.ContainsKey("$name/settled")) { '; then interrupted before its /settled mark' }
+                else { '; then interrupted after its /settled mark' }
+                if ($a.killed) { $then += ' and killed' }
+            }
+            $missing.Add("arm ${name}: stopped by the machine guard ($($a.guardStop)): $where$then")
+            continue
+        }
         if ($a.interrupted) {
             if ($a.killed) { $missing.Add("arm ${name}: interrupted while FsAnalyser.exe ran; it was killed") }
             elseif ($null -ne $a.exitCode) { $missing.Add("arm ${name}: interrupted after FsAnalyser.exe exited (exit $($a.exitCode)), before its /settled mark") }
@@ -469,12 +509,6 @@ function Get-Missing($plan, $marks, $arms) {
             foreach ($field in 'pagedBytes', 'nonpagedBytes', 'tags', 'system120089') {
                 if ($null -eq $m.$field) { $missing.Add("arm ${name}: mark $need has no $field") }
             }
-        }
-        if ($a.guardStop) {
-            $at = Get-Net $byLabel "$name/before" "$name/exit"
-            $where = if ($null -eq $at) { 'its net at the stop is unread' } else { 'paged {0:+#,0;-#,0;0} MiB, nonpaged {1:+#,0;-#,0;0} MiB from /before to /exit' -f ($at.paged / 1MB), ($at.nonpaged / 1MB) }
-            $missing.Add("arm ${name}: stopped by the machine guard ($($a.guardStop)): $where")
-            continue
         }
         if ($null -eq $a.exitCode) { $missing.Add("arm ${name}: no exit code, so its process did not exit") }
         $refusedLine = @(@($a.hookLog) | Where-Object { $_ -match '^refused ' }) | Select-Object -First 1
@@ -508,11 +542,15 @@ function Get-Missing($plan, $marks, $arms) {
     , $missing
 }
 
-# The raw net between two marks: pool bytes, the watched tags' live counts, the System handles. Nothing taken out.
+# The raw net between two marks: pool bytes, the watched tags' live counts, the System handles. Nothing taken out. Keyed by
+# an Ordinal dictionary, never [ordered]@{} or @{}, which fold case: with NtfF and Ntff both in $NetTags a folding table
+# would put one's count in the other's column. Every reader spells a key exactly as it is spelled here.
 function Get-Net($byLabel, [string] $from, [string] $to) {
     $a = $byLabel[$from]; $b = $byLabel[$to]
     if ($null -eq $a -or $null -eq $b -or $null -eq $a.pagedBytes -or $null -eq $b.pagedBytes) { return $null }
-    $net = [ordered]@{ paged = [long]$b.pagedBytes - [long]$a.pagedBytes; nonpaged = [long]$b.nonpagedBytes - [long]$a.nonpagedBytes }
+    $net = New-Object System.Collections.Specialized.OrderedDictionary ([StringComparer]::Ordinal)
+    $net['paged'] = [long]$b.pagedBytes - [long]$a.pagedBytes
+    $net['nonpaged'] = [long]$b.nonpagedBytes - [long]$a.nonpagedBytes
     foreach ($t in $NetTags) { $x = Live $a $t; $y = Live $b $t; $net[$t] = $(if ($null -ne $x -and $null -ne $y) { $y - $x } else { $null }) }
     $net['handles'] = $(if ($null -ne $a.systemHandles -and $null -ne $b.systemHandles) { [long]$b.systemHandles - [long]$a.systemHandles } else { $null })
     $net['h120089'] = $(if ($null -ne $a.system120089 -and $null -ne $b.system120089) { [long]$b.system120089 - [long]$a.system120089 } else { $null })

@@ -228,6 +228,9 @@ ScanArm, the L/S/P arms, the settle gate, the drift judgement, the tolerance, th
 store-size walk and -Attribute are not in this slice; ScanArm and its InternalsVisibleTo line are deleted (stack line:
 deleted once O-003 is decided; spike #87 decided it).
 
+SL-099 took the redesign up: `docs/design/SL-099-outcome-c-redesign.md` disposes of each item above, one row each (settled
+there, carried to the measurement-preparation slice, or dropped), and fixes how session 1's logs are read.
+
 ## The excluded store's size
 
 Not measured as a whole. Q-180 and Q-181 decided that leaving the whole store out, shown as a 'size not counted' row,
