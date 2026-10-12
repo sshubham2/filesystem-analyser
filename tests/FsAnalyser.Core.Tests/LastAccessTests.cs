@@ -109,6 +109,67 @@ public class LastAccessTests
         Assert.Equal((2, 2), (result.LastAccessAsked, result.LastAccessKept)); // the root and a; not synced or synced\inner
     }
 
+    /// <summary>
+    /// A folder a sync engine marks is never asked to keep its last-access time (review M6, SL-102): the gate is the
+    /// folder's own listed attributes, so the marked folder is left out while it is still entered and what is under
+    /// it is still counted and still asked. One row per bit a user can set; the two recall bits cannot be set from
+    /// user mode. The rows are literals, not read from the mask under test, and Pinned and Unpinned are numbers
+    /// because System.IO.FileAttributes names neither.
+    /// </summary>
+    [Theory]
+    [InlineData(FileAttributes.Offline)]
+    [InlineData((FileAttributes)0x80000)] // FILE_ATTRIBUTE_PINNED
+    [InlineData((FileAttributes)0x100000)] // FILE_ATTRIBUTE_UNPINNED
+    public void AFolderWithACloudAttributeIsNotAskedToKeepItsLastAccessTimeButIsStillEntered(FileAttributes attribute)
+    {
+        using var tree = new TempTree();
+        tree.Folder("a");
+        tree.File(@"a\one.txt", 1);
+        tree.Folder(@"off\inner");
+        tree.File(@"off\one.txt", 1);
+        tree.File(@"off\inner\two.txt", 2);
+        TempTree.AddAttributes(tree.PathOf("off"), attribute);
+        // The bit must show in the listing the scan reads, or the row would pass without the gate being reached.
+        Assert.Equal(attribute, (FileAttributes)Scans.Listing(tree.Root)["off"].Attributes & attribute);
+
+        ScanResult result = Scans.Run(tree.Root);
+
+        Assert.Equal(ScanStatus.Completed, result.Status);
+        Assert.Equal(4, result.Totals.Bytes); // off is entered and everything under it counted
+        Assert.Equal(3, result.LastAccessAsked); // the root, a and off\inner; not off
+    }
+
+    /// <summary>
+    /// A share whose server calls itself NTFS is never asked to keep a last-access time (review M6, SL-102): only
+    /// the FileRemoteProtocolInfo query tells it from a local volume, and without it every folder of the share would
+    /// get a write-attributes open and a SetFileInformationByHandle. This PC's administrative share, as
+    /// ContainerLayerStoreTests scans it: a plain tree, since a marked folder is left out by the attribute gate alone
+    /// and would hide part of the remote gate.
+    /// </summary>
+    [Fact]
+    public void NothingOnThisPcsAdminShareIsAskedToKeepItsLastAccessTime()
+    {
+        using var tree = new TempTree();
+        tree.Folder("a");
+        tree.File(@"a\one.txt", 1);
+        tree.Folder(@"b\inner");
+        tree.File(@"b\one.txt", 1);
+        tree.File(@"b\inner\two.txt", 2);
+
+        foreach (string host in new[] { "localhost", "127.0.0.1" })
+        {
+            string share = $@"\\{host}\{tree.Root[0]}$\{tree.Root[3..]}";
+            if (!Directory.Exists(share))
+                continue; // administrative shares are off on this PC: nothing to scan through
+
+            ScanResult result = Scans.Run(share);
+
+            Assert.Equal(ScanStatus.Completed, result.Status);
+            Assert.Equal(4, result.Totals.Bytes);
+            Assert.Equal((0, 0), (result.LastAccessAsked, result.LastAccessKept)); // under the gate removed: 4 and 4
+        }
+    }
+
     [Theory]
     [InlineData("NTFS", false, true)]
     [InlineData("ntfs", false, true)]

@@ -15,6 +15,8 @@ namespace FsAnalyser.Core.Tests;
 /// non-persistent New-SmbMapping -TcpPort (Windows 11 24H2 and later). It needs no elevation and changes
 /// nothing that outlives it: the mapping is removed and the server stopped when the test ends. The rig is
 /// Rig/SmbRig.cs, shared with tests/window/StallRig; it waits for any other rig run in this sign-in session.
+/// Running it is a person's, not a stage's: New-SmbMapping changes this machine's SMB mappings while it runs, and
+/// under the SYSTEM account of a Windows Sandbox it fails with Windows error 1312 (no logon session) besides.
 /// <para>Measured on this PC (SL-024 build 3): this is the one shape Cancel cannot cut short. The SMB
 /// client holds the unanswered listing, and the CancelSynchronousIo aimed at it, until it gives up on the
 /// server: the scan returned 61.9 and 66.0 s after Cancel in two runs, the canceller's single CancelSynchronousIo blocked
@@ -105,6 +107,11 @@ public class StalledShareTests(ITestOutputHelper output)
         Assert.Equal(share.RemotePath + @"\a", progress.CurrentFolder); // hung was never reported listed
         Assert.DoesNotContain(Scans.ByPath(result.Store).Keys, path => path.StartsWith(hung + @"\", StringComparison.Ordinal));
         TraversalTests.AssertChildrenAreContiguous(result.Store);
+
+        // The share's server calls itself NTFS, so only the FileRemoteProtocolInfo query keeps write-attributes opens off
+        // it (review M6, SL-102). It bites although the scan was cancelled at hung: the root's volume is decided and
+        // the root counted before any folder is listed, so a removed gate has asked at least the root by then.
+        Assert.Equal((0, 0), (result.LastAccessAsked, result.LastAccessKept));
 
         // The stalled folder's handle was closed on a pool thread, never on the scan thread: once the listing
         // came back, nothing else kept the scan.
