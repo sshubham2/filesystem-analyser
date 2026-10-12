@@ -4,13 +4,16 @@ using System.Text.RegularExpressions;
 namespace FsAnalyser.Core.Tests;
 
 /// <summary>
-/// The class of lines that change Explorer's Hidden or ShowSuperHidden setting, closed (SL-091, review n2): every row of
+/// The class of lines that change Explorer's Hidden or ShowSuperHidden setting, bounded by who writes them by accident and
+/// not closed against every spelling (SL-091 review n2, widened by SL-103; the corpus's bounded_by says what is outside
+/// and its miss rows pin it): every row of
 /// ExplorerSettingsWriteCorpus.json fed, alone, as the twinned rule's xUnit copy matches a file, to the guard of its
 /// scope. 'src' rows go to ArchitectureRulesTests.TheAppNeverWritesExplorersSettings's patterns, read from that Fact's
 /// source (the copy eng/rules-parity.ps1 compares with the yaml); 'window' rows to the settled entry over tests/window,
 /// read from .taad/fitness.yaml, whose only copy it is. So a change to either guard reaches the corpus with no third copy
 /// to fall behind. Each row also says what the patterns the design declared did with it, kept here as they were handed
-/// to build: the rows they let through and the guards now catch are the ones the n2 fix closed.
+/// to build: the rows they let through and the guards now catch are the ones the n2 fix or SL-103 closed (the corpus's
+/// closed_by names SL-103's, and the commit to repeat the run against).
 /// </summary>
 public class ExplorerSettingsWriteRuleTests
 {
