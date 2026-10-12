@@ -1,0 +1,165 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-101",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-10-12T01:33:58.690Z",
+ "head": "9851b9cfa78055e57c1c677cbd5a9569413c09a1",
+ "run_id": 3298,
+ "summary": "The built part is the right size and in the right place: a never-throw Defender read whose output line sits beside the fsutil line in HeldOpenTreeTests.Record(), plus a pure Describe pinned by a Theory. Its placement, the no-Fact decision, Q-159 and the opt-in machinery (#198, #381) all hold against the tree. Three things need fixing first.\n\n1. The record will print a false fact on this PC. Unelevated, Get-MpPreference replaces ControlledFolderAccessAllowedApplications with the placeholder \"N/A: Must be an administrator to view exclusions\" (two web sources). So the survey's \"1 allowed app\" is very likely that string, and Describe's \"a string counts as 1\" rule turns it into \"allowed apps=1\".\n2. The person recipe never says to scan or run the canary from a non-elevated shell, although the step before it is elevated.\n3. The recipe's reading key reads \"no scanner event\" as \"not blocked\", but nothing shows the published exe asked to keep last access on R. Kept versus fell-back is inferred from events rather than observed. The back-dated last-access witness that HeldOpenTreeTests already uses would observe it.\n\nMinor items: use the default-protected C:\\Users\\Public\\Documents instead of a custom folder (this makes must-verify precondition 2 hold); make the settled rule's regex case-insensitive and also cover eng/; the PSModulePath strip rests on a recalled premise that VolumeUsageTests already disproves; the timeout Fact's no-orphan claim is unchecked; disarm does not restore the allowed-apps list.\n\nThe cited Microsoft claims (audit mode first; CFA blocks raise no Alerts-queue items) check out.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The built part is the right size and in the right place: a never-throw Defender read whose output line sits beside the fsutil line in HeldOpenTreeTests.Record(), plus a pure Describe pinned by a Theory. Its placement, the no-Fact decision, Q-159 and the opt-in machinery (#198, #381) all hold against the tree. Three things need fixing first.\n\n1. The record will print a false fact on this PC. Unelevated, Get-MpPreference replaces ControlledFolderAccessAllowedApplications with the placeholder \"N/A: Must be an administrator to view exclusions\" (two web sources). So the survey's \"1 allowed app\" is very likely that string, and Describe's \"a string counts as 1\" rule turns it into \"allowed apps=1\".\n2. The person recipe never says to scan or run the canary from a non-elevated shell, although the step before it is elevated.\n3. The recipe's reading key reads \"no scanner event\" as \"not blocked\", but nothing shows the published exe asked to keep last access on R. Kept versus fell-back is inferred from events rather than observed. The back-dated last-access witness that HeldOpenTreeTests already uses would observe it.\n\nMinor items: use the default-protected C:\\Users\\Public\\Documents instead of a custom folder (this makes must-verify precondition 2 hold); make the settled rule's regex case-insensitive and also cover eng/; the PSModulePath strip rests on a recalled premise that VolumeUsageTests already disproves; the timeout Fact's no-orphan claim is unchecked; disarm does not restore the allowed-apps list.\n\nThe cited Microsoft claims (audit mode first; CFA blocks raise no Alerts-queue items) check out.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "nature": "defect",
+    "claim": "The criterion-1 record will very likely misreport this PC's allowed-apps list. For an ordinary user, Get-MpPreference returns ControlledFolderAccessAllowedApplications as the single placeholder string 'N/A: Must be an administrator to view exclusions'. The survey's 'allowed-apps list has 1 entry', read from a shell that was not elevated (elevated=False), is most likely that string. Describe's counting rule ('JSON string→1', or an array of length 1) then prints 'allowed apps=1'. The design writes that value into its contract as the expected reading. So the slice's only built deliverable would record a count of apps that was never read. The same hiding may also apply to the protected-folder list once it is non-empty.",
+    "evidence": "Web: blog.51sec.org/2024/10/defender-lab-notes.html shows `ControlledFolderAccessAllowedApplications : {N/A: Must be an administrator to view exclusions}`. tech-sh0.hatenablog.com/entry/2026/09/22/190614: 'ExclusionPathCount: 1 は、この案内文を1件と数えた値' (the count of 1 was this notice counted as one entry). Survey: 'allowed-apps list has 1 entry', read with elevated=False. To settle: run `powershell.exe -NoProfile -Command \"(Get-MpPreference).ControlledFolderAccessAllowedApplications\"` unelevated and look at the string.",
+    "quote": {
+     "path": ".taad/slices/SL-101/design-slice-1.json",
+     "line": 57,
+     "text": "On this PC today it should read EnableControlledFolderAccess=0 (Disabled), protected folders=0, allowed apps=1, AMRunningMode=Normal, RealTimeProtection=True."
+    },
+    "fix": "In Describe, treat a list whose entries start with 'N/A:' (scalar or one-element array) as hidden, and print 'allowed apps=hidden from non-administrators' (the same for protected folders). Add Theory rows for both shapes of the literal placeholder. Correct the expected reading in the contract. Have the person's elevated step 1 list both CFA lists by name.",
+    "class_of": "Defender preference lists that a non-admin read replaces with an 'N/A: Must be an administrator' placeholder",
+    "threat": "accident"
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "claim": "Step 4 of the person recipe opens an elevated shell. Steps 5 (scan R with read-window.ps1) and 7 (run the canary) never say which shell to use. The obvious way to follow a pasteable recipe is to stay in that window. The published exe and the canary would then run with an administrator token. That run is outside the project's constraint ('Runs as an ordinary user'), and it is exactly the elevated driving of the shipped app that the engine refuses. A run like that does not represent the field, and the person's only admin session is spent on it.",
+    "evidence": "Design recipe steps 4-5. Project constraint 'Runs as an ordinary user and never asks for admin rights'. Engine note: 'Driving the shipped application elevated is one [thing not on the list on purpose]'.",
+    "quote": {
+     "path": ".taad/slices/SL-101/design-slice-1.json",
+     "line": 35,
+     "text": "In an elevated shell, arm AuditMode first and then Enabled, and add R to the protected folders."
+    },
+    "fix": "Have the recipe name two windows: arm and disarm only in the elevated one; build, publish, scan, canary and the 1123/1124 count only in an ordinary one. Each results row records `whoami /groups | findstr /i Mandatory` (it must read Medium), and a row taken at High is void."
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "claim": "The reading key says 'canary event and no scanner event: not blocked'. The canary proves R is armed. Nothing proves the published exe issued the FILE_WRITE_ATTRIBUTES keep-open on R at all. Keep can be switched off by an environment OneDrive root, a cloud attribute or a non-NTFS decision, and then 'no scanner event' looks the same as 'never asked'. Criterion 2's 'counted as kept or fell back' is also inferred from events plus spike #109 rather than observed: LastAccessAsked and Kept are internal (Q-159, #328), and the open-OK/set-refused branch was never run. The repo already has an outside witness for kept versus not kept: back-date a folder's last-access time by 48 h and see whether a scan moves it. HeldOpenTreeTests uses exactly this, with a plain-listed control. Under DisableLastAccess=2, SL-045 and SL-056 measured that a listing moves a back-dated time.",
+    "evidence": "Recipe steps 5-8 and the reading key. There is no CFA-off exe scan of R and no last-access witness. HeldOpenTreeTests.cs:68-69 and :92-100 already back-date by 47+ h and check a control.",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/HeldOpenTreeTests.cs",
+     "line": 96,
+     "text": "        Assert.True(held.ControlBefore.LastAccessTime < DateTime.UtcNow.ToFileTimeUtc() - 47 * HourInFileTime,"
+    },
+    "fix": "Add to the recipe:\n(a) before arming, one exe scan of R with CFA off;\n(b) before every run, back-date the LastAccessTime of R, one subfolder and a sibling control folder by 48 h (with pwsh, before arming), then read them after the scan.\nReading key: unchanged means asked and kept; moved means fell back or never asked. The control must move under a plain `Get-ChildItem`. The CFA-off baseline must read 'unchanged' or the session is void."
+   },
+   {
+    "id": "M4",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "extra",
+    "claim": "Must-verify precondition 2 ('a custom protected folder is judged like Documents/Desktop/Pictures') is left unverified. It also costs an extra administrator change (Add-MpPreference, then Remove-MpPreference). If it is false, the session answers criterion 2 for a custom folder only, Q-101 (which is about the default folders) stays open, and a second admin session is needed. C:\\Users\\Public\\Documents is in CFA's default, unmodifiable protected set. It holds no personal data and is not under OneDrive. On NTFS C: the scanner asks to keep last access there (Scanner.cs:296-306). Newer Get-MpPreference also exposes ControlledFolderAccessDefaultProtectedFolders, so the person can confirm it is in the list.",
+    "evidence": "https://learn.microsoft.com/en-us/defender-endpoint/controlled-folder-access-overview: 'CFA protects an unmodifiable set of default folders'. medium.com/@boutnaru: default list includes 'c:\\Users\\Public\\Documents'. The 51sec Get-MpPreference output lists ControlledFolderAccessDefaultProtectedFolders.",
+    "fix": "Make R = C:\\Users\\Public\\Documents\\fsa-cfa-<hex>\\R the primary fixture. First check that an ordinary user can create it and that ControlledFolderAccessDefaultProtectedFolders lists the parent. Keep the custom %LOCALAPPDATA%\\Temp folder only as the fallback.",
+    "quote": {
+     "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+     "line": 296,
+     "text": "        private bool KeepsLastAccess(string folderPath, uint attributes)"
+    }
+   },
+   {
+    "id": "M5",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "extra",
+    "claim": "The settled tripwire is case-sensitive, and PowerShell is not. An accidental `set-mppreference` or `add-mppreference` in a tests/**/*.ps1 passes Fitness. The rule also covers tests/** only, while eng/ holds the person-facing scripts (read-window.ps1, dotnet.ps1). eng/ is the likeliest home for a later 'script the recipe' change. No variant corpus was run against the pattern (CC-007).",
+    "evidence": ".taad/fitness.yaml:1218-1222 (already appended under '# settled by SL-101'). The rule has no (?i) flag, unlike its neighbours at :1194-1200.",
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1220,
+     "text": "    files: tests/**\n    must_not_match:\n    - \\b(Set|Add|Remove)-MpPreference\\b"
+    },
+    "fix": "Change the pattern to `(?i)\\b(set|add|remove)-mppreference\\b`. Append an identical entry with files: eng/**. Check both against a small corpus: mixed case, a module-qualified `ConfigDefender\\Set-MpPreference`, a comment line (blanked, so it should stay quiet), and a C# string literal.",
+    "class_of": "spellings of a Defender-settings change the tripwire misses",
+    "threat": "accident"
+   },
+   {
+    "id": "M6",
+    "severity": "minor",
+    "dimension": "over-engineering",
+    "nature": "extra",
+    "claim": "Two problems with the PSModulePath strip and with the Fsutil helper as the idiom to copy.\n\nThe strip and its 'material' case 2 rest on a recalled premise that the tree already contradicts. VolumeUsageTests.GetVolumeUsed spawns powershell.exe from the same testhost, under the same pwsh-7 eng/dotnet.ps1. It autoloads a System32 module (Get-Volume) with an inherited PSModulePath and passes in the default suite. Case 2 passes with or without the strip, so it pins nothing.\n\nThe design also names the Fsutil helper as the spawn idiom. That helper reads stdout and then stderr synchronously and waits with no timeout, which would make the 20 s kill dead code. The timeout Fact would catch this, but the right idiom (async reads, WaitForExit with a timeout, Kill of the whole tree) is already in VolumeUsageTests.",
+    "evidence": "VolumeUsageTests.cs:303-321 (no environment handling; async reads; 60 s wait; Kill(entireProcessTree: true)). HeldOpenTreeTests.cs:347-349 (ReadToEnd, then WaitForExit()).",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/VolumeUsageTests.cs",
+     "line": 315,
+     "text": "        Task<string> stdout = process.StandardOutput.ReadToEndAsync();\n        Task<string> stderr = process.StandardError.ReadToEndAsync();\n        if (!process.WaitForExit(60_000))"
+    },
+    "fix": "Name VolumeUsageTests.GetVolumeUsed as the spawn idiom, not Fsutil. Either drop the PSModulePath strip or keep it as harmless, and mark case 2 non-material."
+   },
+   {
+    "id": "M7",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "extra",
+    "claim": "The timeout case's 'why' says the kill path must 'leave no child behind'. Its check only asserts the return text and that the call came back in under 10 s. A runner that returns on time but never kills, or kills only powershell.exe and not its tree, passes.",
+    "evidence": "Design case 'the child runs past the timeout': the check covers only the text and the time.",
+    "fix": "Have the runner expose the child's PID to the test seam. The Fact then asserts that the process with that PID has exited (Process.GetProcessById throws, or HasExited is true) right after the call returns."
+   },
+   {
+    "id": "M8",
+    "severity": "minor",
+    "dimension": "security",
+    "nature": "extra",
+    "claim": "Disarm restores only EnableControlledFolderAccess and removes only R. In Enabled mode, the natural reaction to the block toast is Windows Security > 'Allow an app through Controlled folder access'. Any app allowed that way (FsAnalyser.App.exe, canary.exe) stays allowed machine-wide after the session. It would also make a later re-run read 'not blocked' falsely. Because of M1, an existing allowed entry for the scanner's path cannot be seen from the ordinary shell.",
+    "evidence": "Recipe step 9 and the 'Person-run arm and disarm commands' contract: Remove-MpPreference for R and Set-MpPreference back to the recorded mode, nothing for allowed applications.",
+    "fix": "In the elevated window, before arming and after the session, list ControlledFolderAccessAllowedApplications by name. Remove anything added during the session. Void the session if an existing entry already matches the scanner's or the canary's path."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M1: the non-admin allowed-apps read is likely the admin-only placeholder, which Describe would count as 1. M6: the PSModulePath premise is contradicted by VolumeUsageTests. The cited audit-first / no-Alerts claim checks out on learn.microsoft.com/defender-endpoint/evaluate-controlled-folder-access. The 0..4 mode-name mapping is recalled but harmless, because the raw value is always printed."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "M3: nothing shows the scanner asked to keep on R, and kept versus fell-back is never observed. M4: precondition 2 (custom folder judged like the default ones) can be made to hold with the default-protected Public Documents. The other must-verify preconditions: (1) the published exe as the image under test holds by the recipe's construction; (3) if the person cannot arm CFA, only the filed-for-later person items stall, and nothing in the build breaks."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "Invariants checked for whether they hold by construction or only if remembered. Never-throw is enforced inside the runner and Describe seam and pinned by Facts: by construction. No Defender writes in tests: enforced by Fitness, settled and untwinned, so dotnet test stays green if it breaks; accepted by the fitness.yaml:15-17 convention. 'Scan unelevated' exists only by remembering, in prose (M2)."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "M6, the PSModulePath strip. The composition rightly dropped CfaScan.ps1, the canary build and the rehearsal log. Moving DefenderState into its own file is justified by the unattended never-throw tests."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "M2: the recipe does not say which shell to use. M8 (filed under security): disarm does not restore allowed apps. The record-line contract format is otherwise complete, and 'not read (<reason>)' covers the failure classes."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "Covered: non-zero exit, unparsed output, timeout and kill, start failure, missing properties, unknown enable value. Traced per CC-005: the timeout Fact reaches the kill branch whether powershell is starting or sleeping, and the missing-exe Fact reaches the Win32Exception catch. The only gap is the orphan claim (M7)."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "none: the line sits inside HeldOpenTreeTests.Record() right after the fsutil line (:135) and beside 'last access kept N of M' (:140). That matches SL-056's note (docs/design/SL-056-probe-every-file.md:107-108). Q-159 is kept: the counters stay internal and no report field is added. Q-101 is left open."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "M5: rule case-sensitivity and scope (CC-007). CC-002: the rule is engine-appended under '# settled by SL-101' at fitness.yaml:1218, below the first marker, so it is settled and has no twin by the file's own convention. Lessons #198 and #381 are respected (no Trait, no Skip, LastAccessUnderSystemRootTests untouched). No new .ps1, so the AppArgumentTests census (#412) is safe. In .cs files Fitness blanks comments for settled rules, so a comment that names the cmdlet cannot trip the rule."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "The Theory covers null, empty, scalar and array lists, enable 2 and 7, missing properties, non-zero exit and non-JSON output. Missing: a row for the admin-placeholder list (M1) and an orphan-process check (M7). Case 1 can run unattended: the survey measured the HeldOpenTree subset at 109/109."
+   },
+   {
+    "dimension": "security",
+    "result": "M8: the session can leave allowed apps behind. The architecture rule keeps tests from changing Defender. Arming stays with the person, unelevated reads only. No credentials or external sends."
+   }
+  ]
+ }
+}

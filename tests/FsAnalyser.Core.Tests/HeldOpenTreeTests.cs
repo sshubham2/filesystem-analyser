@@ -129,10 +129,12 @@ public class HeldOpenTreeTests(HeldOpenTreeTests.HeldOpenTree held, ITestOutputH
         Assert.Equal(0, old.Store.Size(Scans.Find(old, held.Grow.Path))); // charged its 0 B listing
     }
 
-    // What was measured, in the test's output: the listing's readings before the scan, fsutil's setting, the timings.
+    // What was measured, in the test's output: the listing's readings before the scan, fsutil's setting and the Controlled Folder
+    // Access setting beside it (SL-101: recorded, never asserted), the timings.
     private void Record()
     {
         output.WriteLine($"fsutil behavior query disablelastaccess: {held.DisableLastAccess}");
+        output.WriteLine(DefenderState.Line);
         output.WriteLine($"listed before the scan: grow.bin {held.GrowListed}, locked.bin {held.LockedListed}, stale.bin {held.StaleListed} (EndOfFile, AllocationSize)");
         output.WriteLine($"own handles: grow.bin {held.GrowAfter.EndOfFile}/{held.GrowAfter.AllocationSize}, locked.bin {held.LockedAfter.EndOfFile}/{held.LockedAfter.AllocationSize}");
         ScanResult r = held.Result;
