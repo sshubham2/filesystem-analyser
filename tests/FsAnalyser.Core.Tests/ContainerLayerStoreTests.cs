@@ -802,11 +802,15 @@ public class ContainerLayerStoreTests
             Assert.Equal(0, above.OpensUnderExcludedStore);
             Assert.DoesNotContain(listed, path => path.Contains(@"\Containers\Layers", StringComparison.OrdinalIgnoreCase));
             Assert.Contains(listed, path => path.EndsWith(@"\Containers\ContainerStorages", StringComparison.OrdinalIgnoreCase));
+            // The share calls itself NTFS, so only the remote query keeps write-attributes opens off it (review M6, SL-102).
+            // LastAccessTests scans a share as well; this tree carries no cloud bits, which would hide part of that gate.
+            Assert.Equal((0, 0), (above.LastAccessAsked, above.LastAccessKept));
 
             string link = tree.DirectorySymlink($"to-{host}", Loopback(tree.PathOf("x"), host));
             ScanResult throughLink = Scans.Run(link, Planted(tree));
             Assert.Equal(ScanStatus.Completed, throughLink.Status);
             Assert.Equal(5 + 10, throughLink.Totals.Bytes);
+            Assert.Equal((0, 0), (throughLink.LastAccessAsked, throughLink.LastAccessKept));
             Assert.Equal(link + @"\Containers\Layers", throughLink.Store.GetPath(Assert.Single(throughLink.SkippedStores).Entry));
             string linkInside = tree.DirectorySymlink($"into-{host}", Loopback(tree.PathOf($@"{Store}\L1"), host));
             Assert.Equal(ScanStatus.Refused, Scanner.Scan(linkInside, new ScanProgress(), CancellationToken.None, Planted(tree)).Status);
