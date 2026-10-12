@@ -1,0 +1,180 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-104",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-10-12T12:48:41.850Z",
+ "head": "d5659d24f6e5c332f1228425a0bef8d6396630b3",
+ "run_id": 3495,
+ "summary": "SL-104 changes only .taad/fitness.yaml, eng/rules-harness/plants.json and three new files under tests/bugs; src is byte-identical to 824622e. I re-ran everything that matters on this tree:\n- The acceptance repro exits 0, with 11 and 7 patterns read.\n- The class corpus runner exits 0: 178 rows and 40 census members, with the live .NET 10 census check run.\n- rules-parity is AGREE 18/22/48 with 70 settled entries.\n- RuleCases -Case C-001 exits 0.\n- harness.py --scenario all through the real engine gives 161/161 AS-RECORDED, a clean baseline at 92 rules and 0 stray hits, in 26 s.\n- The Fitness tool says every declared rule holds.\n\nExactly one '# settled by SL-104' marker exists. Under it, the Attributes entry has the M1 pattern and the designed except_files.\n\nThe rules match the design as amended by accepted findings M1-M6, and every departure was declared.\n\nTwo minor defects remain. Both are spellings missing from families the build declared closed, and I compiled each spelling (Add-Type, pwsh 7.6 / .NET 10) and checked it against the patterns in the tree:\n- Deconstruction assignment into the time, Attributes and IsReadOnly properties, and enum ++/-- on Attributes, escape every pattern. They are not corpus rows (fire or residual) and the because-texts do not name them.\n- A method group taken through a using alias (`using F = System.IO.File; ... = F.SetAttributes;` or `F.SetLastWriteTimeUtc`) escapes rule 2, while the using-static twin of that spelling is pinned as a residual.\n\nSecond round: Round 2 looked at the patterns as an attacker would, and found one new gap the first round did not. Every dotted pattern in the three settled entries needs the member name to follow the `.` directly, but C# also allows whitespace, a line break, a comment or the verbatim-identifier `@` there.\n\nI compiled 8 such lines with Add-Type on pwsh 7.6 / .NET 10, and all 8 compiled. I then fed them through the engine itself (taad3.fitness.load, strip_comments and Rule.matches_in, run on this tree's 92 rules for a file under Store/). None of the 30 rules covering that file fired on any of the 8. A control line `fi.Attributes = ...; fi.LastWriteTime = default;` in the same file fired rule 2 and the Attributes entry, so the probe does see hits.\n\nThe comment case escapes too, because strip_comments blanks `/* */` to spaces, which turns it into the whitespace case. I removed my temp folder.\n\nOther things I probed and am not filing:\n- `/*` or `//` inside a string literal makes the engine blank real code (fitness.py:382-384 accepts this). Grep finds no such string in src/FsAnalyser.Core, and the behaviour is in the engine, not this diff.\n- UTF-16 .cs files are the open question Q-247; I am not raising it again.\n- The corpus runner's Read-Entry would include a trailing ` # comment` on a plain scalar in the regex. No such line exists.\n- CRLF yaml and multi-line `\\s*` work: the engine spans line breaks and blanked comments after the member name.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "SL-104 changes only .taad/fitness.yaml, eng/rules-harness/plants.json and three new files under tests/bugs; src is byte-identical to 824622e. I re-ran everything that matters on this tree:\n- The acceptance repro exits 0, with 11 and 7 patterns read.\n- The class corpus runner exits 0: 178 rows and 40 census members, with the live .NET 10 census check run.\n- rules-parity is AGREE 18/22/48 with 70 settled entries.\n- RuleCases -Case C-001 exits 0.\n- harness.py --scenario all through the real engine gives 161/161 AS-RECORDED, a clean baseline at 92 rules and 0 stray hits, in 26 s.\n- The Fitness tool says every declared rule holds.\n\nExactly one '# settled by SL-104' marker exists. Under it, the Attributes entry has the M1 pattern and the designed except_files.\n\nThe rules match the design as amended by accepted findings M1-M6, and every departure was declared.\n\nTwo minor defects remain. Both are spellings missing from families the build declared closed, and I compiled each spelling (Add-Type, pwsh 7.6 / .NET 10) and checked it against the patterns in the tree:\n- Deconstruction assignment into the time, Attributes and IsReadOnly properties, and enum ++/-- on Attributes, escape every pattern. They are not corpus rows (fire or residual) and the because-texts do not name them.\n- A method group taken through a using alias (`using F = System.IO.File; ... = F.SetAttributes;` or `F.SetLastWriteTimeUtc`) escapes rule 2, while the using-static twin of that spelling is pinned as a residual.\n\nSecond round: Round 2 looked at the patterns as an attacker would, and found one new gap the first round did not. Every dotted pattern in the three settled entries needs the member name to follow the `.` directly, but C# also allows whitespace, a line break, a comment or the verbatim-identifier `@` there.\n\nI compiled 8 such lines with Add-Type on pwsh 7.6 / .NET 10, and all 8 compiled. I then fed them through the engine itself (taad3.fitness.load, strip_comments and Rule.matches_in, run on this tree's 92 rules for a file under Store/). None of the 30 rules covering that file fired on any of the 8. A control line `fi.Attributes = ...; fi.LastWriteTime = default;` in the same file fired rule 2 and the Attributes entry, so the probe does see hits.\n\nThe comment case escapes too, because strip_comments blanks `/* */` to spaces, which turns it into the whitespace case. I removed my temp folder.\n\nOther things I probed and am not filing:\n- `/*` or `//` inside a string literal makes the engine blank real code (fitness.py:382-384 accepts this). Grep finds no such string in src/FsAnalyser.Core, and the behaviour is in the engine, not this diff.\n- UTF-16 .cs files are the open question Q-247; I am not raising it again.\n- The corpus runner's Read-Entry would include a trailing ` # comment` on a plain scalar in the regex. No such line exists.\n- CRLF yaml and multi-line `\\s*` work: the engine spans line breaks and blanked comments after the member name.",
+  "matches_design": true,
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "claim": "The corpus says it closes family (1), every setter spelling the compiler accepts. Two compiling spellings of those setters match none of rule 2's 11 patterns or the Attributes entry's pattern: (a) deconstruction assignment, `(fi.LastWriteTime, fi.Attributes) = (t, FileAttributes.Hidden);` and `(fi.IsReadOnly, fi.CreationTimeUtc) = (true, t);`; (b) the predefined enum increment and decrement on the Attributes property, `fi.Attributes++;` and `fi.Attributes--;`, which call its setter. Both compiled under Add-Type in pwsh 7.6 on .NET 10, and both got 0 hits from the patterns read out of .taad/fitness.yaml. Neither is a fire or residual row in tests/bugs/SL-104-SettledRuleClassCorpus.json. Neither is named in the residual list of rule 2's because-text or the Attributes entry's. So the corpus and the rewritten because-texts again stop short of what the code admits, which is the O-031 failure mode this slice exists to close. A writer spelled this way in Core passes every settled rule, and the corpus runner stays green.",
+    "quote": {
+     "path": "tests/bugs/SL-104-SettledRuleClassCorpus.json",
+     "line": 2,
+     "text": "(1) compound-assignment spellings of a fenced property setter (a time, Attributes, IsReadOnly; the operators =, +=, -=, |=, &=, ^=, as many as the property type has)"
+    },
+    "evidence": "tests/bugs/SL-104-SettledRuleClassCorpus.json:3 (bounded_by: 'every spelling the compiler accepts for the BCL member (... each operator the property type defines)'). .taad/fitness.yaml:755 (time setter), :758 (IsReadOnly) and :1254 (Attributes entry). Measured: 0 r2 / 0 attr hits on each of the four lines.",
+    "fix": "Widen the Attributes entry in place so postfix increment and decrement fire: `(?m)\\.Attributes\\s*(?:[-+|&^]?=(?![=>])|\\+\\+|--)`. It stays one pattern. Add fire rows `fi.Attributes++;` and `fi.Attributes--;`. Add residual rows for the deconstruction of a time, Attributes and IsReadOnly, and for prefix `++fi.Attributes;`. Name 'a deconstruction assignment' in the residual sentences of rule 2's because-text and the Attributes entry's.",
+    "class_of": "compound-assignment spellings of a fenced property setter",
+    "threat": "accident"
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "claim": "The corpus bounds family (2), static-versus-instance-versus-alias, as including 'a method group'. Rule 2's qualified patterns `\\bFile\\.SetAttributes\\b` and `\\b(File|Directory)\\.Set(LastAccess|LastWrite|Creation)Time` need the literal type name. The receiver-free patterns need a '('. So a method group taken through a using alias escapes rule 2: `using F = System.IO.File;` then `Action<string, FileAttributes> a = F.SetAttributes;` or `Action<string, DateTime> b = F.SetLastWriteTimeUtc;`. Both compiled under Add-Type, and both got 0 hits from rule 2's 11 patterns. Neither is a corpus row. The because-text lists only 'a delegate made from a using-static method group' as the residual of this kind. The listing side has no such gap, because its instance pattern `\\.(GetFiles|...)\\b` is receiver-free, and neither does Encrypt/Decrypt, which M2 made receiver-free.",
+    "quote": {
+     "path": "tests/bugs/SL-104-SettledRuleClassCorpus.json",
+     "line": 3,
+     "text": "That is every spelling the compiler accepts for the BCL member (a static, an instance, a method group, using static, a fully qualified name, each operator the property type defines) plus the Win32 and NT names Kernel32.cs declares."
+    },
+    "evidence": ".taad/fitness.yaml:753 `(?m)\\b(File|Directory)\\.Set(LastAccess|LastWrite|Creation)Time` and :756 `(?m)\\bFile\\.SetAttributes\\b`. Measured: 0 hits on `Action<string, FileAttributes> a = F.SetAttributes;` and `Action<string, DateTime> b = F.SetLastWriteTimeUtc;`.",
+    "fix": "Widen both patterns in place to the receiver-free forms M2 already used for Encrypt: `(?m)\\.SetAttributes\\b` and `(?m)\\.Set(LastAccess|LastWrite|Creation)Time`. Rule 2 stays at 11 patterns, and src/FsAnalyser.Core holds no `.SetAttributes` or `.Set*Time` outside the excepted files. Add the two alias method-group lines as fire rows to the corpus. If the widening is rejected, add them as residual rows and name 'a method group through a using alias' in the because-text instead.",
+    "class_of": "static-versus-instance spellings of one BCL operation",
+    "threat": "accident"
+   },
+   {
+    "id": "R2-n1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "claim": "Each dotted pattern needs the member name to follow the `.` directly. C# allows whitespace, a line break, a comment or the verbatim-identifier prefix `@` between the dot and the name. The engine blanks a comment to spaces, so the comment case reduces to the whitespace case. All of these compile, and the real engine flags none of them under src/FsAnalyser.Core/Store:\n- `fi. LastWriteTime = t;`\n- `fi.` then a line break, then `Attributes = FileAttributes.Hidden;`\n- `fi./* x */Attributes |= FileAttributes.Hidden;`\n- `fi.@Attributes = FileAttributes.Normal;`\n- `fi.@LastWriteTimeUtc += TimeSpan.FromSeconds(1);`\n- `fi.` then a line break, then `Encrypt();`\n- `Func<FileInfo[]> g = dir.` then a line break, then `GetFiles;`\n- `Action<string, FileAttributes> h = File.` then a line break, then `SetAttributes;`\n\nThe receiver-free patterns (`\\bSetAttributes\\s*\\(`, `\\bSet...Time(Utc)?\\s*\\(`, `\\b(Get|Enumerate)(...)\\s*\\(`, `\\bIsReadOnly`) still catch the call forms. The setters, Encrypt/Decrypt and every method-group form escape: the time setter (:755), Attributes (:1254), Encrypt/Decrypt (:759), `File.SetAttributes` and the File/Directory Set*Time method groups (:756, :753), and the DirectoryInfo listing method groups (:793). The corpus already lists spacing and line-break variants on the operator side (CA31, CA32, CA36-CA38) and a line break before the dot (LS40). It has none for the space between the dot and the name, so its claim to close the family stops one token short.",
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1254,
+     "text": "    - (?m)\\.Attributes\\s*[-+|&^]?=(?![=>])"
+    },
+    "evidence": "These were measured through the engine's own code: fitness.load on this repo (92 rules), strip_comments, and Rule.matches_in for each of the 30 rules covering src/FsAnalyser.Core/Store/Planted.cs. All 8 lines got 0 hits. The control line `fi.Attributes = System.IO.FileAttributes.Normal; fi.LastWriteTime = default;` hit rule 2 and the Attributes entry. All 8 lines compiled with Add-Type. The dotted patterns are at .taad/fitness.yaml:753, 755, 756, 759, 793 and 1254.",
+    "fix": "In every dotted pattern, change `\\.` before the member name to `\\.\\s*@?`. This adds no lines, so rule 2 stays at 11 patterns, rule 4 at 7 and the Attributes entry at 1:\n- :753 becomes `\\b(File|Directory)\\.\\s*@?Set(LastAccess|LastWrite|Creation)Time`\n- :755 becomes `\\.\\s*@?(LastAccess|LastWrite|Creation)Time(Utc)?\\s*[-+]?=(?![=>])`\n- :756 becomes `\\bFile\\.\\s*@?SetAttributes\\b`\n- :759 becomes `\\.\\s*@?(Encrypt|Decrypt)\\b`\n- :793 becomes `\\.\\s*@?(GetFiles|GetDirectories|GetFileSystemInfos|Enumerate(Files|Directories|FileSystemInfos))\\b`\n- :1254 becomes `\\.\\s*@?Attributes\\s*[-+|&^]?=(?![=>])`\n\nAdd fire rows to tests/bugs/SL-104-SettledRuleClassCorpus.json for a space, a line break and an `@` after the dot, for a time setter, Attributes, Encrypt and a listing method group. Re-run `harness.py --scenario clean` to confirm the real tree stays CLEAN.",
+    "class_of": "whitespace, comment or @ between the member-access dot and a fenced member name",
+    "threat": "accident"
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "I ran `pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-104-SettledRuleSpellings.Tests.ps1`: exit 0, 'All checks held.', '11 patterns read for the timestamp rule' and '7 patterns read for the listing rule'. The file is committed in d5659d2."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "In my harness.py --scenario all run through the real engine, S62 (ZwSetInformationFile call), S63 (File.Encrypt), S69 (ZwQueryDirectoryFile call), S76 (using-static EnumerateFiles) and S82 (FileInfo.Encrypt), all new files under Store/, are each AS-RECORDED: xunit quiet, fitness fire. The judge requires exactly the named rule. The run had 0 stray hits."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": ".taad/fitness.yaml has exactly one '# settled by SL-104' marker (:1250). Under it is 'Core sets no file attributes through a FileSystemInfo.Attributes write' with the designed files and except_files. taad_v3 design.py:1179-1209 (_append_rules) appends only rules whose name it has not seen. rules-parity counts 70 settled entries."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "The M1 fix is in .taad/fitness.yaml:755, :758 and :1254. Rows S79-S81 are AS-RECORDED, and corpus rows CA01-CA38 pass. The class-closure claim still misses deconstruction assignment and enum ++/-- (finding m1)."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "Rule 2 has `(?m)\\.(Encrypt|Decrypt)\\b` at .taad/fitness.yaml:759. S82 is AS-RECORDED, and corpus SI01-SI12 pass. The family still misses the method group taken through a using alias (finding m2)."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "There is a single SL-104 block at .taad/fitness.yaml:1250-1266, edited in place to `(?m)\\.Attributes\\s*[-+|&^]?=(?![=>])`. The corpus runner checks that except_files is exactly Kernel32.cs, DirectoryReader.cs and SynchronousIoCancel.cs, and that check passed when I ran it."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "I mapped the design's 14 cases to C-001..C-014 in order, consistent with the builder's 'C-013 = guard case'. tests/bugs/SL-104-SettledRuleSpellings.Tests.ps1 feeds in W01-W03 (File.SetAttributes, qualified and fully qualified) and L01-L04 (DirectoryInfo GetFiles/GetDirectories, with and without arguments), plus the quiet rows W20, W21, L20 and L21. I re-ran it: exit 0, 11 and 7 patterns read."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "S58 is a new file, Store/PlantedSl104S58.cs, containing `File.SetAttributes(path, FileAttributes.Normal);`. It is judged by the real taad3.fitness and is AS-RECORDED in my run."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "S59 is `using static System.IO.File;` then a bare `SetAttributes(...)`. S60 is the same using with a bare `SetLastWriteTimeUtc(...)`. Both have no type prefix and both are AS-RECORDED."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "S61 `new FileInfo(path).IsReadOnly = true;` fires. S73 holds `public bool IsReadOnly => false;` and `bool ro = fi.IsReadOnly == true;` and stays quiet in both engines. Both are AS-RECORDED."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "S62 and S69 are the Zw names spelled as calls (`int status = ZwSetInformationFile(...)`, `ZwQueryDirectoryFile(...)`) with no import declaration. S63 is `File.Encrypt(path);`. All are AS-RECORDED with 0 stray hits."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "S64 is src/FsAnalyser.Core/PlantedSl104S64.cs at zero levels under `**/`, with `new DirectoryInfo(p).GetFiles()`. S65 is in Store/, with `dir.GetDirectories(\"*\", SearchOption.TopDirectoryOnly)`. S78 is Scanning/PlantedSl104S78.cs, which is not DirectoryReader.cs, with `dir.GetDirectories()`. All are AS-RECORDED."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "S66 is `Func<FileInfo[]> list = dir.GetFiles;`, a method group with no parenthesis. AS-RECORDED."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "S67 is `using static System.IO.Directory;` then `GetFiles(p)`. S76 is the same using then `EnumerateFiles(p)`. Both are AS-RECORDED."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "S68 is `sealed class Planted : FileSystemEnumerator<string>`. AS-RECORDED."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "S71 is `=` in Store, S70 is `|=` in Store, and S77 is `&=` in Scanning/PlantedSl104S77.cs, which is not excepted. S80 adds `-=`. All fire the new entry and are AS-RECORDED."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "S72 holds an Attributes read, a `& Hidden` mask test and `== Normal`. S74 holds File.GetAttributes and File.GetLastWriteTimeUtc. S75 holds Directory.Exists and GetFilesCount(p). All are quiet in both engines and AS-RECORDED."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "In my harness run the clean baseline was CLEAN: 92 rules, 228 files, 0 hits. Grep confirms the shapes are in the tree: DirectoryReader.cs:181 `entry.Attributes = Read<uint>(p, AttributesOffset);` and ShellReveal.cs:307 `File.GetAttributes(...)`."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "RuleCases -Case C-001 runs rules-parity on the repo with 70 settled entries and asserts the derived AGREE line. I re-ran it: exit 0, 'AGREE 18 facts <- 22 twinned entries, 48 patterns; 70 settled entries not compared'."
+   },
+   {
+    "key": "C-014",
+    "exercised": "cannot-tell",
+    "evidence": "This case is non-material, and the design named no check for it. The committed corpus runner does feed the shape in, as residual rows SI47 (`{ Attributes = FileAttributes.Hidden }`) and SI48 (`{ LastWriteTime = stamp }`), and asserts that both stay unmatched."
+   }
+  ],
+  "drift": [
+   "design-slice-1.json's architecture_rules entry still has the pre-M1 pattern `(?m)\\.Attributes\\s*[|&^]?=(?!=)` and the old because-text, although the M4 disposition said the design entry would be updated. The tree has `[-+|&^]?=(?![=>])`. The builder declared this. It is harmless while the yaml block exists, because design.py:1179-1209 appends only unseen names. If the block were ever deleted, a redesign would re-append the stale pattern.",
+   "Apart from what the builder declared (25 rows instead of 21, _note 148 instead of 144, receiver-free Encrypt, the corpus and its runner added, the census pinned, the guard case split to RuleCases C-001), I found no other departure from the design.",
+   "Round 2 found no new departure from the design. The drift recorded in round 1 stands."
+  ],
+  "unreviewed": [],
+  "second_round": {
+   "run_id": 3496,
+   "filed": 1
+  }
+ }
+}
