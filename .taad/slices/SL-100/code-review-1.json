@@ -1,0 +1,269 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-100",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-10-12T00:23:42.010Z",
+ "head": "0e4320424e4c8a6789237f453c994ca01ecb5992",
+ "run_id": 3271,
+ "summary": "The fix in MainWindow.ShowTopLevel (src/FsAnalyser.App/MainWindow.xaml.cs:379-439) is what Q-078 and the accepted m1/m6/m7 dispositions ask for. Before the swap it records the selected row's Path, plus either the focused row's Path or, if focus has come adrift, the selected row's Path. Straight after `ItemsSource = rows` it reselects by Ordinal Path, synchronously. In the existing Loaded callback it refocuses the row's new container, and the stale-array guard covers only that refocus: the scroll restore, LastRefresh and _skipNextRefresh run as at HEAD. Items stay TopLevelRow[], and the menu's Tag/CommandTarget workaround is unchanged.\n\nWhat I ran:\n- The acceptance command: 29/29 passed on net10.0-windows.\n- SL-063: 10/10.\n- Fitness: 90 rules hold.\n- The window hook compiles.\n- WindowCases.ps1 stays ASCII and parses.\n- Four of the builder's mutants: M1 8 red, M2 20 red, M6 1 red, M10 3 red. The source was restored afterwards and the tree is as I found it.\n\nThe repro file is byte-identical to the repro stage's (SHA-256 0C90ABA4…57F9) apart from `partial`.\n\nEvery one of the 14 matrix rows is fed its shape by a real test. Each test asserts its precondition: focus actually landed, a real inactive window (IsActive false, FocusedElement null), the open menu holding focus, the Settings button focused. The extra branch the builder measured and added (focus on the window itself, or null, in an active window) is enumerated by a 12-row corpus that runs in full.\n\nUnobservable but declared: the stale guard and UpdateLayout, whose mutants M3 and M4 survive.\n\nDeclared deviations, all recorded: the wider FocusIsAdrift trigger, the interop exemption (both fitness entries and the xUnit twin match), Settings in place of Cancel, the doc file, and the case-sibling Fact.\n\nTwo extras for the backlog:\n- The recorded m8 follow-up as worded checks only for focus on the list, so it would not flip corpus rows F02, F05 and F08: in those rows focus is on the window, not the list.\n- The doc's absolute \"the refresh never scrolls\" has a one-row exception for a partly visible focused row. Only a test comment admits it, and no test pins it.\n\nThe bug report was only a title. Like the design, I assumed scope = Q-078 + derived criteria 2-4 + the loop half of SC-181.\n\nSecond round: Second pass, read adversarially. It found one new minor defect, which I reproduced, and one extra.\n\n**Defect: the corpus test hangs instead of failing.** Rig.ModalDialogAround runs `whileOpen(); dialog.Close();` inside a dispatcher callback. The Rig's own Dispatcher.UnhandledException handler marks every exception Handled. So when a refresh throws while the modal dialog is open, `dialog.Close()` is skipped and ShowDialog never returns. The fault is never asserted, and the acceptance command never exits.\n\nHow I reproduced it:\n- I made ShowTopLevel throw only while MainWindow owns a window, then ran corpus rows F01 and F07 with `--blame-hang-timeout 45s`.\n- F01 passed. F07 hung until the blame collector killed the testhost after 45 s ('Test Run Aborted').\n- Without that flag, the acceptance command as written would hang until something external killed it.\n- I restored the source afterwards: `git diff --quiet` passes, no testhost is left, and the dump folder is deleted.\n\nSo a future regression that throws in ShowTopLevel turns rows F07 and F08 into a hang of the whole SL-100 run, not a red result.\n\n**Extra: the corpus `gap` flag is read by nothing.** Rows F02, F05 and F08 carry `\"gap\": true`. No code reads it, and the vocabulary check does not tie it to `press-dead`. So a dead press can be pinned as expected without being declared a gap.\n\n**Checked and nothing new found:**\n- the JSON reader and its line endings / BOM (File.ReadAllText strips the BOM; there are no comments or trailing commas);\n- the top-key split regex (`top|top-live|top-key` backtracks correctly);\n- FindKeyContainer's error branches;\n- the hook's two-call find-then-focus gap and the Flush-then-press gap (each well under a 1% window; not filed);\n- FocusedRowKey and FocusRow against null, detached, empty-row and closed-window inputs;\n- no SelectionChanged handler on TopLevelList;\n- all the WindowCases helpers step 16 uses exist in scope.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The fix in MainWindow.ShowTopLevel (src/FsAnalyser.App/MainWindow.xaml.cs:379-439) is what Q-078 and the accepted m1/m6/m7 dispositions ask for. Before the swap it records the selected row's Path, plus either the focused row's Path or, if focus has come adrift, the selected row's Path. Straight after `ItemsSource = rows` it reselects by Ordinal Path, synchronously. In the existing Loaded callback it refocuses the row's new container, and the stale-array guard covers only that refocus: the scroll restore, LastRefresh and _skipNextRefresh run as at HEAD. Items stay TopLevelRow[], and the menu's Tag/CommandTarget workaround is unchanged.\n\nWhat I ran:\n- The acceptance command: 29/29 passed on net10.0-windows.\n- SL-063: 10/10.\n- Fitness: 90 rules hold.\n- The window hook compiles.\n- WindowCases.ps1 stays ASCII and parses.\n- Four of the builder's mutants: M1 8 red, M2 20 red, M6 1 red, M10 3 red. The source was restored afterwards and the tree is as I found it.\n\nThe repro file is byte-identical to the repro stage's (SHA-256 0C90ABA4…57F9) apart from `partial`.\n\nEvery one of the 14 matrix rows is fed its shape by a real test. Each test asserts its precondition: focus actually landed, a real inactive window (IsActive false, FocusedElement null), the open menu holding focus, the Settings button focused. The extra branch the builder measured and added (focus on the window itself, or null, in an active window) is enumerated by a 12-row corpus that runs in full.\n\nUnobservable but declared: the stale guard and UpdateLayout, whose mutants M3 and M4 survive.\n\nDeclared deviations, all recorded: the wider FocusIsAdrift trigger, the interop exemption (both fitness entries and the xUnit twin match), Settings in place of Cancel, the doc file, and the case-sibling Fact.\n\nTwo extras for the backlog:\n- The recorded m8 follow-up as worded checks only for focus on the list, so it would not flip corpus rows F02, F05 and F08: in those rows focus is on the window, not the list.\n- The doc's absolute \"the refresh never scrolls\" has a one-row exception for a partly visible focused row. Only a test comment admits it, and no test pins it.\n\nThe bug report was only a title. Like the design, I assumed scope = Q-078 + derived criteria 2-4 + the loop half of SC-181.\n\nSecond round: Second pass, read adversarially. It found one new minor defect, which I reproduced, and one extra.\n\n**Defect: the corpus test hangs instead of failing.** Rig.ModalDialogAround runs `whileOpen(); dialog.Close();` inside a dispatcher callback. The Rig's own Dispatcher.UnhandledException handler marks every exception Handled. So when a refresh throws while the modal dialog is open, `dialog.Close()` is skipped and ShowDialog never returns. The fault is never asserted, and the acceptance command never exits.\n\nHow I reproduced it:\n- I made ShowTopLevel throw only while MainWindow owns a window, then ran corpus rows F01 and F07 with `--blame-hang-timeout 45s`.\n- F01 passed. F07 hung until the blame collector killed the testhost after 45 s ('Test Run Aborted').\n- Without that flag, the acceptance command as written would hang until something external killed it.\n- I restored the source afterwards: `git diff --quiet` passes, no testhost is left, and the dump folder is deleted.\n\nSo a future regression that throws in ShowTopLevel turns rows F07 and F08 into a hang of the whole SL-100 run, not a red result.\n\n**Extra: the corpus `gap` flag is read by nothing.** Rows F02, F05 and F08 carry `\"gap\": true`. No code reads it, and the vocabulary check does not tie it to `press-dead`. So a dead press can be pinned as expected without being declared a gap.\n\n**Checked and nothing new found:**\n- the JSON reader and its line endings / BOM (File.ReadAllText strips the BOM; there are no comments or trailing commas);\n- the top-key split regex (`top|top-live|top-key` backtracks correctly);\n- FindKeyContainer's error branches;\n- the hook's two-call find-then-focus gap and the Flush-then-press gap (each well under a 1% window; not filed);\n- FocusedRowKey and FocusRow against null, detached, empty-row and closed-window inputs;\n- no SelectionChanged handler on TopLevelList;\n- all the WindowCases helpers step 16 uses exist in scope.",
+  "matches_design": true,
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "nature": "extra",
+    "claim": "The follow-up this slice records will not do what it says. The doc, the corpus's bounded_by text and the builder's follow-up all say that resolving TopLevelList.SelectedItem 'when the focus is on the list itself' (m8's deferred two-line form, `ReferenceEquals(Keyboard.FocusedElement, TopLevelList) ? TopLevelList.SelectedItem : null`) flips corpus rows F02, F05 and F08. This slice measured the opposite state for those rows: after a menu close, a re-activation or a modal dialog closing over a detached container, keyboard focus is on the MainWindow itself, not on the list. FocusReturnTests.cs:188 asserts `Keyboard.FocusedElement is Window` after reactivation, which is F05's state; AnOpenRowMenuSurvivesARefresh:164 says the same for a closed menu, which is F02. So m8's form leaves F02, F05 and F08 dead. A follow-up slice built from the record would find this out only at its own build.",
+    "evidence": "Doc docs/design/SL-100-results-list-refresh.md:78-80 vs tests/bugs/SL-100-ResultsListRefresh/FocusReturnTests.cs:164 and :188, and FocusReturnCorpus.json bounded_by ('the filed follow-up that resolves the list's selected row for Ctrl+Enter flips them'). The m8 decision says the follow-up 'takes this finding's two-line `?? SelectedItem` form', which is keyed on TopLevelList only.",
+    "quote": {
+     "path": "docs/design/SL-100-results-list-refresh.md",
+     "line": 80,
+     "text": "  `TopLevelList.SelectedItem` for Ctrl+Enter when the focus is on the list itself."
+    },
+    "fix": "In the doc's Gaps section, in the corpus bounded_by and in the filed m8 follow-up, say that the fallback must resolve SelectedItem whenever MainWindow.FocusIsAdrift(Keyboard.FocusedElement) holds: the list, or, in an active window, the window itself or nothing. Checking for the list alone does not flip F02, F05 or F08."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "extra",
+    "claim": "FocusRow calls container.Focus(). The test's own comment says Focus() brings a partly visible row into view and would move the offset. So when a reorder or a wheel scroll leaves the focused row in the cut-off last slot of the viewport, the restore scrolls the list by up to one row. That contradicts the contract 'The restore never scrolls' and the doc's 'the refresh never scrolls' (docs/design/SL-100-results-list-refresh.md:27). The design allowed this exception on condition that it be stated. It is stated only in a test comment, and no test pins what the offset does for a partly visible focused row. During a live scan the focused row's index changes with every resize, so landing in the cut-off slot is ordinary.",
+    "evidence": "src/FsAnalyser.App/MainWindow.xaml.cs:432-439 (FocusRow -> container.Focus()); tests/bugs/SL-100-ResultsListRefresh/ResultsListShapeTests.cs:106 deliberately avoids the shape; design outside_claim 'VirtualizingStackPanel keeps a keyboard-focused container realised… FrameworkElement brings a newly keyboard-focused element into view' with if_wrong '…has a one-row exception… say so'.",
+    "quote": {
+     "path": "tests/bugs/SL-100-ResultsListRefresh/ResultsListShapeTests.cs",
+     "line": 106,
+     "text": "        // A row fully in view a little way down: Focus() brings a partly visible row into view, which would move the offset."
+    },
+    "fix": "Add a Fact that puts the focused, rebuilt row in the last, partly visible slot and records the offset after the refresh. Then either list the one-row exception in the doc's Gaps section and in the contract, or suppress it by marking RequestBringIntoView handled on the container during the restore's Focus() call."
+   },
+   {
+    "id": "R2-m3",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "nature": "defect",
+    "claim": "Rig.ModalDialogAround turns any exception thrown while the modal dialog is open into a permanent hang. The callback runs `whileOpen(); dialog.Close();` with no try/finally. The Rig constructor registers a Dispatcher.UnhandledException handler that sets e.Handled = true (ResultsListShapeTests.cs:361-365), so a throw from whileOpen (Refresh -> Tick -> RefreshTopLevel -> ShowTopLevel) is swallowed. dialog.Close() never runs, ShowDialog() never returns, and the fault is never asserted. Reproduced: with ShowTopLevel mutated to throw only while MainWindow owns a window, corpus row F01 passed and F07 hung until `--blame-hang-timeout 45s` killed the testhost ('Test Run Aborted'). The acceptance command passes no hang timeout, so a regression that throws in ShowTopLevel's synchronous part hangs the whole SL-100 run (rows F07 and F08) instead of turning it red. The other Facts' results then never reach a summary or an exit code.",
+    "evidence": "tests/bugs/SL-100-ResultsListRefresh/FocusReturnTests.cs:223-246 (ModalDialogAround) together with ResultsListShapeTests.cs:361-365 (UnhandledException marked Handled). Corpus rows F07 and F08 use the 'modal-dialog-with-refresh' step.",
+    "quote": {
+     "path": "tests/bugs/SL-100-ResultsListRefresh/FocusReturnTests.cs",
+     "line": 236,
+     "text": "            Window.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () =>\n            {\n                mainWasActive = Window.IsActive;\n                whileOpen();\n                dialog.Close();\n            });"
+    },
+    "fix": "In ModalDialogAround: catch inside the callback into a local `Exception? failed`, and call `dialog.Close()` in a finally. After `dialog.ShowDialog()` returns, rethrow with `if (failed is not null) ExceptionDispatchInfo.Capture(failed).Throw();`. This makes a throwing refresh fail the row instead of hanging the run."
+   },
+   {
+    "id": "R2-m4",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "extra",
+    "claim": "The corpus defines a `gap` flag (`\"gap\": true` on rows F02, F05 and F08), and the doc says 'Rows marked gap pin what is measured on a list that no longer refreshes'. Nothing reads the flag. RunCorpusRow reads only id, producer, steps and expect, and TheCorpusUsesOnlyTheWordsItDefines does not check `gap`. A row can therefore expect `press-dead` without being declared a gap, which pins a new dead Ctrl+Enter as the expected behaviour. A `gap` row with `press-reaches-row` is equally unchecked. The class O-021 closed against this corpus is looser than its own vocabulary check claims.",
+    "evidence": "tests/bugs/SL-100-ResultsListRefresh/FocusReturnCorpus.json rows F02, F05 and F08 define the flag; tests/bugs/SL-100-ResultsListRefresh/FocusReturnTests.cs:33-58 never reads it.",
+    "quote": {
+     "path": "tests/bugs/SL-100-ResultsListRefresh/FocusReturnTests.cs",
+     "line": 44,
+     "text": "            Assert.Contains(row.GetProperty(\"expect\").GetString(), CorpusExpects);"
+    },
+    "fix": "In TheCorpusUsesOnlyTheWordsItDefines, assert per row that `row.TryGetProperty(\"gap\", out var g) && g.GetBoolean()` equals `expect == \"press-dead\"`."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "I ran `pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-100-ResultsListRefresh/SL-100-ResultsListRefresh.Tests.csproj`: Passed 29, Failed 0. The repro Fact at ResultsListRefreshTests.cs:42-55 is byte-identical to the repro stage's file apart from `partial` (SHA-256 0C90ABA4…57F9 after reverting it). The run is still owed to validate as its own gate."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "The repro Fact passes. ShowTopLevel reselects by Path at MainWindow.xaml.cs:393-394, and FocusRow (:432-439) refocuses the rebuilt 'reading-row' container."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "ResultsListShapeTests.cs:26-40: beta is the same object in both snapshots, and after the refresh AssertPressReaches(beta) checks the focused container, the selection and exactly one execution."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "ResultsListShapeTests.cs:42-69: three refreshes at 4500, 6000 and 6500 bytes; SelectedIndex 1, then 0, then 0; Ctrl+Enter reaches the current object after each."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "ResultsListShapeTests.cs:71-89: the row is rebuilt, Down is raised on the focused element, and selection and focus both end on gamma."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "ResultsListShapeTests.cs:93-115: 80 rows scrolled to offset 30; rows[32] is focused and rebuilt; the offset stays 30 and the press reaches the row. UpdateLayout cannot be observed here (mutant M4 survives, declared)."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "ResultsListShapeTests.cs:117-140: the row is shrunk to the end of the list. It stays selected, focus stays on the ListBox, ContainerFromItem returns null and the offset stays 0. After it is brought back to index 2, the press reaches it."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "ResultsListShapeTests.cs:144-163 uses SettingsButton and asserts IsKeyboardFocused before and after the refresh, and that the reselect happened. :165-184 covers focus that moves away in the gap; mutant M6 kills it, which I re-ran: 1 red."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "ResultsListShapeTests.cs:186-204 with Rig.Deactivate (:445-463, SetActiveWindow on a second window plus SetFocus(NULL)). The precondition asserts !IsActive and FocusedElement null. Mutant M10 turns it red (I re-ran it)."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "FocusReturnTests.cs:145-169: the precondition asserts FocusedElement is ContextMenu. After the refresh the menu is still open and no ListBoxItem has focus, and the entry executes once on the captured row. After the menu closes and one more refresh, the press reaches the row."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "ResultsListShapeTests.cs:208-226: Swap, then ClearTopLevel by reflection before Settle. No dispatcher fault; ItemsSource and SelectedItem are null. The guard at MainWindow.xaml.cs:399 is present but no test can observe it (mutant M3 survives, declared)."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "ResultsListShapeTests.cs:247-265 on the real MainWindow: Swap, then a BeginInvoke(Input, Press), then Settle. It executes once on the rebuilt row. Passed in my run."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "ResultsListShapeTests.cs:269-282 asserts TopLevelRow[], a new array and TopLevelRow items. I ran the SL-063 project: 10/10."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "The machine-checkable half: AKeyQueuedRightAfterTheSwapReachesTheRow (ResultsListShapeTests.cs:247-265) passes on the real MainWindow. The Loaded restore runs before the Input-priority press, which executes once on the rebuilt row. A real hardware key in the gap (SC-254) stays unmeasurable and was filed for a person."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "In view: AScrolledFocusedRowKeepsFocusAndOffset (:93-115) gets a realised, focused container at the restored offset. Out of view: ARowPushedOutOfViewStaysSelectedAndRegainsFocus (:117-140) has a null container, the row stays selected, focus stays on the list, and a later refresh refocuses it. Both pass. A partly visible row is not covered (finding m2)."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "MainWindow.xaml.cs:393-394: a synchronous Ordinal reselect straight after `TopLevelList.ItemsSource = rows`. ResultsListShapeTests.cs:228-245 calls Swap, then ShowFinalTopLevel(Final) before Settle, and asserts the stopped row is selected and focused. Mutant M2 turns 20 red in my run."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "ResultsListShapeTests.cs:153-156: SettingsButton.Focus() followed by an assertion of IsKeyboardFocused before the refresh."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "RevealMode.cs:45 adds top-key to the split regex; :49-50 puts it in hasTopLive; ProcessTopKey (:341-437) calls Flush() (ContextIdle, :610) before reading and pressing, stops the scan after the press, and logs distinct errors (scan-ended, no-reading-row, row-not-found, row-not-realised, focus-failed, no-gesture). New-TopKeyTree is in WindowCases.ps1, and step 16 calls it. The hook builds with 0 errors. The step itself is person-run and was not run here."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "docs/design/SL-100-results-list-refresh.md:63 names the publish, then L-001, L-002 and L-003, run serially."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "MainWindow.xaml.cs:396-403: the guard `ReferenceEquals(TopLevelList.ItemsSource, rows)` wraps only FocusRow. ScrollToVerticalOffset, LastRefresh and _skipNextRefresh run unconditionally, as at HEAD."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "FocusIsAdrift (MainWindow.xaml.cs:422-423) covers the list, and the window itself or null in an active window. FocusReturnCorpus.json has 12 rows and FocusReturnTests.cs:49-141 runs every one. Mutant M1 turns F01, F03, F04, F07, F11 and F12 red, plus two named Facts (I re-ran it). The gap rows F02, F05 and F08 pin today's dead press on a list that no longer refreshes."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "ResultsListRefreshTests.cs:42-126, the repro Fact, unchanged: 'reading-row' is rebuilt as a new object at the refresh (4000->4500); before the fix the failure was SelectedIndex -1 with focus on the ListBox."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "ResultsListShapeTests.cs:26-40: the focused beta is the same TopLevelRow object in both snapshots; only delta is rebuilt."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "ResultsListShapeTests.cs:42-69: three refreshes; on the second the rebuilt row goes to 6000 bytes, above alpha's 5000, and the test asserts SelectedIndex 0; the press is checked after each refresh."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "ResultsListShapeTests.cs:71-89: a rebuilt focused row is restored, Down is raised on the focused element, and the test asserts selection and focus on the next row (gamma)."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "ResultsListShapeTests.cs:93-115: 80 rows scrolled to offset 30 (precondition asserted); rows[32] is focused and rebuilt; the offset stays 30 and the press reaches the row. It uses a fully visible row on purpose, so the partly visible variant is not fed (finding m2)."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "ResultsListShapeTests.cs:117-140: the focused rows[3] shrinks to 1 byte and moves to index 79, outside the viewport. The test asserts it stays selected, focus is on the ListBox, there is no container and the offset is 0. A later refresh brings it back to index 2 and it is refocused."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "ResultsListShapeTests.cs:144-163: SettingsButton stands in for the Cancel button, which is collapsed in the harness (declared, per m2); IsKeyboardFocused is asserted before and after; a row is selected and rebuilt."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "ResultsListShapeTests.cs:186-204: a real inactive window (Rig.Deactivate) replaces the design's ClearFocus stand-in, per m7. The precondition asserts !IsActive and FocusedElement null. The ClearFocus-on-an-active-window shape now lives in corpus row F11, where focus IS taken: a declared consequence of FocusIsAdrift."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "FocusReturnTests.cs:145-169: the menu is opened with PlacementTarget then IsOpen, so the app's Opened handler runs. The precondition asserts FocusedElement is ContextMenu. After the refresh the menu is still open, no row has focus, and the entry executes on the captured row."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "ResultsListShapeTests.cs:208-226: Swap, then ClearTopLevel before the Loaded callback runs, then Settle. The shape is fed. The guard it was designed for can no longer be observed, because the reselect moved to the synchronous path (M3 survives, declared)."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "ResultsListShapeTests.cs:247-265: the press is BeginInvoke'd at DispatcherPriority.Input right after Swap and before Settle, so it queues behind the tick's Loaded callback; it executes once on the rebuilt row."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "The SL-063 DoneRowFinality project (10/10 in my run) enumerates list.Items as TopLevelRow across refreshes; TheListStillHoldsANewArrayOfTopLevelRowsPerRefresh (:269-282) checks the type and that the array is new."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "ResultsListShapeTests.cs:228-245 (marked non-material in the design, made material by m1): the tick swaps with a rebuilt row, then ShowFinalTopLevel(Final) runs by reflection before Settle; the test asserts the stopped row is selected and focused."
+   },
+   {
+    "key": "C-014",
+    "exercised": "yes",
+    "evidence": "ResultsListShapeTests.cs:284-296 (non-material in the design, built anyway): rows README and readme with Paths that differ only by case; the lower-case one is focused; mutant M5 (OrdinalIgnoreCase) turns it red."
+   }
+  ],
+  "drift": [
+   "Declared, and consistent with m7's disposition: FocusIsAdrift (MainWindow.xaml.cs:422-423) moves focus not only from TopLevelList, as the design's refocus step has it, but also from the window itself or from nothing in an active window. As a result corpus row F11 (ClearFocus on an active window) expects focus to be TAKEN, the opposite of the design's original case-8 expectation.",
+   "Undeclared in the doc: docs/design/SL-100-results-list-refresh.md:27 says 'the refresh never scrolls'. The test comment at ResultsListShapeTests.cs:106 concedes that Focus() would move the offset for a partly visible row. The design asked for that one-row exception to be stated if true, and it is stated nowhere outside the comment (finding m2).",
+   "The follow-up text in the doc (:78-80) and in FocusReturnCorpus.json bounded_by says m8's list-only SelectedItem fallback flips F02, F05 and F08. In those rows this slice measured focus on the window, not the list (finding m1).",
+   "Kept per the design but unobservable, and declared: the stale-array guard (:399) and UpdateLayout (:436). Mutants M3 and M4 survive, and the builder measured that the swap leaves the offset and containers in place by Loaded. The design's case-5 premise ('realised containers belong to the pre-restore offset') did not hold in the harness.",
+   "The builder's scratch mutant script (.taad-scratch/sl100-mutants.ps1) builds M0 from `git show HEAD:`. Now that the build is committed as 0e43204, M0 resolves to the FIXED file, so the recorded 'M0 24 of 29 red' cannot be reproduced with the script as it stands. It is scratch only and not committed.",
+   "Nothing new departs from the design beyond what round 1 recorded."
+  ],
+  "unreviewed": [
+   ".taad/slices/SL-100/{critique-1,critique-review-1,design-slice-1,index}.json: engine record exports, not code. Read only through the design and findings quoted in the brief.",
+   "tests/window/WindowCases.ps1 R-001 step 16 and RevealMode top-key: read and compiled, not run. They open real Explorer windows on the person's desktop (person-run, lesson #336), and I did not launch the GUI app here."
+  ],
+  "second_round": {
+   "run_id": 3272,
+   "filed": 2
+  }
+ }
+}

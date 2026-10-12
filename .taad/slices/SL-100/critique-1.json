@@ -1,0 +1,173 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-100",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-10-11T23:44:32.090Z",
+ "head": "7bf476ecd3932c477edd7a4d8d28d2c0110153cc",
+ "run_id": 3267,
+ "summary": "The core of the design is sound. It restores the selection by Path and refocuses the row in the existing Loaded callback, which is the shape Q-078 (human) decided and spike 3 measured go (240/240). Items stay TopLevelRow, so none of the four readers changes, and containers still detach, so R-001 top-live still sees detached==true. The original repro passes as traced: the Settle call runs the Loaded restore before the press.\n\nThe slice is tiered low, so no critique ran; this review is the first disagreement the design has faced.\n\nDefects found:\n- The reselect sits in the Loaded callback, but Q-078 asks only for the refocus to sit there. As a result, the Cancel race the design accepts loses the selection on the stopped list, and a frame is drawn without the selection on every refresh that rebuilds the selected row.\n- One shape Fact (FocusOutsideTheListIsNeverMoved) names a control that cannot take focus in the test setup, because the Cancel button's panel is collapsed there.\n- NoKeyboardFocusIsNeverTakenByARefresh claims to stand in for an inactive window but tests an active one. It pins 'never take focus' in exactly the state that closing a row menu, or returning from Explorer, plausibly leaves behind.\n- The person-run hook step leaves out three things it needs to work: a branch in RevealMode.Drive, the Normal-priority Ui() race with the restore, and how long the test folder's scan must stay live.\n- Validate guard 5 names no window case.\n- How far the stale-array guard reaches is ambiguous: it may also skip the existing LastRefresh and _skipNextRefresh lines.\n\nExtras (backlog only):\n- A loop-runnable half of the window case plus a WindowMutants mutant would give the fix a guard inside a check Q-114 already requires.\n- A synchronous reselect plus the SelectedItem fallback would make Ctrl+Enter independent of both unproven preconditions taken from the htop pattern.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The core of the design is sound. It restores the selection by Path and refocuses the row in the existing Loaded callback, which is the shape Q-078 (human) decided and spike 3 measured go (240/240). Items stay TopLevelRow, so none of the four readers changes, and containers still detach, so R-001 top-live still sees detached==true. The original repro passes as traced: the Settle call runs the Loaded restore before the press.\n\nThe slice is tiered low, so no critique ran; this review is the first disagreement the design has faced.\n\nDefects found:\n- The reselect sits in the Loaded callback, but Q-078 asks only for the refocus to sit there. As a result, the Cancel race the design accepts loses the selection on the stopped list, and a frame is drawn without the selection on every refresh that rebuilds the selected row.\n- One shape Fact (FocusOutsideTheListIsNeverMoved) names a control that cannot take focus in the test setup, because the Cancel button's panel is collapsed there.\n- NoKeyboardFocusIsNeverTakenByARefresh claims to stand in for an inactive window but tests an active one. It pins 'never take focus' in exactly the state that closing a row menu, or returning from Explorer, plausibly leaves behind.\n- The person-run hook step leaves out three things it needs to work: a branch in RevealMode.Drive, the Normal-priority Ui() race with the restore, and how long the test folder's scan must stay live.\n- Validate guard 5 names no window case.\n- How far the stale-array guard reaches is ambiguous: it may also skip the existing LastRefresh and _skipNextRefresh lines.\n\nExtras (backlog only):\n- A loop-runnable half of the window case plus a WindowMutants mutant would give the fix a guard inside a check Q-114 already requires.\n- A synchronous reselect plus the SelectedItem fallback would make Ctrl+Enter independent of both unproven preconditions taken from the htop pattern.",
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "drift-from-design",
+    "nature": "defect",
+    "claim": "The design puts the reselect inside the Loaded callback (component 'Restore by key in the existing Loaded callback', step 1). Q-078 puts only the refocus there. Its wording is: 'After each ItemsSource swap in ShowTopLevel, reselect the row whose folder path matches... If the list had keyboard focus, focus that row's new container in the Loaded-priority callback'. Deferring the reselect causes three problems.\n(1) The Cancel case the design marks non-material is a real defect. Cancel's ShowFinalTopLevel runs at Normal priority (9), before the tick's Loaded (6) callback. The guard skips the stale restore, and the final ShowTopLevel captures selectedKey = null. The stopped list, which is the only results surface after a stop, then shows no selection and has a dead Ctrl+Enter.\n(2) Microsoft's DispatcherPriority docs say Loaded runs 'when layout and render has finished but just before items at input priority are serviced' (https://learn.microsoft.com/en-us/dotnet/api/system.windows.threading.dispatcherpriority?view=windowsdesktop-10.0). So every refresh that rebuilds the selected row draws a frame with that row unselected before the callback reselects it.\n(3) SelectedItem is null for the whole swap-to-Loaded gap, so no fallback can save a key pressed in it.\nThe design also says this case has 'no deterministic trigger without a seam'. Its own ARestoreForAReplacedListDoesNothing uses exactly that trigger: a private call, by reflection, before pumping.",
+    "evidence": "Design component 'Restore by key in the existing Loaded callback' step 1; key_decisions ordering 1-5; the non-material case 'Cancel's ShowFinalTopLevel runs between a tick's swap and its Loaded callback'; Q-078 (human) text; MainWindow.xaml.cs:365-371 ShowFinalTopLevel.",
+    "fix": "Do the Ordinal reselect synchronously in ShowTopLevel, straight after `TopLevelList.ItemsSource = rows`. The items exist at that point, and containers are generated with IsSelected already set. Keep only the stale guard, UpdateLayout, ContainerFromItem and Focus in the Loaded callback. Make the Cancel case material with a Fact that calls RefreshTopLevel and then ShowFinalTopLevel (with a Final snapshot, by reflection) before pumping, and asserts after Settle that the rebuilt row is selected and focused.",
+    "quote": {
+     "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+     "line": 386,
+     "text": "        TopLevelList.ItemsSource = rows;"
+    }
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "defect",
+    "claim": "FocusOutsideTheListIsNeverMoved puts keyboard focus on 'the Cancel button'. CancelButton sits inside ScanningPanel, which is Collapsed in XAML and made Visible only by StartScan (MainWindow.xaml.cs:261). The SL-100 harness never calls StartScan: it drives RefreshTopLevel by reflection with a hand-made ScanProgress. So CancelButton is not visible, Focus() returns false, and focus stays where it was. Traced per CC-005, the Fact goes one of three ways:\n- it throws at its precondition;\n- with no precondition check, focus is still on a row set up earlier, the restore rightly moves it, and the Fact is red for the wrong reason;\n- with no earlier focus, it passes vacuously.",
+    "evidence": "MainWindow.xaml:130 and :139 (CancelButton inside ScanningPanel). MainWindow.xaml.cs:261 is the only place that sets it Visible. ResultsListRefreshTests.cs:86-87 builds a bare ScanProgress and never starts a scan. Design case 'keyboard focus is on a focusable control outside the list (the Cancel button)'.",
+    "fix": "In the Fact, make ScanningPanel visible as StartScan does, or use a control that is visible in the harness (SettingsButton, ShowFoldersButton). Assert that control's IsKeyboardFocused before the refresh, so a focus that failed to land cannot pass.",
+    "quote": {
+     "path": "src/FsAnalyser.App/MainWindow.xaml",
+     "line": 130,
+     "text": "        <Border x:Name=\"ScanningPanel\" DockPanel.Dock=\"Top\" Visibility=\"Collapsed\" Margin=\"0,16,0,0\""
+    }
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "claim": "The top-key hook step is said to 'reuse top-live's scaffolding for keeping a scan live'. That scaffolding is a branch it must be added to, and the design names none of the three things the step needs.\n(1) RevealMode.Drive splits FSA_HOOK_REVEAL on a fixed list of surfaces. Unless a top-live target is present, it waits for the scan to END before processing any target. A 'top-key:' surface that is not added to both the split regex (:44) and the hasTopLive test is processed after ShowFolderTree has nulled ItemsSource, and logs row-not-found.\n(2) Ui() marshals at DispatcherPriority.Normal (:798), which is above Loaded. A step that notices the third ItemsSource change and reads focus or presses in its next Ui() call can run between the swap and the restore. It then logs focus on the ListBox with CanExecute false, a false red.\n(3) New-TopsTree (WindowCases.ps1:1979) was sized for top-live's single detach, about 150 ms. Its ~30,000 empty folders scan in about 1.6 s (lesson #85). That leaves little room for scan start, a Reading row and three refreshes (more if SlowRefresh skips ticks) before the Completed ending replaces the list.\nNo loop stage runs this step, so each of these shows up only at the person's R-001 run (lessons #336, #340).",
+    "evidence": "tests/window/FsaWindowHook/RevealMode.cs:44 (surface split regex), :47-66 (hasTopLive branch), :430 (Flush at ContextIdle), :784-798 (Ui at Normal). WindowCases.ps1:1979-1999 New-TopsTree. Design component 'Hook step top-key (person-run)'.",
+    "fix": "Write these into the design:\n- add top-key to Drive's split regex and to its live-scan branch;\n- call Flush() after the third ItemsSource change, before logging or pressing;\n- stop the scan after the press, as top-live does;\n- size the tree, or a slowed refresh, for at least 3 refreshes after focusing;\n- log distinct error rows (scan-ended, no-reading-row), so a failed person run can be diagnosed.",
+    "quote": {
+     "path": "tests/window/FsaWindowHook/RevealMode.cs",
+     "line": 62,
+     "text": "            else if (!hasTopLive)\n            {\n                // Wait for scan to complete normally\n                WaitForScanToEnd(window);"
+    }
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "under-engineering",
+    "nature": "extra",
+    "claim": "The restore holds only because people remember it. Its only checks are the SL-100 Facts, which sit outside FsAnalyser.slnx and are run by no gate, and a person-run R-001 step. Q-114 already makes `WindowMutants.ps1 -Mutant All` a required validate check for every slice touching src/FsAnalyser.App/**. Yet none of its 12 mutants exercises focus or selection across a refresh. So the next App slice that rewrites ShowTopLevel can drop the restore with every required check green, which brings back exactly the dead Ctrl+Enter this slice removes. The design rejects a loop-run copy because it 'would duplicate the xUnit proof'. That duplicate is what would put the proof inside a gate that is already required.",
+    "evidence": "tests/window/WindowMutants.ps1:37-38 and :285 (roster: no focus or selection mutant). Q-114 (human). Design filed_for_later 'Give the SL-100 Facts a standing guard'. Key decision on Q-078's window case: 'A loop-run copy that skipped the reveal would duplicate the xUnit proof'.",
+    "fix": "Split the window case. The loop-runnable half (an L- case): focus a row, wait 3 refreshes, Flush, log the focused Path, the SelectedItem Path and CanExecute, then press with a PreviewExecuted handler that sets Handled, so no Explorer opens (the repro's own technique). Add a NoFocusRestore mutant: ValidateSet, $CaseMutants, the roster and MayFail, about 40-50 s (lesson #246). Keep the reveal as the person-run R-001 step. Alternatively, record this as the preferred shape for the filed follow-up.",
+    "quote": {
+     "path": "tests/window/WindowMutants.ps1",
+     "line": 285,
+     "text": "$names = if ($Mutant -eq 'All') { 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'CancelThrows', 'HookFailsAfterActing', 'HookCompileError', 'HookLocked', 'EndingObeysSkip', 'ListingFailsAnyFolder', 'NoFailListingMember', 'NoExplorerViewMember' } else { @($Mutant) }"
+    }
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "claim": "Regression guard 5, 'The WindowCases cases the loop may run that drive the live top-level list', names no case. Validate therefore cannot run or judge it unattended (CC-006). The cases exist:\n- L-001 and L-002 read the list mid-scan through the hook's watch mode. L-002 slows every refresh with FSA_HOOK_SLOW_REFRESH_MS and arms the skip, which is the droppable-refresh timing that the restore's UpdateLayout now sits inside.\n- L-003 covers the endings.\nAll of them need the publish step first (lesson #84).",
+    "evidence": "Design contract 'Regression guards at validate', item 5. WindowCases.ps1:30-35 and :1258-1302 (L-001, L-002). WindowCases.ps1:149 ($HookedCases includes L-001 and L-002).",
+    "fix": "Name the cases in guard 5: publish, then `tests/window/WindowCases.ps1 -Case L-001`, `-Case L-002` and `-Case L-003`, run one after another under the %LOCALAPPDATA%\\Temp wrapper.",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 30,
+     "text": "# L-001 to L-003 (SL-039) are the results list, TopLevelList: the root's direct children filling in while"
+    }
+   },
+   {
+    "id": "m6",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "claim": "In the callback's ordering, the stale-array guard ('returns at once') comes at step 2, before the existing LastRefresh / _skipNextRefresh lines at step 5, all in the same lambda. Read literally, a callback whose list has already been replaced (by ShowTopLevel, ClearTopLevel or ShowFolderTree) no longer sets LastRefresh or _skipNextRefresh. That changes SL-039's droppable-refresh behaviour. The hook's measure mode reads that state (StartupHook.cs:1207), and L-002 and EndingObeysSkip pin it. The 'ShowTopLevel survives the Reset' contract says nothing about it, so the builder is left to choose.",
+    "evidence": "Design key_decisions ordering (2. stale-array guard ... 5. the existing LastRefresh / _skipNextRefresh). Component 'Restore by key...': 'It returns at once unless ReferenceEquals(TopLevelList.ItemsSource, rows)'. MainWindow.xaml.cs:388-393, :402.",
+    "fix": "State that the guard skips only the reselect and refocus, and that the scroll restore and the two timing lines run exactly as they do today. If the change is wanted, add it to the contract and to L-002's expectations.",
+    "quote": {
+     "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+     "line": 390,
+     "text": "            scroll?.ScrollToVerticalOffset(offset);\n            LastRefresh = _refreshClock.Elapsed;\n            _skipNextRefresh = LastRefresh > SlowRefresh;"
+    }
+   },
+   {
+    "id": "m7",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "defect",
+    "class_of": "focus returning to an element a refresh detached",
+    "threat": "accident",
+    "claim": "The capture recognises only two focus states: a TopLevelList row, or TopLevelList itself. Anything else, including null, means 'never move focus'. Two ordinary paths plausibly leave an ACTIVE window with null keyboard focus, after a refresh has detached the element focus would return to:\n- closing a row menu that was opened before a refresh, where MenuBase restores focus through the placement target's focus scope, which is now a detached container;\n- coming back to the window after Ctrl+Enter put Explorer in front, where WPF restores the last focused element, also the detached container.\nBoth claims come from memory and have not been measured. If either lands on null, OnCanOpenInExplorer resolves nothing, Ctrl+Enter and the arrows stay dead until a click, and no refresh ever repairs it.\nNoKeyboardFocusIsNeverTakenByARefresh pins the opposite of that repair. It calls Keyboard.ClearFocus on a window that is active (spike 3: Window.IsActive=True in this setup), calls that 'standing in for an inactive window', and asserts a refresh never takes focus. So it fixes the behaviour for the active-window-with-null-focus state, which is exactly the state a repair for these paths would need to change.",
+    "evidence": "Design component 'Row-key capture before the swap' ('Anything else ... wantFocus=false'). Case 'nothing has keyboard focus (Keyboard.ClearFocus before the refresh, standing in for an inactive window)'. Outside claim on FocusManager reactivation (recalled). Spike 3 environment: 'Window.IsActive=True ... the foreground window was not ours'.",
+    "fix": "Make the Fact create a real inactive state: show a second window on the same STA thread, make it active, and assert window.IsActive == false as the precondition. Otherwise rename the Fact for what it actually tests. Extend AnOpenRowMenuSurvivesARefresh: close the menu after the refresh, run one more refresh, and record where focus lands. Add a reactivation Fact (second window active during a refresh, then MainWindow reactivated); it runs unattended and answers the return-from-Explorer question the design files for a person. If either path lands on null, add a capture branch `window.IsActive && Keyboard.FocusedElement is null && selectedKey != null`.",
+    "quote": {
+     "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+     "line": 808,
+     "text": "        object? row = e.Parameter ?? (Keyboard.FocusedElement as FrameworkElement)?.DataContext ?? (e.OriginalSource as FrameworkElement)?.DataContext;"
+    }
+   },
+   {
+    "id": "m8",
+    "severity": "minor",
+    "dimension": "under-engineering",
+    "nature": "extra",
+    "claim": "The design relies on both must-verify preconditions it took from the htop pattern instead of removing the need for them:\n- a real key in the swap-to-Loaded gap (SC-254);\n- a focused row outside the restored viewport.\nEach leaves focus on the ListBox, whose DataContext is null, so CanExecute is false. Once the reselect is synchronous (m1), the two-line fallback from the taste disagreement makes Ctrl+Enter independent of both preconditions and of dispatcher timing: when Keyboard.FocusedElement is TopLevelList, resolve TopLevelList.SelectedItem. The menu path is unaffected, because it always passes a non-null Parameter (NoRow when nothing was captured). The recommendation is to settle that taste disagreement in favour of the fallback.",
+    "evidence": "cross_domain_transfer invariants 3 and 4 (must-verify). Taste disagreement 2. MainWindow.xaml.cs:787-789 (NoRow is never null) and :806-811.",
+    "fix": "In OnCanOpenInExplorer and OnOpenInExplorer, add `?? (ReferenceEquals(Keyboard.FocusedElement, TopLevelList) ? TopLevelList.SelectedItem : null)` before the OriginalSource fallback. Add one Fact: a row out of view stays selected, and Ctrl+Enter from the list executes once on it.",
+    "quote": {
+     "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+     "line": 809,
+     "text": "        e.CanExecute = !string.IsNullOrEmpty(PathOf(row));"
+    }
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "I checked the two must-verify preconditions the design imported from the htop pattern.\n- 'Cursor re-derived before the next input': Microsoft's DispatcherPriority docs back it ('Loaded ... processed when layout and render has finished but just before items at input priority are serviced'). If it fails, a real key pressed in the few-ms gap goes to the ListBox and does nothing; pressing again works.\n- 'Re-derived row has a container': if this fails, a scrolled or out-of-view focused row keeps a dead Ctrl+Enter until a later tick. The scrolled-row and out-of-view Facts would catch it at build. m8 removes the dependence on both.\nThe cited claim from SO 7363777 is supported: Cheeso's own answer on SO 5944430 says 'you need to call Focus() on the list item after selecting it'.\nThree recalled claims are each settled at build by a named Fact: an open ContextMenu holds focus, focusing an element calls BringIntoView, and one UpdateLayout realises containers at the restored offset."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "m1: Cancel's ShowFinalTopLevel running between the swap and the Loaded callback loses the selection on the stopped list. It is fixable without new machinery, and the trigger is deterministic by reflection.\nm7: closing a row menu, or returning from Explorer, after a refresh can leave null focus that nothing repairs."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "m4: no gate covers the restore, although Q-114 already makes WindowMutants a required check for App slices.\nm8: the SelectedItem fallback would make Ctrl+Enter work by construction rather than by dispatcher timing."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "None. The ten Facts map one-to-one onto failure shapes measured in the spikes and the investigation. Lesson #176 says the test harness is the main body of a window slice. The person-run hook and R-001 step were asked for by Q-078 (human). There is no wrapper type, no new field and no architecture rule."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "m3: the top-key step misses three things it needs to work:\n- the Drive split regex and the hasTopLive branch;\n- the Normal-priority Ui() call racing the Loaded restore;\n- how long New-TopsTree's scan stays live.\nm5: guard 5 names no WindowCases case.\nm6: the stale guard may also skip the existing LastRefresh and _skipNextRefresh lines."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "None beyond m6. The design handles:\n- a null container (focus stays on the list, no cast, no scroll);\n- a replaced or nulled ItemsSource (ReferenceEquals guard);\n- a null FocusedElement;\n- a missing key.\nAn exception in the Loaded callback would reach the dispatcher, and Q-071 forbids a global Handled=true, but nothing in the restore plausibly throws."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "m1: Q-078 places only the refocus in the Loaded callback; the design moved the reselect there too. Recording Derived 1 and 5 as 'not met by decision Q-078' rather than missing is correct: a person's answer outranks the model reflection, and no measurement contradicts Q-078 (spikes 1 and 2 support it)."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "The design respects:\n- the KnownWorkarounds policy (own-code defect, no checkbox);\n- Q-114 (WindowMutants required);\n- lessons #91 (ASCII), #136 (network pass stated as unmeasured), #336 (R-001 person-run), #391/#392 (TEMP wrapper) and #405 (serial runs).\nThe only gap is m4: the required WindowMutants run gives no signal on this change."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "m2: FocusOutsideTheListIsNeverMoved focuses a Cancel button that is collapsed in the test setup.\nm7: the NoKeyboardFocus Fact claims to stand in for an inactive window but tests an active one, and pins a no-repair rule.\nThe original repro traces to a pass under the design: capture, swap, Loaded reselect and refocus, then the press after Settle. AKeyQueuedRightAfterTheSwapReachesTheRow guards the restore's priority, not real input; the design says so itself."
+   },
+   {
+    "dimension": "security",
+    "result": "None. There is no new input surface, no elevation and no change to Core or the scan store. The hook is a test-only startup hook that is not shipped."
+   }
+  ]
+ }
+}

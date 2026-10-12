@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -41,11 +42,12 @@ internal static class RevealMode
                 return;
             }
 
-            string[] targets = System.Text.RegularExpressions.Regex.Split(revealEnv, @",(?=(?:largest|tree|top|top-live|unreadable|gesture|tree-competing|placeholder):)");
+            string[] targets = System.Text.RegularExpressions.Regex.Split(revealEnv, @",(?=(?:largest|tree|top|top-live|top-key|unreadable|gesture|tree-competing|placeholder):)");
             window = WaitForWindow();
 
             bool hasTopTarget = targets.Any(t => t.Trim().StartsWith("top:", StringComparison.OrdinalIgnoreCase));
-            bool hasTopLive = targets.Any(t => t.Trim().StartsWith("top-live:", StringComparison.OrdinalIgnoreCase));
+            bool hasTopLive = targets.Any(t => t.Trim().StartsWith("top-live:", StringComparison.OrdinalIgnoreCase)
+                || t.Trim().StartsWith("top-key:", StringComparison.OrdinalIgnoreCase));
 
             if (hasTopTarget)
             {
@@ -131,6 +133,12 @@ internal static class RevealMode
         if (surface.Equals("top-live", StringComparison.OrdinalIgnoreCase))
         {
             ProcessTopLive(window, name);
+            return;
+        }
+
+        if (surface.Equals("top-key", StringComparison.OrdinalIgnoreCase))
+        {
+            ProcessTopKey(window, name);
             return;
         }
 
@@ -318,6 +326,178 @@ internal static class RevealMode
         entry["enabled"] = enabled;
         entry["open"] = open;
         StartupHook.Log(JsonSerializer.Serialize(entry));
+    }
+
+    // top-key (SL-100, Q-078): Ctrl+Enter on a results-list row after live refreshes. A row that is still being read is
+    // selected and given the keyboard focus, as a click on it leaves it; the scan's own ticks then replace the list's
+    // items three times; once the dispatcher has run what the third swap queued (Flush: Ui() marshals at Normal priority,
+    // above the Loaded priority the restore runs at, so a read without it can fall between the swap and the restore),
+    // the command's own KeyGesture is raised on the focused element and the reveal is waited for. The line logs what the
+    // fix must give: the focus on the same row's container ("focusPath"), the row still selected ("selectedPath"), the
+    // command enabled from the focus ("canExecute"), and a reveal of the row's path beside "rowPath". name is a row's
+    // name, or * for the first row that is still being read and has a container at the current offset. A run that
+    // cannot make its premise logs a line of its own: scan-ended (the list was replaced before three refreshes, with
+    // "refreshes" counted), no-reading-row, row-not-found, row-not-realised, focus-failed (with "active"), no-gesture.
+    private static void ProcessTopKey(Window window, string name)
+    {
+        WaitForScanToStart(window);
+
+        FrameworkElement? container = null;
+        string? error = null;
+        var wait = Stopwatch.StartNew();
+        while (wait.Elapsed < EndingDeadline)
+        {
+            (container, error) = Ui(() => FindKeyContainer(window, name));
+            if (container != null || error != "no-reading-row")
+                break;
+            if (!Ui(() => IsScanning(window)))
+                break;
+            Thread.Sleep(10);
+        }
+        if (container == null)
+        {
+            LogTopKeyError(name, error ?? "no-reading-row", null);
+            StopScan(window);
+            WaitForScanToStop(window);
+            return;
+        }
+
+        (string? rowPath, bool active, bool focused) = Ui(() =>
+        {
+            var list = (ListBox)window.FindName("TopLevelList");
+            list.SelectedItem = container.DataContext;
+            container.Focus();
+            Keyboard.Focus(container);
+            return (PathOfRow(container.DataContext), window.IsActive, container.IsKeyboardFocused);
+        });
+        if (!focused)
+        {
+            LogTopKeyError(name, "focus-failed", new Dictionary<string, object?> { ["rowPath"] = rowPath, ["active"] = active });
+            StopScan(window);
+            WaitForScanToStop(window);
+            return;
+        }
+
+        object? seen = Ui(() => ((ListBox)window.FindName("TopLevelList")).ItemsSource);
+        int refreshes = 0;
+        var since = Stopwatch.StartNew();
+        while (refreshes < 3 && since.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            (object? now, bool scanning) = Ui(() => (((ListBox)window.FindName("TopLevelList")).ItemsSource, IsScanning(window)));
+            if (now == null || !scanning)
+                break;
+            if (!ReferenceEquals(now, seen))
+            {
+                refreshes++;
+                seen = now;
+            }
+            Thread.Sleep(10);
+        }
+        if (refreshes < 3)
+        {
+            LogTopKeyError(name, "scan-ended", new Dictionary<string, object?> { ["rowPath"] = rowPath, ["refreshes"] = refreshes });
+            StopScan(window);
+            WaitForScanToStop(window);
+            return;
+        }
+
+        Flush();
+        object? initialOutcome = Ui(() => GetLastOutcome(window));
+        Interlocked.Exchange(ref _revealStartQpc, 0);
+        (string focusType, string? focusPath, string? selectedPath, bool canExecute, bool pressed) = Ui(() =>
+        {
+            IInputElement? focus = Keyboard.FocusedElement;
+            var cmd = window.GetType().GetField("OpenInExplorer", BindingFlags.Static | BindingFlags.Public)?.GetValue(null) as RoutedUICommand;
+            bool can = cmd != null && focus != null && cmd.CanExecute(null, focus);
+            bool sent = cmd != null && cmd.InputGestures.OfType<KeyGesture>().Any(g => g.Key == Key.Enter && g.Modifiers == ModifierKeys.Control)
+                && PressCtrlEnter(window);
+            return (focus?.GetType().Name ?? "nothing",
+                PathOfRow((focus as FrameworkElement)?.DataContext),
+                PathOfRow(((ListBox)window.FindName("TopLevelList")).SelectedItem),
+                can, sent);
+        });
+
+        (object? finalOutcome, string statusText) = pressed ? WaitForOutcome(window, initialOutcome) : (null, "");
+        StopScan(window);
+        WaitForScanToStop(window);
+
+        var entry = OutcomeEntry("top-key", name, finalOutcome, statusText, null);
+        entry["via"] = "gesture";
+        entry["rowPath"] = rowPath;
+        entry["active"] = active;
+        entry["refreshes"] = refreshes;
+        entry["focusType"] = focusType;
+        entry["focusPath"] = focusPath;
+        entry["selectedPath"] = selectedPath;
+        entry["canExecute"] = canExecute;
+        entry["pressed"] = pressed;
+        if (!pressed)
+            entry["error"] = "no-gesture";
+        StartupHook.Log(JsonSerializer.Serialize(entry));
+    }
+
+    private static void LogTopKeyError(string name, string error, Dictionary<string, object?>? more)
+    {
+        var entry = new Dictionary<string, object?> { ["surface"] = "top-key", ["name"] = name, ["error"] = error };
+        if (more != null)
+            foreach (KeyValuePair<string, object?> pair in more)
+                entry[pair.Key] = pair.Value;
+        StartupHook.Log(JsonSerializer.Serialize(entry));
+    }
+
+    // The row to press on, without scrolling: a named row, or the first one still being read, that has a container at
+    // the list's current offset. The error says why none was found.
+    private static (FrameworkElement? Container, string? Error) FindKeyContainer(Window window, string name)
+    {
+        if (window.FindName("TopLevelList") is not ListBox list)
+            return (null, "row-not-found");
+        bool named = name != "*";
+        bool anyRow = false;
+        foreach (object item in list.Items)
+        {
+            anyRow = true;
+            string? rowName = item.GetType().GetProperty("Name")?.GetValue(item) as string;
+            bool match = named
+                ? rowName == name || PathOfRow(item) == name || (PathOfRow(item) is { } p && p.EndsWith(name, StringComparison.OrdinalIgnoreCase))
+                : item.GetType().GetProperty("State")?.GetValue(item)?.ToString() == "Reading";
+            if (!match)
+                continue;
+            return list.ItemContainerGenerator.ContainerFromItem(item) is FrameworkElement found
+                ? (found, null)
+                : (null, "row-not-realised");
+        }
+        return (null, named ? (anyRow ? "row-not-found" : "no-reading-row") : "no-reading-row");
+    }
+
+    private static string? PathOfRow(object? row) => row?.GetType().GetProperty("Path")?.GetValue(row) as string;
+
+    [DllImport("user32.dll")] private static extern bool GetKeyboardState(byte[] state);
+    [DllImport("user32.dll")] private static extern bool SetKeyboardState(byte[] state);
+
+    // Ctrl held in this thread's key state, then a KeyDown(Enter) raised on the focused element: CommandManager matches
+    // the command's own KeyGesture as it does for a real press. The key state is put back after.
+    private static bool PressCtrlEnter(Window window)
+    {
+        if (Keyboard.FocusedElement is not UIElement target)
+            return false;
+        var saved = new byte[256];
+        GetKeyboardState(saved);
+        var held = (byte[])saved.Clone();
+        held[0x11] = 0x80; // VK_CONTROL
+        held[0xA2] = 0x80; // VK_LCONTROL
+        SetKeyboardState(held);
+        try
+        {
+            target.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window), Environment.TickCount, Key.Enter)
+            {
+                RoutedEvent = Keyboard.KeyDownEvent
+            });
+            return true;
+        }
+        finally
+        {
+            SetKeyboardState(saved);
+        }
     }
 
     // placeholder (m3, B3-3): the row that stands in for a folder's children until it is opened, with the app's own

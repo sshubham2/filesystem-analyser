@@ -372,11 +372,17 @@ public partial class MainWindow : Window
 
     // The rows are sorted on the UI thread into an array of their own and replace the list's items whole;
     // the scroll position, in rows, is put back once layout has run. The time to that point is the refresh's.
+    // Replacing the items makes WPF unlink every row container: the keyboard focus drops onto the list and a row
+    // the tracker rebuilt as a new object loses its selection, so Ctrl+Enter finds no row (SL-100). The selected
+    // row is found again by its Path as the items are replaced, and the focus is put back on its new container once
+    // layout has run, only if the list or one of its rows had the focus and nothing took it since.
     private void ShowTopLevel(TopLevelSnapshot snapshot)
     {
         _refreshClock.Restart();
         ScrollViewer? scroll = TopLevelScroll();
         double offset = scroll?.VerticalOffset ?? 0;
+        string? selectedKey = (TopLevelList.SelectedItem as TopLevelRow)?.Path;
+        string? focusKey = FocusedRowKey(selectedKey);
         TopLevelRow[] rows = [.. snapshot.Rows];
         Array.Sort(rows, LargestFirst);
         _shownTopLevel = snapshot;
@@ -384,13 +390,52 @@ public partial class MainWindow : Window
             ? $"Largest at the top of {snapshot.Root}, so far. Rows marked reading are still growing."
             : "What was read before the stop. Rows marked not read yet or stopped partway are short.";
         TopLevelList.ItemsSource = rows;
+        if (selectedKey is not null && FindRow(rows, selectedKey) is { } selected && !ReferenceEquals(TopLevelList.SelectedItem, selected))
+            TopLevelList.SelectedItem = selected;
         TopLevelPanel.Visibility = Visibility.Visible;
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
         {
             scroll?.ScrollToVerticalOffset(offset);
+            if (focusKey is not null && ReferenceEquals(TopLevelList.ItemsSource, rows))
+                FocusRow(rows, focusKey);
             LastRefresh = _refreshClock.Elapsed;
             _skipNextRefresh = LastRefresh > SlowRefresh;
         });
+    }
+
+    // The Path of the row the keyboard focus is on, or of the selected row when the focus has come adrift (below);
+    // null when it is anywhere else (an open row menu, a button, the folder tree, another window, nothing in an
+    // inactive window), which a refresh never moves.
+    private string? FocusedRowKey(string? selectedKey)
+    {
+        IInputElement? focus = Keyboard.FocusedElement;
+        if (focus is ListBoxItem { DataContext: TopLevelRow row } item && ReferenceEquals(ItemsControl.ItemsControlFromItemContainer(item), TopLevelList))
+            return row.Path;
+        return FocusIsAdrift(focus) ? selectedKey : null;
+    }
+
+    // Where WPF leaves the keyboard focus when the element it would give it to is gone: on the list itself when the
+    // container the focus was on is unlinked, and on the window itself, in an active window, when a row menu closes or
+    // the window is activated again after a refresh unlinked the container the focus was last on (SL-100, measured).
+    // A person who put the focus on the window's blank space has it there too; moving it onto the row they last
+    // selected costs them nothing, and only a refresh of the list ever moves it.
+    private bool FocusIsAdrift(IInputElement? focus) =>
+        ReferenceEquals(focus, TopLevelList) || (IsActive && (focus is null || ReferenceEquals(focus, this)));
+
+    // Paths are compared as they are written: a case-sensitive folder can hold two names that differ only by case.
+    private static TopLevelRow? FindRow(TopLevelRow[] rows, string path) =>
+        Array.Find(rows, row => string.Equals(row.Path, path, StringComparison.Ordinal));
+
+    // Once the restored scroll offset has been laid out: the focus goes onto the new container of the row, if it
+    // is still adrift. A row outside the viewport has no container and is not scrolled to; the focus stays where it
+    // is and the next refresh that has the row in view puts it on the row.
+    private void FocusRow(TopLevelRow[] rows, string path)
+    {
+        if (!FocusIsAdrift(Keyboard.FocusedElement) || FindRow(rows, path) is not { } row)
+            return;
+        TopLevelList.UpdateLayout();
+        if (TopLevelList.ItemContainerGenerator.ContainerFromItem(row) is ListBoxItem container)
+            container.Focus();
     }
 
     private void ClearTopLevel()

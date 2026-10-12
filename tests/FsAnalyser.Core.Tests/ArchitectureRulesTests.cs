@@ -89,6 +89,9 @@ public class ArchitectureRulesTests
     /// Trait-gated class that unregisters its sync root, and the provider process under tests\CfProvider.
     /// The held-open rig under tests\HoldRig (SL-056) is a process of its own that reads metadata through
     /// handles, the observer the scan is checked against, so it shares nothing with Native either.
+    /// The window tests that press Ctrl+Enter with the thread's key state and make another window the active one
+    /// (SL-100) call user32 directly, which no Native call does: the repro project under tests\bugs\SL-100-ResultsListRefresh,
+    /// and the reveal mode of the window hook.
     /// </summary>
     [Fact]
     public void InteropLivesOnlyInNative()
@@ -97,7 +100,8 @@ public class ArchitectureRulesTests
                 .Where(f => !f.StartsWith(@"src\FsAnalyser.Core\Native\", StringComparison.OrdinalIgnoreCase))
                 .Where(f => !f.StartsWith(@"tests\CfProvider\", StringComparison.OrdinalIgnoreCase))
                 .Where(f => !f.StartsWith(@"tests\HoldRig\", StringComparison.OrdinalIgnoreCase))
-                .Except([@"tests\FsAnalyser.Core.Tests\TestNative.cs", @"tests\FsAnalyser.Core.Tests\CloudPlaceholderTests.cs"]),
+                .Where(f => !f.StartsWith(@"tests\bugs\SL-100-ResultsListRefresh\", StringComparison.OrdinalIgnoreCase))
+                .Except([@"tests\FsAnalyser.Core.Tests\TestNative.cs", @"tests\FsAnalyser.Core.Tests\CloudPlaceholderTests.cs", @"tests\window\FsaWindowHook\RevealMode.cs"]),
             @"(Library|Dll)Import");
     }
 
