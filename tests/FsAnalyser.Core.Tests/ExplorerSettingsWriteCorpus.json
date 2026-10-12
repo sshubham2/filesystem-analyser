@@ -1,5 +1,181 @@
 {
-  "_note": "SL-091 review n2, closed as a class: the spellings of a write that changes Explorer's Hidden or ShowSuperHidden setting, which the two write guards must catch, and the look-alikes they must leave. The class is bounded by who writes such a line by accident: in src, C# through Microsoft.Win32's registry API, the shell's own settings call with its set flag, or a Win32 or shlwapi registry write declared and called; in tests/window, a window script's ItemProperty cmdlets, reg.exe, the same .NET registry API from PowerShell (static and on a key, either quote), and C# in an Add-Type block or the hook. ExplorerSettingsWriteRuleTests feeds every line, alone, to the guard of its scope: 'src' rows to ArchitectureRulesTests.TheAppNeverWritesExplorersSettings's patterns, read from that Fact (twinned in .taad/fitness.yaml), and 'window' rows to the settled entry 'no window case or hook changes Explorer's view settings', read from .taad/fitness.yaml. 'now' is what the guard does today: fire, quiet, or miss (a known limit of a tripwire on names, pinned so a change to it is seen: a key path or value name held in a variable or constant, a call laid over two lines, a positional or abbreviated -Name). 'before' is what the patterns the SL-091 design declared did with the same line, kept in the test as they were handed to build: every row whose 'before' is quiet and 'now' fire is one the n2 fix closed. Fitness also blanks comments in .ps1 (#) and .cs (// and /* */) for the settled entry, and the twinned one matches comments too; no row here is a comment.",
+  "_note": "The class of lines that change Explorer's Hidden or ShowSuperHidden setting, which the two write guards must catch, and the look-alikes they must leave: bounded by who writes such a line by accident (bounded_by) and not closed against every spelling, because a regex over C# and PowerShell cannot close an open spelling space; what the guards cannot see is pinned as 'miss' rows so that a change to it is seen. First enumerated by SL-091 review n2 (B01-B29, W01-W34) and widened by SL-103 (B30-B51, W35-W73: the RegistryRights overloads of OpenSubKey, PowerShell's string, cast and all-string opens, deletes, reg import, the registry-provider cmdlets). The class is bounded by who writes such a line by accident: in src, C# through Microsoft.Win32's registry API, the shell's own settings call with its set flag, or a Win32 or shlwapi registry write or delete declared and called; in tests/window, a window script's ItemProperty and Item cmdlets, reg.exe, the same .NET registry API from PowerShell (static and on a key, either quote, string or enum rights), and C# in an Add-Type block or the hook. ExplorerSettingsWriteRuleTests feeds every line, alone, to the guard of its scope: 'src' rows to ArchitectureRulesTests.TheAppNeverWritesExplorersSettings's patterns, read from that Fact (twinned in .taad/fitness.yaml), and 'window' rows to the settled entry 'no window case or hook changes Explorer's view settings', read from .taad/fitness.yaml. 'now' is what the guard does today: fire, quiet, or miss (a known limit of a tripwire on names, pinned so a change to it is seen: a key path, value name or rights held in a variable or constant, a call laid over two lines, a positional or abbreviated -Name, a write through a handle, command aliases, .reg content, regedit /s, WMI StdRegProv). 'before' is what the patterns the SL-091 design declared did with the same line, kept in the test as they were handed to build; it is not the code before SL-103. Every row whose 'before' is quiet and 'now' fire was closed after the design declared its patterns: by the SL-091 n2 fix for the rows up to B29 and W34, and by SL-103 for the ids in closed_by, which also names the commit and the command that fail them again. Fitness also blanks comments in .ps1 (#) and .cs (// and /* */) for the settled entry, and the twinned one matches comments too; no row here is a comment.",
+  "bounded_by": {
+    "producers": "Who writes a line that changes Explorer's Hidden or ShowSuperHidden by accident. In src: C# through Microsoft.Win32's registry API, the shell's settings call with its set flag, or a Win32 or shlwapi registry write or delete declared and called. In tests/window: a window script or the hook, using the registry-provider cmdlets, reg.exe, the same .NET registry API from PowerShell, or C# in an Add-Type block.",
+    "member": "One line that opens Explorer\\Advanced writable or with write-capable rights, sets, deletes, imports, copies, moves, renames or recreates its Hidden or ShowSuperHidden value or the key itself, in a spelling an ordinary producer reaches for.",
+    "write_capable_rights": "RegistryRights.SetValue, WriteKey and FullControl, alone or combined. ReadKey and QueryValues cannot write, and CreateSubKey was measured unable to: RegSetValueExW on a handle opened with it returned 5 (SL-103, Sandbox), so B38 is quiet and the issue's marker, which included CreateSubKey, is deliberately not adopted for that word.",
+    "run_time_facts": ["A key opened with a write-capable RegistryRights value has a handle that changes Hidden through RegistryKey.FromHandle(handle).SetValue or RegSetValueExW (2 to 1 in the Sandbox), while a managed key.SetValue on it throws 'Cannot write to the registry key' (dotnet/runtime#113535, an open proposal).", "PowerShell binds a non-empty quoted string second argument of OpenSubKey to the (string, bool) overload as $true, so 'ReadKey' and 'False' open the key fully writable (measured: state 4, managed SetValue ok).", "Deleting Hidden changes the effective setting a fresh process reads through SHGetSetSettings (showAll 1 to 0).", "New-Item -Force on an existing registry key recreates it empty (PowerShell/PowerShell#5444)."],
+    "aliases_are_a_known_gap": "Command aliases (rm, ri, del, sp, rp, clp, cli ...) are not matched, as in the RuleCases Remove-Item rule; the scripts under tests/window use none. W69 and W70 pin that.",
+    "outside_the_bound": {
+      "rows": ["B27", "B28", "B29", "B39", "W32", "W33", "W34", "W45", "W53", "W54", "W56", "W59", "W69", "W70"],
+      "why": "A name, path or rights held in a variable or constant, a call over two lines, a write through a handle, command aliases and a positional -Name need a resolver, not a tripwire on names. A .reg file is inert until something imports it, and the import line fires; Fitness (taad_v3 backend/taad3/fitness.py content_hits) reads a UTF-16LE .reg, which is what reg export writes, as UTF-8, so no content pattern could see W53 or W54. regedit /s and WMI StdRegProv are deliberate routes, not spellings of the producer above."
+    },
+    "not_pinned": "Rights held in a variable (OpenSubKey(path, rights)), a using alias of RegistryRights, and a key path split over a parent open and a child call pass both guards and have no row yet; neither does a multi-line plant in the repo's real layout. Carried to the backlog as SC-308 (the census is not checked against the rows), SC-309 and SC-310.",
+    "next_step_if_this_reopens": "Do not add a fourth batch of patterns (lesson #400). Use a spelling-independent check: a PowerShell AST check for tests/window, which P-004 already loads scripts through, and a symbol-level banned-API check for src. Filed, not built."
+  },
+  "aliases": {
+    "open-writable": {
+      "OpenSubKey(path, true) or writable: true": ["B07", "B08", "B10", "W16"],
+      "OpenSubKey(path, RegistryKeyPermissionCheck.ReadWriteSubTree)": ["B09"],
+      "OpenSubKey(path, RegistryRights.X) and (path, check, RegistryRights.X) for X in SetValue, WriteKey, FullControl: short, fully qualified, | combined, behind any check, named rights:, through OpenBaseKey, doubled-backslash path": ["B30", "B31", "B33", "B34", "B35", "B36", "B37", "B40", "W43"],
+      "[RegistryRights]::X from PowerShell, -bor combined, behind [RegistryKeyPermissionCheck]::Default": ["W35", "W41", "W42"],
+      "a quoted string as the only second argument, bound as $true": ["W36", "W37", "W38", "W46", "W55"],
+      "[RegistryRights]'X' cast, one name or a flags string": ["W39", "W65", "W66"],
+      "all-string OpenBaseKey(...).OpenSubKey(path, 'Default', 'X')": ["W40", "W67"],
+      "read-only, must stay quiet: one argument, $false, ReadKey, QueryValues, CreateSubKey rights, read-only flags string": ["B21", "B32", "B38", "B41", "W29", "W44", "W47", "W68", "W73"],
+      "write intent behind the open: path held in a constant, open over two lines": ["B28", "B29"]
+    },
+    "set-value": {
+      "key.SetValue(\"Hidden\" or \"ShowSuperHidden\") in any case, verbatim string": ["B03", "B04", "B05", "B06"],
+      "$key.SetValue('Hidden') in either quote, C# in an Add-Type block or the hook": ["W14", "W15", "W21"],
+      "static Registry.SetValue(path, name, value) and [Registry]::SetValue": ["B11", "B12", "W12", "W13"],
+      "Win32 and shlwapi names: RegSetValueEx, RegSetKeyValue, SHSetValue, declared or called": ["B15", "B16", "B17", "B18", "W22"],
+      "the shell's SHGetSetSettings with the set flag true": ["B01", "B02", "W18", "W19", "W20"],
+      "value name or handle held in a constant or variable": ["B27", "B39", "W33", "W45"]
+    },
+    "delete-value": {
+      "key.DeleteValue(\"Hidden\" or \"ShowSuperHidden\"[, false]) and $key.DeleteValue('Hidden')": ["B42", "B43", "W48"],
+      "Win32 and shlwapi names: RegDeleteValue, RegDeleteKeyValue(W), SHDeleteValue, RegDeleteTree": ["B45", "B46", "B47", "B48", "B49", "W57"],
+      "Remove-ItemProperty, Clear-ItemProperty on the key": ["W06", "W07"],
+      "reg delete": ["W11"],
+      "another value deleted, must stay quiet": ["B51"]
+    },
+    "delete-key": {
+      "DeleteSubKey and DeleteSubKeyTree of Explorer\\Advanced": ["B44", "B50", "W50"],
+      "Remove-Item of the key": ["W49"],
+      "Clear-Item of the key (removes every value)": ["W61"],
+      "New-Item -Force on the key (recreates it empty)": ["W60"],
+      "CreateSubKey of the key (opens it writable)": ["B13", "B14", "W17"]
+    },
+    "provider-cmdlet-on-value": {
+      "Set-, New-, Remove-, Clear-ItemProperty on the key's path or naming Hidden with -Name": ["W01", "W02", "W03", "W04", "W05", "W06", "W07", "W08"],
+      "Copy-, Move-, Rename-ItemProperty": ["W62", "W63", "W64"],
+      "aliases (rm, sp), positional or abbreviated -Name": ["W32", "W34", "W69", "W70"],
+      "reads and unrelated items, must stay quiet": ["W23", "W24", "W25", "W27", "W71", "W72"]
+    },
+    "import": {
+      "reg import and reg.exe import, whatever key the file names": ["W51", "W52"],
+      "reg add on the path, or /v Hidden with the path held in a variable": ["W09", "W10", "W58"],
+      ".reg file content": ["W53", "W54"],
+      "regedit /s and WMI StdRegProv": ["W56", "W59"]
+    }
+  },
+  "census": [
+    {
+      "type": "Microsoft.Win32.Registry",
+      "members": [
+        { "member": "SetValue(keyName, valueName, value)", "scope": "both", "verdict": "fire", "rows": ["B11", "B12", "W12", "W13"] },
+        { "member": "CurrentUser and the other root properties", "scope": "both", "verdict": "out", "why": "only the route to a key; the call made on it is what is judged" }
+      ]
+    },
+    {
+      "type": "Microsoft.Win32.RegistryKey",
+      "members": [
+        { "member": "OpenSubKey(string)", "scope": "both", "verdict": "quiet", "rows": ["B21", "W29"] },
+        { "member": "OpenSubKey(string, bool)", "scope": "both", "verdict": "fire", "rows": ["B07", "B08", "B10", "W16"] },
+        { "member": "OpenSubKey(string, bool) with false", "scope": "window", "verdict": "quiet", "rows": ["W47"] },
+        { "member": "OpenSubKey(string, RegistryKeyPermissionCheck) with ReadWriteSubTree", "scope": "src", "verdict": "fire", "rows": ["B09"] },
+        { "member": "OpenSubKey(string, RegistryRights) and (string, RegistryKeyPermissionCheck, RegistryRights), write-capable rights", "scope": "both", "verdict": "fire", "rows": ["B30", "B31", "B33", "B34", "B35", "B36", "B37", "B40", "W35", "W41", "W42", "W43"] },
+        { "member": "OpenSubKey with read-only or CreateSubKey rights", "scope": "both", "verdict": "quiet", "rows": ["B32", "B38", "B41", "W44", "W68", "W73"] },
+        { "member": "OpenSubKey from PowerShell with a quoted string, a [RegistryRights] cast, or all-string arguments", "scope": "window", "verdict": "fire", "rows": ["W36", "W37", "W38", "W39", "W40", "W46", "W55", "W65", "W66", "W67"] },
+        { "member": "OpenBaseKey(...).OpenSubKey(...)", "scope": "both", "verdict": "fire", "rows": ["B33", "W40", "W67"] },
+        { "member": "CreateSubKey(path)", "scope": "both", "verdict": "fire", "rows": ["B13", "B14", "W17"] },
+        { "member": "SetValue(name, value) with a literal Hidden or ShowSuperHidden", "scope": "both", "verdict": "fire", "rows": ["B03", "B04", "B05", "B06", "W14", "W15", "W21"] },
+        { "member": "SetValue(name, value) with a constant or variable name", "scope": "both", "verdict": "miss", "rows": ["B27", "W33"] },
+        { "member": "FromHandle(handle).SetValue(...)", "scope": "both", "verdict": "miss", "rows": ["B39", "W45"] },
+        { "member": "DeleteValue(\"Hidden\" or \"ShowSuperHidden\")", "scope": "both", "verdict": "fire", "rows": ["B42", "B43", "W48"] },
+        { "member": "DeleteValue of another value", "scope": "src", "verdict": "quiet", "rows": ["B51"] },
+        { "member": "DeleteSubKey and DeleteSubKeyTree of Explorer\\Advanced", "scope": "both", "verdict": "fire", "rows": ["B44", "B50", "W50"] },
+        { "member": "GetValue", "scope": "src", "verdict": "quiet", "rows": ["B22"] },
+        { "member": "OpenSubKey with the path held in a constant, or the call over two lines", "scope": "src", "verdict": "miss", "rows": ["B28", "B29"] }
+      ]
+    },
+    {
+      "type": "System.Security.AccessControl.RegistryRights",
+      "members": [
+        { "member": "SetValue, WriteKey, FullControl, alone or combined", "scope": "both", "verdict": "fire", "rows": ["B30", "B31", "B33", "B34", "B35", "B36", "B37", "B40", "W35", "W41", "W42", "W43", "W65", "W66"] },
+        { "member": "ReadKey, QueryValues, and read-only flags strings", "scope": "both", "verdict": "quiet", "rows": ["B32", "B41", "W44", "W68"] },
+        { "member": "CreateSubKey", "scope": "src", "verdict": "quiet", "rows": ["B38"], "why": "the handle cannot write Hidden (RegSetValueExW returned 5)" }
+      ]
+    },
+    {
+      "type": "Microsoft.Win32.RegistryKeyPermissionCheck",
+      "members": [
+        { "member": "ReadWriteSubTree", "scope": "src", "verdict": "fire", "rows": ["B09"] },
+        { "member": "Default and ReadSubTree beside write-capable rights", "scope": "both", "verdict": "fire", "rows": ["B31", "B34", "W42"] }
+      ]
+    },
+    {
+      "type": "advapi32",
+      "members": [
+        { "member": "RegSetValue*, RegSetKeyValue*", "scope": "both", "verdict": "fire", "rows": ["B15", "B16", "B18", "W22"] },
+        { "member": "RegDelete* (RegDeleteValue, RegDeleteKeyValue, RegDeleteKey, RegDeleteTree), declared or called", "scope": "both", "verdict": "fire", "rows": ["B45", "B46", "B48", "B49", "W57"] }
+      ]
+    },
+    {
+      "type": "shlwapi",
+      "members": [
+        { "member": "SHSetValue*, SHRegSetUSValue*", "scope": "src", "verdict": "fire", "rows": ["B17"] },
+        { "member": "SHDelete* (SHDeleteValue, SHDeleteKey, SHDeleteEmptyKey)", "scope": "src", "verdict": "fire", "rows": ["B47"] }
+      ]
+    },
+    {
+      "type": "shell32",
+      "members": [
+        { "member": "SHGetSetSettings with the set flag true", "scope": "both", "verdict": "fire", "rows": ["B01", "B02", "W18", "W19", "W20"] },
+        { "member": "SHGetSetSettings read", "scope": "both", "verdict": "quiet", "rows": ["B19", "B20", "W30"] }
+      ]
+    },
+    {
+      "type": "registry-provider cmdlets",
+      "members": [
+        { "member": "Set-, New-, Remove-, Clear-ItemProperty on the key or naming Hidden with -Name", "scope": "window", "verdict": "fire", "rows": ["W01", "W02", "W03", "W04", "W05", "W06", "W07", "W08"] },
+        { "member": "Copy-, Move-, Rename-ItemProperty", "scope": "window", "verdict": "fire", "rows": ["W62", "W63", "W64"] },
+        { "member": "New-Item, Clear-Item, Remove-Item on the key", "scope": "window", "verdict": "fire", "rows": ["W49", "W60", "W61"] },
+        { "member": "Get-ItemProperty, Get-ItemPropertyValue, and New-Item or Remove-Item of an unrelated path", "scope": "window", "verdict": "quiet", "rows": ["W23", "W24", "W25", "W71", "W72"] },
+        { "member": "command aliases, positional or abbreviated -Name", "scope": "window", "verdict": "miss", "rows": ["W32", "W34", "W69", "W70"] }
+      ]
+    },
+    {
+      "type": "reg.exe",
+      "members": [
+        { "member": "add on the key, or /v Hidden|ShowSuperHidden", "scope": "window", "verdict": "fire", "rows": ["W09", "W10", "W58"] },
+        { "member": "delete", "scope": "window", "verdict": "fire", "rows": ["W11"] },
+        { "member": "import", "scope": "window", "verdict": "fire", "rows": ["W51", "W52"] }
+      ]
+    },
+    {
+      "type": "regedit.exe",
+      "members": [
+        { "member": "/s <file>", "scope": "window", "verdict": "miss", "rows": ["W56"], "why": "a deliberate route, outside the producer bound" }
+      ]
+    },
+    {
+      "type": ".reg file content",
+      "members": [
+        { "member": "the key header and the Hidden value line", "scope": "window", "verdict": "miss", "rows": ["W53", "W54"], "why": "Fitness reads a UTF-16LE file as UTF-8; the import line is what fires" }
+      ]
+    },
+    {
+      "type": "WMI StdRegProv",
+      "members": [
+        { "member": "SetDWORDValue and the other methods", "scope": "window", "verdict": "miss", "rows": ["W59"], "why": "a deliberate route, outside the producer bound" }
+      ]
+    },
+    {
+      "type": "System.IO.File attributes (not Explorer's setting)",
+      "members": [
+        { "member": "File.SetAttributes, Set-ItemProperty -Name Attributes", "scope": "both", "verdict": "quiet", "rows": ["B23", "W26", "W27"] }
+      ]
+    }
+  ],
+  "closed_by": {
+    "slice": "SL-103",
+    "pre_fix_commit": "1105c3f",
+    "ids": ["B30", "B31", "B33", "B34", "B35", "B36", "B37", "B40", "B42", "B43", "B44", "B45", "B46", "B47", "B48", "B49", "B50", "W35", "W36", "W37", "W38", "W39", "W40", "W41", "W42", "W43", "W46", "W48", "W49", "W50", "W51", "W52", "W57", "W58", "W60", "W61", "W62", "W63", "W64", "W65", "W66", "W67"],
+    "how_to_repeat": "Put .taad/fitness.yaml and tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs as they were at 1105c3f beside this corpus (git show 1105c3f:<path>) and run: pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~ExplorerSettingsWriteRuleTests. Exactly these ids fail. The build recorded that run when the rows were added and before any pattern changed: 42 failed, and the other 82 rows and the corpus Fact passed.",
+    "not_in_the_list": "W55 fires both before and after (the word true caught 'True' already) and is the control that the quoted-argument branch still fires for a string; B38 is quiet in both."
+  },
   "rows": [
     { "id": "B01", "scope": "src", "now": "fire", "before": "fire", "line": "        SHGetSetSettings(state, SSF_SHOWALLOBJECTS, true);", "note": "the shell's settings call with its set flag" },
     { "id": "B02", "scope": "src", "now": "fire", "before": "fire", "line": "        SHGetSetSettings(state, mask, bSet: true);", "note": "the set flag named" },
@@ -30,6 +206,28 @@
     { "id": "B27", "scope": "src", "now": "miss", "before": "quiet", "line": "        key.SetValue(HiddenValueName, 2);", "note": "known limit: the value name held in a constant" },
     { "id": "B28", "scope": "src", "now": "miss", "before": "quiet", "line": "        using var key = Registry.CurrentUser.OpenSubKey(AdvancedKeyPath, writable: true);", "note": "known limit: the key's path held in a constant" },
     { "id": "B29", "scope": "src", "now": "miss", "before": "quiet", "line": "        using var key = Registry.CurrentUser.OpenSubKey(@\"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\",", "note": "known limit: a writable open laid over two lines, its first line; the second holds only the flag" },
+    { "id": "B30", "scope": "src", "now": "fire", "before": "quiet", "line": "        using var key = Registry.CurrentUser.OpenSubKey(@\"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\", RegistryRights.SetValue);", "note": "SL-103 m1: OpenSubKey(string, RegistryRights) with SetValue; the handle can write (RegSetValueEx, RegistryKey.FromHandle) though a managed SetValue on it throws (dotnet/runtime#113535)" },
+    { "id": "B31", "scope": "src", "now": "fire", "before": "quiet", "line": "        using var key = Registry.CurrentUser.OpenSubKey(@\"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\", RegistryKeyPermissionCheck.Default, RegistryRights.FullControl);", "note": "SL-103 m1: OpenSubKey(string, RegistryKeyPermissionCheck.Default, RegistryRights.FullControl); same handle behaviour as B30" },
+    { "id": "B32", "scope": "src", "now": "quiet", "before": "quiet", "line": "        using var key = Registry.CurrentUser.OpenSubKey(@\"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\", RegistryRights.ReadKey);", "note": "rights overload with ReadKey: the handle cannot write Hidden, so the guard must not turn every RegistryRights open into a violation" },
+    { "id": "B33", "scope": "src", "now": "fire", "before": "quiet", "line": "        using var key = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Default).OpenSubKey(@\"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\", RegistryRights.WriteKey);", "note": "SL-103 m1: OpenBaseKey(...).OpenSubKey(string, RegistryRights.WriteKey); the handle writes through FromHandle or RegSetValueEx (dotnet/runtime#113535)" },
+    { "id": "B34", "scope": "src", "now": "fire", "before": "quiet", "line": "        using var key = Registry.CurrentUser.OpenSubKey(@\"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\", RegistryKeyPermissionCheck.ReadSubTree, RegistryRights.SetValue);", "note": "rights overload behind a ReadSubTree check, the rights still SetValue" },
+    { "id": "B35", "scope": "src", "now": "fire", "before": "quiet", "line": "        using var key = Registry.CurrentUser.OpenSubKey(@\"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\", RegistryRights.QueryValues | RegistryRights.SetValue);", "note": "rights combined with |, one of them SetValue" },
+    { "id": "B36", "scope": "src", "now": "fire", "before": "quiet", "line": "        using var key = Registry.CurrentUser.OpenSubKey(@\"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\", System.Security.AccessControl.RegistryRights.SetValue);", "note": "rights fully qualified" },
+    { "id": "B37", "scope": "src", "now": "fire", "before": "quiet", "line": "        using var key = Registry.CurrentUser.OpenSubKey(@\"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\", rights: RegistryRights.SetValue);", "note": "rights passed as a named argument" },
+    { "id": "B38", "scope": "src", "now": "quiet", "before": "quiet", "line": "        using var key = Registry.CurrentUser.OpenSubKey(@\"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\", RegistryRights.CreateSubKey);", "note": "SL-103: RegistryRights.CreateSubKey is deliberately NOT a write marker. In the Sandbox, RegSetValueExW on a handle opened with it returned 5 (access denied) and FromHandle(...).SetValue threw, so the handle cannot change Hidden; the issue's marker would have fired here, and the measurement outranks it" },
+    { "id": "B39", "scope": "src", "now": "miss", "before": "quiet", "line": "        RegistryKey.FromHandle(key.Handle).SetValue(HiddenName, 1);", "note": "known limit: a constant value name written through the handle of a rights-opened key; only the open line names Explorer\\Advanced (the write itself changed Hidden 2 to 1 in the Sandbox)" },
+    { "id": "B40", "scope": "src", "now": "fire", "before": "quiet", "line": "        using var key = Registry.CurrentUser.OpenSubKey(\"Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Explorer\\\\Advanced\", RegistryRights.SetValue);", "note": "rights overload with the path in an escaped (non-verbatim) string, two backslashes per separator as B08" },
+    { "id": "B41", "scope": "src", "now": "quiet", "before": "quiet", "line": "        using var key = Registry.CurrentUser.OpenSubKey(@\"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\", RegistryRights.QueryValues);", "note": "rights overload with QueryValues: the handle cannot write" },
+    { "id": "B42", "scope": "src", "now": "fire", "before": "quiet", "line": "        key.DeleteValue(\"Hidden\");", "note": "SL-103: a key's DeleteValue of Hidden; deleting it changed the effective setting a fresh process reads (showAll 1 to 0)" },
+    { "id": "B43", "scope": "src", "now": "fire", "before": "quiet", "line": "        key.DeleteValue(\"ShowSuperHidden\", false);", "note": "a key's DeleteValue of ShowSuperHidden, throwOnMissingValue false" },
+    { "id": "B44", "scope": "src", "now": "fire", "before": "quiet", "line": "        Registry.CurrentUser.DeleteSubKeyTree(@\"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\");", "note": "DeleteSubKeyTree of Explorer\\Advanced removes every value in it" },
+    { "id": "B45", "scope": "src", "now": "fire", "before": "quiet", "line": "    private static extern int RegDeleteValue(IntPtr hKey, string name);", "note": "the Win32 value delete declared (advapi32)" },
+    { "id": "B46", "scope": "src", "now": "fire", "before": "quiet", "line": "    private static extern int RegDeleteKeyValue(IntPtr hKey, string subKey, string name);", "note": "the Win32 key-value delete declared" },
+    { "id": "B47", "scope": "src", "now": "fire", "before": "quiet", "line": "    private static extern int SHDeleteValue(IntPtr hKey, string subKey, string name);", "note": "shlwapi's value delete declared" },
+    { "id": "B48", "scope": "src", "now": "fire", "before": "quiet", "line": "        int error = RegDeleteKeyValueW(HKEY_CURRENT_USER, @\"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\", \"Hidden\");", "note": "the Win32 key-value delete called on Explorer\\Advanced, with the W suffix" },
+    { "id": "B49", "scope": "src", "now": "fire", "before": "quiet", "line": "    private static extern int RegDeleteTree(IntPtr hKey, string subKey);", "note": "RegDeleteTree declared: the RegDelete name prefix covers the whole delete family, not only the three names measured" },
+    { "id": "B50", "scope": "src", "now": "fire", "before": "quiet", "line": "        Registry.CurrentUser.DeleteSubKey(@\"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\", false);", "note": "DeleteSubKey of Explorer\\Advanced" },
+    { "id": "B51", "scope": "src", "now": "quiet", "before": "quiet", "line": "        key.DeleteValue(\"HiddenColumns\");", "note": "another value whose name starts with Hidden, deleted" },
 
     { "id": "W01", "scope": "window", "now": "fire", "before": "fire", "line": "Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced' -Name Hidden -Value 2", "note": "the cmdlet on the key's path" },
     { "id": "W02", "scope": "window", "now": "fire", "before": "fire", "line": "New-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced' -Name ShowSuperHidden -Value 1 -PropertyType DWord -Force", "note": "New-ItemProperty on the key's path" },
@@ -64,6 +262,45 @@
     { "id": "W31", "scope": "window", "now": "quiet", "before": "quiet", "line": "    Check ($row.hiddenBy -ceq 'HiddenFiles') 'refused for hidden files'", "note": "a check on the reveal record" },
     { "id": "W32", "scope": "window", "now": "miss", "before": "quiet", "line": "Set-ItemProperty $adv Hidden 2", "note": "known limit: -Name given by position" },
     { "id": "W33", "scope": "window", "now": "miss", "before": "quiet", "line": "$key.SetValue($name, 2)", "note": "known limit: the value name held in a variable" },
-    { "id": "W34", "scope": "window", "now": "miss", "before": "quiet", "line": "Set-ItemProperty -Path $adv -N Hidden -Value 2", "note": "known limit: -Name abbreviated" }
+    { "id": "W34", "scope": "window", "now": "miss", "before": "quiet", "line": "Set-ItemProperty -Path $adv -N Hidden -Value 2", "note": "known limit: -Name abbreviated" },
+    { "id": "W35", "scope": "window", "now": "fire", "before": "quiet", "line": "$adv = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced', [System.Security.AccessControl.RegistryRights]::SetValue)", "note": "SL-103 m1: [RegistryRights]::SetValue from PowerShell; the handle can write (dotnet/runtime#113535)" },
+    { "id": "W36", "scope": "window", "now": "fire", "before": "quiet", "line": "$adv = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced', 'SetValue')", "note": "PowerShell binds a quoted string second argument to OpenSubKey(string, bool) as $true: the key is fully writable" },
+    { "id": "W37", "scope": "window", "now": "fire", "before": "quiet", "line": "$adv = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced', 'ReadKey')", "note": "'ReadKey' as a string binds as $true: fully writable, though its author believes it read-only" },
+    { "id": "W38", "scope": "window", "now": "fire", "before": "quiet", "line": "$adv = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced', 'False')", "note": "'False' as a string binds as $true (measured: state 4, managed SetValue ok)" },
+    { "id": "W39", "scope": "window", "now": "fire", "before": "quiet", "line": "$adv = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced', [Security.AccessControl.RegistryRights]'SetValue')", "note": "a [RegistryRights] cast of a string; the handle can write (dotnet/runtime#113535)" },
+    { "id": "W40", "scope": "window", "now": "fire", "before": "quiet", "line": "$adv = [Microsoft.Win32.RegistryKey]::OpenBaseKey('CurrentUser', 'Default').OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced', 'Default', 'FullControl')", "note": "OpenBaseKey with every argument a string, rights FullControl" },
+    { "id": "W41", "scope": "window", "now": "fire", "before": "quiet", "line": "$adv = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced', [System.Security.AccessControl.RegistryRights]::QueryValues -bor [System.Security.AccessControl.RegistryRights]::SetValue)", "note": "rights combined with -bor" },
+    { "id": "W42", "scope": "window", "now": "fire", "before": "quiet", "line": "$adv = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced', [Microsoft.Win32.RegistryKeyPermissionCheck]::Default, [System.Security.AccessControl.RegistryRights]::FullControl)", "note": "[RegistryKeyPermissionCheck]::Default with [RegistryRights]::FullControl" },
+    { "id": "W43", "scope": "window", "now": "fire", "before": "quiet", "line": "        using var key = Registry.CurrentUser.OpenSubKey(@\"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\", RegistryRights.SetValue);", "note": "the hook's or an Add-Type block's C# rights overload" },
+    { "id": "W44", "scope": "window", "now": "quiet", "before": "quiet", "line": "$adv = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced', [System.Security.AccessControl.RegistryRights]::ReadKey)", "note": "[RegistryRights]::ReadKey: the handle cannot write" },
+    { "id": "W45", "scope": "window", "now": "miss", "before": "quiet", "line": "[Microsoft.Win32.RegistryKey]::FromHandle($adv.Handle).SetValue($name, 1)", "note": "known limit: a variable value name written through the handle; only the open line names Explorer\\Advanced" },
+    { "id": "W46", "scope": "window", "now": "fire", "before": "quiet", "line": "$adv = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced', 'QueryValues')", "note": "'QueryValues' as a string binds as $true: fully writable" },
+    { "id": "W47", "scope": "window", "now": "quiet", "before": "quiet", "line": "$adv = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced', $false)", "note": "$false: read-only" },
+    { "id": "W48", "scope": "window", "now": "fire", "before": "quiet", "line": "$adv.DeleteValue('Hidden')", "note": "a key's DeleteValue of Hidden from PowerShell" },
+    { "id": "W49", "scope": "window", "now": "fire", "before": "quiet", "line": "Remove-Item -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced' -Recurse", "note": "Remove-Item of Explorer\\Advanced" },
+    { "id": "W50", "scope": "window", "now": "fire", "before": "quiet", "line": "[Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced')", "note": "DeleteSubKeyTree of Explorer\\Advanced from PowerShell" },
+    { "id": "W51", "scope": "window", "now": "fire", "before": "quiet", "line": "reg import $env:TEMP\\adv.reg", "note": "reg import of a .reg file, whatever key the file names" },
+    { "id": "W52", "scope": "window", "now": "fire", "before": "quiet", "line": "& reg.exe import \"$PSScriptRoot\\explorer-advanced.reg\"", "note": "reg.exe import" },
+    { "id": "W53", "scope": "window", "now": "miss", "before": "quiet", "line": "[HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced]", "note": "known limit: a .reg file's Explorer\\Advanced header; Fitness reads a UTF-16LE .reg (what reg export writes) as UTF-8, so no content pattern could see it, and the import line is what fires" },
+    { "id": "W54", "scope": "window", "now": "miss", "before": "quiet", "line": "\"Hidden\"=dword:00000001", "note": "known limit: a .reg file's Hidden value line, same reason as W53" },
+    { "id": "W55", "scope": "window", "now": "fire", "before": "quiet", "line": "$adv = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced', 'True')", "note": "'True' as a string, caught before SL-103 by the word true: the control that shows the quoted-argument branch still fires for a string" },
+    { "id": "W56", "scope": "window", "now": "miss", "before": "quiet", "line": "regedit.exe /s \"$PSScriptRoot\\explorer-advanced.reg\"", "note": "known limit: regedit /s imports a .reg file silently; a deliberate route, outside the producer bound" },
+    { "id": "W57", "scope": "window", "now": "fire", "before": "quiet", "line": "        int error = RegDeleteKeyValueW(HKEY_CURRENT_USER, @\"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\", \"Hidden\");", "note": "the Win32 key-value delete in an Add-Type block or the hook" },
+    { "id": "W58", "scope": "window", "now": "fire", "before": "quiet", "line": "reg add $adv /v Hidden /t REG_DWORD /d 1 /f", "note": "reg add with the key's path in a variable and the value named: the same producer as W03, Set-ItemProperty $adv -Name Hidden" },
+    { "id": "W59", "scope": "window", "now": "miss", "before": "quiet", "line": "Invoke-CimMethod -Namespace root\\default -ClassName StdRegProv -MethodName SetDWORDValue -Arguments @{ hDefKey = [uint32]2147483649; sSubKeyName = 'Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced'; sValueName = 'Hidden'; uValue = [uint32]1 }", "note": "known limit: WMI StdRegProv writes the registry without any of the spellings the guard names; a deliberate route" },
+    { "id": "W60", "scope": "window", "now": "fire", "before": "quiet", "line": "New-Item -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced' -Force | Out-Null", "note": "SL-103 review M1: New-Item -Force on an existing registry key recreates it empty, deleting its values (PowerShell/PowerShell#5444); the everyday 'make sure the key exists' idiom" },
+    { "id": "W61", "scope": "window", "now": "fire", "before": "quiet", "line": "Clear-Item -LiteralPath 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced'", "note": "SL-103 review M1: Clear-Item on the key removes every value and keeps the key" },
+    { "id": "W62", "scope": "window", "now": "fire", "before": "quiet", "line": "Copy-ItemProperty -Path $backup -Destination $adv -Name Hidden", "note": "SL-103 review M1: the 'save then restore' move of Hidden, with the key held in a variable" },
+    { "id": "W63", "scope": "window", "now": "fire", "before": "quiet", "line": "Move-ItemProperty -Path $adv -Destination $backup -Name ShowSuperHidden", "note": "SL-103 review M1: Move-ItemProperty takes the value off the key" },
+    { "id": "W64", "scope": "window", "now": "fire", "before": "quiet", "line": "Rename-ItemProperty -LiteralPath $adv -Name Hidden -NewName HiddenOld", "note": "SL-103 review M1: Rename-ItemProperty leaves the setting unset" },
+    { "id": "W65", "scope": "window", "now": "fire", "before": "quiet", "line": "$adv = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced', [System.Security.AccessControl.RegistryRights]'QueryValues, SetValue')", "note": "SL-103 review M2: the flags-string cast, how this repo's window scripts write combined flags (as [System.IO.FileAttributes]'Hidden, System'); the rights include SetValue" },
+    { "id": "W66", "scope": "window", "now": "fire", "before": "quiet", "line": "$adv = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced', [System.Security.AccessControl.RegistryRights]'SetValue, QueryValues')", "note": "SL-103 review M2: the same flags string with SetValue first" },
+    { "id": "W67", "scope": "window", "now": "fire", "before": "quiet", "line": "$adv = [Microsoft.Win32.RegistryKey]::OpenBaseKey('CurrentUser', 'Default').OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced', 'Default', 'QueryValues, SetValue')", "note": "SL-103 review M2: the all-string three-argument open with a flags string" },
+    { "id": "W68", "scope": "window", "now": "quiet", "before": "quiet", "line": "$adv = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced', [System.Security.AccessControl.RegistryRights]'ReadKey, QueryValues')", "note": "SL-103 review M2: a flags-string cast of read-only rights" },
+    { "id": "W69", "scope": "window", "now": "miss", "before": "quiet", "line": "rm 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced' -Recurse", "note": "known limit: command aliases are a known gap, as in the RuleCases Remove-Item rule; the scripts under tests/window use none (SL-103 review m1)" },
+    { "id": "W70", "scope": "window", "now": "miss", "before": "quiet", "line": "sp $adv -Name Hidden -Value 1", "note": "known limit: sp is Set-ItemProperty's alias, and aliases are a known gap (SL-103 review m1)" },
+    { "id": "W71", "scope": "window", "now": "quiet", "before": "quiet", "line": "New-Item -ItemType Directory -Force -Path $root | Out-Null", "note": "New-Item with -Force on a folder: the New-Item branch needs Explorer\\Advanced on the line" },
+    { "id": "W72", "scope": "window", "now": "quiet", "before": "quiet", "line": "Remove-Item -LiteralPath $dir -Recurse -Force", "note": "Remove-Item of a scratch folder, which the window scripts do everywhere" },
+    { "id": "W73", "scope": "window", "now": "quiet", "before": "quiet", "line": "$adv = [Microsoft.Win32.RegistryKey]::OpenBaseKey('CurrentUser', 'Default').OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced', 'Default', 'ReadKey')", "note": "the all-string three-argument open with read-only rights" }
   ]
 }

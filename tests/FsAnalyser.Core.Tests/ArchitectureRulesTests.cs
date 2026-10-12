@@ -272,21 +272,24 @@ public class ArchitectureRulesTests
     /// <summary>
     /// The app never writes Explorer's settings (SL-091, Q-169, Q-175): it reads Explorer's view to decide a reveal and
     /// never changes it. Each pattern holds on one line, so this per-line match fires where Fitness's whole-file match does
-    /// (SL-087). They name the write spellings an ordinary C# producer reaches for, closed as a class (review n2) in
-    /// ExplorerSettingsWriteCorpus.json, which ExplorerSettingsWriteRuleTests feeds to these patterns, read from here. A
-    /// tripwire on names: a key path or value name held in a variable, or a call laid over two lines, passes it. Comments
-    /// are matched too.
+    /// (SL-087). They name the write spellings an ordinary C# producer reaches for, bounded by who writes such a line by
+    /// accident and not closed against every spelling (review n2, widened by SL-103): the shell call with its set flag, a
+    /// key's SetValue or DeleteValue of either value, a writable OpenSubKey of Explorer\Advanced (true, ReadWriteSubTree or
+    /// a RegistryRights overload with SetValue, WriteKey or FullControl), CreateSubKey, DeleteSubKey and DeleteSubKeyTree of
+    /// it, the static Registry.SetValue, and the Win32 and shlwapi registry writes and deletes. ExplorerSettingsWriteCorpus.json
+    /// pins them, and feeds them to these patterns, read from here. A tripwire on names: a key path or value name held in a
+    /// variable or constant, rights held in a variable, or a call laid over two lines, passes it. Comments are matched too.
     /// </summary>
     [Fact]
     public void TheAppNeverWritesExplorersSettings()
     {
         AssertNoMatch(Files("src", "*.cs"),
             @"\bSHGetSetSettings\b[^;\r\n]*\btrue\b",
-            @"(?i)\.SetValue[ \t]*\([ \t]*@?""(Hidden|ShowSuperHidden)""",
-            @"(?i)\bOpenSubKey[ \t]*\([^;\r\n]*Explorer\\{1,2}Advanced[^;\r\n]*\b(true|ReadWriteSubTree)\b",
-            @"\b(RegSetValue|RegSetKeyValue|SHSetValue|SHRegSetUSValue)\w*",
+            @"(?i)\.(SetValue|DeleteValue)[ \t]*\([ \t]*@?""(Hidden|ShowSuperHidden)""",
+            @"(?i)\bOpenSubKey[ \t]*\([^;\r\n]*Explorer\\{1,2}Advanced[^;\r\n]*\b(true|ReadWriteSubTree|RegistryRights\]?(\.|::)(SetValue|WriteKey|FullControl))\b",
+            @"\b(RegSetValue|RegSetKeyValue|SHSetValue|SHRegSetUSValue|RegDelete|SHDelete)\w*",
             @"(?i)\bRegistry\.SetValue[ \t]*\([^;\r\n]*Explorer\\{1,2}Advanced",
-            @"(?i)\bCreateSubKey[ \t]*\([^;\r\n]*Explorer\\{1,2}Advanced");
+            @"(?i)\b(CreateSubKey|DeleteSubKey|DeleteSubKeyTree)[ \t]*\([^;\r\n]*Explorer\\{1,2}Advanced");
     }
 
     private static IEnumerable<string> Files(string folder, params string[] patterns) =>

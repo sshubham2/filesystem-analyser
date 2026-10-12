@@ -1,0 +1,534 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-103",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-10-12T08:36:40.570Z",
+ "head": "1105c3f1b5a00fb026861f65877ca65af725f622",
+ "run_id": 3411,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "reason": "One proposal (practice), checked against the tree and the four spikes. It is kept with five changes: W58 flips from miss to fire; two miss rows are added (W59, W60); two Fitness plants are added (F51, S55) to cover the texts nobody has measured; and the before-fix id count is corrected to 33. The `corpus` obligation is answered by tests/FsAnalyser.Core.Tests/ExplorerSettingsWriteCorpus.json.",
+  "selection_rationale": "I chose against what is already in the tree and what the spikes measured. Every pattern text in this design was either measured go by a spike or is a strict superset of a measured text with a plant that checks it.\n\n**How the code is shaped today**\n- The src guard is a twinned pair: .taad/fitness.yaml:281-291 and ArchitectureRulesTests.cs:280-290. The window guard is the settled rule C at fitness.yaml:1121-1133.\n- ExplorerSettingsWriteRuleTests reads both guards from those files and asserts exactly 9 window and 6 src patterns (lines 83-84).\n- Widening in place therefore needs no code change in the test. The parity line stays `AGREE 18 facts <- 22 twinned entries, 48 patterns; 69 settled entries not compared`, and RuleCases' derived counts are untouched.\n\n**Spike evidence**\n- `registryrights-marker-without-createsubkey` (go): the rights marker without CreateSubKey. B38 stays quiet, parity AGREE, Fitness clean.\n- `window-ps-string-open-marker` (go): the :1130 replacement, with xUnit and Fitness agreeing on all 55 window rows.\n- `src-and-window-delete-widenings` (go): the delete widenings, with 63/63 old rows unchanged.\n- `all-widenings-together` (go): the measured widenings applied together. 32 rows went from fail to pass, 71 stayed green, 0 stray hits, and all 16 snippets that wrote Hidden got a hit.\n- `reg-import-and-reg-content-patterns` (no-go): Fitness reads a UTF-16LE .reg as UTF-8. The .reg-content patterns are therefore not adopted, which keeps the window count at 9; W53 and W54 are pinned as miss.\n\n**Proposal flags**\nThe practice designer raised over_engineering_flag against a semantic checker (Roslyn analyzer or AST rule). I take that as a real signal: the defect is latent, with zero registry calls in src/ or tests/window/ (grep: only the Get-ItemProperty read at WindowCases.ps1:3690). The regex family is widened and the analyser route is filed for the next time this class reopens (#400). The cross-domain transfer is only partial: the corpus discipline and enumerating the whole API family carry over; matching on resolved symbols does not, because most members are PowerShell.\n\n**What reality overrode in the brief**\n- The brief's marker includes CreateSubKey. The Sandbox measured RegSetValueExW returning 5 on a RegistryRights.CreateSubKey handle, so B38 is quiet and C1's literal wording is deliberately not met for that one word.\n- The brief names four rows. The investigation measured 33 closable members, and the obligation is to close the class, so the corpus carries them all.\n\n**My changes to the proposal**\n- **W58 (`reg add $adv /v Hidden`) now fires.** Rule C's :1125 already catches an ItemProperty write that names Hidden with -Name wherever the path is held. reg.exe add with /v Hidden is the same producer making the same mistake, so the :1126 add branch gets the matching /v alternative.\n- **W59 (WMI StdRegProv) and W60 (New-Item -Force on the key) are pinned as miss.** They are routes outside the bound. Pinning them means a later widening shows up instead of being invisible.\n- **F51 and S55 are added as plants.** The RegDelete prefix and the /v branch have not been measured in Fitness, and these two plants put them through it.",
+  "components": [
+   {
+    "name": "Src write guard (twinned yaml entry)",
+    "lives_at": ".taad/fitness.yaml",
+    "responsibility": "Change four of the six patterns of 'TheAppNeverWritesExplorersSettings (*.cs)' in place. Each stays one single-quoted line with its prefixes.\n- :285 becomes '(?m)(?i)\\.(SetValue|DeleteValue)[ \\t]*\\([ \\t]*@?\"(Hidden|ShowSuperHidden)\"'.\n- :286 becomes '(?m)(?i)\\bOpenSubKey[ \\t]*\\([^;\\r\\n]*Explorer\\\\{1,2}Advanced[^;\\r\\n]*\\b(true|ReadWriteSubTree|RegistryRights\\]?(\\.|::)(SetValue|WriteKey|FullControl))\\b'.\n- :287 becomes '(?m)\\b(RegSetValue|RegSetKeyValue|SHSetValue|SHRegSetUSValue|RegDelete|SHDelete)\\w*'.\n- :289 becomes '(?m)(?i)\\b(CreateSubKey|DeleteSubKey|DeleteSubKeyTree)[ \\t]*\\([^;\\r\\n]*Explorer\\\\{1,2}Advanced'.\n\n:284 and :288 are unchanged, and including_comments: true stays. Rewrite `because` to name the rights-argument opens, deletes and Win32/shlwapi deletes, and to say 'bounded by producer, known misses pinned in the corpus' instead of 'closed as a class' (#400).",
+    "key_interactions": "Read by Fitness, by eng/rules-parity.ps1 (which compares it with the Fact after stripping (?m)), by the SL-103 bug script and by the harness."
+   },
+   {
+    "name": "Src xUnit twin",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs",
+    "responsibility": "Make the same four edits to the verbatim strings in TheAppNeverWritesExplorersSettings (lines 285, 286, 287, 289), with \" written as \"\" and without (?m), so the text equals the yaml byte for byte after (?m) is stripped. The new strings are:\n- @\"(?i)\\.(SetValue|DeleteValue)[ \\t]*\\([ \\t]*@?\"\"(Hidden|ShowSuperHidden)\"\"\"\n- @\"(?i)\\bOpenSubKey[ \\t]*\\([^;\\r\\n]*Explorer\\\\{1,2}Advanced[^;\\r\\n]*\\b(true|ReadWriteSubTree|RegistryRights\\]?(\\.|::)(SetValue|WriteKey|FullControl))\\b\"\n- @\"\\b(RegSetValue|RegSetKeyValue|SHSetValue|SHRegSetUSValue|RegDelete|SHDelete)\\w*\"\n- @\"(?i)\\b(CreateSubKey|DeleteSubKey|DeleteSubKeyTree)[ \\t]*\\([^;\\r\\n]*Explorer\\\\{1,2}Advanced\"\n\nUpdate the XML summary in the same terms as `because`.",
+    "key_interactions": "ExplorerSettingsWriteRuleTests reads these strings through FailCriticalErrorsTests.FactPatterns. AssertNoMatch runs them one line at a time over src/**/*.cs."
+   },
+   {
+    "name": "Window write guard (rule C, settled)",
+    "lives_at": ".taad/fitness.yaml",
+    "responsibility": "Widen six of the nine patterns of 'no window case or hook changes Explorer's view settings' in place. Each stays one single-quoted line with every ' doubled.\n- :1124 becomes '(?m)(?i)((Set|New|Remove|Clear)-ItemProperty|(?<![\\w$-])(Remove-Item|ri|rm|del|erase|rd|rmdir)(?![\\w-]))[^\\r\\n]*Explorer\\\\{1,2}Advanced'.\n- :1126 becomes '(?m)(?i)\\breg(\\.exe)?[''\"]?[ \\t]+(add\\b[^\\r\\n]*(Explorer\\\\{1,2}Advanced|/v[ \\t]+[''\"]?(Hidden|ShowSuperHidden)\\b)|(delete|import)\\b)'.\n- :1128 becomes '(?m)(?i)\\.(SetValue|DeleteValue)[ \\t]*\\([ \\t]*@?[''\"](Hidden|ShowSuperHidden)[''\"]'.\n- :1130 becomes the spike-measured '(?m)(?i)\\bOpenSubKey[ \\t]*\\([^\\r\\n]*Explorer\\\\{1,2}Advanced([''\"][ \\t]*,[ \\t]*[''\"][^''\"\\r\\n]+[''\"][ \\t]*\\)|[^\\r\\n]*(\\b(true|ReadWriteSubTree)\\b|RegistryRights\\]?(\\.|::)(SetValue|WriteKey|FullControl)\\b|[''\"](SetValue|WriteKey|FullControl)[''\"]))'.\n- :1131 becomes '(?m)(?i)\\b(CreateSubKey|DeleteSubKey|DeleteSubKeyTree)[ \\t]*\\([^\\r\\n]*Explorer\\\\{1,2}Advanced'.\n- :1132 becomes '(?m)\\b(RegSetValue|RegSetKeyValue|SHSetValue|SHRegSetUSValue|RegDelete|SHDelete)\\w*'.\n\n:1125, :1127 and :1129 are unchanged, so the count stays 9. Rewrite `because` the same way as the src entry.",
+    "key_interactions": "Its only readers besides Fitness are ExplorerSettingsWriteRuleTests.SettledPatterns and the SL-103 bug script. It is settled, so rules-parity never compares it."
+   },
+   {
+    "name": "Class corpus (the `corpus` answer)",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ExplorerSettingsWriteCorpus.json",
+    "responsibility": "Append 46 rows, all with before=quiet. Add three top-level keys and extend `_note`.\n\n**40 rows from the investigation's reproduction parameters (B30-B48, W35-W55), with these fixes:**\n- B38 now=quiet.\n- B40 written with two backslashes per separator, like B08. .taad-scratch/repro-rows.json has four, which is a census slip.\n- B39 and W45 now=miss.\n- W53 and W54 now=miss.\n\n**Six new rows:**\n- B49 fire: '    private static extern int RegDeleteTree(IntPtr hKey, string subKey);'\n- W56 miss: 'regedit.exe /s \"$PSScriptRoot\\explorer-advanced.reg\"'\n- W57 fire: '        int error = RegDeleteKeyValueW(HKEY_CURRENT_USER, @\"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\", \"Hidden\");' (hook or Add-Type C#)\n- W58 fire: 'reg add $adv /v Hidden /t REG_DWORD /d 1 /f'\n- W59 miss: 'Invoke-CimMethod -Namespace root\\default -ClassName StdRegProv -MethodName SetDWORDValue -Arguments @{ hDefKey = [uint32]2147483649; sSubKeyName = ''Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced''; sValueName = ''Hidden''; uValue = [uint32]1 }' (written with single quotes in the JSON line)\n- W60 miss: 'New-Item -Path ''HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced'' -Force | Out-Null'\n\n**Row notes:** the rights-open rows cite the Sandbox result: the handle writes through FromHandle or RegSetValueEx, while a managed SetValue throws (dotnet/runtime#113535). B38's note says the CreateSubKey-rights handle got RegSetValueExW=5.\n\n**New top-level keys:**\n- `bounded_by`: who produces members, what a member is, and what is out and why.\n- `aliases`: route -> spellings -> row ids, for the routes open-writable, set-value, delete-value, delete-key, import.\n- `census`: every type that carries the value -> scope -> row ids -> fire/quiet/miss/out. The types are Registry, RegistryKey (all five OpenSubKey overloads, OpenBaseKey, CreateSubKey, SetValue, DeleteValue, DeleteSubKey, DeleteSubKeyTree, FromHandle), RegistryRights (write-capable: SetValue, WriteKey, FullControl; not: CreateSubKey, ReadKey, QueryValues), RegistryKeyPermissionCheck, advapi32 RegSet*/RegDelete*, shlwapi SHSet*/SHDelete*, shell32 SHGetSetSettings, the registry-provider cmdlets, reg.exe, regedit.exe, .reg content and WMI StdRegProv.\n\n`_note` gains a sentence naming SL-103/O-048 and saying `before` still means SL-091's declared patterns.",
+    "key_interactions": "Fed row by row by ExplorerSettingsWriteRuleTests. Its Corpus() reader reads only the `rows` array, so the new top-level keys are ignored."
+   },
+   {
+    "name": "Corpus test (unchanged)",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ExplorerSettingsWriteRuleTests.cs",
+    "responsibility": "No code change: every pattern is widened in place, so the 9/6 count assertions hold. The class grows from 64 to 110 test cases (109 Theory rows and 1 Fact).",
+    "key_interactions": "Reads the patterns from the Fact source and from fitness.yaml, so it sees the edits without a third copy."
+   },
+   {
+    "name": "Harness plants",
+    "lives_at": "eng/rules-harness/plants.json",
+    "responsibility": "Append ten plants in the SL-091 idiom.\n\n**src plants** are // comment lines after `long seq = Interlocked.Increment(ref _revealSequence);` in src/FsAnalyser.App/MainWindow.xaml.cs:\n- F49: B30, fire/fire.\n- F50: B42, fire/fire.\n- F51: B48, fire/fire. Not measured: the first Fitness check of the RegDelete prefix.\n- P34: B32, quiet/quiet.\n- P35: B38, quiet/quiet.\n\n**window plants** are code lines after `$ErrorActionPreference = 'Stop'` in tests/window/WindowCases.ps1, expected xunit quiet:\n- S51: W37, fitness fire.\n- S52: W44, fitness quiet.\n- S53: W48, fitness fire.\n- S54: W51, fitness fire.\n- S55: W58, fitness fire. Not measured: the first Fitness check of the /v branch.",
+    "key_interactions": "Checked with harness.py --scenario plants --only F45,P33,S39,S43,F49,F50,F51,P34,P35,S51,S52,S53,S54,S55 (#106)."
+   },
+   {
+    "name": "Acceptance repro (committed unchanged)",
+    "lives_at": "tests/bugs/SL-103-ExplorerAdvancedRightsOpen.Tests.ps1",
+    "responsibility": "Commit it as the repro stage wrote it. It exits 1 against today's patterns and must exit 0 after the widening. It reads the src patterns from both copies and the window patterns from the yaml.",
+    "key_interactions": "Reads .taad/fitness.yaml and ArchitectureRulesTests.cs directly, so no copy of the patterns can fall behind."
+   },
+   {
+    "name": "Before-fix proof",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ExplorerSettingsWriteCorpus.json",
+    "responsibility": "The rows and plants go in before any pattern changes. With the patterns still unchanged, the build runs the filtered corpus test and records its output in the build record; if the build makes more than one commit, the rows-only commit is the first. That run must fail exactly these 33 ids and nothing else: B30, B31, B33-B37, B40, B42-B49, W35-W43, W46, W48-W52, W57, W58. Then the pattern edits land and all 110 cases pass. A different failing set means a row was entered wrongly, and the run is inconclusive, not a pass.",
+    "key_interactions": "The bug script is a second standing before/after proof for the rights-open subset."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "fitness.yaml must_not_match line format (both entries)",
+    "kind": "function",
+    "error_cases": "A pattern wrapped onto two yaml lines, or an undoubled ', makes SettledPatterns stop early or throw InvalidDataException, and the 9-pattern assertion fails. A mismatch between the src yaml text and the Fact text makes rules-parity print DRIFT and exit 1.",
+    "notes": "Each pattern stays one single-quoted scalar with (?m), plus (?i) where the original had it. The src yaml text must equal the Fact text once (?m) is stripped and C# \"\" is read as \". Counts stay src 6, window 9, twinned 48, settled 69. Use [ \\t] and [^\\r\\n], never \\s (Q-014, #326)."
+   },
+   {
+    "name": "ExplorerSettingsWriteCorpus.json schema",
+    "kind": "function",
+    "error_cases": "These fail TheCorpusHoldsRowsTheDeclaredPatternsLetThroughInBothScopes: a duplicate id, a `now` outside fire|quiet|miss, or a `before` outside fire|quiet. A row with the wrong verdict fails EachRowFiresOrStaysQuietAsTheCorpusSays, with its id in the message.",
+    "notes": "The row shape is unchanged: {id, scope, now, before, line, note}. The top-level keys bounded_by, aliases and census are documentation the reader ignores. `before` keeps its SL-091 meaning."
+   },
+   {
+    "name": "SL-103 acceptance",
+    "kind": "cli",
+    "error_cases": "Exits 1 with a FAIL line per row and guard copy.",
+    "notes": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-103-ExplorerAdvancedRightsOpen.Tests.ps1 must exit 0 after the widening."
+   },
+   {
+    "name": "Rules harness plant rows",
+    "kind": "cli",
+    "error_cases": "MISSED-BY-XUNIT, MISSED-BY-FITNESS or a stray hit gives a non-zero exit. Exit 2 means the engine could not be imported.",
+    "notes": "%APPDATA%\\taad3\\venv\\Scripts\\python.exe eng/rules-harness/harness.py --engine-root C:\\Users\\sshub\\projets\\taad_v3\\backend --scenario plants --only F45,P33,S39,S43,F49,F50,F51,P34,P35,S51,S52,S53,S54,S55. The clean baseline must read CLEAN and every row AS-RECORDED. The import rule's NOT RUN is expected."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Widen patterns in place and add none. Four of the six src patterns and six of the nine window patterns change. The counts stay 6/9, and the rules-parity output stays byte-identical.",
+    "reversibility": "cheap",
+    "rationale": "Adding patterns would change ExplorerSettingsWriteRuleTests.cs:83-84 and the parity line other tooling reads (#158, #330). The all-widenings spike measured in-place widening as go: 63 old rows unchanged, parity AGREE, 0 stray hits."
+   },
+   {
+    "decision": "Drop CreateSubKey from the brief's rights marker and pin B38 (RegistryRights.CreateSubKey) as quiet.",
+    "reversibility": "cheap",
+    "rationale": "The measurement outranks the brief's regex. In the Sandbox, RegSetValueExW on that handle returned 5 and FromHandle(...).SetValue threw, and spike registryrights-marker-without-createsubkey measured this marker as go. C1 names CreateSubKey, so it is deliberately unmet for that one word, and B38's note says so. Re-adding it is one word plus flipping B38."
+   },
+   {
+    "decision": "Window scope: these fire on an OpenSubKey of Explorer\\Advanced: a non-empty quoted string as the only second argument, the [RegistryRights]'X' cast, the all-string OpenBaseKey(...).OpenSubKey(p,'Default','FullControl') form, and the `::` rights spelling.",
+    "reversibility": "cheap",
+    "rationale": "PowerShell binds a string second argument to OpenSubKey(string, bool) as $true. 'ReadKey' and 'False' therefore open the key fully writable (measured: state=4, managed SetValue ok, Hidden 2->1). An author who believes the key is read-only writes this by accident. The spike measured the pattern go across 55 window rows, with W44, W47 and W29 quiet."
+   },
+   {
+    "decision": "Deletes are members of the class. DeleteValue sits beside SetValue and DeleteSubKey(Tree) beside CreateSubKey in both scopes. RegDelete*/SHDelete* sit beside RegSet*/SHSet* as a name prefix. In the window scope, the measured Remove-Item alias family on Explorer\\Advanced is added.",
+    "reversibility": "cheap",
+    "rationale": "Deleting Hidden turned showAll from 1 to 0 in a fresh process (measured). The prefix form is a superset of the measured exact names (spike: (RegDeleteValue|RegDeleteKeyValue|SHDeleteValue)[AW]?\\b). It also covers RegDeleteKey, RegDeleteTree, SHDeleteKey and SHDeleteEmptyKey, as #225 asks, and matches the existing `RegSetValue\\w*` idiom. It has 0 occurrences in src/ or tests/window/ (grep). It has not been measured in Fitness, so plant F51 and row B49 check it."
+   },
+   {
+    "decision": "reg.exe: `reg import` and `reg delete` fire wherever the path is held. `reg add` fires on the path, or on /v Hidden|ShowSuperHidden wherever the path is held (W58). This changes the practice proposal, which pinned W58 as miss.",
+    "reversibility": "cheap",
+    "rationale": "Rule C's own :1125 already catches an ItemProperty write naming Hidden with -Name wherever the path is held, and reg add /v Hidden is the same producer making the same mistake. The reg-import spike's variant A, which dropped the add-path branch, broke W09/W10. Here the add branch keeps its path and only gains an alternative. The /v branch has not been measured in Fitness, so plant S55 checks it."
+   },
+   {
+    "decision": "Pin outside the bound, as miss rows, and add no patterns for: .reg file content (W53, W54), regedit /s (W56), WMI StdRegProv (W59), New-Item -Force on the key (W60), and a write through a handle with a constant or variable name (B39, W45).",
+    "reversibility": "cheap",
+    "rationale": "The class is call spellings an author writes by accident. A .reg file is inert until a script imports it, and the import line fires. The reg-import spike was no-go because Fitness (taad_v3 fitness.py:445) reads UTF-16LE as UTF-8, so content patterns would be blind to what `reg export` writes; fixing that is outside this repo. StdRegProv and a whole-key New-Item are deliberate routes, not accidents. A regex over PowerShell cannot close an open spelling space (#400), so the corpus says 'bounded by producer', never 'closed'."
+   },
+   {
+    "decision": "ExplorerSettingsWriteCorpus.json stays the single record of the class and is the `corpus` obligation's answer. The inputs table is the rows; the alias list and type census are top-level `aliases` and `census` keys; the bound is `bounded_by`, the idiom DefenderStateCorpus.json already uses.",
+    "reversibility": "cheap",
+    "rationale": "A second file would be a second copy that can fall behind. The test's Corpus() reader reads only `rows`, so no code changes."
+   },
+   {
+    "decision": "The before-fix proof is by order: the rows go in first and the recorded filtered run fails exactly 33 ids; the patterns go in second and every row passes. No third frozen pattern set is added to the test.",
+    "reversibility": "cheap",
+    "rationale": "`before` already means SL-091's declared patterns. A third frozen set would change the row schema for 109 rows. The spikes measured this split (32 fail -> 0, 71 unchanged); this design adds B49, W57 and W58 and moves W53/W54 to miss, which makes 33."
+   },
+   {
+    "decision": "No semantic checker (Roslyn BannedApiAnalyzers, PowerShell AST rule) and no new architecture_rules in this slice.",
+    "reversibility": "cheap",
+    "rationale": "This is the practice designer's own over_engineering_flag: an analyzer dependency, for a latent defect in a tree with zero registry calls, and blind to the .ps1 scope. Declaring architecture_rules would make the engine append a settled third copy of these guards (#330, #367), changing the settled count and duplicating the patterns. The AST/analyser route is filed for the next reopening of the class."
+   },
+   {
+    "decision": "Not a workaround: no KnownWorkarounds entry and no setting.",
+    "reversibility": "cheap",
+    "rationale": "The defect is this project's own guard regex, so it is fixed rather than toggled. The outside behaviours (dotnet/runtime#113535's managed write check, PowerShell's string-to-bool binding, Fitness reading UTF-16 as UTF-8) only decide which lines are members. The app does not step around any of them at run time."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal, adopted as the core. Its pattern texts are the spike-measured ones, apart from the RegDelete|SHDelete prefix, which a plant now checks. Five changes at composition: W58 moves from miss to fire through a /v alternative in rule C's reg add branch; W59 (StdRegProv) and W60 (New-Item -Force) are added as pinned misses; plants F51 and S55 cover the texts not yet run through Fitness; the before-fix id set is corrected to 33. The proposal's own over_engineering_flag against a semantic checker is honoured."
+   }
+  ],
+  "coherence_check": "One proposal, so there is no composition to check. Nothing here has survived a disagreement yet, and the reviewer should argue with it first.\n\n**Seams checked inside the proposal and against the spikes:**\n1. The all-widenings spike reached 32/32 by ADDING two .reg-content patterns, which put the window count at 11 and changed ExplorerSettingsWriteRuleTests.cs:83. This design does not add them. So W53/W54 must be `miss`, not `fire`, and the count assertion stays 9. Rows and patterns agree on that.\n2. Variant A of the reg-import spike, which replaced the reg pattern with delete|import only, broke W09/W10. The adopted :1126 keeps `add` tied to the path and only adds a /v alternative, so W09 and W10 still fire by the path branch. W11 (reg delete) fires by the delete branch.\n3. The src yaml and the Fact must stay byte-equal after (?m) is stripped, or parity goes DRIFT. All four src edits are specified in both forms.\n4. SrcBefore's OpenSubKey pattern has no (?i) and needs `true`, and WindowBefore has no delete, import or OpenSubKey pattern. Every new row is therefore before=quiet, which I checked by reading each new line against each frozen pattern.\n5. The miss rows were checked by reading against every widened window pattern. For W59 and W60, the Remove-Item alias lookarounds do not fire inside 'Microsoft', 'default', 'SetDWORDValue' or 'CurrentVersion'. The one live Explorer\\\\Advanced line (WindowCases.ps1:3690) stays quiet.\n6. The CreateSubKey drop contradicts C1's wording. That is kept and recorded, because the Sandbox measurement outranks it.\n\n**What I changed:** W58 from miss to fire (consistent with :1125), two pinned misses added, and two plants added for the texts not yet measured in Fitness.\n\n**architecture_rules is deliberately empty.** This design widens two guards that already exist and settles no new dependency or text constraint. A declared rule would be appended by the engine as a settled third copy of these patterns, which would desync the settled count and duplicate the guard (#330, #367).",
+  "architecture_rules": [],
+  "cases": [
+   {
+    "behaviour": "catch a writable open of Explorer\\Advanced in src",
+    "shape": "the second or third argument is a write-capable RegistryRights (SetValue, WriteKey, FullControl). It may be short or fully qualified, OR'd with QueryValues, behind a RegistryKeyPermissionCheck, passed as a named argument, through OpenBaseKey, or with a two-backslash path (B30, B31, B33-B37, B40)",
+    "why": "The OpenSubKey marker branches only on `true|ReadWriteSubTree`; this is the reported defect. Each qualification is a different token position before the `\\b` the marker anchors on.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-103-ExplorerAdvancedRightsOpen.Tests.ps1 (exit 0), and pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~ExplorerSettingsWriteRuleTests\" with rows B30, B31, B33-B37, B40 passing"
+   },
+   {
+    "behaviour": "leave a read-only open in src alone",
+    "shape": "the rights cannot write Hidden: ReadKey (B32), QueryValues (B41), or CreateSubKey (B38, measured RegSetValueExW=5)",
+    "why": "A widened marker that matches any RegistryRights would turn every read into a violation, and the brief's own marker makes B38 fire.",
+    "check": "same corpus filter run: B32, B38 and B41 pass as quiet; the bug script's B32/B41 checks print ok"
+   },
+   {
+    "behaviour": "catch a delete of Hidden or of the key in src",
+    "shape": "key.DeleteValue(\"Hidden\"|\"ShowSuperHidden\"[, false]), DeleteSubKeyTree of Explorer\\Advanced, or a declared or called RegDeleteValue, RegDeleteKeyValue(W), SHDeleteValue or RegDeleteTree (B42-B49)",
+    "why": "The src guard has no delete branch at all today, and deleting Hidden was measured to turn showAll from 1 to 0. The prefix form is not yet measured.",
+    "check": "corpus filter run: B42-B49 pass as fire"
+   },
+   {
+    "behaviour": "record what the src guard cannot see",
+    "shape": "the write goes through a handle whose value name is a constant (B39: RegistryKey.FromHandle(key.Handle).SetValue(HiddenName, 1)); and the existing B27 (const value name), B28 (const path) and B29 (open wrapped over two lines)",
+    "why": "Only the open line names Explorer\\Advanced. A row that suddenly fired, or one quietly moved to quiet, would hide a change in what the tripwire covers (#326: both engines measured 0 on the wrapped open, so they agree).",
+    "check": "corpus filter run: B27, B28, B29 and B39 pass as miss"
+   },
+   {
+    "behaviour": "catch a rights open in a window script or the hook",
+    "shape": "[System.Security.AccessControl.RegistryRights]::SetValue (W35), -bor of QueryValues and SetValue (W41), [RegistryKeyPermissionCheck]::Default plus FullControl (W42), or the C# rights line in the hook (W43)",
+    "why": "The `::` spelling needs the `\\]?(\\.|::)` part of the marker, and the hook line goes through the same window pattern as PowerShell.",
+    "check": "bug script exit 0 (W35, W41-W43), and the corpus filter run: W35 and W41-W43 pass as fire"
+   },
+   {
+    "behaviour": "catch a PowerShell open the author believes is read-only",
+    "shape": "a quoted string is the only second argument: 'ReadKey', 'False', 'SetValue', 'QueryValues' (W37, W38, W36, W46)",
+    "why": "PowerShell binds the string to OpenSubKey(string, bool) as $true, so the key is fully writable (measured). This needs the quoted-argument branch of :1130.",
+    "check": "corpus filter run: W36, W37, W38 and W46 pass as fire; harness plant S51 (W37) reads AS-RECORDED, quiet/fire"
+   },
+   {
+    "behaviour": "catch the cast and all-string open forms",
+    "shape": "[Security.AccessControl.RegistryRights]'SetValue' (W39), or OpenBaseKey('CurrentUser','Default').OpenSubKey(P,'Default','FullControl') (W40)",
+    "why": "Neither has `.` or `::` after RegistryRights, so only the quoted-rights alternative of :1130 reaches them.",
+    "check": "corpus filter run: W39 and W40 pass as fire"
+   },
+   {
+    "behaviour": "leave a read-only PowerShell open alone",
+    "shape": "[RegistryRights]::ReadKey (W44), $false (W47), the one-argument read (W29); and the 'True' string (W55) fires as the control",
+    "why": "The quoted-argument branch must not swallow $false or an enum ReadKey, and W55 shows the branch still fires for a string.",
+    "check": "corpus filter run: W29, W44 and W47 pass as quiet and W55 as fire; harness plant S52 (W44) reads AS-RECORDED, quiet/quiet"
+   },
+   {
+    "behaviour": "catch a delete in a window script or the hook",
+    "shape": "$adv.DeleteValue('Hidden') (W48), Remove-Item of the key (W49), ::DeleteSubKeyTree (W50), or RegDeleteKeyValueW in the hook (W57)",
+    "why": "Rule C names only Remove/Clear-ItemProperty and reg delete today. The Remove-Item alias tokens and the RegDelete prefix are separate branches.",
+    "check": "corpus filter run: W48, W49, W50 and W57 pass as fire; harness plant S53 (W48) reads AS-RECORDED, quiet/fire"
+   },
+   {
+    "behaviour": "catch reg.exe writes wherever the path is held",
+    "shape": "reg import of a file (W51, W52), or reg add with the path in a variable and /v Hidden (W58); W09, W10 (reg add on the path) and W11 (reg delete) keep firing",
+    "why": "The :1126 widening changes an existing pattern. A replacement that loses the add-path branch was measured to break W09/W10.",
+    "check": "corpus filter run: W09, W10, W11, W51, W52 and W58 pass as fire; harness plants S54 (W51) and S55 (W58) read AS-RECORDED, quiet/fire"
+   },
+   {
+    "behaviour": "record the window routes outside the producer bound",
+    "shape": "a write through a handle with a variable name (W45), .reg file content (W53, W54), regedit /s (W56), WMI StdRegProv SetDWORDValue (W59), New-Item -Force on the key (W60)",
+    "why": "These are pinned limits: Fitness cannot see UTF-16 .reg content, and the rest are deliberate routes. A widening that made one fire, or a narrowing, would show here.",
+    "check": "corpus filter run: W45, W53, W54, W56, W59 and W60 pass as miss"
+   },
+   {
+    "behaviour": "keep every row the SL-091 corpus already settled",
+    "shape": "the 63 existing rows B01-B29 and W01-W34, each row's `before` verdict under the frozen SL-091 patterns, and the 9/6 pattern counts",
+    "why": "Six patterns are rewritten in place. A rewrite that drops an alternative (as variant A did) flips old rows, and a corrupted yaml line makes SettledPatterns throw.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~ExplorerSettingsWriteRuleTests|FullyQualifiedName~ArchitectureRulesTests|FullyQualifiedName~RuleCopiesAgreeTests|FullyQualifiedName~FailCriticalErrorsTests\" all green, including TheCorpusHoldsRowsTheDeclaredPatternsLetThroughInBothScopes"
+   },
+   {
+    "behaviour": "show the code before the fix failing the rows it closes",
+    "shape": "the 46 rows are present and the patterns are still as at 1105c3f",
+    "why": "The obligation requires it. A failing set other than the expected 33 means a row was entered wrongly (for example B40 with four backslashes), so the run is inconclusive.",
+    "check": "the same filtered dotnet test, run after the rows are added and before the pattern edits: exactly B30, B31, B33-B37, B40, B42-B49, W35-W43, W46, W48-W52, W57 and W58 fail (33), and every other row passes"
+   },
+   {
+    "behaviour": "both engines and the whole tree agree after the change",
+    "shape": "today's src/** and tests/window/** with no plants, and the 14 harness plants, under Fitness, the xUnit twin and rules-parity",
+    "why": "xUnit matches per line and Fitness over the whole file (#326). Parity compares text only. The prefix and /v texts have never been run through Fitness. A stray hit on a real file would block every later slice.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/rules-parity.ps1 prints 'rules-parity: AGREE 18 facts <- 22 twinned entries, 48 patterns; 69 settled entries not compared'; %APPDATA%\\taad3\\venv\\Scripts\\python.exe eng/rules-harness/harness.py --engine-root C:\\Users\\sshub\\projets\\taad_v3\\backend --scenario plants --only F45,P33,S39,S43,F49,F50,F51,P34,P35,S51,S52,S53,S54,S55 exits 0 with CLEAN and all rows AS-RECORDED; pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-001, then -Case C-003, C-004 and C-005 in turn, each green; pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx all green (874 + 46 = 920)"
+   }
+  ],
+  "channeled_experts": [
+   "Semgrep / CodeQL rule author (match the API family, not one spelling)",
+   "Roslyn BannedApiAnalyzers maintainer (ban by symbol, spelling-independent)",
+   "PowerShell overload-resolution specialist (string-to-bool binding on OpenSubKey)"
+  ],
+  "code_claims": [
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "TheAppNeverWritesExplorersSettings (*.cs)",
+    "claim": "The twinned src entry over src/**/*.cs has six (?m)-prefixed single-quoted patterns with including_comments: true, and its OpenSubKey pattern at line 286 uses the write marker \\b(true|ReadWriteSubTree)\\b."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "no window case or hook changes Explorer's view settings",
+    "claim": "Rule C over tests/window/** has nine single-quoted (?m)(?i) patterns at lines 1124-1132. :1124 is the ItemProperty cmdlets on the path, :1126 is reg add|delete on the path, :1130 is OpenSubKey with the true|ReadWriteSubTree marker, :1131 is CreateSubKey and :1132 is the RegSet/SHSet names."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "# settled by SL-023",
+    "claim": "The twinned src entry sits above the first '# settled by' marker, and rule C sits below '# settled by SL-091', so parity compares the first and not the second."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs",
+    "symbol": "TheAppNeverWritesExplorersSettings",
+    "claim": "The xUnit twin calls AssertNoMatch over src *.cs with six verbatim-string patterns whose text equals the yaml entry's patterns without (?m). Its OpenSubKey pattern is at line 286."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs",
+    "symbol": "AssertNoMatch",
+    "claim": "It reads each file with File.ReadAllLines and matches every pattern against one line at a time with RegexOptions.Multiline."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ExplorerSettingsWriteRuleTests.cs",
+    "symbol": "EachRowFiresOrStaysQuietAsTheCorpusSays",
+    "claim": "For each corpus row it asserts that the current guard of its scope fires exactly when now == \"fire\" ('miss' and 'quiet' both expect no hit). It also asserts that the frozen SrcBefore/WindowBefore patterns fire exactly when before == \"fire\"."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ExplorerSettingsWriteRuleTests.cs",
+    "symbol": "TheCorpusHoldsRowsTheDeclaredPatternsLetThroughInBothScopes",
+    "claim": "It asserts unique ids, now in fire|quiet|miss and before in fire|quiet. Per scope it asserts a fire/before-quiet row and a quiet row. It asserts exactly 9 window patterns and exactly 6 src patterns."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ExplorerSettingsWriteRuleTests.cs",
+    "symbol": "SettledPatterns",
+    "claim": "It reads the named entry's must_not_match lines matching ^\\s+- '(.*)'$, reads '' as one quote and stops at the first line that does not match. It throws if it reads none."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ExplorerSettingsWriteRuleTests.cs",
+    "symbol": "SrcBefore",
+    "claim": "The frozen SL-091 src patterns are four. Their OpenSubKey pattern has no (?i) and needs `true`, and their only Win32 name pattern is \\bRegSetValue\\w*."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ExplorerSettingsWriteRuleTests.cs",
+    "symbol": "WindowBefore",
+    "claim": "The frozen SL-091 window patterns are four: Set|New-ItemProperty on the path, reg add on the path, SHGetSetSettings true, and .SetValue of the value names in double quotes."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ExplorerSettingsWriteRuleTests.cs",
+    "symbol": "Corpus",
+    "claim": "It parses the JSON and reads only the top-level \"rows\" array (id, scope, now, before, line, note), so other top-level keys are ignored."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ExplorerSettingsWriteRuleTests.cs",
+    "symbol": "FactPatterns",
+    "claim": "The src patterns are read from ArchitectureRulesTests.cs's source through FailCriticalErrorsTests.FactPatterns, so widening the Fact reaches the corpus test with no third copy."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ExplorerSettingsWriteCorpus.json",
+    "symbol": "B29",
+    "claim": "The corpus holds rows B01-B29 and W01-W34 only, with B27, B28, B29, W32, W33 and W34 pinned as 'miss'. No row mentions RegistryRights, DeleteValue or import."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ExplorerSettingsWriteCorpus.json",
+    "symbol": "_note",
+    "claim": "The top-level note calls the class 'closed as a class' and defines 'now' as the guard's verdict today and 'before' as the SL-091 design's declared patterns."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/DefenderStateCorpus.json",
+    "symbol": "bounded_by",
+    "claim": "A sibling corpus already carries a top-level bounded_by key beside its rows, which is the idiom the extended corpus follows."
+   },
+   {
+    "path": "eng/rules-harness/plants.json",
+    "symbol": "F45",
+    "claim": "The SL-091 src plants are // comment lines inserted after `long seq = Interlocked.Increment(ref _revealSequence);` in src/FsAnalyser.App/MainWindow.xaml.cs, expecting xunit fire / fitness fire."
+   },
+   {
+    "path": "eng/rules-harness/plants.json",
+    "symbol": "S39",
+    "claim": "The SL-091 window plants are code lines inserted after `$ErrorActionPreference = 'Stop'` in tests/window/WindowCases.ps1, expecting xunit quiet / fitness fire, because rule C has no xUnit twin."
+   },
+   {
+    "path": "eng/rules-harness/plants.json",
+    "symbol": "S50",
+    "claim": "The highest plant ids today are F48, P33 and S50, so F49-F51, P34-P35 and S51-S55 are free."
+   },
+   {
+    "path": "eng/rules-harness/plants.json",
+    "symbol": "P33",
+    "claim": "P33 is the quiet plant of a one-argument OpenSubKey read of Explorer\\Advanced, expecting quiet in both engines."
+   },
+   {
+    "path": "tests/bugs/SL-103-ExplorerAdvancedRightsOpen.Tests.ps1",
+    "symbol": "Read-YamlPatterns",
+    "claim": "The acceptance script reads the src patterns from the yaml entry and the window patterns from rule C, and exits 1 if any check fails."
+   },
+   {
+    "path": "tests/bugs/SL-103-ExplorerAdvancedRightsOpen.Tests.ps1",
+    "symbol": "Read-FactPatterns",
+    "claim": "The acceptance script also reads the src patterns from the TheAppNeverWritesExplorersSettings Fact, so it checks both src copies."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "Get-ItemProperty",
+    "claim": "Line 3690's Get-ItemProperty read is the only line in src/ or tests/window/ that names Explorer\\Advanced, so no widened pattern has a real line to fire on."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "_revealSequence",
+    "claim": "The anchor line the src plants insert after exists in MainWindow.xaml.cs."
+   }
+  ],
+  "outside_claims": [
+   {
+    "claim": "On .NET 10, RegistryKey has five OpenSubKey overloads, including (string, RegistryRights) and (string, RegistryKeyPermissionCheck, RegistryRights).",
+    "evidence": "measured",
+    "source": "build-check survey: reflection on .NET 10.0.12 ([Microsoft.Win32.RegistryKey].GetMethods())",
+    "if_wrong": "The rights-open rows would describe calls that do not compile, and the class would be smaller than the corpus says."
+   },
+   {
+    "claim": "With the Default check, a key opened with RegistryRights.SetValue, WriteKey or FullControl gets a handle that can change Hidden through RegistryKey.FromHandle(handle).SetValue or RegSetValueExW, while a managed SetValue on that key throws 'Cannot write to the registry key'.",
+    "evidence": "measured",
+    "source": "investigation S3, Windows Sandbox writes.json (PS 5.1 / .NET Framework 4.8.9345); round 1 on .NET 10.0.12",
+    "if_wrong": "The rights opens would be harmless, the marker would be a conservative false positive, and the B30-family rows would be quiet by run time."
+   },
+   {
+    "claim": "A handle opened with RegistryRights.CreateSubKey cannot write Hidden: RegSetValueExW returns 5 and FromHandle(...).SetValue throws.",
+    "evidence": "measured",
+    "source": "investigation S3, Sandbox run-20261012-130925",
+    "if_wrong": "Dropping CreateSubKey would let through a real member: B38 would need to fire and the marker would regain |CreateSubKey."
+   },
+   {
+    "claim": "PowerShell binds a non-empty quoted string second argument to OpenSubKey(string, bool) as $true, including 'ReadKey' and 'False', and the key opens fully writable.",
+    "evidence": "measured",
+    "source": "investigation false.json (state=4, managed SetValue ok); W36-W38 and W46 + $adv.SetValue changed Hidden 2->1 in the Sandbox",
+    "if_wrong": "The quoted-string branch of :1130 would be a false positive on genuinely read-only opens, and W37/W38 would belong among the quiet rows."
+   },
+   {
+    "claim": "Deleting the Hidden value changes the effective setting that a fresh process reads through SHGetSetSettings (showAll 1 -> 0).",
+    "evidence": "measured",
+    "source": "investigation S3 effective-setting read",
+    "if_wrong": "The delete rows would not be members, and the delete widenings would be conservative only."
+   },
+   {
+    "claim": "Fitness (taad3 fitness.py content_hits) opens files as UTF-8 with errors=replace, so a UTF-16LE .reg file with a BOM is invisible to content patterns.",
+    "evidence": "measured",
+    "source": "spike reg-import-and-reg-content-patterns: adv-utf16.reg 0 hits, adv-utf8.reg 2",
+    "if_wrong": ".reg-content patterns could be added and W53/W54 could become fire rows, though that would change the window count and the test's assertion."
+   },
+   {
+    "claim": ".NET Regex and Python re give the same verdict on the adopted patterns, including the fixed-width lookbehind (?<![\\w$-]), \\b, [^\\r\\n] and the quoted-argument alternation.",
+    "evidence": "measured",
+    "source": "spikes all-widenings (0 disagreements, 16/16 snippets), window-ps-string-open-marker (55/55 rows), src-and-window-delete-widenings (73/73 files)",
+    "if_wrong": "xUnit and Fitness would disagree on a row. The harness plants would report MISSED-BY-FITNESS or MISSED-BY-XUNIT."
+   },
+   {
+    "claim": "The two texts not yet measured (the RegDelete|SHDelete prefix and the reg add /v branch) behave the same in Python re as in .NET, because they use only \\b, \\w*, [ \\t]+ and optional quotes.",
+    "evidence": "recalled",
+    "source": "memory; checked at build by plants F51 and S55",
+    "if_wrong": "F51 or S55 reads MISSED-BY-FITNESS, and the pattern text has to be adjusted before validate."
+   },
+   {
+    "claim": "`reg import <file>` writes the file's keys and values into the registry, so importing a file that holds Explorer\\Advanced changes Hidden.",
+    "evidence": "recalled",
+    "source": "memory (reg.exe documentation)",
+    "if_wrong": "W51 and W52 would not be members. The import branch would be a harmless conservative fire."
+   },
+   {
+    "claim": "New-Item -Force on an existing registry key recreates it empty, deleting its values.",
+    "evidence": "recalled",
+    "source": "memory (PowerShell registry provider behaviour)",
+    "if_wrong": "W60 is pinned as miss either way, so nothing breaks. The census note for it would just be wrong in its reason."
+   },
+   {
+    "claim": "dotnet/runtime#113535 is an open API proposal and no shipped runtime makes a managed SetValue succeed on a rights-opened key.",
+    "evidence": "recalled",
+    "source": "investigation record (GitHub issue read in an earlier round), not fetched for this design",
+    "if_wrong": "Once it ships, key.SetValue(HiddenName, 1) after a rights open also becomes a real write. That changes nothing in the guards, because the open line already fires. This is already filed as SC-302..SC-305."
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Static-analysis rule engineering (Semgrep/CodeQL rule packs, Roslyn banned-API analyzers)",
+   "pattern": "Guard a dangerous capability by its API family, not by one observed spelling, and give every rule a test corpus of true and false positives. Where possible, match on resolved symbols rather than text.",
+   "transfer_found": true,
+   "rationale": "Only the corpus discipline and the family enumeration transfer: every rule ships with fire/quiet fixtures and is widened across open, set, delete and import. This repo already has that in the corpus and the plants. Matching on resolved symbols does not transfer to this slice: most measured members are PowerShell in tests/window, and the project's guard mechanism is twinned regexes. So spellings outside the producer bound are pinned as known misses, not claimed closed (#400).",
+   "invariants": [
+    {
+     "precondition": "src and tests/window have no legitimate registry write, so widening toward the whole family cannot fire on today's code.",
+     "status": "holds",
+     "evidence": "Grep in this design: the only line in src/ or tests/window/ naming Explorer\\Advanced, OpenSubKey or RegistryRights is the Get-ItemProperty read at WindowCases.ps1:3690. There is no RegDelete, SHDelete, DeleteValue, DeleteSubKey, regedit or reg add|delete|import."
+    },
+    {
+     "precondition": "Both engines give the same verdict on every widened pattern.",
+     "status": "holds",
+     "evidence": "Spikes: all-widenings 0 disagreements; window-ps-string-open-marker 55/55; delete widenings 73/73. Only [ \\t] and [^\\r\\n] are used, never \\s (Q-014)."
+    },
+    {
+     "precondition": "The texts and rows nobody has measured behave as predicted: the RegDelete|SHDelete prefix, the /v branch, rows B49, W56-W60, and plants F51, S53, S54 and S55.",
+     "status": "must-verify",
+     "evidence": "Predicted by reading each regex against each line. The rows-first run (exactly 33 failing ids), the after run and harness --only are the checks."
+    },
+    {
+     "precondition": "A symbol-level banned-API check could cover the window scope too.",
+     "status": "fails",
+     "evidence": "tests/window is PowerShell plus a hook outside FsAnalyser.slnx, so a Roslyn analyzer would not see the .ps1 lines where most members (W35-W52) live."
+    }
+   ]
+  },
+  "prior_art": [
+   {
+    "pattern": "A write guard applied to one write surface but not to a sibling surface that writes the same protected targets; the fix applies the shared guard to every write route.",
+    "where": "https://github.com/NousResearch/hermes-agent/pull/57953",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2026-07-03"
+   },
+   {
+    "pattern": "Protection enforced for one verb only (delete) while edit and create were open; the fix extends the block to the whole verb family.",
+    "where": "https://code.obermui.de/Epsilon_02/xplorer/commit/ceac6c6a8397ed985f9a4dea6b47aa7695a7fab4",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2026-04-06"
+   },
+   {
+    "pattern": "Ban APIs by documentation-comment symbol ID (BannedSymbols.txt, RS0030), so that aliases, full qualification and named arguments cannot get around the ban.",
+    "where": "Microsoft.CodeAnalysis.BannedApiAnalyzers (dotnet/roslyn-analyzers)",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Rule packs ship with annotated true-positive and true-negative test files per rule, and a rule change must keep every annotation green.",
+    "where": "Semgrep rule testing (ruleid:/ok: annotations), CodeQL query tests",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "OpenSubKey(string, RegistryRights) leaves the managed key without write state, so a managed SetValue throws while the handle itself can write.",
+    "where": "dotnet/runtime#113535",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "PowerShell converts any non-empty string to $true when binding a [bool] parameter, which selects OpenSubKey(string, bool) for a quoted second argument.",
+    "where": "about_Type_Conversion (PowerShell docs)",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "decidable_disagreements": [],
+  "taste_disagreements": [
+   "W58 (`reg add $adv /v Hidden`): the practice proposal pinned it as miss; this composition fires it through a /v alternative in rule C's add branch, to match :1125's -Name-wherever-the-path-is-held rule.",
+   "The delete names use the prefix `RegDelete|SHDelete` with \\w* (a superset, in the existing RegSetValue\\w* style), where the spike measured the exact names `(RegDeleteValue|RegDeleteKeyValue|SHDeleteValue)[AW]?\\b`.",
+   "`reg delete` and `reg import` fire whatever key they name, which is a conservative false positive on unrelated keys. The alternative is to require Explorer\\Advanced on the line, which would miss an import of a .reg file.",
+   "The census and alias list live as top-level keys in the existing corpus file rather than in a separate census file.",
+   "CreateSubKey is dropped from the marker, per the measurement, instead of being kept as a conservative fire to match the brief and C1's wording.",
+   "The Remove-Item alias tokens (ri, rm, del, erase, rd, rmdir) on a line naming Explorer\\Advanced are a bare-word tripwire that a future read line could trip."
+  ],
+  "filed_for_later": [
+   {
+    "what": "Make taad_v3 Fitness decode a file that starts with FF FE or FE FF as UTF-16 before matching (backend/taad3/fitness.py content_hits, line 445). Then rule C could add .reg-content patterns and flip W53 and W54 from miss to fire, with the window count assertion raised to match.",
+    "why": "The change lives in the engine outside this repository, and nothing in tests/window/** holds a .reg file today.",
+    "who": "slice"
+   },
+   {
+    "what": "If the Explorer-settings write class reopens a third time, replace further regex widening with a spelling-independent check. For tests/window that is an AST-level check through the PowerShell parser (as P-004 already loads scripts); for src it is a symbol-level ban on Microsoft.Win32.Registry/RegistryKey writes.",
+    "why": "#400: a regex over PowerShell cannot close an open spelling space. This slice's latent defect does not justify a new guard mechanism and analyzer dependency.",
+    "who": "slice"
+   }
+  ],
+  "whats_new": [
+   "Four src patterns widened identically in .taad/fitness.yaml:285-289 and ArchitectureRulesTests.cs:285-289: DeleteValue, the rights marker without CreateSubKey, the RegDelete|SHDelete prefix, and Delete(SubKey|SubKeyTree).",
+   "Six rule-C patterns widened in place in .taad/fitness.yaml:1124-1132. They add the Remove-Item alias family; reg import and delete wherever the path is held, plus reg add /v Hidden; DeleteValue; the PowerShell string, cast, all-string and rights OpenSubKey marker; Delete(SubKey|SubKeyTree); and RegDelete|SHDelete.",
+   "46 corpus rows: B30-B49 (B32, B38 and B41 quiet; B39 miss) and W35-W60 (W44 and W47 quiet; W45, W53, W54, W56, W59 and W60 miss; W55 the fire control).",
+   "Top-level bounded_by, aliases and census keys in ExplorerSettingsWriteCorpus.json, and _note extended to SL-103 with 'bounded by producer' wording.",
+   "Rewritten `because` text on both entries and the Fact's XML summary.",
+   "Plants F49, F50, F51, P34, P35, S51, S52, S53, S54 and S55 in eng/rules-harness/plants.json.",
+   "tests/bugs/SL-103-ExplorerAdvancedRightsOpen.Tests.ps1 committed unchanged as the acceptance test.",
+   "A recorded rows-first run failing exactly the 33 closed ids."
+  ],
+  "whats_reused": [
+   "ExplorerSettingsWriteRuleTests as it is: the row Theory, the frozen SL-091 `before` sets, the 9/6 count Fact, and the SettledPatterns and FactPatterns readers.",
+   "The SL-091 corpus file and row schema, and the bounded_by idiom from DefenderStateCorpus.json.",
+   "The SL-091 plant idioms: a // comment after the _revealSequence anchor for src, and a code line after $ErrorActionPreference in WindowCases.ps1 for window.",
+   "Pattern texts the spikes measured go: all-widenings-together, window-ps-string-open-marker, src-and-window-delete-widenings, registryrights-marker-without-createsubkey.",
+   "eng/rules-parity.ps1, eng/rules-harness/harness.py, tests/rules/RuleCases.ps1 and eng/dotnet.ps1 (repo-local SDK 10.0.401 in .dotnet/, #72)."
+  ]
+ }
+}
