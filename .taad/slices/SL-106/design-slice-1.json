@@ -1,0 +1,592 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-106",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-10-12T22:02:10.647Z",
+ "head": "c6d43e0585c97d74c7e652878bbb65aad49034d9",
+ "run_id": 3589,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "reason": "One proposal (practice), checked line by line against the tree at HEAD c6d43e0 and against four spikes that all returned go on a patch of the same shape. It is selected with three changes: (1) KindText's fallback is neutral, not a throw. (2) FolderTreeSession is linked into Core.Tests so the tree's kind lookup gets a test without WPF. (3) Two settled architecture rules make the one-stamp, one-wording seam fail when crossed.",
+  "selection_rationale": "Chosen by how well it fits what was measured, not by taste:\n\n1. **It fits the code as it is.** The survey measured the seams this design changes. DirectoryReader.Read returns the open's error and List's error through one int (DirectoryReader.cs:99-104). Scanner.FolderDone is the only place a kind is decided (Scanner.cs:364-370). The tree works the ChildCount rule out again (FolderTreeNode.cs:93) and so does the top-level row (TopLevelTracker.cs:98). The proposal adds an `Opened` property beside the reader's existing `Count`, which the Scanner already reads after Read. That is the idiom already in the file. Read's signature and its test callers stay as they are.\n\n2. **Each step has been run.**\n   - Spike 1 showed one bit, set after Open returns a handle, is enough. b (59 on its first page) and e (opened by the plain fallback) get the new kind. d (refused with 5) stays NothingListed. A folder that failed after one entry stays ListedPartway.\n   - Spike 2 applied the whole design. The three surfaces agreed on 25 of 25 folder rows (HEAD: 24 of 25). The default suite was 935/936, and the one red test is the partway wording pin this slice changes on purpose. The SL-106 bug test passed on that patch.\n   - Spike 3 showed the real Windows SMB redirector opens s and fails its first QUERY_DIRECTORY (5, then 59). The patched scan stamps s with the new kind. A cloud-tagged folder under attached cldflt still fails at CreateFile with 363 and stays NothingListed.\n   - Spike 4 showed the tree and the top-level row follow the stamped kind even when ChildCount disagrees.\n   - The survey's probe found all 27 real code-363 folders failing at the open, so they keep 'could not be opened'.\n\n3. **It is cheap to reverse.** Every piece is cheap to reverse except the appended enum member, which is a public contract. Appending it as value 2 keeps NothingListed=0 and ListedPartway=1.\n\n4. **It is the simplest thing that works.** The practice designer raised over_engineering_flag against their own interest. They rejected four things: a ReadOutcome or phase struct replacing Read's int, kind flags in ScanStore (which would change C-001's entry layout), relaxing FailListingOf's page-1 refusal in SynchronousIoCancel.cs (lesson #214's high-risk file), and a new window case. Their reason was that only one bit was ever missing. That flag is honoured: none of those four is in this design.\n\n**What I changed from the proposal, and why:**\n- **KindText's fallback is neutral instead of throwing.** TitleOf runs inside the live results list's converter during a scan, outside Q-158's per-view catch. Q-071 rules out a global Handled=true handler. So a throw there could end the app, while a neutral 'could not be read' is true of every failed folder. The every-kind Fact still makes a forgotten branch red before ship.\n- **FolderTreeSession.cs is linked into Core.Tests.** It uses no WPF. Its new lookup (kind, null for an entry not in the record, first kind wins, null once closed) is the one tree-side branch spike 2 could only reach through a scratch console.\n- **Two settled architecture rules are added.** They make the seam this slice settles fail when crossed. At HEAD, both match exactly the lines this slice removes.",
+  "components": [
+   {
+    "name": "DirectoryReader.Opened",
+    "responsibility": "Says whether the last Read got a handle for its folder. Cleared at the top of Read with _count and _namesUsed, and set true right after Open returns 0, just before List. So it follows the plain fallback open when the keep-last-access open was refused (spike 1, arm A2). It stays false for a refused open and for InsideExcludedStore.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/DirectoryReader.cs",
+    "key_interactions": "Scanner.Execute's loop reads it right after _reader.Read, as it reads _reader.Count. Read's int return and its existing callers are unchanged."
+   },
+   {
+    "name": "Scanner.FailedKind and the FolderDone stamp",
+    "responsibility": "One pure internal rule beside ClassifyReadError, FailedKind(int error, bool opened, int listed): error 0 gives null; listed > 0 gives ListedPartway; opened gives OpenedNothingListed; anything else gives NothingListed. FolderDone gains `bool opened`: the loop passes _reader.Opened and the root passes true. FolderDone computes `UnreadableKind? failed` once. A non-null kind sets EntryFlags.Unreadable and adds the UnreadableFolder, and the same value goes to _topLevel.FolderExited in place of `error != 0`. The Cancelled early return is unchanged and comes before any stamp.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "key_interactions": "The only place in Core that names an UnreadableKind member (architecture rule 1). StoreSkipped passes failed: null. ListRoot is unchanged."
+   },
+   {
+    "name": "UnreadableKind.OpenedNothingListed",
+    "responsibility": "A third member, appended so NothingListed=0 and ListedPartway=1 keep their values. NothingListed keeps its name, and its doc narrows to 'the open was refused, so nothing was listed'. The enum doc at ScanResult.cs:75-79, which says the scan cannot tell the phases apart, is rewritten to say it can. It also records that code-363 cloud-tag folders were measured failing at CreateFile.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/ScanResult.cs",
+    "key_interactions": "UnreadableFolder's constructor stays internal, so only Core makes records (SL-087 review M3)."
+   },
+   {
+    "name": "TopLevelTracker and TopLevelRow.FailedKind",
+    "responsibility": "FolderExited takes `UnreadableKind? failed` instead of `bool unreadable`. Row.OwnUnreadable and Row.OwnListedPartway become one `UnreadableKind? OwnFailed`, so the tracker no longer reads ChildCount for the kind. UnreadableBelow++ when the folder is not the row's own and failed is not null. Build picks Unreadable when OwnFailed is not null and publishes `FailedKind = state == TopLevelState.Unreadable ? r.OwnFailed : null`. TopLevelRow's `bool ListedPartway { get; init; }` is replaced by `UnreadableKind? FailedKind { get; init; }`. The 9-argument constructor is unchanged.",
+    "lives_at": "src/FsAnalyser.Core/TopLevelTracker.cs, src/FsAnalyser.Core/TopLevelSnapshot.cs",
+    "key_interactions": "Carries the scanner's stamp and never names a kind member (architecture rule 1). The fitness rule 'published snapshot types cannot be changed after they are built' still holds: init-only, with no setter and no public field."
+   },
+   {
+    "name": "UnreadableRows.KindText, the one wording source",
+    "responsibility": "A switch with one arm per named kind: NothingListed gives 'could not be opened', OpenedNothingListed gives 'opened, but nothing could be listed', ListedPartway gives 'only partly read'. The discard gives the neutral 'could not be read', which is true of every failed folder, instead of today's 'could not be opened'. A kind nobody worded can then neither make a false claim nor throw inside a WPF converter.",
+    "lives_at": "src/FsAnalyser.App/UnreadableRows.cs",
+    "key_interactions": "Called by UnreadableRow.Text, TopLevelRowText.TitleOf and FolderTreeNode.Note. Already linked as source into Core.Tests and the SL-106 bug project. The only App file allowed to hold the kind words (architecture rule 2)."
+   },
+   {
+    "name": "TopLevelRowText.TitleOf",
+    "responsibility": "The two Unreadable arms become one: `TopLevelState.Unreadable when row.FailedKind is { } failed => $\"{row.Name}  ({UnreadableRows.KindText(failed)})\"`. The header doc is rewritten to say all three surfaces word through KindText. FiguresOf's aggregate '...inside could not be read (in full)' stays as it is, on purpose: it counts all three kinds, and it is true of each.",
+    "lives_at": "src/FsAnalyser.App/TopLevelRowText.cs"
+   },
+   {
+    "name": "FolderTreeSession kind lookup and FolderTreeNode.Note",
+    "responsibility": "The session constructor becomes (ScanStore? store, IReadOnlyList<UnreadableFolder> unreadable), with the record required. It builds a Dictionary<int, UnreadableKind> keeping the first kind per entry, as UnreadableRows.Build keeps the first row. FailedKind(entry) returns null for an entry not in the record and once the session is closed; Close drops the dictionary with the store. None = new(null, []). Note keeps its Link and NotScanned arms, then ends `_session.FailedKind(_entry) is { } failed ? UnreadableRows.KindText(failed) : \"\"`. It no longer reads ChildCount, and no longer re-reads the Unreadable flag for wording.",
+    "lives_at": "src/FsAnalyser.App/FolderTreeSession.cs, src/FsAnalyser.App/FolderTreeNode.cs",
+    "key_interactions": "MainWindow.ShowFolderTree (MainWindow.xaml.cs:471), the only construction site in the App, becomes new FolderTreeSession(result.Store, result.Unreadable). FolderTreeSession.cs uses no WPF and is linked into Core.Tests for FolderTreeSessionTests."
+   },
+   {
+    "name": "App-never-decides-kind rule, widened",
+    "responsibility": "The existing twinned rule's alternation becomes any member, `(?<!\\?)\\?\\s*UnreadableKind\\.\\w+\\b`, so a ternary choosing OpenedNothingListed fires; spike 2 showed today's pattern misses it. The same text changes in the xUnit Fact and in its fitness.yaml twin (:253), and eng/rules-harness/plants.json gains a must-fire row for the new member. The number of facts and patterns does not change.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs, .taad/fitness.yaml, eng/rules-harness/plants.json",
+    "key_interactions": "eng/rules-parity.ps1 must still print AGREE with the twinned counts unchanged. RuleCases C-001 and C-003 settled counts rise by the two rules the engine appends from this design (lesson #212: settled = rule items minus 15)."
+   },
+   {
+    "name": "Window harness updates",
+    "responsibility": "(a) T-007 expects P's tree note 'only partly read' (WindowCases.ps1:3075, :3127, :3133). (b) CheckSeamRow's kind text maps all three kinds and fails on an unknown kind (:5476). (c) Get-OracleRow returns a tallied, never-opened class 'opened-nothing-listed' for OpenedNothingListed (:6125). (d) W-001's row-sum check (:6225-6227) gains the third bucket. (e) W001OracleCorpus.json gains F16: kind OpenedNothingListed, code 5, plant listable, expect opened-nothing-listed. That is SMB variant 1's shape, a folder that opens now and must never be classed a leak. (f) RowsMode.cs:33's doc lists three kinds.",
+    "lives_at": "tests/window/WindowCases.ps1, tests/window/W001OracleCorpus.json, tests/window/FsaWindowHook/RowsMode.cs",
+    "key_interactions": "W001OracleTests, in the default Core suite, runs the corpus through the script's own Get-OracleRow. Lesson #361: extend the corpus, never patch the script alone."
+   },
+   {
+    "name": "Core tests",
+    "responsibility": "New tests:\n- A Theory on Scanner.FailedKind.\n- A Fact in UnreadableRowsTests: every Enum.GetValues<UnreadableKind>() member has distinct words other than the fallback, and only NothingListed says 'could not be opened'.\n- A Fact in UnreadableFolderTests for the fallback-open arm: deny WriteAttributes on e, then fail e's first page with 59 using the bug test's dry-run-then-OverrideQueryError recipe.\n- FolderTreeSessionTests over the linked FolderTreeSession.cs.\n\nMechanical updates:\n- TopLevelTests.cs:559 and :592 pass `failed: null`.\n- TopLevelRowTextTests.cs:44, :45 and :51 read FailedKind.\n- TopLevelRowTextTests.cs:48 expects 'b-big  (only partly read)'.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/"
+   },
+   {
+    "name": "Measurement record and stale-doc corrections",
+    "responsibility": "Commit what the survey and the Sandbox runs measured; today it exists only in the untracked .taad-scratch:\n- 27 code-363 folders under fsa-guard-tests: the attributes open and the list open both return 363 (PHASE=open), none fails at the first query.\n- Hand-planted cloud tags under attached cldflt also fail at the open.\n- The CfProvider rig cannot make a 363 folder.\n- N-005's s (SMB CREATE ok, first QUERY_DIRECTORY 59) now stamps OpenedNothingListed.\n\nAlso correct the false doc sentences in SynchronousIoCancel.FailListingOf ('a first page that fails is a folder never opened'; 'the tree's \"could not be read in full\" row'). Doc only: the page-1 refusal stays.",
+    "lives_at": "docs/design/SL-106-opened-then-failed.md, src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs"
+   }
+  ],
+  "contracts": [
+   {
+    "name": "UnreadableKind { NothingListed = 0, ListedPartway = 1, OpenedNothingListed = 2 }",
+    "kind": "function",
+    "notes": "Public Core enum. NothingListed now means only 'open refused, nothing listed'. Consumers: UnreadableRows, TopLevelRow.FailedKind, FolderTreeSession, the RowsMode dump (enum name as a string), WindowCases CheckSeamRow and Get-OracleRow, and W001OracleCorpus.json.",
+    "error_cases": "A value with no KindText arm reads the neutral 'could not be read'. The every-kind Fact turns that red before ship."
+   },
+   {
+    "name": "DirectoryReader.Opened (bool, get)",
+    "kind": "function",
+    "notes": "Valid after Read returns. True iff Open returned a handle on this Read, whether the keep-last-access open or the plain fallback. False for a refused open and for InsideExcludedStore. Read's int return is unchanged.",
+    "error_cases": "Not set by List alone. The root goes through Open and List directly, and FolderDone is told opened: true for it."
+   },
+   {
+    "name": "Scanner.FailedKind(int error, bool opened, int listed) -> UnreadableKind?",
+    "kind": "function",
+    "notes": "Internal and pure. Checked in order: no error, then listed > 0, then opened. FolderDone never calls it for a Cancelled outcome, because it returns first.",
+    "error_cases": "none"
+   },
+   {
+    "name": "TopLevelTracker.FolderExited(int folder, int row, UnreadableKind? failed, int subfoldersPushed, in ScanTotals totals, bool notScanned = false)",
+    "kind": "function",
+    "notes": "Internal. Replaces `bool unreadable`. null means read in full, or left out on purpose (StoreSkipped).",
+    "error_cases": "none"
+   },
+   {
+    "name": "TopLevelRow.FailedKind (UnreadableKind?, init)",
+    "kind": "function",
+    "notes": "Non-null iff State == Unreadable. Replaces bool ListedPartway; no other reader of ListedPartway exists in src or tests/window (grep).",
+    "error_cases": "A null on an Unreadable row falls through TitleOf to the bare name: a visible gap, never a false claim. The tracker makes it impossible by construction, and TopLevelRowTextTests pins it."
+   },
+   {
+    "name": "FolderTreeSession(ScanStore? store, IReadOnlyList<UnreadableFolder> unreadable) / FailedKind(int entry) -> UnreadableKind?",
+    "kind": "function",
+    "notes": "Internal to the App. The record argument is required, which removes spike 2's hazard of a session built without a lookup wording every failure 'could not be opened'. The first record for an entry wins. Returns null once closed.",
+    "error_cases": "none"
+   },
+   {
+    "name": "Surface wording",
+    "kind": "ui",
+    "notes": "List: '<path>  —  <KindText>: <reason>'. Tree note: '<KindText>'. Top-level title: '<name>  (<KindText>)'. KindText gives 'could not be opened', 'opened, but nothing could be listed', 'only partly read', and the fallback 'could not be read'. 'could not be read in full' is retired from the tree and the top-level title. The aggregate 'could not be read (in full)' in FiguresOf and in MainWindow's largest-files caption is unchanged."
+   },
+   {
+    "name": "RowsMode dump row event",
+    "kind": "event",
+    "notes": "{\"event\":\"row\",...,\"kind\":\"NothingListed\"|\"ListedPartway\"|\"OpenedNothingListed\",...}. Only the doc changes; the value is the enum's name."
+   },
+   {
+    "name": "W-001 oracle class 'opened-nothing-listed'",
+    "kind": "cli",
+    "notes": "Get-OracleRow tallies it without opening the folder. The folder was opened by definition, so it cannot be the refused keep-last-access leak W-001 hunts. W-001's sum check accepts three kinds."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Carry the phase as a `bool Opened` property on DirectoryReader, read beside Count. Read's int is not replaced by a ReadOutcome struct, and no out parameter is added.",
+    "reversibility": "cheap",
+    "rationale": "The reader already exposes per-read state (Count) that the Scanner reads after Read, so this follows the file's own idiom and leaves Read's signature and callers alone. The slice text's 'DirectoryReader's ReadOutcome' does not exist; Scanner.ReadOutcome is an unrelated cancel enum. Spike 1 showed one bit is enough."
+   },
+   {
+    "decision": "Append OpenedNothingListed to UnreadableKind. Keep the name NothingListed and narrow its doc to a refused open.",
+    "reversibility": "expensive",
+    "rationale": "A new member is the only way to tell the phases apart on the public record (lesson #328). Renaming NothingListed would churn corpus rows F01-F13, CheckSeamRow call sites, T-009 and N-005 expectations and many tests for no gain. Appending keeps 0 and 1 stable. Expensive because the enum is a contract with six consumers: the list, the tree, the title, the hook dump, WindowCases, and the oracle corpus."
+   },
+   {
+    "decision": "Stamp once, in FolderDone, from one pure rule: no error gives null; listed > 0 gives ListedPartway; opened gives OpenedNothingListed; anything else gives NothingListed. Pass the same value to the record and to the tracker.",
+    "reversibility": "cheap",
+    "rationale": "One place decides, and the tracker's copy of the rule (TopLevelTracker.cs:98) disappears. Checking partway first keeps every folder that listed something ListedPartway, as today. Every real refused open (5, 32, 53, 363, 1920) has opened=false and stays NothingListed: the survey found 27/27 real 363 rows at PHASE=open, and spikes 1-3 confirmed it."
+   },
+   {
+    "decision": "All three surfaces word through UnreadableRows.KindText. Partway reads 'only partly read', and the new kind reads 'opened, but nothing could be listed'.",
+    "reversibility": "cheap",
+    "rationale": "One wording function makes it impossible for the surfaces to disagree, which is m1. The words were measured identical on list, tree and title in spike 2, and the new kind's words do not contain 'could not be opened', which the bug test asserts. Architecture rule 2 keeps the words in that one file."
+   },
+   {
+    "decision": "KindText's discard returns the neutral 'could not be read' instead of throwing (a change from the proposal). An every-kind Fact asserts every named member has its own distinct words and only NothingListed says 'could not be opened'.",
+    "reversibility": "cheap",
+    "rationale": "Today's `_ => \"could not be opened\"` would word any future kind as a refused open, the exact false claim this slice removes. A throw would instead reach TopLevelRowText's converter in the live results list, outside Q-158's per-view catch and with no global Handled=true handler (Q-071), so it could end the app mid-scan. The neutral words are true of every record. The Fact turns a forgotten arm red at every validate, so the loudness the proposal wanted from the throw is kept."
+   },
+   {
+    "decision": "The tree gets the kind from a lookup that FolderTreeSession builds from result.Unreadable, given as a required constructor argument. ScanStore gets no new flags.",
+    "reversibility": "cheap",
+    "rationale": "The record stays the single source. The store's 1-byte flags field (C-001) is untouched. A required argument removes the hazard spike 2 found. The cost is one dictionary of roughly 700 entries per C: scan (682 measured), dropped on Close as the store is (SL-044 review M2)."
+   },
+   {
+    "decision": "Replace TopLevelRow.ListedPartway with TopLevelRow.FailedKind (UnreadableKind?, init), and change FolderExited's `bool unreadable` to `UnreadableKind? failed`.",
+    "reversibility": "cheap",
+    "rationale": "The tracker stops recomputing the kind from ChildCount. Nothing reads ListedPartway outside TopLevelRowText and its tests (grep). An init property keeps the snapshot-immutability fitness rule and the 9-argument constructor intact."
+   },
+   {
+    "decision": "The scan root is out of scope. An opened root whose first page fails still ends RootUnreadable, with no record.",
+    "reversibility": "cheap",
+    "rationale": "The root produces no UnreadableFolder, no top-level row and no tree node, so none of the three surfaces this slice aligns shows it. In spike 2's ROOT arm, HEAD and the patch behaved identically. The root passes opened: true to FolderDone, which the rule only reaches when listed > 0. Filed for a later slice."
+   },
+   {
+    "decision": "Widen TheAppNeverDecidesAFailedFolderKind and its fitness twin from `(NothingListed|ListedPartway)` to `\\w+`, and add two settled rules: Core names kind members only in Scanner.cs, and the App writes kind words only in UnreadableRows.cs.",
+    "reversibility": "cheap",
+    "rationale": "Spike 2 showed a ternary choosing OpenedNothingListed passes today's rule. This names the new member of the rule's own subject; it is not the spelling-chasing Q-252 ruled out. The two settled rules fail on exactly the lines this slice removes (Scanner is the only Core site today; FolderTreeNode.cs:93-94 and TopLevelRowText.cs:27-28 are the stray word sites). The appended rules move RuleCases C-001 and C-003 settled counts, which validate must re-run (lesson #212)."
+   },
+   {
+    "decision": "Do not relax FailListingOf's page-1 refusal and do not add a window case for the new kind. Update T-007 to 'only partly read', link FolderTreeSession.cs into Core.Tests, and correct the failpoint's false doc.",
+    "reversibility": "cheap",
+    "rationale": "Note is a one-line composition of a lookup that ignores which kind it holds and KindText. T-007 exercises the lookup in the published exe at ChildCount 0 (R) and above 0 (P). FolderTreeSessionTests and the every-kind Fact pin the rest without WPF. Relaxing a guard in SynchronousIoCancel.cs, the high-risk file of lesson #214, would buy one drawn row; it is filed for a later slice instead."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal. Selected whole, with three changes made at composition:\n- KindText's discard returns the neutral 'could not be read' instead of throwing.\n- FolderTreeSession.cs is linked into Core.Tests for a lookup test.\n- Two settled architecture rules are declared.\n\nIts over_engineering_flag was honoured: no ReadOutcome struct, no store flags, no relaxation of FailListingOf."
+   }
+  ],
+  "coherence_check": "There was one proposal, so there is no composition to check. Nothing in this design has yet survived a disagreement with another designer; the downstream reviewer is the first to argue with it.\n\nWhat I checked within the one design:\n\n1. **One stamp, three readers.** Scanner computes `UnreadableKind? failed` once. The record, the tracker (FolderExited) and, through result.Unreadable, the tree session all receive that same value. No reader recomputes it: ChildCount leaves FolderTreeNode.Note and TopLevelTracker's kind. No invariant is held two ways.\n\n2. **Ordering between the cancel early-return and the stamp.** FolderDone returns on Cancelled before it stamps, so an aborted listing is never recorded, as today. A 995 with no cancel issued is stamped by phase: OpenedNothingListed if nothing was kept, ListedPartway if pages were kept. This matches CancelledFolderTests:211, which pins the partway 995 as ListedPartway.\n\n3. **The fallback-open path.** Opened is set after Open returns 0, and OpenDirectory already falls back to the plain open inside that call. So a folder opened by the fallback counts as opened (spike 1, arm A2).\n\n4. **The seam I redesigned.** The proposal's throwing KindText discard conflicted with how the App calls it: TitleOf runs in the live list's converter, outside Q-158's catch and with no global handler (Q-071). I kept the guard (the every-kind Fact) and replaced the throw with neutral words that are true of every record.\n\n5. **The new architecture rules against the tree.**\n   - Rule 1 (`\\bUnreadableKind\\.\\w+` in Core except Scanner.cs): Scanner.cs:369 is the only Core line that matches today.\n   - Rule 2 (kind words in App .cs except UnreadableRows.cs): it matches only FolderTreeNode.cs:93-94 and TopLevelRowText.cs:27-28, the lines this slice removes. MainWindow.xaml.cs:571 ('files could not be opened to read...') and :668 ('could not be read (in full)') do not match.\n   - Both files globs match existing files, and both except_files exist.\n\n6. **No outside-defect workaround applies.** The defect is this project's own: the reader drops the phase. The code-363 rows are a measured Windows behaviour that this design leaves correctly worded; it does not step around it. So nothing joins KnownWorkarounds, and no on/off case is owed.",
+  "architecture_rules": [
+   {
+    "name": "in Core, only the scanner names a failed folder's kind",
+    "files": "src/FsAnalyser.Core/**/*.cs",
+    "must_not_match": [
+     "\\bUnreadableKind\\.\\w+"
+    ],
+    "except_files": [
+     "src/FsAnalyser.Core/Scanning/Scanner.cs"
+    ],
+    "because": "The kind is stamped once, in Scanner.FolderDone, from the phase the reader saw. Any other Core file naming a member is deciding or re-deciding the kind: that is how TopLevelTracker came to work it out again from ChildCount (TopLevelTracker.cs:98, SL-087 m1). Its row then disagrees with the list and the tree about the same folder, and an opened-then-failed folder reads 'could not be opened' on one surface only."
+   },
+   {
+    "name": "in the App, only UnreadableRows writes a failed folder's kind in words",
+    "files": "src/FsAnalyser.App/**/*.cs",
+    "must_not_match": [
+     "[(\"]\\s*(?:could not be opened|only partly read|could not be read in full|opened, but nothing could be listed)\\s*[)\"]"
+    ],
+    "except_files": [
+     "src/FsAnalyser.App/UnreadableRows.cs"
+    ],
+    "because": "The list, the tree note and the top-level title must give the same words for the same folder, so all three word through UnreadableRows.KindText. A copy of those words in another App file drifts from it. That is m1: the tree and the title said 'could not be read in full' while the list said 'only partly read', and their 'could not be opened' arms were chosen from ChildCount rather than the stamped kind."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "record and word a folder that could not be read",
+    "shape": "its open is refused (deny ListDirectory, error 5), so nothing is listed",
+    "why": "opened=false must still give NothingListed and 'could not be opened' on the list and the top-level title. Losing this would reword a true refusal, which the bug test's control half guards.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-106-OpenedThenFailedKind/SL-106-OpenedThenFailedKind.Tests.csproj"
+   },
+   {
+    "behaviour": "record and word a folder that could not be read",
+    "shape": "its open succeeds and its first listing page fails with 59, so nothing is listed (ChildCount 0)",
+    "why": "This is the bug itself (M2). Opened must reach the stamp, the record must differ from a refused open, and neither the list nor the top-level title may say 'could not be opened'.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-106-OpenedThenFailedKind/SL-106-OpenedThenFailedKind.Tests.csproj"
+   },
+   {
+    "behaviour": "record and word a folder that could not be read",
+    "shape": "its keep-last-access open is refused (deny WriteAttributes), the plain fallback opens it, and its first page fails with 59",
+    "why": "Opened must follow the fallback open, not the refused first attempt. If it were set from the first attempt, this folder would read 'could not be opened' though it was opened (spike 1, arm A2).",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~UnreadableFolderTests\""
+   },
+   {
+    "behaviour": "record and word a folder that could not be read",
+    "shape": "its listing fails at page 2 after entries were kept, so it is listed partway",
+    "why": "listed > 0 must win over opened and give ListedPartway. The title must now say 'only partly read', never 'could not be read in full'. The same test checks a folder failing below a row's own folder: it must count in UnreadableBelow and leave the row's own kind alone.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~TopLevelRowTextTests|FullyQualifiedName~UnreadableFolderTests|FullyQualifiedName~TopLevelTests\""
+   },
+   {
+    "behaviour": "stamp the kind from the phase",
+    "shape": "error 995: with cancel requested, versus returned on the first page with no cancel issued (LastCallAborted false)",
+    "why": "A cancelled 995 must return before any stamp and leave no record. An unasked 995 is 'an error like any other' (DirectoryReader.cs:115-118, lesson #312), so after an open it is OpenedNothingListed, or ListedPartway when pages were kept (CancelledFolderTests:211).",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~ScannerFailedKindTests|FullyQualifiedName~CancelledFolderTests\""
+   },
+   {
+    "behaviour": "stamp the kind from the phase",
+    "shape": "a refused open with a code other than 5: 32 (held by another program), 363 (cloud metadata), 1920",
+    "why": "The rule branches on opened, never on the code. The survey found all 27 real 363 rows failing at the open, and they must keep NothingListed. HeldFolderReasonTests scans a real 32 hold; FailedKind Theory rows pin 363 and 1920 with opened=false.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~ScannerFailedKindTests|FullyQualifiedName~HeldFolderReasonTests\""
+   },
+   {
+    "behaviour": "leave out the container layer store",
+    "shape": "the folder is at or under the excluded store, by the walk's own check or by the reader's InsideExcludedStore backstop",
+    "why": "Opened is false and Read returns -1, which never reaches FolderDone. StoreSkipped must pass failed: null, so the store is NotScanned and never an UnreadableFolder.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~ContainerLayerStoreTests\""
+   },
+   {
+    "behaviour": "word a kind",
+    "shape": "every member of UnreadableKind, plus an unnamed value",
+    "why": "Each named member needs its own distinct words, other than the fallback, and only NothingListed may say 'could not be opened'. An unnamed value must get the neutral fallback and not throw.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~UnreadableRowsTests\""
+   },
+   {
+    "behaviour": "look up a tree row's kind",
+    "shape": "an entry in the record, an entry not in it, an entry the record holds twice, and a closed session",
+    "why": "Note's whole kind branch is this lookup. A miss must give no note; a duplicate must keep the first kind, as the list does; a closed session must give null, so a row WPF still holds reads empty (SL-044 review M2).",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FolderTreeSessionTests\""
+   },
+   {
+    "behaviour": "draw the folder tree's note in the published app",
+    "shape": "P listed partway (failpoint at page 2) and R denied outright, in one tree",
+    "why": "These are the only drawn-exe checks of the session wiring, at ChildCount above 0 and at 0. P's note changes to 'only partly read', and R must keep 'could not be opened' through the lookup, not through ChildCount.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case T-007"
+   },
+   {
+    "behaviour": "draw the folder tree's note in the published app",
+    "shape": "a folder that opened and failed its first page (OpenedNothingListed)",
+    "why": "Considered and judged not worth a test in this slice. FailListingOf refuses page 1, and relaxing it touches SynchronousIoCancel.cs, lesson #214's high-risk file. Note does not branch on the kind, and the word and lookup halves are pinned by the two cases above. Filed for a later slice.",
+    "material": false
+   },
+   {
+    "behaviour": "classify a panel row in W-001's oracle",
+    "shape": "an OpenedNothingListed row, code 5, whose folder lists now (SMB variant 1's shape)",
+    "why": "Today Get-OracleRow returns 'unknown-kind' for any third kind. If the new kind fell through to the code-5 open instead, an opened folder would be called a leak. Corpus row F16 pins the class 'opened-nothing-listed'.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~W001OracleTests\""
+   },
+   {
+    "behaviour": "keep the App from deciding the kind, and the rule copies in agreement",
+    "shape": "a ternary choosing UnreadableKind.OpenedNothingListed in an App .cs file, plus two settled rules appended by the engine",
+    "why": "Today's pattern names only the two old members, so it misses the new one (spike 2). The widened twin must still AGREE in parity, and the appended rules move the settled counts that RuleCases C-001 and C-003 pin (lessons #85, #212).",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~ArchitectureRulesTests|FullyQualifiedName~RuleCopiesAgreeTests\"; powershell.exe -NoProfile -ExecutionPolicy Bypass -File eng/rules-parity.ps1; pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-001; pwsh -NoProfile -ExecutionPolicy Bypass -File tests/rules/RuleCases.ps1 -Case C-003"
+   },
+   {
+    "behaviour": "record a scan whose root fails",
+    "shape": "the root opens and its first listing page fails with nothing listed",
+    "why": "Considered and judged not worth a test here. ListRoot returns before AppendRoot (Scanner.cs:261-262), so the root never reaches the stamp and shows on none of the three surfaces; spike 2's ROOT arm was identical on HEAD and the patch. The root's own conflation is filed for a later slice.",
+    "material": false
+   }
+  ],
+  "code_claims": [
+   {
+    "path": "src/FsAnalyser.Core/Scanning/DirectoryReader.cs",
+    "symbol": "Read",
+    "claim": "Read returns the open's Win32 error when Open fails and otherwise List's result, through one int, with nothing marking which phase failed."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/DirectoryReader.cs",
+    "symbol": "InsideExcludedStore",
+    "claim": "Read returns InsideExcludedStore (-1) without opening a folder at or under ExcludedStore."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/DirectoryReader.cs",
+    "symbol": "Count",
+    "claim": "The reader exposes per-read state as a property, Count, reset at the top of Read, which the Scanner reads after Read returns."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/DirectoryReader.cs",
+    "symbol": "ERROR_FILE_NOT_FOUND",
+    "claim": "List returns 0 when the first page fails with ERROR_FILE_NOT_FOUND, and clears what it read before returning the error when io.LastCallAborted is set."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "FolderDone",
+    "claim": "FolderDone returns before committing anything when ClassifyReadError gives Cancelled. Otherwise, on an error, it stamps ListedPartway when ChildCount(folder) > 0 and NothingListed otherwise, and passes only error != 0 to _topLevel.FolderExited."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "ListRoot",
+    "claim": "ListRoot returns the error before AppendRoot when the root's listing fails with Count == 0, so the root never gets an UnreadableFolder record."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "StoreSkipped",
+    "claim": "StoreSkipped calls _topLevel.FolderExited with unreadable: false and notScanned: true."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "ReadOutcome",
+    "claim": "ReadOutcome is an enum nested in Scanner with Read, Unreadable and Cancelled, carrying no phase of the read."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/ScanResult.cs",
+    "symbol": "UnreadableKind",
+    "claim": "UnreadableKind has only NothingListed and ListedPartway, and its doc says the scan does not tell a refused open from a folder that opened and then failed before its first entry."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/ScanResult.cs",
+    "symbol": "UnreadableFolder",
+    "claim": "UnreadableFolder's constructor is internal and its Entry, Win32Error and Kind are get-only."
+   },
+   {
+    "path": "src/FsAnalyser.Core/TopLevelTracker.cs",
+    "symbol": "OwnListedPartway",
+    "claim": "FolderExited sets OwnListedPartway = unreadable && _store!.ChildCount(folder) > 0 for the row's own folder."
+   },
+   {
+    "path": "src/FsAnalyser.Core/TopLevelTracker.cs",
+    "symbol": "UnreadableBelow",
+    "claim": "FolderExited increments UnreadableBelow for an unreadable folder that is not the row's own folder."
+   },
+   {
+    "path": "src/FsAnalyser.Core/TopLevelTracker.cs",
+    "symbol": "Build",
+    "claim": "Build sets the published row's ListedPartway to state == TopLevelState.Unreadable && r.OwnListedPartway."
+   },
+   {
+    "path": "src/FsAnalyser.Core/TopLevelSnapshot.cs",
+    "symbol": "ListedPartway",
+    "claim": "TopLevelRow.ListedPartway is a public bool init-only property."
+   },
+   {
+    "path": "src/FsAnalyser.App/FolderTreeNode.cs",
+    "symbol": "Note",
+    "claim": "Note words an entry flagged Unreadable 'could not be read in full' when its ChildCount > 0 and 'could not be opened' otherwise."
+   },
+   {
+    "path": "src/FsAnalyser.App/FolderTreeSession.cs",
+    "symbol": "FolderTreeSession",
+    "claim": "FolderTreeSession holds only a ScanStore (None is built with null) and nothing that maps an entry to its UnreadableKind."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "ShowFolderTree",
+    "claim": "ShowFolderTree builds the tree's session as new FolderTreeSession(result.Store)."
+   },
+   {
+    "path": "src/FsAnalyser.App/UnreadableRows.cs",
+    "symbol": "KindText",
+    "claim": "KindText maps ListedPartway to 'only partly read' and every other kind, through a discard arm, to 'could not be opened'."
+   },
+   {
+    "path": "src/FsAnalyser.App/UnreadableRows.cs",
+    "symbol": "Build",
+    "claim": "Build keeps the first kind and code for an entry the record holds more than once."
+   },
+   {
+    "path": "src/FsAnalyser.App/TopLevelRowText.cs",
+    "symbol": "TitleOf",
+    "claim": "TitleOf words an Unreadable row '(could not be read in full)' when row.ListedPartway and '(could not be opened)' otherwise."
+   },
+   {
+    "path": "src/FsAnalyser.App/TopLevelRowText.cs",
+    "symbol": "FiguresOf",
+    "claim": "FiguresOf words the aggregate count of failed folders below a row as 'inside could not be read (in full)'."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+    "symbol": "UnreadableRows.cs",
+    "claim": "Core.Tests compiles src/FsAnalyser.App/TopLevelRowText.cs and UnreadableRows.cs as linked source."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs",
+    "symbol": "TheAppNeverDecidesAFailedFolderKind",
+    "claim": "The Fact forbids (?<!\\?)\\?\\s*UnreadableKind\\.(NothingListed|ListedPartway)\\b in src/FsAnalyser.App .cs files, so a ternary choosing any other member passes."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "TheAppNeverDecidesAFailedFolderKind",
+    "claim": "fitness.yaml carries the twin pattern '(?m)(?<!\\?)\\?\\s*UnreadableKind\\.(NothingListed|ListedPartway)\\b' over src/FsAnalyser.App/**/*.cs."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "Get-OracleRow",
+    "claim": "Get-OracleRow returns 'partway' for ListedPartway and 'unknown-kind' for any kind other than NothingListed."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "CheckSeamRow",
+    "claim": "CheckSeamRow expects 'only partly read' for ListedPartway and 'could not be opened' for every other kind."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "Test-T007",
+    "claim": "T-007 asserts that the tree note of P, whose listing fails at its second page, is 'could not be read in full'."
+   },
+   {
+    "path": "tests/window/W001OracleCorpus.json",
+    "symbol": "F15",
+    "claim": "The oracle corpus has 15 rows, F01-F15, each of kind NothingListed or ListedPartway."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs",
+    "symbol": "FailListingOf",
+    "claim": "FailListingOf's doc says it refuses a page under 2 because a first page that fails is a folder never opened, and names the tree's 'could not be read in full' row."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/TopLevelTests.cs",
+    "symbol": "FolderExited",
+    "claim": "TopLevelTests calls _tracker.FolderExited with the named argument unreadable: false at two sites."
+   }
+  ],
+  "outside_claims": [
+   {
+    "claim": "Through the real Windows SMB redirector, CreateFileW on a share folder succeeds when the server accepts CREATE. A server failure of the first QUERY_DIRECTORY then surfaces at GetFileInformationByHandleEx (as 5, or 59 once the server stops), not at the open.",
+    "evidence": "measured",
+    "source": "Spike natural-triggers-smb-and-cloud-tag-in-sandbox, Windows Sandbox build 26100, SMBLibrary 1.5.8.1 server with the real redirector: PHASE=first-query in both variants",
+    "if_wrong": "The natural trigger would not be an opened-then-failed folder, and N-005's s would stay NothingListed. The design itself would not change, since it stamps from what the reader saw."
+   },
+   {
+    "claim": "A folder carrying a cloud reparse tag that cldflt cannot read fails at CreateFile with 363 (ERROR_CLOUD_FILE_METADATA_CORRUPT), not at the first directory query.",
+    "evidence": "measured",
+    "source": "Build-check survey probe on this PC: 27/27 folders under fsa-guard-tests gave attrOpen=363 and listOpen=363. Spike 3 in Sandbox, cldflt.sys 10.0.26100.9444 (the same file version as this PC): PHASE=open in states C2 and C3.",
+    "if_wrong": "Real 363 rows would become OpenedNothingListed and read 'opened, but nothing could be listed'. The words would then be true of them, so the wording stays honest either way, but the expectation that the 363 rows are unchanged would fail."
+   },
+   {
+    "claim": "On local NTFS an ordinary user cannot make a real listing fail after a successful open: the ACL is checked at open time only, and deleting the folder mid-enumeration truncates silently. Opened-then-failed must be injected through OverrideQueryError (Core.Tests) or FailListingOf (window cases).",
+    "evidence": "measured",
+    "source": "Lesson #309 (SL-082 spikes 2 and 4)",
+    "if_wrong": "A real-I/O fixture could replace injection, which would be strictly better and would change no boundary."
+   },
+   {
+    "claim": "An exception thrown from a WPF IValueConverter.Convert during binding is not swallowed by the binding engine. It reaches the dispatcher and, with no Handled=true handler, ends the app.",
+    "evidence": "recalled",
+    "source": "memory",
+    "if_wrong": "The neutral KindText fallback is then only a wording choice rather than a crash guard. It is still true of every record, so nothing breaks."
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Directory-walking libraries (Rust std::fs / walkdir, POSIX fts)",
+   "pattern": "Report the phase where an error surfaces instead of reconstructing it later from what is left over. In Rust, read_dir returns the open's error, and the iterator yields per-entry errors, so a caller never infers 'did it open?' from how many entries came back. Here the reader records Opened at the moment Open returns, and the kind is stamped once from it rather than from ChildCount.",
+   "transfer_found": true,
+   "rationale": "The defect is inferring the phase from what is left over (ChildCount 0), which cannot tell 'never opened' from 'opened, then nothing'. Walk libraries avoid that by keeping the phase in the API's shape. One bit at the open is the smallest version of that pattern that fits a reader returning one int.",
+   "invariants": [
+    {
+     "precondition": "The reader knows, at the moment Open returns, whether it holds a handle.",
+     "status": "holds",
+     "evidence": "DirectoryReader.Read :99-101 returns early on Open's error and lists only with a handle. Spike 1 patched exactly there and stamped b (59, 0) as the new kind, with d (5) unchanged."
+    },
+    {
+     "precondition": "A folder opened by the plain fallback after its keep-last-access open was refused counts as opened.",
+     "status": "holds",
+     "evidence": "Spike 1, arm A2: e was denied WriteAttributes (keptLastAccess=False in the dry run) and its first query was forced to 59. It was stamped OpenedNothingListed."
+    },
+    {
+     "precondition": "Every surface reads the stamped kind and none recomputes it.",
+     "status": "must-verify",
+     "evidence": "After build:\n- grep shows ChildCount no longer feeds Note, TitleOf or the tracker's kind.\n- Architecture rule 1 (Core) and rule 2 (App words) pass.\n- The widened TheAppNeverDecidesAFailedFolderKind fires on a planted ternary over OpenedNothingListed.\n\nSpike 2 measured 25/25 agreement on a patch of this shape."
+    },
+    {
+     "precondition": "Real refused opens, including code-363 cloud-tag folders, fail at CreateFile and so keep NothingListed.",
+     "status": "holds",
+     "evidence": "Survey probe: 27/27 code-363 folders give attrOpen=363 and listOpen=363 (PHASE=open). Spike 3: planted cloud tags under attached cldflt give PHASE=open 363, and the patched driver stamps NothingListed."
+    }
+   ]
+  },
+  "prior_art": [
+   {
+    "pattern": "Open errors and iteration errors surface separately: read_dir() returns io::Result<ReadDir> for the open, and the iterator yields io::Result<DirEntry> per entry, so a caller never infers the phase from an entry count.",
+    "where": "Rust standard library std::fs::read_dir / ReadDir",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "A walk error carries the path and depth where it happened and is yielded inline, so the consumer words it from the error's own fields rather than from the tree it built.",
+    "where": "walkdir crate (Rust)",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "The traversal reports an unreadable directory as its own node state (FTS_DNR) with the errno attached, separate from its children, rather than leaving the caller to infer it from an empty child list.",
+    "where": "POSIX/BSD fts(3), used by GNU find/du",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Wording comes from one function keyed by an enum, with every member named, so a member added without words is caught rather than falling into a default that makes a false claim.",
+    "where": "C# switch-expression exhaustiveness practice (CS8509/CS8524)",
+    "authority": "community",
+    "basis": "recalled"
+   }
+  ],
+  "channeled_experts": [
+   "Rust std::fs / walkdir maintainers (keep the open phase and the iteration phase apart in the API)",
+   "BSD fts(3) authors (an unreadable directory as its own node state, with errno)",
+   "The SL-087 reviewer who deferred M2 and m1 (one stamp, three surfaces, changed together)"
+  ],
+  "decidable_disagreements": [],
+  "taste_disagreements": [
+   "KindText's discard: the proposal throws ArgumentOutOfRangeException; this composition returns the neutral 'could not be read'. The every-kind Fact guards both. The choice turns on whether a missed arm should be loud at run time (the throw) or never crash a live-scan converter (the neutral words).",
+   "The new member's name, OpenedNothingListed. It is appended and NothingListed keeps its name. A rename to OpenRefused / OpenedNothingListed would read more symmetrically, but it churns corpus rows F01-F13, CheckSeamRow call sites and many tests.",
+   "The new kind's words, 'opened, but nothing could be listed', measured on all three surfaces in spike 2. Alternatives such as 'opened, but could not be listed' are equally true.",
+   "Leaving FailListingOf's page-1 refusal in place (doc-only fix), so the published exe never draws the new kind in the tree, against relaxing it in the high-risk SynchronousIoCancel.cs for one more window case.",
+   "Where the tree gets the kind: from a session lookup built from result.Unreadable (chosen), against a flag bit in ScanStore entries, which would change C-001's layout."
+  ],
+  "filed_for_later": [
+   {
+    "what": "The scan root still conflates the two phases. A root that opens and then fails its first listing page ends RootUnreadable exactly like a root whose open was refused. Decide whether RootUnreadable's ending text should tell the phases apart, by carrying ListRoot's phase into ScanResult.",
+    "why": "The root produces no UnreadableFolder, no top-level row and no tree node, so it is on none of the three surfaces this slice aligns. Changing it touches the ending text and ScanResult's RootError contract.",
+    "who": "slice"
+   },
+   {
+    "what": "Let the published app draw an OpenedNothingListed tree note: relax SynchronousIoCancel.FailListingOf's page-1 refusal (FSA_HOOK_FAIL_LISTING '<leaf>|1|59') and add a window case asserting the drawn note 'opened, but nothing could be listed' beside the list and title.",
+    "why": "It touches SynchronousIoCancel.cs, lesson #214's high-risk file, for one drawn row. This slice pins the words and the lookup without WPF, and T-007 covers the wiring.",
+    "who": "slice"
+   },
+   {
+    "what": "Run `pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter Network=SMB-LOOPBACK` on this slice's build, and confirm the real-share cancel and failure paths still pass now that FolderDone and DirectoryReader.Read have changed (lesson #99).",
+    "why": "It needs a non-persistent New-SmbMapping on 127.0.0.1, which changes network state, and the project's stack says no engine stage runs Network=SMB-LOOPBACK (lessons #120, #236). Network=TEST-NET-1 stays in validate.",
+    "who": "person"
+   }
+  ],
+  "stack_chosen": [],
+  "whats_new": [
+   "DirectoryReader.Opened: true once Read's open returned a handle (keep-last-access or plain fallback), false for a refused open or the excluded store.",
+   "Scanner.FailedKind(error, opened, listed), the single pure kind rule, plus a `bool opened` parameter on FolderDone (the root passes true).",
+   "UnreadableKind.OpenedNothingListed, appended as value 2, with the UnreadableKind and NothingListed docs rewritten.",
+   "TopLevelRow.FailedKind (UnreadableKind?, init) replaces bool ListedPartway. FolderExited takes `UnreadableKind? failed`, and Row.OwnFailed replaces OwnUnreadable and OwnListedPartway.",
+   "FolderTreeSession takes the scan's record (required), builds an entry-to-kind dictionary and exposes FailedKind(entry). Note reads it and words it through KindText.",
+   "UnreadableRows.KindText with one arm per named kind, 'opened, but nothing could be listed' for the new one, and a neutral 'could not be read' fallback. TitleOf and Note both word through it.",
+   "The widened App rule pattern `\\?\\s*UnreadableKind\\.\\w+` in the xUnit Fact and its fitness.yaml twin, plus a must-fire plants.json row for the new member.",
+   "Two settled architecture rules: Core names kind members only in Scanner.cs, and the App writes the kind words only in UnreadableRows.cs.",
+   "W001OracleCorpus.json row F16, the Get-OracleRow class 'opened-nothing-listed', and W-001's three-kind sum.",
+   "CheckSeamRow's three-kind mapping, T-007's 'only partly read' expectation, and the RowsMode doc listing three kinds.",
+   "Tests: a ScannerFailedKindTests Theory, an every-kind-has-its-own-words Fact, a fallback-open first-page Fact, and FolderTreeSessionTests over FolderTreeSession.cs linked into Core.Tests. Mechanical edits at TopLevelTests.cs:559 and :592 and TopLevelRowTextTests.cs:44-51.",
+   "docs/design/SL-106-opened-then-failed.md, committing the 27 × 363 PHASE=open measurement and N-005's s change, plus doc-only corrections to FailListingOf's false sentences."
+  ],
+  "whats_reused": [
+   "The repro stage's bug test tests/bugs/SL-106-OpenedThenFailedKind, unchanged. It is the acceptance command and becomes the catalog row at ship.",
+   "SynchronousIoCancel.OverrideQueryError via the Created hook, reused for the fallback-open Fact with the bug test's dry-run-then-inject recipe.",
+   "UnreadableRows.Build, Reason and ComparePaths, unchanged: the list already read the kind off the record.",
+   "UnreadableFolder's internal constructor (SL-087 review M3): only Core makes records.",
+   "TopLevelRow's 9-argument constructor, so SL-063's reflection test is untouched.",
+   "The FailListingOf failpoint and T-007's P/Q/R tree for the drawn partway and refused tree notes.",
+   "W001OracleTests running the script's own Get-OracleRow against the corpus.",
+   "The aggregate 'could not be read (in full)' wording in FiguresOf and MainWindow's largest-files caption, deliberately unchanged because it is true of all three kinds.",
+   "eng/dotnet.ps1 for every build and test (lesson #72)."
+  ],
+  "open_questions": []
+ }
+}

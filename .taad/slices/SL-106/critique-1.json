@@ -1,0 +1,149 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-106",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-10-12T22:16:21.319Z",
+ "head": "c6d43e0585c97d74c7e652878bbb65aad49034d9",
+ "run_id": 3590,
+ "summary": "The core of the design holds against the tree:\n- one Opened bit in the reader;\n- one FailedKind stamp in FolderDone, passed to the record and the tracker;\n- the tree reads the stamp through a lookup built from result.Unreadable, which the constructor requires;\n- all three surfaces word through KindText.\n\nI checked it against the code. Scanner.cs:353-393 is the only stamp site. Root goes through ListRoot, which returns before FolderDone unless entries were kept. DirectoryReader.Read only lists after Open has returned a handle. TitleOf really is a WPF converter, and the search confirms the binding engine does not catch converter exceptions. The two new settled rules match exactly the lines being removed: Scanner.cs:369, FolderTreeNode.cs:93-94 and TopLevelRowText.cs:27-28.\n\nWhat the design misses:\n- **Major:** the SL-063 bug project goes red. DoneRowFinalityTests.TheMarkShowsOnlyOnADoneRow builds an Unreadable TopLevelRow by reflection with no kind and expects 'a-row  (could not be opened)'. Under this design that row falls through TitleOf to its bare name. SL-100's validate ran this project as a regression guard, but the design's grep covered only src and tests/window.\n- That bare name is itself a false claim: in the results list a bare name means Done.\n- Q-114 (WindowMutants -Mutant All) and Q-128 (T-003) are not named among the slice's checks, though the slice touches App and FolderTreeNode.\n- The fallback-open Fact can pass without ever taking the fallback path.\n- The two settled rules have no plant rows and no xUnit twin. Rule 2 misses a kind phrase written inside a longer string.\n- The recalled fts(3) prior art is contradicted by gnulib, which conflates the two phases exactly as HEAD does.\n- Opened reaches FolderDone as a passed parameter rather than from the reader it already reads Count from.\n\nNothing found blocks the acceptance command. Spike 2 passed it on a patch of the same shape, and none of these findings changes that path.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The core of the design holds against the tree:\n- one Opened bit in the reader;\n- one FailedKind stamp in FolderDone, passed to the record and the tracker;\n- the tree reads the stamp through a lookup built from result.Unreadable, which the constructor requires;\n- all three surfaces word through KindText.\n\nI checked it against the code. Scanner.cs:353-393 is the only stamp site. Root goes through ListRoot, which returns before FolderDone unless entries were kept. DirectoryReader.Read only lists after Open has returned a handle. TitleOf really is a WPF converter, and the search confirms the binding engine does not catch converter exceptions. The two new settled rules match exactly the lines being removed: Scanner.cs:369, FolderTreeNode.cs:93-94 and TopLevelRowText.cs:27-28.\n\nWhat the design misses:\n- **Major:** the SL-063 bug project goes red. DoneRowFinalityTests.TheMarkShowsOnlyOnADoneRow builds an Unreadable TopLevelRow by reflection with no kind and expects 'a-row  (could not be opened)'. Under this design that row falls through TitleOf to its bare name. SL-100's validate ran this project as a regression guard, but the design's grep covered only src and tests/window.\n- That bare name is itself a false claim: in the results list a bare name means Done.\n- Q-114 (WindowMutants -Mutant All) and Q-128 (T-003) are not named among the slice's checks, though the slice touches App and FolderTreeNode.\n- The fallback-open Fact can pass without ever taking the fallback path.\n- The two settled rules have no plant rows and no xUnit twin. Rule 2 misses a kind phrase written inside a longer string.\n- The recalled fts(3) prior art is contradicted by gnulib, which conflates the two phases exactly as HEAD does.\n- Opened reaches FolderDone as a passed parameter rather than from the reader it already reads Count from.\n\nNothing found blocks the acceptance command. Spike 2 passed it on a patch of the same shape, and none of these findings changes that path.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "claim": "Replacing ListedPartway with FailedKind, with a null kind falling through TitleOf to the bare name, turns a committed regression test red, and the design does not list it. DoneRowFinalityTests.TheMarkShowsOnlyOnADoneRow builds its rows through TopLevelRow's internal 9-argument constructor, by reflection. For TopLevelState.Unreadable it sets no kind and expects 'a-row  (could not be opened)' twice, at :126-127. Under the design, State == Unreadable with FailedKind null skips the new `when row.FailedKind is { } failed` arm and reaches `_ => row.Name`. Both assertions then fail. The design's grep for other consumers ('no other reader of ListedPartway exists in src or tests/window') never looked at tests/bugs. Its mechanical-update list covers only TopLevelTests and TopLevelRowTextTests. Spike 2 could not catch this. It kept a KindText(UnreadableKind?) whose discard caught null as 'could not be opened', and it ran only Core.Tests. The previous slice that changed what the results list's rows carry (SL-100) ran this exact project at validate as 'SL-063 regression guard'. If SL-063 is a shippability catalog row, every validate re-runs it.",
+    "evidence": "tests/bugs/SL-063-DoneRowFinality/DoneRowFinalityTests.cs:122 and :220-226 (MadeRow: ctor.Invoke with 9 args, then only Revised set by reflection). Design contract 'TopLevelRow.FailedKind': 'A null on an Unreadable row falls through TitleOf to the bare name'. .taad/slices/SL-100/validate-slice-1.json:23-24 ran this project as a regression guard.",
+    "quote": {
+     "path": "tests/bugs/SL-063-DoneRowFinality/DoneRowFinalityTests.cs",
+     "line": 122,
+     "text": "[InlineData(TopLevelState.Unreadable, \"a-row  (could not be opened)\")]"
+    },
+    "fix": "Add tests/bugs/SL-063-DoneRowFinality/DoneRowFinalityTests.cs to the mechanical updates. In MadeRow, for TopLevelState.Unreadable, set FailedKind = UnreadableKind.NothingListed through reflection, as it already does for Revised. Name `pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-063-DoneRowFinality/SL-063-DoneRowFinality.Tests.csproj` among the slice's checks. Grep tests/bugs for TopLevelRow constructions before calling any TopLevelRow change contained."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "nature": "defect",
+    "claim": "The design says an Unreadable row with a null FailedKind shows 'the bare name: a visible gap, never a false claim'. In the results list, a bare name is exactly how a Done row is worded. A folder row that could not be read would therefore read as one listed and measured in full, which is a false claim by omission. The design's own neutral KindText fallback exists to avoid exactly this, and the null case bypasses it.",
+    "evidence": "TopLevelRowText.cs:10-11 doc and the `_ => row.Name` arm at :32. Design component 'TopLevelRowText.TitleOf' and contract 'TopLevelRow.FailedKind' error_cases.",
+    "quote": {
+     "path": "src/FsAnalyser.App/TopLevelRowText.cs",
+     "line": 10,
+     "text": "A Done row is its bare name unless a correction moved its"
+    },
+    "fix": "Make the Unreadable arm unconditional and route null through the neutral fallback, for example `TopLevelState.Unreadable => $\"{row.Name}  ({UnreadableRows.KindText(row.FailedKind)})\"` with KindText(UnreadableKind?) mapping null and unnamed values to 'could not be read'. Add one TopLevelRowTextTests row for it."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "drift-from-design",
+    "nature": "required",
+    "claim": "Two validate checks that a person decided are required are missing from the design's cases. Q-114 (human) requires `WindowMutants.ps1 -Mutant All` when a diff touches src/FsAnalyser.App/** or src/FsAnalyser.Core/TopLevel*.cs; this slice changes FolderTreeNode, FolderTreeSession, TopLevelRowText, UnreadableRows, MainWindow.xaml.cs, TopLevelTracker.cs and TopLevelSnapshot.cs. Q-128 (human) requires `WindowCases.ps1 -Case T-003` at validate for slices touching FolderTreeNode or MainWindow's tree. Note now does a session lookup on every realised row, and ShowFolderTree builds the session differently. The only window case the design names is T-007. Lesson #114 records SL-063 skipping the WindowMutants check for the same reason.",
+    "evidence": "Q-114 and Q-128 in the decided questions. Design 'cases' name T-007 only. Its filed_for_later says 'Network=TEST-NET-1 stays in validate' without a case row (lesson #99).",
+    "fix": "Add case rows whose checks are `pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowMutants.ps1 -Mutant All`, `pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case T-003`, and the Core suite with `--filter Network=TEST-NET-1`. Run them serially (lesson #351)."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "defect",
+    "claim": "The fallback-open Fact is the only guard on the invariant that Opened follows the plain fallback rather than the refused keep-last-access attempt. As planned, it can pass without the fallback ever happening. The scan asks for the keep-last-access open only when _keepLastAccess is set: a local NTFS volume decided at the root, outside sync roots and cloud folders. Where that is false, e opens plainly on the first attempt, and the Fact still sees OpenedNothingListed. A wrong placement, with Opened taken from the first attempt's result, would then also pass. Spike 1 proved the precondition with its dry-run log (keptLastAccess=False for e). The planned Fact does not carry that assertion (CC-005).",
+    "evidence": "Design case 'its keep-last-access open is refused (deny WriteAttributes), the plain fallback opens it...' and component 'Core tests'. Scanner.KeepsLastAccess is shown in the quote.",
+    "quote": {
+     "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+     "line": 298,
+     "text": "if (!_keepLastAccess || (attributes & CloudFolderAttributes) != 0)"
+    },
+    "fix": "In the Fact's dry run, assert that e's keep-last-access open was asked and refused before injecting. Core.Tests sees the internals, so either assert that LastAccessAsked minus LastAccessKept rose by e's refusal, or read the guard's KeptLastAccess when e's open is counted, as spike 1 did."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "extra",
+    "claim": "Two gaps in how the two new settled rules are pinned.\n\n1. There are no plant rows and no xUnit twin. Since SL-095, the project's convention is S-rows in eng/rules-harness/plants.json for each settled rule, one that must fire and one that must stay quiet. The design adds a plant only for the widened twin. A settled-only rule leaves `dotnet test` green when it is crossed (SL-087 conditional spike, CC-002).\n\n2. Rule 2's pattern needs '(' or '\"' right next to the phrase, so it was never tested against variants (CC-007). A copy of the kind words inside a longer string passes it. An example is the list's own row shape, `$\"{path}  —  could not be opened: {reason}\"`, or `\"... only partly read.\"`. That is the form a second surface wording a failed folder would most likely take.",
+    "class_of": "kind words composed inside a longer App string literal",
+    "threat": "accident",
+    "evidence": ".taad/fitness.yaml:1268-1291, which the engine has already appended to the worktree. plants.json _note lists S14-S82 for settled rules and nothing for these.",
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1280,
+     "text": "- name: in the App, only UnreadableRows writes a failed folder's kind in words"
+    },
+    "fix": "Add S-rows to plants.json:\n- a must-fire `UnreadableKind.ListedPartway` in a Core file other than Scanner.cs;\n- a must-fire `$\"{p}  —  could not be opened: {r}\"` in an App file;\n- a must-stay-quiet row on MainWindow.xaml.cs:571's 'files could not be opened to read' line.\n\nThen widen rule 2's delimiters to allow any non-word neighbour, or accept the gap in its 'because' text."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "under-engineering",
+    "nature": "extra",
+    "claim": "The opened phase reaches FolderDone as a parameter that each caller must remember to supply: `_reader.Opened` in the loop and a literal `true` at the root. The other per-read state, Count, FolderDone reads from the same reader itself. The design's contract says Opened is deliberately 'not set by List alone', because ListRoot calls Open and List directly. List runs only on a handle that is already open. If List set Opened, cleared at the top of Read as the design already says, then the root's List calls would set it too. FolderDone could then read `_reader.Opened` beside `_reader.Count`. No call site would pass the phase, and a future one could not pass it wrong.",
+    "evidence": "Design contract 'DirectoryReader.Opened': 'Not set by List alone. The root goes through Open and List directly, and FolderDone is told opened: true for it.' FolderDone reads the reader's Count itself.",
+    "quote": {
+     "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+     "line": 359,
+     "text": "int count = _reader.Count;"
+    },
+    "fix": "Set Opened = true at the top of DirectoryReader.List, clear it in Read beside _count, and have FolderDone read _reader.Opened. FolderDone's signature then keeps no phase parameter."
+   },
+   {
+    "id": "m6",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "nature": "defect",
+    "claim": "The prior-art claim about fts(3) is wrong. The design says fts 'reports an unreadable directory as its own node state (FTS_DNR) with the errno attached... rather than leaving the caller to infer it from an empty child list'. gnulib's fts, the one GNU find and du use, does exactly that inference. Its readdir-error commit says 'We treat the case where no items are read the same as if the dir can't be accessed, i.e. by setting fts_errno to FTS_DNR.' fts therefore conflates a refused open with an open whose first read failed, which is this repo's bug at HEAD. The claim is decorative: the design rests on its spikes, not on fts. But the design names an fts author as a channelled expert, so the record cites a source that contradicts it.",
+    "evidence": "https://github.com/coreutils/gnulib/commit/6835fc458f30b94f15d69c35a79cbc2dfabe2d06 ('fts: handle readdir() errors'). Design prior_art row 3 and channeled_experts.",
+    "fix": "Drop the fts row, or restate it as a counter-example: gnulib fts infers FTS_DNR from 'no items read', which is the conflation this slice removes."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "m6: the fts prior art is contradicted by gnulib commit 6835fc4. Checked and true:\n- DirectoryReader.Read lists only after Open has returned a handle (DirectoryReader.cs:99-104).\n- FolderDone is the only stamp site (Scanner.cs:364-370).\n- ListRoot returns before AppendRoot on error with Count == 0, so opened: true at the root is correct (:261-262).\n- TitleOf is the results list's WPF converter (TopLevelRowText.cs:6-8).\n- The recalled converter-exception claim holds: 'The data binding engine does not catch exceptions that are thrown by a user-supplied converter' (mindscapehq.com/forums/thread/1254, quoting MSDN).\n- RuleCases derives its settled count (RuleCases.ps1:315 Get-RuleCounts), so the appended rules need no RuleCases edit."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "None found within scope:\n- 995 with and without cancel, the excluded-store backstop, the fallback open, refused opens with 32/363/1920, and the root are all covered by the design's cases.\n- A first page that fails with 2 or 18 still reads as an empty folder (DirectoryReader.cs:140-143). That is U-109's shape, which is marked IMPOSSIBLE and so out of scope.\n- Duplicate record entries are handled by first-wins, matching UnreadableRows.Build."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "m5: the phase is a parameter at two FolderDone call sites rather than reader state read beside Count. Everything else is held by construction:\n- the required session argument;\n- the one stamp value passed to both the record and the tracker;\n- KindText as the single wording source."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "None. No ReadOutcome struct, no store flags and no FailListingOf change. Three rule edits for one seam is proportionate, given SL-087's m1 drift."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "M1: the TopLevelRow change breaks SL-063's reflection-built Unreadable row (DoneRowFinalityTests.cs:122, :220-226). The design's consumer grep skipped tests/bugs. Other consumers were checked:\n- SL-100's Row() never builds an Unreadable row.\n- The SL-106 bug csproj links both TopLevelRowText.cs and UnreadableRows.cs.\n- Nothing outside src constructs FolderTreeSession.\n- SL-105's and SL-102's Mutants.ps1 anchors are untouched."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "m1: the null-kind Unreadable row falls to the bare name, which is the Done wording, so the design's 'never a false claim' does not hold. The neutral KindText discard is sound: a converter throw would be uncaught, and the search confirms that."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "m2: Q-114 (WindowMutants -Mutant All) and Q-128 (T-003) are human-decided validate checks the slice's surface triggers, and the design omits both. The brief's items are all covered:\n- the 363 measurement (27 rows, all failing at the open);\n- the opened bit;\n- the stamp;\n- Note and the tracker reading the stamp;\n- aligned wording;\n- all three surfaces changed together.\n\nNo answered question is contradicted. Q-112's 'keep could not be opened' still holds for refused opens."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "m4: the two settled rules have no S plant rows and no twin (CC-002, CC-007), and rule 2's delimiters miss the kind words composed inside a longer string. Checked:\n- Rule 1 matches only Scanner.cs:369 in Core. Comments are blanked, since the rule has no including_comments.\n- Rule 2 matches only FolderTreeNode.cs:93-94 and TopLevelRowText.cs:27-28. UnreadableRows.cs, the only file holding these words, is a single file with no partials.\n- CC-004: cases have committed commands. CC-006: SMB-LOOPBACK is correctly filed to a person. CC-008/CC-009: no new P/Invoke or scratch roots."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "m3: the fallback-open Fact does not assert its own precondition (CC-005). Otherwise the coverage is good:\n- the FailedKind Theory;\n- the every-kind Fact;\n- FolderTreeSessionTests over the linked file;\n- W001 corpus row F16, which falls to 'leak' if the oracle opens it, so it bites;\n- T-007 for the drawn partway and refused notes.\n\nThe acceptance command passed on spike 2's patch of the same shape."
+   },
+   {
+    "dimension": "security",
+    "result": "None. No new input surface, privilege, file write or native call. The change is internal classification and wording only."
+   }
+  ]
+ }
+}

@@ -656,10 +656,12 @@ public class ContainerLayerStoreTests
         Assert.NotEqual(Scanner.ReadOutcome.Read, Scanner.ClassifyReadError(error, cancelRequested: false));
         Assert.Equal(0, guard.Calls);
         Assert.Equal(0, reader.Count);
+        Assert.False(reader.Opened); // never opened, so the scan could not stamp it as a folder that opened and failed (SL-106)
         Assert.Equal(1, reader.OpensUnderExcludedStore);
 
         Assert.Equal(0, reader.Read(LongPath.ToExtended(tree.PathOf(@"x\Containers\ContainerStorages")), fullClass: false, keepLastAccess: false));
         Assert.Equal(1, reader.Count);
+        Assert.True(reader.Opened);
         Assert.Equal(1, reader.OpensUnderExcludedStore);
     }
 

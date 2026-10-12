@@ -3072,7 +3072,7 @@ function New-PartwayTree([string] $root) {
 # T-007 (SL-082): the row of a folder whose listing failed partway, which no ordinary user can make happen. The hook
 # arms Core's listing failpoint before the app's Main (FSA_HOOK_FAIL_LISTING, see StartupHook.cs) so that P's listing
 # fails at its second page with error 995, and its tree mode walks the tree to depth 2. The fault fired once, on P,
-# during the scan. P keeps its first page: its row reads 'could not be read in full', has an expander, is open, and
+# during the scan. P keeps its first page: its row reads 'only partly read' (SL-106: the words the list uses), has an expander, is open, and
 # opens onto exactly the children it charges, each drawn by a container of its own, more of them than the viewport
 # holds (review M2): its size is that many files, and it ranks by it. Q, as large, listed before P and with no fault
 # armed against it, is read in full, so a failpoint that ignored the name or counted pages across folders fails it
@@ -3124,13 +3124,13 @@ function Test-T007 {
         $bad = [System.Collections.Generic.List[string]]::new()
         if ($null -eq $p.rendered) { $bad.Add('no container drew it') }
         else {
-            if ($p.rendered.note -cne 'could not be read in full') { $bad.Add("note $(Show $p.rendered.note)") }
+            if ($p.rendered.note -cne 'only partly read') { $bad.Add("note $(Show $p.rendered.note)") }
             if ($p.rendered.expander -ne $true) { $bad.Add('no expander is drawn') }
             if ($p.rendered.expanded -ne $true -or $p.nodeExpanded -ne $true) { $bad.Add("expanded $($p.rendered.expanded), node $($p.nodeExpanded)") }
         }
         if ($k -le 0 -or $k -ge $n) { $bad.Add("childCount $k") }
         if ([long]$p.size -ne $k * $PartwayFileBytes -or [long]$p.onDisk -ne $k * $PartwayFileBytes) { $bad.Add("size $($p.size), onDisk $($p.onDisk), for $k files") }
-        Check ($bad.Count -eq 0) "P, whose listing failed at its second page, reads 'could not be read in full', has an expander, is open, and charges the $k of $n files it kept ($(Show ($bad -join '; ')))"
+        Check ($bad.Count -eq 0) "P, whose listing failed at its second page, reads 'only partly read', has an expander, is open, and charges the $k of $n files it kept ($(Show ($bad -join '; ')))"
 
         Check ($k -le 1000) "P's $k children are few enough for the walk to open it (1,000 at most)"
         $children = @($rows | Where-Object { $_.depth -eq 2 -and (Parent-Of $_.path) -ceq $built.P })
@@ -5466,14 +5466,21 @@ function CheckPanelAgrees($report, $dump, [string] $what, [int] $expected = -1) 
 }
 
 # One row of the panel as the person reads it: there once, of $kind with $code and $reason, and drawn with both, 'could
-# not be opened' or 'only partly read' and then the reason. Drawn text is required: criterion 2 is what the panel says.
+# not be opened', 'opened, but nothing could be listed' or 'only partly read' and then the reason. Drawn text is required:
+# criterion 2 is what the panel says. A kind with no words here fails, so a fourth kind cannot pass as a refused open (SL-106).
 function CheckSeamRow($byLeaf, [string] $leaf, [string] $kind, [int] $code, [string] $reason, [string] $what) {
     $rows = @(Get-LeafRows $byLeaf $leaf)
     Check ($rows.Count -eq 1) "${what}: $leaf is a row once ($($rows.Count))"
     if ($rows.Count -ne 1) { return }
     $row = $rows[0]
     Check ($row.kind -ceq $kind -and [int]$row.code -eq $code -and $row.reason -ceq $reason) "${what}: $leaf is $kind, code $code, '$reason' ($($row.kind), $($row.code), $(Show $row.reason))"
-    $kindText = if ($kind -ceq 'ListedPartway') { 'only partly read' } else { 'could not be opened' }
+    $kindText = switch -CaseSensitive ($kind) {
+        'NothingListed' { 'could not be opened' }
+        'OpenedNothingListed' { 'opened, but nothing could be listed' }
+        'ListedPartway' { 'only partly read' }
+        default { $null }
+    }
+    if ($null -eq $kindText) { Check $false "${what}: $leaf is of kind '$kind', which this check has no words for"; return }
     $shown = if ($null -eq $row.shown) { @() } else { @($row.shown) }
     Check ($null -ne $row.shown -and @($shown | Where-Object { ([string]$_).EndsWith("${kindText}: $reason", [System.StringComparison]::Ordinal) }).Count -eq 1) "${what}: $leaf's row is drawn '${kindText}: $reason' ($(if ($null -eq $row.shown) { 'never drawn' } else { Show ($shown -join ' | ') }))"
 }
@@ -6113,7 +6120,9 @@ function Test-T009 {
 # W-001's oracle for one panel row (SL-089 criterion 3): the class the row falls in, opening its folder only when the
 # row has the shape a refused keep-last-access open would leave, could the engine record one: a folder that could not
 # be opened at all, with code 5 (review m3), the one code that open's refusal gives. Every other row is tallied and
-# never opened: a folder only partly read was opened by definition; 363 is the CfProvider rig's leftover that criterion
+# never opened: a folder only partly read, or one that opened and failed its first page (OpenedNothingListed, SL-106:
+# an SMB server that answers CREATE and refuses the first QUERY_DIRECTORY), was opened by definition, so it cannot be
+# the refused keep-last-access open this hunts; 363 is the CfProvider rig's leftover that criterion
 # 3 expects; any other code (32 or 33 from a holder, 2 or 3 from a folder that went, a network code) is a cause that may
 # have ended since the scan, which an open now could not tell from a leak. A code-5 row's folder that is a reparse point
 # is the rig's leftover again. Otherwise it is opened once with the scanner's plain mask, never listed (an open moves no
@@ -6122,6 +6131,7 @@ function Test-T009 {
 # folder the engine recorded cannot have been. Corpus: tests/window/W001OracleCorpus.json (W001OracleTests).
 function Get-OracleRow($row, [DateTime] $scanStartUtc) {
     if ($row.kind -ceq 'ListedPartway') { return 'partway' }
+    if ($row.kind -ceq 'OpenedNothingListed') { return 'opened-nothing-listed' }
     if ($row.kind -cne 'NothingListed') { return 'unknown-kind' }
     if ([int]$row.code -eq 363) { return 'leftover-363' }
     if ([int]$row.code -ne 5) { return 'other-code' }
@@ -6224,7 +6234,8 @@ function Test-W001 {
         $rows = @($dump.Rows)
         $nothing = @($rows | Where-Object kind -ceq 'NothingListed')
         $partway = @($rows | Where-Object kind -ceq 'ListedPartway')
-        CheckEqual $rows.Count ($nothing.Count + $partway.Count) 'every row is NothingListed or ListedPartway (review M2)'
+        $openedFailed = @($rows | Where-Object kind -ceq 'OpenedNothingListed')
+        CheckEqual $rows.Count ($nothing.Count + $partway.Count + $openedFailed.Count) 'every row is NothingListed, OpenedNothingListed or ListedPartway (review M2, SL-106)'
 
         $classes = @{}
         foreach ($row in $rows) {
@@ -6264,7 +6275,7 @@ function Test-W001 {
             notScanned             = $dump.NotScanned.Count
             duplicates             = @($rows | Group-Object -Property path -CaseSensitive | Where-Object Count -gt 1).Count
             emptyReasons           = @($rows | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.reason) }).Count
-            byKind                 = [ordered]@{ nothingListed = $nothing.Count; listedPartway = $partway.Count }
+            byKind                 = [ordered]@{ nothingListed = $nothing.Count; openedNothingListed = $openedFailed.Count; listedPartway = $partway.Count }
             byCode                 = $byCode
             oracle                 = [ordered]@{
                 opened                  = $opened

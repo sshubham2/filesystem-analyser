@@ -556,7 +556,7 @@ public class TopLevelTests
         public void ListBSub()
         {
             _store.SetChildren(_sub, _store.Count, 0);
-            _tracker.FolderExited(_sub, 1, unreadable: false, subfoldersPushed: 0, _totals);
+            _tracker.FolderExited(_sub, 1, failed: null, subfoldersPushed: 0, _totals);
         }
 
         /// <summary>A correction in place of <paramref name="entry"/>, credited and published as a probe batch's is.</summary>
@@ -589,7 +589,7 @@ public class TopLevelTests
                 _totals = _totals with { Folders = _totals.Folders + 1 };
             }
             _store.SetChildren(folder, first, _store.Count - first);
-            _tracker.FolderExited(folder, row, unreadable: false, subfoldersPushed: withSub ? 1 : 0, _totals);
+            _tracker.FolderExited(folder, row, failed: null, subfoldersPushed: withSub ? 1 : 0, _totals);
             return entry;
         }
     }

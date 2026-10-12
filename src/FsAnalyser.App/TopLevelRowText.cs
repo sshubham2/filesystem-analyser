@@ -9,9 +9,10 @@ namespace FsAnalyser.App;
 /// 100,000 entries formats a screenful per refresh, not 100,000 rows. No percentages: mid-scan and after
 /// Cancel a share would be of an incomplete whole. A Done row is its bare name unless a correction moved its
 /// figures after it settled, which it says (SL-063): Done promises the row was listed and measured, and the
-/// mark is how a figure that changed since is told apart. A folder is worded as the folder tree words it
-/// (FolderTreeNode.Note): one whose listing failed partway kept and counted what it listed, so it could not be
-/// read in full, and only one with nothing listed could not be opened (HF-002).
+/// mark is how a figure that changed since is told apart. A folder that could not be read in full is worded as the
+/// unreadable-folders list and the folder tree word it, through the one function, UnreadableRows.KindText, from the
+/// kind the scanner stamped: its open refused, opened and failed before its first entry, or listed partway (HF-002,
+/// SL-106). A row in that state is never left as its bare name, which is how a Done row reads.
 /// </summary>
 /// <remarks>
 /// The words are here and the converter that binds them is in TopLevelRowText.Converter.cs, so this half has no WPF
@@ -24,8 +25,7 @@ public sealed partial class TopLevelRowText
         TopLevelState.Reading => $"{row.Name}  (reading...)",
         TopLevelState.NotRead => $"{row.Name}  (not read yet)",
         TopLevelState.StoppedPartway => $"{row.Name}  (stopped partway)",
-        TopLevelState.Unreadable when row.ListedPartway => $"{row.Name}  (could not be read in full)",
-        TopLevelState.Unreadable => $"{row.Name}  (could not be opened)",
+        TopLevelState.Unreadable => $"{row.Name}  ({UnreadableRows.KindText(row.FailedKind)})",
         TopLevelState.NotFollowed => $"{row.Name}  (link, not followed)",
         TopLevelState.NotScanned => $"{row.Name}  (size not counted: Windows container layers)",
         TopLevelState.Done when row.Revised => $"{row.Name}  (revised)",

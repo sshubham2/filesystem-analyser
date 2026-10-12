@@ -1,5 +1,6 @@
 using FsAnalyser.App;
 using FsAnalyser.Core.Scanning;
+using FsAnalyser.Core.Store;
 
 namespace FsAnalyser.Core.Tests;
 
@@ -40,17 +41,41 @@ public class TopLevelRowTextTests
         Assert.Equal([5, 995, 995, 5], result.Unreadable.Select(u => u.Win32Error));
         TopLevelRow notOpened = Named(result, "a-denied"), partway = Named(result, "b-big"), top = Named(result, "c-top");
 
-        // Both are unreadable, and only the one listed partway has anything counted.
-        Assert.Equal((TopLevelState.Unreadable, 0L, false), (notOpened.State, notOpened.Files, notOpened.ListedPartway));
-        Assert.Equal((TopLevelState.Unreadable, true), (partway.State, partway.ListedPartway));
+        // Both are unreadable, and only the one listed partway has anything counted. The row carries the kind the scanner
+        // stamped, the one the list reads off the record (SL-106), and words it as the list does: 'only partly read'.
+        Assert.Equal((TopLevelState.Unreadable, 0L, UnreadableKind.NothingListed), (notOpened.State, notOpened.Files, notOpened.FailedKind));
+        Assert.Equal((TopLevelState.Unreadable, UnreadableKind.ListedPartway), (partway.State, partway.FailedKind));
+        Assert.Equal(
+            [UnreadableKind.NothingListed, UnreadableKind.ListedPartway, UnreadableKind.ListedPartway, UnreadableKind.NothingListed],
+            result.Unreadable.Select(u => u.Kind));
         Assert.InRange(partway.Files, 1, 1999);
         Assert.Equal("a-denied  (could not be opened)", TopLevelRowText.TitleOf(notOpened));
-        Assert.Equal("b-big  (could not be read in full)", TopLevelRowText.TitleOf(partway));
+        Assert.Equal("b-big  (only partly read)", TopLevelRowText.TitleOf(partway));
 
-        // Below a row that finished, one of each: the count covers both, and claims of neither more than is true.
-        Assert.Equal((TopLevelState.Done, 2L, false), (top.State, top.UnreadableBelow, top.ListedPartway));
+        // Below a row that finished, one of each: the count covers both, and claims of neither more than is true. A
+        // failure below a row's own folder leaves the row's own kind alone: the row is Done, with none.
+        Assert.Equal((TopLevelState.Done, 2L, (UnreadableKind?)null), (top.State, top.UnreadableBelow, top.FailedKind));
         Assert.InRange(top.Files, 2, 2000);
         Assert.EndsWith("; 2 folders inside could not be read (in full)", TopLevelRowText.FiguresOf(top));
+    }
+
+    /// <summary>
+    /// Every kind is worded on the row as the list and the tree word it, from the kind alone (SL-106). And an Unreadable
+    /// row that somehow carries no kind, which the tracker never builds, is worded 'could not be read' and not left as its
+    /// bare name, which is how the list words a Done row: a folder that failed must not read as one measured in full.
+    /// </summary>
+    [Theory]
+    [InlineData(UnreadableKind.NothingListed, "a-row  (could not be opened)")]
+    [InlineData(UnreadableKind.OpenedNothingListed, "a-row  (opened, but nothing could be listed)")]
+    [InlineData(UnreadableKind.ListedPartway, "a-row  (only partly read)")]
+    [InlineData(null, "a-row  (could not be read)")]
+    [InlineData((UnreadableKind)99, "a-row  (could not be read)")]
+    public void AnUnreadableRowIsWordedFromItsKindAndNeverAsItsBareName(UnreadableKind? kind, string expected)
+    {
+        var row = new TopLevelRow("a-row", @"C:\a-row", EntryKind.Folder, TopLevelState.Unreadable, 0, 0, 0, 1, 0) { FailedKind = kind };
+
+        Assert.Equal(expected, TopLevelRowText.TitleOf(row));
+        Assert.Equal(UnreadableRows.KindText(kind), expected["a-row  (".Length..^1]); // the list's and the tree's words
     }
 
     // Scans the tree with a 995 at the third listing buffer of each of the named folders. Which folder a call lists is

@@ -73,17 +73,26 @@ public sealed record NotScannedFolder
 public readonly record struct ScanTotals(long Files, long Folders, long Links, long Bytes, long BytesOnDisk);
 
 /// <summary>
-/// How much of a folder the scan listed before it failed, as the folder tree and the top-level rows word it (HF-002).
-/// It says what was listed, not where Windows refused: the scan does not tell a refused open from a folder that
-/// opened and then failed before its first entry came back, and both are NothingListed (SL-087, review M2).
+/// How far the scan got with a folder before it failed, as the unreadable-folders list, the folder tree and the top-level
+/// rows word it (HF-002). The scan keeps the phase that failed (SL-106, which closes SL-087's review M2 and m1): whether the
+/// folder's open was refused, or it opened and failed before its first entry came back, or it failed after some were
+/// listed. Scanner.FolderDone stamps it once, and every surface reads that stamp. A refused open is a fact of the open:
+/// the code does not decide it (5, 32, 53, 363 and 1920 all fail there). The 27 code-363 folders measured on this PC, whose
+/// cloud reparse tag cldflt cannot read, fail when the folder is opened (SL-106 survey), so they stay NothingListed.
 /// </summary>
 public enum UnreadableKind
 {
-    /// <summary>No entry of the folder was listed, so nothing in it is counted: worded "could not be opened".</summary>
+    /// <summary>The open was refused, so nothing was listed and nothing in the folder is counted: worded "could not be opened".</summary>
     NothingListed,
 
     /// <summary>At least one entry was listed before the error, and what was listed is kept and counted.</summary>
     ListedPartway,
+
+    /// <summary>
+    /// The folder opened, and its listing failed before the first entry was kept, so nothing in it is counted. Appended
+    /// after the other two so that they keep their values (SL-106).
+    /// </summary>
+    OpenedNothingListed,
 }
 
 /// <summary>

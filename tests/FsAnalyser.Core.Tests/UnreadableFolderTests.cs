@@ -7,6 +7,7 @@ namespace FsAnalyser.Core.Tests;
 public class UnreadableFolderTests
 {
     private const uint FileListDirectory = 0x1;
+    private const uint FileWriteAttributes = 0x100;
 
     [Fact]
     public void AFolderThatCannotBeListedIsRecordedAndItsSiblingsAreCounted()
@@ -70,5 +71,71 @@ public class UnreadableFolderTests
         Assert.Equal([$"{denied}  —  could not be opened: access denied", $"{big}  —  only partly read: {UnreadableRows.Reason(995)}"],
             rows.Select(r => r.Text));
         Assert.EndsWith("(Windows error 995)", rows[1].Reason);
+    }
+
+    /// <summary>
+    /// A folder that opened and failed its first page is told apart from one whose open was refused (SL-106), on every
+    /// surface that words it, in one scan: the refused open (error 5) keeps NothingListed and 'could not be opened'; the
+    /// folder that opened and failed its first page with 59 is OpenedNothingListed, worded 'opened, but nothing could be
+    /// listed' by the list and the top-level row alike.
+    /// </summary>
+    [Fact]
+    public void AFolderThatOpenedAndFailedItsFirstPageIsOpenedNothingListedBesideARefusedOne()
+    {
+        using var tree = new TempTree();
+        string refused = tree.Folder("a-refused");
+        tree.File(@"a-refused\not-seen.txt", 5);
+        string opened = tree.Folder("b-opened");
+        tree.File(@"b-opened\one.txt", 5);
+        tree.Deny(refused, FileListDirectory);
+        (int call, _) = FirstPageFailure.CallOf(tree, opened);
+
+        (ScanResult result, int injected) = FirstPageFailure.Scan(tree, call, 59);
+
+        Assert.Equal((ScanStatus.Completed, 1), (result.Status, injected));
+        int refusedEntry = Scans.Find(result, refused), openedEntry = Scans.Find(result, opened);
+        Assert.Equal(
+            [new UnreadableFolder(refusedEntry, 5, UnreadableKind.NothingListed), new UnreadableFolder(openedEntry, 59, UnreadableKind.OpenedNothingListed)],
+            result.Unreadable);
+        Assert.Equal((0, 0), (result.Store.ChildCount(refusedEntry), result.Store.ChildCount(openedEntry)));
+        Assert.Equal(
+            [$"{refused}  —  could not be opened: access denied", $"{opened}  —  opened, but nothing could be listed: network or share error"],
+            UnreadableRows.Build(result.Unreadable, result.Store.GetPath).Select(r => r.Text));
+        Assert.Equal(
+            ["a-refused  (could not be opened)", "b-opened  (opened, but nothing could be listed)"],
+            result.TopLevel!.Rows.Where(r => r.State == TopLevelState.Unreadable).Select(TopLevelRowText.TitleOf));
+    }
+
+    /// <summary>
+    /// The open that counts is the one that returned a handle. A folder whose keep-last-access open is refused (deny
+    /// WriteAttributes) is opened by the plain open it falls back to, so a first page that then fails is the folder
+    /// opened, not refused. The dry run proves the fallback ran before 59 is injected: the scan asked to keep this
+    /// folder's last-access time, and was refused, while the folder listed in full. Without that, a stamp taken from the
+    /// first attempt, or a scan that never asked, would pass this too.
+    /// </summary>
+    [Fact]
+    public void AFolderOpenedByTheFallbackAfterItsKeepOpenWasRefusedIsOpenedNothingListedWhenItsFirstPageFails()
+    {
+        using var tree = new TempTree();
+        tree.Folder("a-plain");
+        tree.File(@"a-plain\one.txt", 5);
+        string fallback = tree.Folder("b-no-write-attributes");
+        tree.File(@"b-no-write-attributes\one.txt", 5);
+        tree.Folder("c-plain");
+        tree.File(@"c-plain\one.txt", 5);
+        tree.Deny(fallback, FileWriteAttributes); // no inheritance: only this folder refuses to keep its last-access time
+        (int call, ScanResult dry) = FirstPageFailure.CallOf(tree, fallback);
+
+        Assert.Empty(dry.Unreadable); // the plain open listed it in full
+        Assert.True(dry.LastAccessAsked >= 2, $"the scan asked to keep {dry.LastAccessAsked} folders' last-access time: it must ask for the root and this folder");
+        Assert.Equal(1, dry.LastAccessAsked - dry.LastAccessKept); // this folder alone refused
+
+        (ScanResult result, int injected) = FirstPageFailure.Scan(tree, call, 59);
+
+        Assert.Equal((ScanStatus.Completed, 1), (result.Status, injected));
+        Assert.Equal(1, result.LastAccessAsked - result.LastAccessKept); // refused again: the open that returned the handle was the plain one
+        int entry = Scans.Find(result, fallback);
+        Assert.Equal(new UnreadableFolder(entry, 59, UnreadableKind.OpenedNothingListed), Assert.Single(result.Unreadable));
+        Assert.Equal(0, result.Store.ChildCount(entry));
     }
 }

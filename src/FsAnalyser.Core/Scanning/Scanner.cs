@@ -76,6 +76,19 @@ public static class Scanner
         : ReadOutcome.Unreadable;
 
     /// <summary>
+    /// How a folder failed, from the phase the reader saw (SL-106), or null when it did not. The one place a kind is
+    /// decided; the record, the top-level rows and the folder tree all read what this returns. Entries kept come first: a
+    /// folder that listed something was opened and was listed partway whatever else is true of it. Then the phase: a
+    /// folder that opened and failed before its first entry is told apart from one whose open was refused, whatever the
+    /// code (5, 32, 53, 363 and 1920 are all refusals of the open).
+    /// </summary>
+    internal static UnreadableKind? FailedKind(int error, bool opened, int listed) =>
+        error == 0 ? null
+        : listed > 0 ? UnreadableKind.ListedPartway
+        : opened ? UnreadableKind.OpenedNothingListed
+        : UnreadableKind.NothingListed;
+
+    /// <summary>
     /// Whether a scan keeps its folders' last-access times, from what the root's volume says it is: only on a local
     /// NTFS volume, the one place the suppression was measured (review M6). A share, ReFS, FAT and exFAT are listed
     /// as before.
@@ -184,7 +197,9 @@ public static class Scanner
                     ? Finish(ScanStatus.Cancelled)
                     : Finish(ScanStatus.RootUnreadable, error);
             }
-            if (FolderDone(rootEntry, win32Root, RootRow, error))
+            // The root's listing was opened by ListRoot, and it reaches here only with entries kept or no error, so the
+            // phase decides nothing for it: a root that opened and listed nothing ends RootUnreadable above (SL-106).
+            if (FolderDone(rootEntry, win32Root, RootRow, error, opened: true))
                 return Finish(ScanStatus.Cancelled);
 
             while (_pending.Count > 0)
@@ -206,7 +221,7 @@ public static class Scanner
                     continue;
                 }
                 CountListingOpen(keep, path);
-                if (FolderDone(folder, path, row, error))
+                if (FolderDone(folder, path, row, error, _reader.Opened))
                     return Finish(ScanStatus.Cancelled);
             }
             _listingTime = _clock.Elapsed;
@@ -321,7 +336,7 @@ public static class Scanner
             _store.SetChildren(folder, _store.Count, 0);
             _store.AddFlags(folder, EntryFlags.NotScanned);
             _skipped.Add(new NotScannedFolder(folder, NotScannedReason.ContainerLayerStore, ContainerLayerStore.WorkaroundId));
-            _topLevel.FolderExited(folder, row, unreadable: false, subfoldersPushed: 0, Totals, notScanned: true);
+            _topLevel.FolderExited(folder, row, failed: null, subfoldersPushed: 0, Totals, notScanned: true);
             return ct.IsCancellationRequested;
         }
 
@@ -349,8 +364,8 @@ public static class Scanner
         // Appends the listing as the folder's children, queues its subfolders, publishes progress, and reports
         // whether the scan must stop. An aborted listing commits nothing and stops the scan. The one exit of every
         // folder's listing, so the top-level tracker hears of each committed folder once, here: the root's listing
-        // seeds its rows, and every other folder is credited to its row.
-        private bool FolderDone(int folder, string folderPath, int row, int error)
+        // seeds its rows, and every other folder is credited to its row. Opened: the folder's open returned a handle.
+        private bool FolderDone(int folder, string folderPath, int row, int error, bool opened)
         {
             if (ClassifyReadError(error, ct.IsCancellationRequested) == ReadOutcome.Cancelled)
                 return true;
@@ -361,12 +376,12 @@ public static class Scanner
                 AddEntry(folder, k);
             _store.SetChildren(folder, first, count);
 
-            if (error != 0)
+            // The one stamp: the record below, the top-level row and, through the record, the folder tree read it.
+            UnreadableKind? failed = FailedKind(error, opened, count);
+            if (failed is { } kind)
             {
-                // What it listed is in the store now, so its kind is the rule the tree and the top-level rows use.
                 _store.AddFlags(folder, EntryFlags.Unreadable);
-                _unreadable.Add(new UnreadableFolder(folder, error,
-                    _store.ChildCount(folder) > 0 ? UnreadableKind.ListedPartway : UnreadableKind.NothingListed));
+                _unreadable.Add(new UnreadableFolder(folder, error, kind));
             }
 
             // Pushed last-first so folders are visited in listing order. A root child is its own row.
@@ -383,7 +398,7 @@ public static class Scanner
             if (row == RootRow)
                 _topLevel.Seed(_store, folder, first, count, Totals);
             else
-                _topLevel.FolderExited(folder, row, error != 0, pushed, Totals);
+                _topLevel.FolderExited(folder, row, failed, pushed, Totals);
 
             _foldersListed++;
             _lastFolder = folderPath;

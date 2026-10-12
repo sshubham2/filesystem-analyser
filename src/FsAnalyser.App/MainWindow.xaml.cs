@@ -468,7 +468,7 @@ public partial class MainWindow : Window
     // away from every one of them at once, whatever WPF still holds on to.
     private void ShowFolderTree(ScanResult result)
     {
-        var session = new FolderTreeSession(result.Store);
+        var session = new FolderTreeSession(result.Store, result.Unreadable);
         FolderTreeNode root = FolderTreeNode.Root(session);
         root.EnsureChildren();
         root.IsExpanded = true;
