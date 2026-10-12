@@ -107,6 +107,45 @@ public class TopLevelTests
         Assert.Equal(1L, repeat.Files);
     }
 
+    /// <summary>
+    /// The file-row half of SL-063's Revised latch (O-018); the fact above and every other Revised assertion here are over
+    /// folder rows. A FILE directly under the scan root is Done as soon as the root is listed, at the size its directory
+    /// entry lists (TopLevelTracker.Seed settles File and Link rows there). A hardlink's entry is refreshed only at the
+    /// name a write went through, so a-stale.bin lists the stale 1 MiB while the file holds 64 MiB. Once every folder is
+    /// listed its probe reads the real size and corrects the record in place, and the correction is credited to the root
+    /// child's own row. That row must end Done at 64 MiB and Revised; "sub", which holds the name the write went through
+    /// and was never wrong, must not be. Nothing may open a-stale.bin by name between the Append and the scan: an open
+    /// refreshes its entry and the fixture is no longer stale (#221), which the first snapshot's figure would show.
+    /// tests/bugs/SL-105-FileRowRevisedGuard reads this test's shape.
+    /// </summary>
+    [Fact]
+    public void AnInPlaceCorrectionOfARootLevelFileNameMarksThatFileRowRevised()
+    {
+        using var tree = new TempTree();
+        tree.Folder("sub");
+        string current = Put(tree, @"sub\current.bin", 1 * MiB);
+        TempTree.Hardlink(tree.PathOf("a-stale.bin"), current);
+        TempTree.Append(current, 63 * MiB);
+
+        Watched scan = Watch(tree.Root, correctedRows: ["a-stale.bin"]);
+
+        Assert.Equal(ScanStatus.Completed, scan.Result.Status);
+        // Stale at Seed: Done at the listed 1 MiB, not Revised. Asserted before the probe's figures so that an entry
+        // something refreshed before the scan fails here, by name, and not at a flag.
+        TopLevelRow seeded = Named(scan.Snapshots[0], "a-stale.bin");
+        Assert.Equal((EntryKind.File, TopLevelState.Done, 1 * MiB, false), (seeded.Kind, seeded.State, seeded.Bytes, seeded.Revised));
+        Assert.Equal(1, scan.Result.Probes);
+        int stale = Scans.Find(scan.Result, tree.PathOf("a-stale.bin"));
+        Assert.Equal(EntryFlags.SizeProbed | EntryFlags.ProbeCorrected, scan.Result.Store.Flags(stale));
+
+        // Then corrected in place to the file's own size, and the row says so.
+        TopLevelRow charged = Named(scan.Final, "a-stale.bin"), sub = Named(scan.Final, "sub");
+        Assert.Equal((EntryKind.File, TopLevelState.Done, 64 * MiB, true), (charged.Kind, charged.State, charged.Bytes, charged.Revised));
+        Assert.Equal(scan.Result.Store.OnDisk(stale), charged.OnDisk);
+        // The other name sits inside a folder row that was never wrong: it counts the file and charges nothing.
+        Assert.Equal((TopLevelState.Done, 0L, 1L, 1L, false), (sub.State, sub.Bytes, sub.Files, sub.Folders, sub.Revised));
+    }
+
     /// <summary>Developer Mode is on (Q-001): the symbolic links are created for real and never skipped.</summary>
     [Fact]
     public void TopLevelLinksAreNotFollowedRowsWithNothingCounted()

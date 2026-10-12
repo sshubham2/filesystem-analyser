@@ -1,0 +1,39 @@
+{
+  "class": "scratch roots leaked when a run is killed (SL-105 critique m1, accepted as O-011)",
+  "bounded_by": "Who leaves one: a Mutants.ps1 run that did not reach its `finally` (the engine's case runner ends a case at 120 s, a tool call has its own limit, a person closes the window), a build server or test host that still holds a file of the copy, a copy that holds read-only files, a run still in progress, and a process id that has been handed to something else since. Not covered: a link inside a copy (a copy is made of plain files), a copy on another volume, an ACL that denies the sweep the delete.",
+  "runner": "tests/bugs/SL-105-FileRowRevisedGuard/ScratchRootCorpus.Tests.ps1",
+  "sweep": "tests/bugs/SL-105-FileRowRevisedGuard/ScratchRoots.ps1 :: Remove-StaleScratchRoots",
+  "fields": {
+    "id": "row id",
+    "name": "how the entry under the base is named: pid = fsa-sl105-mutant-<owner pid>-<8 hex digits> (what Mutants.ps1 makes), legacy = fsa-sl105-mutant-<8 hex digits> with no process id (the name the design's prose procedure gave its copies), other = a folder of another slice's, with the prefix fsa-sl102-mutants-",
+    "kind": "directory or file",
+    "owner": "the process id in a pid name: dead = a PowerShell that has exited, self = the runner's own, liveOther = a running process that is not PowerShell (the id was handed on), none = no id in the name",
+    "contents": "what the killed run left inside: copied = some of the copied sources, built = bin and obj of the test build, results = a trx file, readOnly = a read-only file, empty = nothing, heldOpen = a file another process still has open without sharing",
+    "expected": "swept = gone after the sweep, kept = still there and reported kept, stuck = still there and reported stuck, ignored = still there and not reported at all (not a name the sweep looks at)",
+    "produced_by": "who or what leaves a root in this state"
+  },
+  "rows": [
+    { "id": "S01", "name": "pid", "kind": "directory", "owner": "dead", "contents": ["copied", "built", "heldOpen"], "expected": "stuck",
+      "produced_by": "a run killed mid-test whose build server or test host still holds a file of its copy; the sweep must report it, leave it and go on to the other rows" },
+    { "id": "S02", "name": "pid", "kind": "directory", "owner": "dead", "contents": ["copied"], "expected": "swept",
+      "produced_by": "a run killed while it was copying the tree" },
+    { "id": "S03", "name": "pid", "kind": "directory", "owner": "dead", "contents": ["copied", "built"], "expected": "swept",
+      "produced_by": "a run killed mid-build (tool timeout, engine case timeout)" },
+    { "id": "S04", "name": "pid", "kind": "directory", "owner": "dead", "contents": ["copied", "built", "results"], "expected": "swept",
+      "produced_by": "a run killed after its tests ran, before its `finally`" },
+    { "id": "S05", "name": "pid", "kind": "directory", "owner": "dead", "contents": ["copied", "readOnly"], "expected": "swept",
+      "produced_by": "any killed run whose source tree holds a read-only file: Copy-Item keeps the attribute and the delete refuses it" },
+    { "id": "S06", "name": "pid", "kind": "directory", "owner": "dead", "contents": ["empty"], "expected": "swept",
+      "produced_by": "a run killed right after it made its folder" },
+    { "id": "S07", "name": "legacy", "kind": "directory", "owner": "none", "contents": ["copied", "built"], "expected": "swept",
+      "produced_by": "a copy made by the procedure the design wrote in prose, whose folder name carried a guid and no process id" },
+    { "id": "S08", "name": "pid", "kind": "directory", "owner": "liveOther", "contents": ["copied"], "expected": "swept",
+      "produced_by": "a killed run whose process id has since been handed to a process that is not PowerShell" },
+    { "id": "S09", "name": "pid", "kind": "directory", "owner": "self", "contents": ["copied", "built"], "expected": "kept",
+      "produced_by": "a run in progress (here, the runner's own process id): a second run must not remove the copy under the first" },
+    { "id": "S10", "name": "pid", "kind": "file", "owner": "dead", "contents": [], "expected": "kept",
+      "produced_by": "a file that happens to carry the prefix: only folders are copies" },
+    { "id": "S11", "name": "other", "kind": "directory", "owner": "dead", "contents": ["copied"], "expected": "ignored",
+      "produced_by": "SL-102's Mutants.ps1 copies (fsa-sl102-mutants-*), which this sweep has no claim on" }
+  ]
+}
