@@ -1,0 +1,148 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-102",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-10-12T06:54:24.694Z",
+ "head": "a8fa4cfdb815b0c1e087dc0908d097c5fc04ca68",
+ "run_id": 3368,
+ "summary": "SL-102 was a test-only slice that closed O-029 from SL-056. It added a 3-row Theory for the cloud-attribute gate (Scanner.cs:298), two default-suite admin-share Facts and one opt-in StalledShareTests assert for the remote gate (Scanner.cs:286), and a committed mutant driver, tests/bugs/SL-102-LastAccessGatesAssertions/Mutants.ps1. Validate showed every mutant killed by exactly the intended tests (874/874 unmutated, src byte-identical to b719e31). It also ran the SMB-LOOPBACK assert in a Windows Sandbox as a local user: green unmutated, red at StalledShareTests.cs:114 under mutant B. The real cost was the mutant-kill proof, not the nine assertion lines. The repro command was a regex source reader that could not express the slice's mutant-kill criteria, so critique halted once on a major finding and code review ran twice.",
+ "payload": {
+  "status": "complete",
+  "reason": "Slice shipped through validate with one build attempt. No candidates are raised: the backlog is at 31 against a ceiling of 30, SL-102 is itself a follow-up (O-029 from SL-056), and every follow-up it revealed is already filed (SC-298 to SC-301 and the build's filed-for-later list).",
+  "summary": "SL-102 was a test-only slice that closed O-029 from SL-056. It added a 3-row Theory for the cloud-attribute gate (Scanner.cs:298), two default-suite admin-share Facts and one opt-in StalledShareTests assert for the remote gate (Scanner.cs:286), and a committed mutant driver, tests/bugs/SL-102-LastAccessGatesAssertions/Mutants.ps1. Validate showed every mutant killed by exactly the intended tests (874/874 unmutated, src byte-identical to b719e31). It also ran the SMB-LOOPBACK assert in a Windows Sandbox as a local user: green unmutated, red at StalledShareTests.cs:114 under mutant B. The real cost was the mutant-kill proof, not the nine assertion lines. The repro command was a regex source reader that could not express the slice's mutant-kill criteria, so critique halted once on a major finding and code review ran twice.",
+  "learned": [
+   {
+    "kind": "process",
+    "lesson": "When the bug is 'a gate has no test' (a surviving mutant), the repro's acceptance command is a regex source reader and cannot judge the real criteria, which are mutant kills. Ask for a committed mutant driver as the acceptance command at repro or design time. Reuse Mutants.ps1 (mutants held as data: old text, new text, expected red set), not hand scripts.",
+    "evidence": "Critique #1 M1 (major): the repro's ScansAShare check (LastAccessGatesAssertionsTests.cs:60-61, `RemotePath` plus `Assert.Equal(0, result.LastAccessAsked)`) is satisfied by StalledShareTests alone, so the repro goes green whether or not the default suite kills mutant B. Critique then ran twice."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "Mutants.ps1 is now the check for M6's two gates and for the three single-bit drops from CloudFolderAttributes (Scanner.cs:143-144, :286, :298). A full run (all mutants, both TEMPs) takes about 10 minutes; `-Mutant B -Temp Ordinary` takes about 2. Run it for any slice that touches those lines, LastAccessTests, the admin-share Fact in ContainerLayerStoreTests, or the StalledShareTests asserts. It exits 1 wrongly if src is already dirty (SC-301), so commit src edits first. It leaks a ~150 MB copy if killed (SC-300). A flaky test such as SynchronousIoCancelTests makes it exit 1 because it does not rerun.",
+    "evidence": "Code review #1 and #2 (R2-m2, R2-m3, drift note on no rerun); validate ran the full driver, exit 0. Its closing check is at Mutants.ps1:250-251."
+   },
+   {
+    "kind": "risk",
+    "lesson": "Hand-written mutation scripts have already corrupted the real worktree once in this project. Never apply a mutant outside Mutants.ps1, which refuses targets under the worktree, requires exactly one match, checks the DLL write time and ends with a src digest and `git diff --exit-code src`.",
+    "evidence": "Build-check incident: `[IO.File]::WriteAllText` with a relative path wrote mutant B into the worktree's src/FsAnalyser.Core/Scanning/Scanner.cs. It was reverted with `git checkout` and that run's results were discarded."
+   },
+   {
+    "kind": "design",
+    "lesson": "A mutant driver specified as `git archive HEAD` cannot test the new tests a build is still adding, because they are uncommitted. Specify 'tracked plus untracked files, excluding .taad and .taad-scratch', which is what Mutants.ps1 does with `git ls-files`. The critique's own M1 fix and the design contract both said archive HEAD, so the build had to deviate.",
+    "evidence": "Build declared deviation: `git ls-files` instead of the design's `git archive HEAD`, because the Theory and Facts were uncommitted during the build."
+   },
+   {
+    "kind": "process",
+    "lesson": "Validate can discharge an SMB-LOOPBACK assert even though the design and survey marked it person-only. In Windows Sandbox: create a local Administrators user, run `eng/dotnet.ps1` via `schtasks /ru <user>`, use Windows PowerShell 5.1 (pwsh is absent), set TEMP to a non-Windows path and turn networking on. Run as SYSTEM it fails with error 1312, but the engine itself runs as the interactive user on this PC. Only the run on the host's own logon (Windows 11 26200; the Sandbox is 26100.9457) stays a person's check. Plan for validate to do the Sandbox run.",
+    "evidence": "Validate #2: unmutated passed in 1 m 14 s; mutant B failed in 1 m 09 s at StalledShareTests.cs:114 with `Expected: Tuple (0, 0) Actual: Tuple (3, 3)`; no mapping remained. Critique m1 showed the design's 'engine runs as SYSTEM' claim was only the Sandbox's identity."
+   },
+   {
+    "kind": "estimate",
+    "lesson": "Do not size a mutant-kill test slice by assertion count. The design said 'nine assertion lines and one three-row Theory' and predicted 873 tests. The build edited 3 test files, added a dedicated Fact (874 tests) and wrote a committed PowerShell driver. Medium size held with one build attempt, but the driver and its failure modes (copy, kill-leak, dirty src, flake rerun) were the cost. Product risk was far below the medium tier (src byte-identical); harness risk was the real exposure.",
+    "evidence": "Design whats_new vs build `git diff b719e314e..a8fa4cfdb` (LastAccessTests.cs, ContainerLayerStoreTests.cs, StalledShareTests.cs, Mutants.ps1). Lesson #388's 'one Fact is an undercount' recurred."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "The two default-suite witnesses of the remote gate depend on this PC's admin share answering, and each carries its own copy of the local-path-to-admin-share rule. Both Facts `continue` silently when `Directory.Exists(share)` is false, so on Windows 10, a non-admin account or UAC remote restriction mutant B survives the default suite. Only Mutants.ps1 fails there, from an empty red set. Anyone changing TempTree's root shape must change both copies (SC-299).",
+    "evidence": "LastAccessTests.cs:161 inline `$@\"\\\\{host}\\{tree.Root[0]}$\\{tree.Root[3..]}\"` is character-for-character the private ContainerLayerStoreTests.Loopback at :821. Validate could not produce the no-admin-share shape (case 11; Q-224)."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "A green Mutants.ps1 does not prove the attribute gate is per-folder, and it does not guard the RECALL bits. The Theory's Asked == 3 cannot tell a gate that judges a folder by its parent's attributes from the correct one (off asked and off\\inner skipped also reads 3). Mutants.ps1 has no shifted-gate mutant and no RECALL_ON_OPEN or RECALL_ON_DATA_ACCESS bit-drop mutant, because user-mode SetFileAttributes drops those two bits (SC-290 to SC-292). The ListRoot caller (Scanner.cs:241) is covered only by a scratch probe.",
+    "evidence": "Critique m5 (waived to SC-298); build 'LEFT OPEN' on RECALL rows and ListRoot; validate probe: root carrying a cloud attribute asked 3 against 4, with no committed test."
+   },
+   {
+    "kind": "process",
+    "lesson": "When the design record is wrong and build cannot edit it, the correction lives only in obligation text and test remarks. The design text for SL-102 still says 'engine runs as SYSTEM' and that PINNED is missing from Kernel32's table, and it contains two non-compiling lines. A later slice reading the SL-102 design should take O-016, O-017 and O-018 over the contract wording.",
+    "evidence": "Build deviation list: m1 and m3 corrections 'belong to the design record ... outside this repo'. Kernel32.cs:31-32 defines PINNED and UNPINNED. TempTree.AddAttributes is static (TempTree.cs:233)."
+   },
+   {
+    "kind": "process",
+    "lesson": "All nine gate findings on this slice (6 critique, 3 code review) were disposed by a model and count as untriaged, so the gates' precision is unmeasured. Four minors went to the backlog as SC-298 to SC-301 while the backlog sat over its ceiling (31 against 30). The cheap, test-only ones, such as moving Loopback into Scans (SC-299), would have cost less to build in-slice than to carry.",
+    "evidence": "critique #2 and code-review #2 gate notes ('answered by a model, counted as untriaged'); O-020 to O-023 waived; backlog ceiling note in this reflection's brief."
+   }
+  ],
+  "candidates": [],
+  "lessons_judged": [
+   {
+    "id": 99,
+    "verdict": "used",
+    "why": "It explains why the remote-gate witnesses went into the default-suite admin-share Facts rather than only the opt-in SMB-LOOPBACK assert, and why validate ran the Network=SMB-LOOPBACK filter explicitly (in the Sandbox), since the default run executed 0 StalledShareTests."
+   },
+   {
+    "id": 94,
+    "verdict": "used",
+    "why": "No impacket and no new rig. The new assert sits in the existing StalledShareTests loopback test, and the spike built the rig-reports-NTFS check from SMBLibrary in-process."
+   },
+   {
+    "id": 124,
+    "verdict": "used",
+    "why": "The spike linked the project's SmbRig.cs instead of copying it. No second share fixture was built, and validate checked that no `\\\\127.0.0.1\\fsa<8hex>` mapping remained."
+   },
+   {
+    "id": 371,
+    "verdict": "used",
+    "why": "Every spike, build and validate run was done under both TEMP=C:\\WINDOWS\\TEMP and %LOCALAPPDATA%\\Temp, and Mutants.ps1 bakes the two-TEMP loop in. Results matched in both, so no location-dependent red appeared."
+   },
+   {
+    "id": 388,
+    "verdict": "used",
+    "why": "The design's coherence check cited it and ran the full default suite for pins. The undercount still recurred in another shape: 'nine assertion lines' became 3 edited test files, an extra Fact (874 tests, not 873) and a committed driver."
+   },
+   {
+    "id": 72,
+    "verdict": "used",
+    "why": "All builds and tests went through eng/dotnet.ps1, and the mutant driver does the same. SDK 10.0.401 was installed into the tree's .dotnet by the first call."
+   }
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "dimension": "contract-gaps",
+    "severity": "minor",
+    "what": "Critique M1's fix and the design contract said the mutant driver should `git archive HEAD`. The build adds the new tests uncommitted, so an archive of HEAD cannot contain the tests the mutants must be killed by. The build had to switch to `git ls-files` (tracked plus untracked outside .taad and .taad-scratch). A check would be: 'does the copy method contain the uncommitted files the build is adding?'",
+    "caught_by": "build (declared deviation)"
+   },
+   {
+    "gate": "critique",
+    "dimension": "cross-cutting-conformance",
+    "severity": "minor",
+    "what": "Critique m4's fix told the builder to add a dedicated Fact scanning `\\\\{host}\\{drive}$\\...` without pointing at the private ContainerLayerStoreTests.Loopback helper (:821) that already builds that path. The build wrote a character-for-character copy at LastAccessTests.cs:161. Two default-suite witnesses of mutant B then carry separate copies of one path rule (SC-299). A check would be: 'when a new test builds a path that another test class already builds, name the shared helper'.",
+    "caught_by": "code-review"
+   },
+   {
+    "gate": "critique",
+    "dimension": "error-paths",
+    "severity": "minor",
+    "what": "M1 asked for a scratch-copy driver under %LOCALAPPDATA%\\Temp that takes about 10 minutes. It did not ask what happens when the process is killed before its `finally`. Q-222 (the engine's 120 s case-runner kill), lesson #132 (851 leaked fsa-* dirs) and the 10-minute tool cap were all in the handed context. A killed run leaves about 150 MB under fsa-sl102-mutants-<8hex> and nothing sweeps it (R2-m2, SC-300).",
+    "caught_by": "code-review (round 2)"
+   },
+   {
+    "gate": "critique",
+    "dimension": "missing-edge-cases",
+    "severity": "minor",
+    "what": "M1's driver spec required `git diff --exit-code src` = 0 at the end without asking what happens when src is already dirty at the start. Any later slice that edits Scanner.cs near the gates and re-runs Mutants.ps1 exits 1 with a message that reads as worktree contamination (R2-m3, SC-301). The header comment also wrongly claims dirty-start support.",
+    "caught_by": "code-review (round 2)"
+   }
+  ],
+  "estimate_error": "Size 'medium' held: one build attempt, no loop, and src byte-identical. The risk tier 'medium' was too high for product behaviour, since only test code changed and the investigation, survey and spikes had measured both gates. It was about right for process risk, because the harness was the exposure: the survey stage had already leaked a mutant into the worktree. The design said 'nine assertion lines and one three-row Theory' (873 tests). The delivered work was three edited test files, a fourth test (874 tests) and a committed mutant driver with roughly 10 minutes of full-run cost, plus two review rounds each on critique and code review. That is an undercount in the same direction as lesson #388.",
+  "unknowns": [
+   "Does the remote-gate witness hold on a PC or account where \\\\localhost\\C$ does not answer (Windows 10, a non-admin account, UAC remote restrictions on loopback)? There both admin-share Facts skip silently and mutant B survives the default suite. Only Mutants.ps1 fails, from an empty red set (Q-224, validate case 11).",
+   "Does the new StalledShareTests assert (StalledShareTests.cs:114) pass under the person's own logon on the Windows 11 26200 host? Validate ran it only in a 26100.9457 Sandbox as a local user through a scheduled-task batch logon.",
+   "Does any real folder ever carry RECALL_ON_OPEN or RECALL_ON_DATA_ACCESS? U-004 found no directory with a RECALL bit in a standalone exe, so the CF-SYNC-ROOT follow-up for those two bits may guard code that never fires on folders.",
+   "Does a server that reports 'NTFS' but is not Windows, such as a Samba NAS, still make FileRemoteProtocolInfo succeed on the redirector handle? Only this PC's LanmanServer and the SMBLibrary rig were reached.",
+   "Does the throughLink assert in the admin-share Fact bite on its own under mutant B? In the committed Fact it stops at the `above` assert first; only the risk spike measured throughLink alone (asked 3)."
+  ],
+  "what_went_wrong": [
+   "Critique ran twice. Pass 1 halted with 6 findings, including a major (M1): the slice's real criteria, (a') and (b') mutant kills, were discharged only by hand edits in an uncommitted scratch copy. The cause was upstream. The repro command was a regex source reader that passes on StalledShareTests alone, so it could not express the criteria, and the design inherited the gap.",
+   "The survey stage wrote mutant B into the real worktree's Scanner.cs through a relative path in a hand script. It was reverted with `git checkout` and that run's results were discarded. This was the very risk the design later listed as an unproven precondition.",
+   "The design record carried claims that were wrong or would not compile. It said the engine runs as SYSTEM (only the Sandbox does), that PINNED is missing from Kernel32 (Kernel32.cs:31-32 defines it), and that a dedicated share Fact was 'unspiked' (the investigation probe had measured it). Two Theory lines did not compile (CS0176 and a uint/FileAttributes `&`/`==` precedence error). Build cannot edit the design record, so the old wording is still there.",
+   "Code review ran twice and found the duplicated admin-share path rule, a kill-leak and a dirty-src false failure in Mutants.ps1. It also found undeclared departures: no rerun of out-of-set failures, per-mutant `build` plus csproj `test --no-build`, and an assert placed before the existing ClosesHandedOff assertion, which breaks the design's stated reason for its position. The three minors were waived to SC-299, SC-300 and SC-301 rather than fixed.",
+   "The shifted-gate hole (critique m5) was accepted as real but waived to SC-298, so the Theory's Asked == 3 still cannot tell 'off skipped' from 'off\\inner skipped'. A green Mutants.ps1 therefore does not prove the gate is per-folder.",
+   "Part of the build's evidence predates the final shape. The 22/22 filtered run and the 874/874 'as shipped' run were taken before the Theory's tree was trimmed. The final shape is covered only by the driver's baseline, not by those two runs.",
+   "Validate ran twice only because attempt 1 was turned away by the provider's session limit. That is no quality signal, but a gate stage was lost to infrastructure.",
+   "Some checks remain unreached. The SMB-LOOPBACK assert on the host's own logon, Windows 10, an admin-share-less PC, the RECALL bits and a committed ListRoot test were all not reached or not built. The default suite protects the remote gate only on a PC whose admin share answers."
+  ]
+ }
+}
