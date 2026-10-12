@@ -1,0 +1,146 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-104",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-10-12T12:21:56.345Z",
+ "head": "824622e6472f8bc6bbe9fae0f83786dc5c42d29e",
+ "run_id": 3492,
+ "summary": "The design is mostly sound and matches the tree. The engine has already appended the new entry once (.taad/fitness.yaml:1230-1246), so that unproven precondition now holds. Both cited sources say what the design claims (dotnet/runtime#62602 with PR #62638, and #127974). Nothing else in the repo reads the two rules by name or pins the 69/91/123 counts. The main defect is the slice's own failure mode one level down: every setter pattern, kept or new, misses compound assignment. That covers `fi.LastWriteTimeUtc += ...`, `fi.Attributes -= FileAttributes.ReadOnly` and `fi.IsReadOnly |= ...`, all of which compile. The rewritten because-texts would again claim those setters are fenced. The new Encrypt/Decrypt pattern names only the File static and misses the FileInfo.Encrypt()/Decrypt() instance calls. The build-time GetMethods() enumeration contradicts the pinned 11/7 counts, and as worded it would also sweep in members that write no time or attribute. The design gives no path for a stale engine-appended SL-104 block if the entry changes on redesign. Its instruction to put an extra rule in 'also' gets MISSED-BY-XUNIT when the extra rule is twinned. The proof plan spends 11 separate scratch builds where one harness run covers every row, and its guard case is six commands plus a shell setting the case runner cannot provide.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The design is mostly sound and matches the tree. The engine has already appended the new entry once (.taad/fitness.yaml:1230-1246), so that unproven precondition now holds. Both cited sources say what the design claims (dotnet/runtime#62602 with PR #62638, and #127974). Nothing else in the repo reads the two rules by name or pins the 69/91/123 counts. The main defect is the slice's own failure mode one level down: every setter pattern, kept or new, misses compound assignment. That covers `fi.LastWriteTimeUtc += ...`, `fi.Attributes -= FileAttributes.ReadOnly` and `fi.IsReadOnly |= ...`, all of which compile. The rewritten because-texts would again claim those setters are fenced. The new Encrypt/Decrypt pattern names only the File static and misses the FileInfo.Encrypt()/Decrypt() instance calls. The build-time GetMethods() enumeration contradicts the pinned 11/7 counts, and as worded it would also sweep in members that write no time or attribute. The design gives no path for a stale engine-appended SL-104 block if the entry changes on redesign. Its instruction to put an extra rule in 'also' gets MISSED-BY-XUNIT when the extra rule is twinned. The proof plan spends 11 separate scratch builds where one harness run covers every row, and its guard case is six commands plus a shell setting the case runner cannot provide.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "claim": "Every property-setter pattern in the design misses compound assignment, which compiles for all three property kinds. (a) The kept time pattern `\\.(LastAccess|LastWrite|Creation)Time(Utc)?\\s*=(?!=)` misses `fi.LastWriteTimeUtc += TimeSpan.FromSeconds(2);` and `-=`, because DateTime + TimeSpan defines a compound assignment. (b) The new entry's `\\.Attributes\\s*[|&^]?=(?!=)` misses `fi.Attributes -= FileAttributes.ReadOnly;` and `+=`. C# allows enum `-`/`+` in compound assignment, and `-=` is a common way to clear a flag. (c) The new `\\bIsReadOnly\\s*=(?![=>])` misses `fi.IsReadOnly |= x;`, `&=` and `^=`, even though the Attributes pattern in the same design admits those operators. The rewritten rule 2 because-text says 'the FileSystemInfo time setters' and the IsReadOnly setter are fenced, so it would overclaim again. That is the failure mode behind O-031 (#225, #376). No spike corpus contained a compound-assignment row (CC-007).",
+    "evidence": ".taad/fitness.yaml:754 (kept time pattern), :1234 (engine-appended Attributes entry), and the design's rule 2 list item '\\bIsReadOnly\\s*=(?![=>])'. Spike 1/3/4 plant lists contain only `=`, `|=` and `&=` on Attributes and `=` on IsReadOnly and the time properties. Settle it by running the patched yaml through taad3.fitness.content_hits on plants `fi.LastWriteTimeUtc += TimeSpan.FromDays(1);`, `fi.Attributes -= FileAttributes.ReadOnly;` and `fi.IsReadOnly |= true;` in Store/.",
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1234,
+     "text": "    - (?m)\\.Attributes\\s*[|&^]?=(?!=)"
+    },
+    "fix": "Widen in place, with no new pattern lines, so the 11/7 counts hold. Time: `\\.(LastAccess|LastWrite|Creation)Time(Utc)?\\s*[-+]?=(?![=>])`. IsReadOnly: `\\bIsReadOnly\\s*[|&^]?=(?![=>])`. New entry: `\\.Attributes\\s*[-+|&^]?=(?![=>])`. Add one fire plant row per family, using `+=` on a time property, `-=` on Attributes and `|=` on IsReadOnly. Add the operator lists to the because-texts. Edit the engine-appended block in place (see M4).",
+    "class_of": "compound-assignment spellings of a fenced property setter",
+    "threat": "accident"
+   },
+   {
+    "id": "M2",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "claim": "The design adds `\\bFile\\.(Encrypt|Decrypt)\\b` to rule 2 and lists 'File.Encrypt/Decrypt' as fenced, but FileInfo has instance methods Encrypt() and Decrypt() that do the same thing. `new FileInfo(path).Encrypt();` and `fi.Decrypt();` match no pattern. This is the one-member under-fencing that lesson #225 describes, inside an addition nobody asked for. The design also files 'content writes' for later as a scope decision, yet Encrypt/Decrypt rewrite the file's data.",
+    "evidence": "Design, component 'Rule 2 widened in place': '\\bFile\\.(Encrypt|Decrypt)\\b' (new and not run by any spike; plant S63 must prove it). Plant S63 is the static only. Grep of src/FsAnalyser.Core finds no Encrypt or Decrypt, so either fix leaves the tree clean.",
+    "fix": "Either make the pattern receiver-free, `(?m)\\.(Encrypt|Decrypt)\\b`, which still counts as one pattern and catches the static, the instance call and method groups, and add a plant row `new FileInfo(path).Encrypt();`. Or drop Encrypt/Decrypt from this slice, consistent with filing content writes for later. Rule 2 would then hold 10 patterns.",
+    "class_of": "static-versus-instance spellings of one BCL operation",
+    "threat": "accident"
+   },
+   {
+    "id": "M3",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "claim": "The design pins rule 2 at 'exactly 11' and rule 4 at 'exactly 7' patterns, and the acceptance case expects '11 patterns read'. It also tells the build to list every Set*, set_*, Encrypt and Decrypt member of File, Directory, FileInfo and FileSystemInfo, and to treat 'any member the list shows that no pattern names' as 'a missing pattern, not a residual'. That enumeration returns members no pattern names: FileInfo.Encrypt/Decrypt (see M2), Directory.SetCurrentDirectory (writes no file metadata), and File.SetUnixFileMode and FileSystemInfo.set_UnixFileMode (both throw PlatformNotSupportedException on Windows). The builder must then either break the pinned count and the acceptance text, or ignore the design's own rule. The enumeration is knowable now, so leaving it to the build is an invariant that holds only if the builder remembers.",
+    "evidence": "Design, component 'Rule 2 widened in place', key_interactions: 'Once during the build, run [IO.File]/[IO.Directory]/[IO.FileInfo]/[IO.FileSystemInfo] GetMethods() ... Any member the list shows that no pattern names is a missing pattern'. Acceptance case: '11 patterns read for the timestamp rule'.",
+    "fix": "Run the enumeration at design time and pin its outcome. List each member as fenced (with its pattern), out of family (SetCurrentDirectory; the UnixFileMode members, which are unsupported on Windows), or residual. Restate the counts to match. Remove the open-ended build instruction."
+   },
+   {
+    "id": "M4",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "nature": "required",
+    "claim": "The engine has already appended the new entry into the worktree (fitness.yaml:1230-1246, uncommitted, git status 'M'). The design's only guard is that the build checks the entry 'appears exactly once with that exact name and those fields', or else writes it by hand. If review changes the entry and the design stage re-runs (M1 changes its pattern), the engine appends a second '# settled by SL-104' block. Lesson #367 says engine-appended rules persist across take-backs. The design gives no path for two SL-104 markers, or for an old-pattern block that carries the same name. A same-name duplicate would make rules-parity count 71 settled entries and leave the harness's per-rule attribution ambiguous. A renamed entry would leave a stale fence behind.",
+    "evidence": "Design, component 'New settled entry': 'The build checks that it appears exactly once with that exact name and those fields ... If the engine has not appended it, the build writes it once, by hand'. Lesson #367 (SL-091): engine-appended rules persist across take-backs.",
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1230,
+     "text": "  # settled by SL-104\n  - name: Core sets no file attributes through a FileSystemInfo.Attributes write"
+    },
+    "fix": "State the build's check as: exactly one '# settled by SL-104' marker exists, and the block under it equals the final design's architecture_rules entry field for field. If it does not, edit that block in place and delete any earlier SL-104 block. Then re-run rules-parity and expect exactly 70 settled entries."
+   },
+   {
+    "id": "M5",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "claim": "The design says that when a plant fires another rule, the build should 'record it in also/also_settled from the measured run'. That works only when the extra rule is settled. The harness's judge builds the expected xUnit set from rule + also, so a row whose primary is a settled entry (no Fact) cannot be AS-RECORDED if a twinned rule also fires. Listing the twin in 'also' gives MISSED-BY-XUNIT, because the settled rule's name is then expected as a Fact. Leaving xunit at 'quiet' gives FIRED-WHEN-EXEMPT. The only recordable form is F03's: make the twinned rule primary and put rule 2 or 4 in also_settled. The Scanning plants S77 and S78 are the rows most exposed to twinned Scanning rules.",
+    "evidence": "eng/rules-harness/harness.py judge, lines 512-515. plants.json _note: F03 is keyed on the twinned rule with 'only DirectoryReader lists a directory' in also_settled.",
+    "quote": {
+     "path": "eng/rules-harness/harness.py",
+     "line": 512,
+     "text": "    rules = [row[\"rule\"]] + list(row.get(\"also\") or [])\n    # Settled rules the same plant breaks: they have no xUnit twin, so only Fitness is expected to fire them.\n    settled = list(row.get(\"also_settled\") or [])\n    wanted = {\"fitness\": set(rules) | set(settled), \"xunit\": {base(r) for r in rules}}"
+    },
+    "fix": "Amend the instruction: an extra settled rule goes in also_settled. If a twinned rule also fires, either re-key the row F03-style (twinned rule as `rule`, expect xunit fire, rules 2/4/new entry in also_settled), or move the plant to a file that twinned rule does not cover. Never delete the row."
+   },
+   {
+    "id": "M6",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "claim": "The guard case 'keep the rule-count guards green' is not one runnable command. Its check is rules-parity plus five separate RuleCases runs (-Case C-001 to C-005), each 'with $env:TEMP=$env:TMP=... set in the calling shell'. The engine's case runner executes a check string unattended with its own environment. Lesson #395 forbids setting TEMP inside `pwsh -Command`, so the precondition cannot be met as written. The five RuleCases runs take about 3, 7, 7, 10 and 62 s (spike 3), close to the 120 s per-case kill when chained (Q-222). This is CC-004/CC-006 conformance: a case must be backed by a command validate can run unattended.",
+    "evidence": "Design case 'keep the rule-count guards green after adding a settled entry', check field. Q-222: repro.py TIMEOUT = 120 for every case. Spike 3 step 6 run times 3/7/7/10/62 s.",
+    "fix": "Split it into a rules-parity case and one case per RuleCases -Case (each one command). Or commit a small wrapper script that sets TEMP/TMP inside itself and runs them in turn. Before relying on the TEMP precondition, check whether RuleCases is already TEMP-safe since SL-098 by running -Case C-001 once under TEMP=C:\\WINDOWS\\TEMP."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "over-engineering",
+    "nature": "extra",
+    "claim": "Eleven cases each run harness.py with --only on two or three rows. Every harness run copies the repo, does a full dotnet build of the scratch copy, and runs a clean baseline (xUnit and Fitness) before its single batch. All 21 new-file rows fit in one batch, so one `--only S58,...,S78` run proves the same thing at the cost of one build. Eleven runs cost about eleven times as much on every cases.measure pass, at build and again at validate. Each run also faces the 120 s kill (Q-222). A killed run leaves its fsa-rules-* scratch behind (Q-132). Under the engine's TEMP (C:\\WINDOWS\\TEMP) that scratch needs elevation to clean (Q-219).",
+    "evidence": "eng/rules-harness/harness.py measure(): copy_tree, then build, then the clean run_xunit and run_fitness, all before any batch.",
+    "quote": {
+     "path": "eng/rules-harness/harness.py",
+     "line": 639,
+     "text": "    copied = copy_tree(root, tree)\n    build(dotnet_from, tree)"
+    },
+    "fix": "Time one `--only S58` run at build. Group the rows into one to three harness cases (for example rule 2 rows, rule 4 rows, and the new entry plus quiet rows), and keep the per-behaviour descriptions as one case's shape list."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "Both cited claims checked on the web. dotnet/runtime#62602 shows File.SetLastWriteTime and File.SetAttributes side by side, and its fix PR #62638 says 'All other attribute/timestamp operations go through GetFileAttributesEx/SetFileAttributes', which also backs the recalled Attributes-setter claim. #127974 is a real release/10.0 backport, 'Optimize Directory.GetFiles by passing safe patterns to NtQueryDirectoryFile'. Must-verify precondition 2 (engine appends once) now holds: one entry at .taad/fitness.yaml:1230-1246, plain scalars, fields identical to architecture_rules. If it breaks on redesign, see M4. Must-verify precondition 1 (no stray rule on Encrypt, Zw calls or using-static Enumerate in Store) is supported by the investigation's 91-rule run (W06, W09 and L05 fired no rule in Store). If it is false, the 'record in also' remedy fails for twinned rules (M5). The claim that no test asserts the pattern counts was confirmed: grep finds rules 2 and 4 named only in the repro, plants.json (F03), the SL-056 doc and .taad-scratch."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "M1: compound assignment (`+=`, `-=`, `|=`, `&=`, `^=`) escapes the time, IsReadOnly and Attributes setter patterns. M2: FileInfo.Encrypt()/Decrypt() instance calls escape the File-static Encrypt pattern. Checked and covered: multi-line receiver chains (`dir\\n.GetFiles()`; the engine's whole-file \\s* spans newlines); EntryPoint-renamed imports in a new Native file (strings are not blanked, so `\\bSetFileAttributes\\w*` and `\\bNtQueryDirectoryFile\\w*` match the EntryPoint literal; only declarations added inside the excepted Kernel32.cs escape, as for the PathOpens precedent); reads such as Scanner.cs:398 `raw.Attributes & Kernel32...`, Scanner.cs:199 `_store.Attributes(folder)` and ScanStore.cs:229 `page.Attributes[i] =` do not match the new entry."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "M3: the GetMethods enumeration is left to the builder's memory and conflicts with the pinned counts. The repro prints '11 patterns read' but does not assert it. A quoting slip that shortens the repro's read is still caught, because every new pattern has an engine plant row, so no separate finding was raised."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "m1: eleven separate harness invocations where one covers every row. The pattern union itself is not over-built: it is yaml lines, measured go across five spikes, and lesson #225 asks for the sibling family. RS0030 was correctly kept out."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "M3 (enumeration rule against pinned counts), M5 (judge() cannot record a twinned co-fire through 'also' on a settled-primary row; harness.py:512-515), M6 (guard case's check is six commands plus a calling-shell TEMP precondition)."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "M4: no path for a stale or duplicated '# settled by SL-104' block if the entry changes after the engine has already appended it. The harness's scratch-on-failure leak (Q-132) is noted under m1."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "none. The engine-appended block at fitness.yaml:1231-1246 matches the design's architecture_rules (name, glob, pattern, the three except_files, because-text). Rules 2 and 4 are at the lines and patterns the design names (746-764, 774-791). The '# settled by SL-059' marker follows rule 4 after one blank line, as claimed."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "CC-002: the new entry and rules 2 and 4 have no xUnit twin. The design defers twinning with rationale (#313; filed_for_later), which is consistent with the 70 other settled entries, so it is not raised again. CC-004/CC-006: M6. CC-007: compound-assignment variants were absent from every spike corpus (M1); renamed-EntryPoint variants are covered as described above. CC-008: the new tests/bugs repro .ps1 sat in the tree when the survey's 91-rule Fitness run and spike 1's harness clean baseline came back clean. The no-absolute-path rule over eng/** is respected by the plan for plant notes."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "Each new and replaced pattern has a fire plant through the real engine, plus quiet rows for reads, `=>` and `==`. Missing are the rows M1 and M2 call for: `+=`/`-=` on a time property and on Attributes, `|=` on IsReadOnly, and FileInfo.Encrypt(). The acceptance repro is unchanged and exits on the reported spellings only, as intended."
+   },
+   {
+    "dimension": "security",
+    "result": "none: the fences guard against accidental drift by the project's own code (Q-026 threat model). No input crosses a trust boundary and nothing here runs elevated."
+   }
+  ]
+ }
+}

@@ -748,15 +748,29 @@ rules:
     must_not_match:
     - '(?m)\bSetFileInformationByHandle\b'
     - '(?m)\bSetFileTime\b'
-    - '(?m)\bNtSetInformationFile\b'
+    - '(?m)\b(Nt|Zw)SetInformationFile\b'
     - '(?m)\bSetFileAttributes\w*'
     - '(?m)\b(File|Directory)\.Set(LastAccess|LastWrite|Creation)Time'
-    - '(?m)\.(LastAccess|LastWrite|Creation)Time(Utc)?\s*=(?!=)'
+    - '(?m)\bSet(LastAccess|LastWrite|Creation)Time(Utc)?\s*\('
+    - '(?m)\.(LastAccess|LastWrite|Creation)Time(Utc)?\s*[-+]?=(?![=>])'
+    - '(?m)\bFile\.SetAttributes\b'
+    - '(?m)\bSetAttributes\s*\('
+    - '(?m)\bIsReadOnly\s*[|&^]?=(?![=>])'
+    - '(?m)\.(Encrypt|Decrypt)\b'
     because: 'Criterion 6 forbids the scan changing any timestamp. The folder-atime-suspend-on-list-handle spike
       proved the one set the scanner makes, LastAccessTime -1 and 0 everywhere else on a listing handle, leaves a
       folder unchanged, but only while it is the one place that writes metadata: a second call site could set a
-      wrong field and nobody would notice (review M8). So every way to write a time or an attribute is fenced, not
-      one API name. The declaration lives in Native/Kernel32.cs (InteropLivesOnlyInNative) and the one call inside
+      wrong field and nobody would notice (review M8). So the family is fenced by member name, not by one API name
+      (SL-104, O-031): the Win32 and NT setters (SetFileInformationByHandle, SetFileTime, Nt and Zw
+      SetInformationFile, SetFileAttributes*), the File and Directory Set(LastAccess|LastWrite|Creation)Time
+      statics whether qualified, taken as a method group or called through using static, the FileSystemInfo time
+      setters (=, += and -=), File.SetAttributes whether qualified or called through using static, the IsReadOnly
+      setter (=, |=, &=, ^=), and Encrypt and Decrypt on File or FileInfo. The Attributes property setter has
+      its own entry (Core sets no file attributes through a FileSystemInfo.Attributes write), because
+      DirectoryReader.cs assigns a listing struct''s field of that name and except_files covers a whole entry.
+      A text rule does not see an object initializer ({ Attributes = ..., LastWriteTime = ... }), reflection,
+      a delegate made from a using-static method group, or Encrypt and Decrypt through using static; review
+      holds those. The declaration lives in Native/Kernel32.cs (InteropLivesOnlyInNative) and the one call inside
       SynchronousIoCancel.OpenDirectory, the one function that hands out a listing handle, bracketed by the cancel
       guard (FileSystemCallsGoThroughTheCancelGuard); those two files are excepted, and review is what holds them.'
     except_files:
@@ -775,17 +789,23 @@ rules:
     files: src/FsAnalyser.Core/**/*.cs
     must_not_match:
     - '(?m)\bFindFirstFile\w*'
-    - '(?m)\bNtQueryDirectoryFile\w*'
+    - '(?m)\b(Nt|Zw)QueryDirectoryFile\w*'
     - '(?m)\bFile\w*Directory(Restart)?Info\b'
     - '(?m)\bDirectory\.(Enumerate\w*|GetFiles|GetDirectories|GetFileSystemEntries)\b'
-    - '(?m)\.(EnumerateFiles|EnumerateDirectories|EnumerateFileSystemInfos|GetFileSystemInfos)\s*\('
-    - '(?m)\bFileSystemEnumerable\b'
+    - '(?m)\.(GetFiles|GetDirectories|GetFileSystemInfos|Enumerate(Files|Directories|FileSystemInfos))\b'
+    - '(?m)\b(Get|Enumerate)(Files|Directories|FileSystemEntries)\s*\('
+    - '(?m)\bFileSystemEnumera(ble|tor)\b'
     because: 'A listing moves a folder''s last-access time unless its handle was given LastAccessTime -1 first
       (SL-045, and the folder-atime spike). DirectoryReader lists only through SynchronousIoCancel.OpenDirectory,
       which does that where the volume and the folder allow it. A second listing anywhere else in Core, a folder
       refresh or a child count, would move last-access times while HeldOpenTreeTests, which runs only the scan,
       stayed green (review M8). The directory-information classes of GetFileInformationByHandleEx are fenced by
-      their names; Kernel32.cs declares them.'
+      their names; Kernel32.cs declares them. The BCL listings are fenced by member name, not by type (SL-104,
+      O-031): Directory''s statics, DirectoryInfo''s GetFiles, GetDirectories, GetFileSystemInfos and Enumerate*
+      whether called or taken as a method group, the same Directory statics called through using static, and
+      FileSystemEnumerable and FileSystemEnumerator<T>, which run the directory query themselves. A text rule
+      does not see a listing made through reflection or a delegate built from a using-static method group;
+      review holds those.'
     except_files:
     - src/FsAnalyser.Core/Scanning/DirectoryReader.cs
     - src/FsAnalyser.Core/Native/Kernel32.cs
@@ -1226,3 +1246,21 @@ rules:
       app. The person does it by hand from docs/design/SL-101-controlled-folder-access.md, which
       is outside this glob. The survey's grep found no MpPreference anywhere in tests/ at 9851b9c,
       so the rule starts clean.
+
+  # settled by SL-104
+  - name: Core sets no file attributes through a FileSystemInfo.Attributes write
+    files: src/FsAnalyser.Core/**/*.cs
+    must_not_match:
+    - (?m)\.Attributes\s*[-+|&^]?=(?![=>])
+    because: Assigning a FileSystemInfo's Attributes (=, |=, &=, ^=, += and -=) writes the file's attributes
+      to disk through the same BCL path as File.SetAttributes. Criterion 6 forbids the scan
+      changing file metadata outside the one listing-handle call in SynchronousIoCancel (rule
+      'only the directory-listing open path may write a file-system timestamp', review M8, SL-104/O-031).
+      A second writer there would change what a person's tools show and no test would notice.
+      This is a separate entry only because except_files covers a whole entry, and DirectoryReader.cs:181
+      assigns a listing struct's field of the same name, which writes nothing to disk. An object
+      initializer { Attributes = ... } has no dot and is not caught; review holds it.
+    except_files:
+    - src/FsAnalyser.Core/Scanning/DirectoryReader.cs
+    - src/FsAnalyser.Core/Native/Kernel32.cs
+    - src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs
