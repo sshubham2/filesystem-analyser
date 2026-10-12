@@ -1998,6 +1998,24 @@ function New-TopsTree([string] $root) {
     , $denied
 }
 
+# R-001's top-key step's tree under $root (SL-100): 3 small top-level folders of 2 files, and 12 folders of 4,000 empty
+# folders each (48,000), which keep the scan running for about two and a half seconds: a row still being read to focus,
+# then three live refreshes (250 ms apart, more where a slow one skips a tick) before the Completed ending replaces the
+# list with the folder tree.
+function New-TopKeyTree([string] $root) {
+    for ($d = 1; $d -le 3; $d++) {
+        for ($f = 1; $f -le 2; $f++) {
+            New-File (Join-Path $root "a$d-$Planted\$Planted-$f.bin") $KiB64
+        }
+    }
+    for ($s = 1; $s -le 12; $s++) {
+        $slow = Join-Path $root ('c{0:D2}-{1}' -f $s, $Planted)
+        for ($j = 0; $j -lt 4000; $j++) {
+            [void][System.IO.Directory]::CreateDirectory((Join-Path $slow "m$j"))
+        }
+    }
+}
+
 # The window's size when nothing has sized it: MainWindow.xaml's Width and Height, the height no more than the
 # work area's (SL-044, review M2).
 $DefaultWidth = 880
@@ -3696,6 +3714,7 @@ function Expected-RefusalText([string] $leaf, [string] $hiddenBy) {
 # R-001 (SL-047): reveals items from all results surfaces in Windows Explorer, asserting selection, the refusal of
 # an unaddressable name (SL-088: it opened its folder instead until then), hidden items as Explorer's settings in force
 # decide (SL-091: refused, naming the setting, or landing with nothing on the status line), and proper command binding.
+# Its step 16 (SL-100) is Ctrl+Enter on a results-list row after three live refreshes.
 # Every landing is Find-Landing's: resolved long paths, and the target as the only selected item (SL-088).
 function Test-R001 {
     Initialize-RevealWin32
@@ -4029,6 +4048,35 @@ function Test-R001 {
         finally {
             foreach ($f in $topDenied) { Undo-DenyListing $f }
             Remove-CaseFolder $topCase
+        }
+
+        # 16. top-key (Q-078, SL-100): Ctrl+Enter on a results-list row after three live refreshes reveals that row.
+        # The hook selects and focuses a row that is still being read, waits for the scan's own ticks to replace the
+        # list's items three times, then raises the command's KeyGesture on the focused element (reveal mode, top-key).
+        $keyCase = New-CaseFolder
+        $caseRoots.Add($keyCase)
+        try {
+            $keyRoot = Join-Path $keyCase 'key-root'
+            New-TopKeyTree $keyRoot
+            & $closeNewWindows
+            $runKey = Invoke-RevealRun $keyRoot 'top-key:*'
+            CheckEqual '0' $runKey.Exit 'top-key run exit code'
+            $keyRow = $runKey.Lines | Where-Object surface -eq 'top-key'
+            Check ($null -ne $keyRow) "top-key row was logged ($(Show ($runKey.Lines | ConvertTo-Json -Compress)))"
+            Check ($null -eq $keyRow.error) "top-key ran to its press ($(Show ($runKey.Lines | ConvertTo-Json -Compress)))"
+            CheckEqual 3 $keyRow.refreshes 'the scan replaced the list three times after the row was focused'
+            CheckEqual $keyRow.rowPath $keyRow.focusPath 'the keyboard focus was still on the row after three live refreshes'
+            CheckEqual $keyRow.rowPath $keyRow.selectedPath 'the row was still selected after three live refreshes'
+            CheckEqual $true $keyRow.canExecute 'Ctrl+Enter could execute from the focus'
+            CheckEqual $keyRow.rowPath $keyRow.path 'the reveal was of the row that was focused'
+            CheckEqual 'Exact' $keyRow.kind 'top-key kind'
+            if ($keyRow.rowPath) {
+                $keySel = Wait-ExplorerSelection $keyRoot (Split-Path $keyRow.rowPath -Leaf)
+                Check $keySel.Matched 'top-key folder selected in Explorer'
+            }
+        }
+        finally {
+            Remove-CaseFolder $keyCase
         }
     }
     finally {
