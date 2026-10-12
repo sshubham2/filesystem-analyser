@@ -250,7 +250,7 @@ rules:
   - name: 'TheAppNeverDecidesAFailedFolderKind (*.cs)'
     files: 'src/FsAnalyser.App/**/*.cs'
     must_not_match:
-      - '(?m)(?<!\?)\?\s*UnreadableKind\.(NothingListed|ListedPartway)\b'
+      - '(?m)(?<!\?)\?\s*UnreadableKind\.\w+\b'
     including_comments: true
     because: 'The App never decides how much of a failed folder was listed (SL-087 Done-when #3, declared by its design and twinned by its build): the kind is the engine''s, read off its record, so the list cannot disagree with the engine about a folder. The compiler holds the rest: UnreadableFolder''s constructor is internal to Core and nothing on it can be set, so the App cannot make a record or copy one with another kind, and the declared pattern for a constructed record is dropped (review M3). This catches the kind chosen by a ternary, the shape a kind worked out again from a child count takes; a switch or an if/else passes it. The pattern holds on the ''?'' line alone, so the xUnit twin, which matches one line at a time, fails a ternary laid out over three lines as this repo writes them, as Fitness does (review R2-m1); ''??'' is not a ternary and is left out. Comments are matched too.'
 
@@ -1264,3 +1264,28 @@ rules:
     - src/FsAnalyser.Core/Scanning/DirectoryReader.cs
     - src/FsAnalyser.Core/Native/Kernel32.cs
     - src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs
+
+  # settled by SL-106
+  - name: in Core, only the scanner names a failed folder's kind
+    files: src/FsAnalyser.Core/**/*.cs
+    must_not_match:
+    - \bUnreadableKind\.\w+
+    because: 'The kind is stamped once, in Scanner.FolderDone, from the phase the reader saw.
+      Any other Core file naming a member is deciding or re-deciding the kind: that is how TopLevelTracker
+      came to work it out again from ChildCount (TopLevelTracker.cs:98, SL-087 m1). Its row
+      then disagrees with the list and the tree about the same folder, and an opened-then-failed
+      folder reads ''could not be opened'' on one surface only.'
+    except_files:
+    - src/FsAnalyser.Core/Scanning/Scanner.cs
+  - name: in the App, only UnreadableRows writes a failed folder's kind in words
+    files: src/FsAnalyser.App/**/*.cs
+    must_not_match:
+    - '[("]\s*(?:could not be opened|only partly read|could not be read in full|opened, but
+      nothing could be listed)\s*[)"]'
+    because: 'The list, the tree note and the top-level title must give the same words for the
+      same folder, so all three word through UnreadableRows.KindText. A copy of those words
+      in another App file drifts from it. That is m1: the tree and the title said ''could not
+      be read in full'' while the list said ''only partly read'', and their ''could not be opened''
+      arms were chosen from ChildCount rather than the stamped kind.'
+    except_files:
+    - src/FsAnalyser.App/UnreadableRows.cs

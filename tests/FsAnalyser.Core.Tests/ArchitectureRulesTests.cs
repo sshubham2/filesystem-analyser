@@ -213,13 +213,15 @@ public class ArchitectureRulesTests
     /// or copy one with another kind (review M3). This catches the kind chosen by a ternary, the shape a kind worked
     /// out again from a child count takes; a switch or an if/else passes it. The pattern holds on the '?' line alone,
     /// so a ternary laid out over three lines, as this repo writes them, fails here as well as in Fitness, which
-    /// matches the whole file (review R2-m1); '??' is not a ternary and is left out. Comments are matched too.
+    /// matches the whole file (review R2-m1); '??' is not a ternary and is left out. Comments are matched too. The pattern
+    /// names any member of the enum, not the members it had when it was written, so a member added later is fenced from the
+    /// day it is added (SL-106: a ternary choosing OpenedNothingListed passed the pattern that named the first two).
     /// </summary>
     [Fact]
     public void TheAppNeverDecidesAFailedFolderKind()
     {
         AssertNoMatch(Files(@"src\FsAnalyser.App", "*.cs"),
-            @"(?<!\?)\?\s*UnreadableKind\.(NothingListed|ListedPartway)\b");
+            @"(?<!\?)\?\s*UnreadableKind\.\w+\b");
     }
 
     /// <summary>

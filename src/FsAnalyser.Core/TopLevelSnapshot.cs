@@ -24,7 +24,7 @@ public enum TopLevelState
     StoppedPartway,
 
     /// <summary>Its own folder could not be opened or listed. Anything under it that was listed is counted, and
-    /// <see cref="TopLevelRow.ListedPartway"/> says whether anything was.</summary>
+    /// <see cref="TopLevelRow.FailedKind"/> says how far it got.</summary>
     Unreadable,
 
     /// <summary>A junction or symbolic link: recorded, never entered, charged 0 bytes.</summary>
@@ -95,11 +95,11 @@ public sealed class TopLevelRow
     public bool Revised { get; init; }
 
     /// <summary>
-    /// An Unreadable row whose own folder's listing failed partway (HF-002): what was listed before the error is kept
-    /// and counted, so the folder was opened and not read in full. False on an Unreadable row that could not be opened
-    /// or listed at all, and on every other state.
+    /// How an Unreadable row's own folder failed, as the scanner stamped it (HF-002, SL-106): its open refused, opened and
+    /// failed before its first entry, or listed partway, with what was listed kept and counted. The same stamp the
+    /// unreadable-folders list and the folder tree read. Null on every other state; on an Unreadable row it is never null.
     /// </summary>
-    public bool ListedPartway { get; init; }
+    public UnreadableKind? FailedKind { get; init; }
 }
 
 /// <summary>

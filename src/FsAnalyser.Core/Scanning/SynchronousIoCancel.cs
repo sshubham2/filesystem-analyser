@@ -145,13 +145,16 @@ internal sealed unsafe class SynchronousIoCancel : IDisposable
     /// and so is the scan root, which is listed through a handle and no name. <paramref name="fired"/> is told the
     /// name of the folder it failed, as listed, and the page each time it fires. The product reads no flag or
     /// environment variable that arms it, and never calls this: arming it takes code injected into the process, as
-    /// the window cases' startup hook calls it by reflection before the app's Main, the one way to the tree's "could
-    /// not be read in full" row, since an ordinary user cannot make a real listing fail partway. It ships dormant, not
+    /// the window cases' startup hook calls it by reflection before the app's Main, the one way to the tree's "only
+    /// partly read" row, since an ordinary user cannot make a real listing fail partway. It ships dormant, not
     /// compiled out, like the other test seams here, so it is no boundary against code already running in the process.
     /// </summary>
     /// <exception cref="ArgumentException">The name is empty or holds a path separator: it is one folder's name.</exception>
-    /// <exception cref="ArgumentOutOfRangeException">The page is under 2: a first page that fails is a folder never
-    /// opened, not one read partway. Or the error is 0 or ERROR_NO_MORE_FILES, which end a listing as complete.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The page is under 2: a first page that fails keeps nothing, so the
+    /// folder is not one read partway, and this failpoint exists to make that row for the window cases. (Such a folder
+    /// opened, and the scan stamps it as one that opened and listed nothing, as a refused open is not; the window cases do
+    /// not draw it, SL-106, and Core.Tests feed it through OverrideQueryError.) Or the error is 0 or ERROR_NO_MORE_FILES,
+    /// which end a listing as complete.</exception>
     internal static void FailListingOf(string folderName, int page, int win32Error, Action<string, int>? fired = null)
     {
         if (string.IsNullOrWhiteSpace(folderName) || folderName.IndexOfAny(['\\', '/']) >= 0)

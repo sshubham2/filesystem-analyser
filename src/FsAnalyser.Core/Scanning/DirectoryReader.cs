@@ -54,6 +54,14 @@ internal sealed unsafe class DirectoryReader(SynchronousIoCancel io) : IDisposab
     /// <summary>The number of entries the last listing produced (excluding "." and "..").</summary>
     public int Count => _count;
 
+    /// <summary>
+    /// Whether the last <see cref="Read"/> got a handle for its folder: true once Open returned one, the keep-last-access
+    /// open or the plain open it falls back to, whether or not the listing then failed. False for a refused open and
+    /// for a folder at or under <see cref="ExcludedStore"/>. It tells the scan which phase an error came from, which the
+    /// int <see cref="Read"/> returns does not (SL-106). Set by Read alone: the root goes through Open and List itself.
+    /// </summary>
+    public bool Opened { get; private set; }
+
     public ref readonly RawEntry this[int index] => ref _entries[index];
 
     public ReadOnlySpan<char> NameOf(in RawEntry entry) => _names.AsSpan(entry.NameStart, entry.NameLength);
@@ -91,6 +99,7 @@ internal sealed unsafe class DirectoryReader(SynchronousIoCancel io) : IDisposab
     {
         _count = 0;
         _namesUsed = 0;
+        Opened = false;
         if (ExcludedStore is { } store && Scanner.IsAtOrUnder(win32Path, store))
         {
             OpensUnderExcludedStore++;
@@ -99,6 +108,7 @@ internal sealed unsafe class DirectoryReader(SynchronousIoCancel io) : IDisposab
         int error = Open(win32Path, keepLastAccess, out SafeFileHandle? handle);
         if (error != 0)
             return error;
+        Opened = true;
         try
         {
             return List(handle!, fullClass, win32Path);

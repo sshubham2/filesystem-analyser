@@ -30,7 +30,7 @@ using System.Windows.Media;
 /// then a closing line:
 /// <code>
 ///   {"event":"notScanned","i":n,"path":text,"shown":[text]|null}
-///   {"event":"row","i":n,"path":text,"kind":"NothingListed"|"ListedPartway","code":n,"reason":text,"shown":[text]|null}
+///   {"event":"row","i":n,"path":text,"kind":"NothingListed"|"OpenedNothingListed"|"ListedPartway","code":n,"reason":text,"shown":[text]|null}
 ///   {"event":"rows","count":n,"notScanned":n,"selected":bool,"elevated":bool,"stopUtc":time|null,"atUtc":time}
 /// </code>
 /// A notScanned line is a folder SL-095 left out on purpose (the Windows container layer store), which the same list

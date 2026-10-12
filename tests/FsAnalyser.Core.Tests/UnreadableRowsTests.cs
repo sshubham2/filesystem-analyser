@@ -236,4 +236,42 @@ public class UnreadableRowsTests
         }
         Assert.True(problems.Count == 0, string.Join("\n", problems.Take(20)));
     }
+
+    /// <summary>
+    /// The one wording source (SL-106): every member of UnreadableKind has words of its own, none of them the fallback, and
+    /// only a refused open says it could not be opened, so a kind added without an arm cannot pass as one and a folder that
+    /// opened is never worded as refused. A value nobody named, and no kind at all, get the plain fallback and do not
+    /// throw: the results list's converter calls this while a scan is on.
+    /// </summary>
+    [Fact]
+    public void EveryKindHasWordsOfItsOwnAndOnlyARefusedOpenSaysItCouldNotBeOpened()
+    {
+        const string fallback = "could not be read";
+        UnreadableKind[] kinds = Enum.GetValues<UnreadableKind>();
+        Assert.Equal(3, kinds.Length);
+
+        string[] words = kinds.Select(k => UnreadableRows.KindText(k)).ToArray();
+        Assert.Equal(words.Length, words.Distinct().Count());
+        Assert.DoesNotContain(fallback, words);
+        Assert.Equal([UnreadableKind.NothingListed], kinds.Where(k => UnreadableRows.KindText(k).Contains("could not be opened")));
+        Assert.Equal("could not be opened", UnreadableRows.KindText(UnreadableKind.NothingListed));
+        Assert.Equal("opened, but nothing could be listed", UnreadableRows.KindText(UnreadableKind.OpenedNothingListed));
+        Assert.Equal("only partly read", UnreadableRows.KindText(UnreadableKind.ListedPartway));
+
+        Assert.Equal(fallback, UnreadableRows.KindText((UnreadableKind)99));
+        Assert.Equal(fallback, UnreadableRows.KindText(null));
+    }
+
+    /// <summary>The kind the record holds reaches the list's line as that kind's words, for all three kinds.</summary>
+    [Fact]
+    public void AnOpenedNothingListedEntryIsOneRowWordedAsOpenedAndNotAsRefused()
+    {
+        UnreadableFolder[] record = [new(2, 59, UnreadableKind.OpenedNothingListed), new(1, 5, UnreadableKind.NothingListed)];
+
+        IReadOnlyList<UnreadableRow> rows = UnreadableRows.Build(record, e => $@"C:\x\{e}");
+
+        Assert.Equal(
+            [@"C:\x\1  —  could not be opened: access denied", @"C:\x\2  —  opened, but nothing could be listed: network or share error"],
+            rows.Select(r => r.Text));
+    }
 }

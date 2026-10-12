@@ -223,6 +223,9 @@ public class DoneRowFinalityTests
         EntryKind kind = state == TopLevelState.NotFollowed ? EntryKind.Link : EntryKind.Folder;
         var row = (TopLevelRow)ctor.Invoke(["a-row", @"C:\made\a-row", kind, state, 1L, 1L, 0L, 1L, 0L]);
         typeof(TopLevelRow).GetProperty(nameof(TopLevelRow.Revised))!.SetValue(row, revised);
+        // An Unreadable row always carries the kind the scanner stamped (SL-106): a refused open reads 'could not be opened'.
+        if (state == TopLevelState.Unreadable)
+            typeof(TopLevelRow).GetProperty(nameof(TopLevelRow.FailedKind))!.SetValue(row, UnreadableKind.NothingListed);
         return row;
     }
 

@@ -1,0 +1,219 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-106",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-10-12T23:07:16.714Z",
+ "head": "f50d7978e2f2bc2d9469f552de8d8bce9ab3c971",
+ "run_id": 3593,
+ "summary": "The build matches the design. DirectoryReader.Opened is cleared at the top of Read and set only after Open returns a handle (the plain fallback counts). Scanner.FailedKind is the only rule and FolderDone stamps once, passing the same value to the record and to TopLevelTracker.FolderExited. The tracker carries the stamp as Row.OwnFailed and TopLevelRow.FailedKind and no longer reads ChildCount. FolderTreeSession (record required) indexes the first kind per entry, and FolderTreeNode.Note words it through KindText. TitleOf's Unreadable arm is unconditional (accepted m1). KindText has one arm per kind and a neutral fallback. The App's only construction site passes result.Unreadable.\n\nWhat I re-ran, and what came back:\n- Acceptance bug test: 1/1.\n- Full suite (FsAnalyser.slnx): 964/964.\n- SL-063 bug project: 10/10. SL-100 bug project: 29/29. Both compile App sources, and they still pass.\n- WindowCases -Case T-007 on the published exe: passed. P reads 'only partly read' with 355 children; R reads 'could not be opened'.\n- rules-parity: AGREE 18 facts / 22 twinned entries / 48 patterns.\n- RuleCases C-001 and C-003: all checks held.\n- Fitness: 94 rules hold.\n- The rules harness under the engine's own interpreter (`--only F52,F29`): F52, the new must-fire ternary choosing OpenedNothingListed, fires in both xUnit and Fitness (AS-RECORDED). The build had only checked it by regex.\n- `--filter Network=TEST-NET-1`: 2 of 2 fail, as the builder reported. The scan of the unreachable address ends by itself at about 530 ms, inside the root open, which this slice does not touch.\n\nEvery case on the matrix is fed its shape. The two not-material deferrals still hold:\n- ListRoot still returns before AppendRoot when the root lists nothing (Scanner.cs:276-277).\n- FailListingOf's page-1 refusal is unchanged; only its doc changed.\n\nOne extra, filed to the backlog: the new FirstPageFailure.OnThisThread wrapper re-implements the per-thread scoping that SynchronousIoCancel.Created already has as a [ThreadStatic] field. The build's declared reason for it ('a process-wide static') is false.\n\nSecond round: Second round, read as someone trying to break the changed code: nothing new to file.\n\n**Matchers and readers**\n- I loaded .taad/fitness.yaml with the engine's own yaml. The App rule's folded single-quoted scalar comes out as one line: 'opened, but nothing could be listed', with a single space.\n- I fed that pattern sample lines: a bare literal fires, a parenthesised literal fires, a phrase followed by a tab fires, and the fallback 'could not be read' stays quiet. A phrase inside an interpolated string stays quiet; that gap was already waived (m4, SC-337), so it is not new.\n- The widened twin `(?<!\\?)\\?\\s*UnreadableKind\\.\\w+\\b` has no hit in today's App code (harness clean baseline: 0 hits). F52 fires in both engines.\n- Two spelling gaps remain, both present before this diff and of the kind Q-252 leaves to review rather than rules: a fully qualified member spelling, and a ternary whose `?` ends one line with the member on the next.\n- WindowCases' CheckSeamRow uses a case-sensitive switch that fails on a kind it has no words for. Get-OracleRow tests OpenedNothingListed before the code-5 open. W-001's byKind values are integers, so the record's stray-string guard is not tripped.\n- No script, test or count pins the plants.json row total.\n- A case-insensitive search of tests/window found no 'listedPartway' or 'could not be read in full' left.\n\n**Boundaries**\n- ScanResult.Unreadable defaults to `[]` and Finish assigns the scanner's list, so FolderTreeSession's ThrowIfNull cannot fire from MainWindow.\n- ShowFolderTree runs only for a finished scan.\n- FolderTreeSession.None and a closed session return \"\" before the lookup is reached.\n- KindText takes a nullable kind, and all three callers compile against it.\n- The three bug projects that compile App sources pass: SL-063 10/10, SL-100 29/29, SL-106 1/1.\n\n**Error paths the design did not list**\n- A keep-last-access open whose set is refused closes its handle and falls back to the plain open (SynchronousIoCancel.cs:532-546). Opened therefore means that open's handle.\n- A cancel already requested makes Enter fail; a cancel issued during the open makes Open return through Settle. Either way Opened stays false and FolderDone classifies the result as Cancelled before any stamp.\n- If a first page holds only '.' and '..' and the second page fails, the count is 0 and the folder is stamped OpenedNothingListed, which is the correct phase.\n- An abort clears what List read, and FolderDone returns Cancelled before the stamp.\n\nNo new defect was found. First-round finding m1 (extra) stands.",
+ "payload": {
+  "status": "complete",
+  "verdict": "clean",
+  "summary": "The build matches the design. DirectoryReader.Opened is cleared at the top of Read and set only after Open returns a handle (the plain fallback counts). Scanner.FailedKind is the only rule and FolderDone stamps once, passing the same value to the record and to TopLevelTracker.FolderExited. The tracker carries the stamp as Row.OwnFailed and TopLevelRow.FailedKind and no longer reads ChildCount. FolderTreeSession (record required) indexes the first kind per entry, and FolderTreeNode.Note words it through KindText. TitleOf's Unreadable arm is unconditional (accepted m1). KindText has one arm per kind and a neutral fallback. The App's only construction site passes result.Unreadable.\n\nWhat I re-ran, and what came back:\n- Acceptance bug test: 1/1.\n- Full suite (FsAnalyser.slnx): 964/964.\n- SL-063 bug project: 10/10. SL-100 bug project: 29/29. Both compile App sources, and they still pass.\n- WindowCases -Case T-007 on the published exe: passed. P reads 'only partly read' with 355 children; R reads 'could not be opened'.\n- rules-parity: AGREE 18 facts / 22 twinned entries / 48 patterns.\n- RuleCases C-001 and C-003: all checks held.\n- Fitness: 94 rules hold.\n- The rules harness under the engine's own interpreter (`--only F52,F29`): F52, the new must-fire ternary choosing OpenedNothingListed, fires in both xUnit and Fitness (AS-RECORDED). The build had only checked it by regex.\n- `--filter Network=TEST-NET-1`: 2 of 2 fail, as the builder reported. The scan of the unreachable address ends by itself at about 530 ms, inside the root open, which this slice does not touch.\n\nEvery case on the matrix is fed its shape. The two not-material deferrals still hold:\n- ListRoot still returns before AppendRoot when the root lists nothing (Scanner.cs:276-277).\n- FailListingOf's page-1 refusal is unchanged; only its doc changed.\n\nOne extra, filed to the backlog: the new FirstPageFailure.OnThisThread wrapper re-implements the per-thread scoping that SynchronousIoCancel.Created already has as a [ThreadStatic] field. The build's declared reason for it ('a process-wide static') is false.\n\nSecond round: Second round, read as someone trying to break the changed code: nothing new to file.\n\n**Matchers and readers**\n- I loaded .taad/fitness.yaml with the engine's own yaml. The App rule's folded single-quoted scalar comes out as one line: 'opened, but nothing could be listed', with a single space.\n- I fed that pattern sample lines: a bare literal fires, a parenthesised literal fires, a phrase followed by a tab fires, and the fallback 'could not be read' stays quiet. A phrase inside an interpolated string stays quiet; that gap was already waived (m4, SC-337), so it is not new.\n- The widened twin `(?<!\\?)\\?\\s*UnreadableKind\\.\\w+\\b` has no hit in today's App code (harness clean baseline: 0 hits). F52 fires in both engines.\n- Two spelling gaps remain, both present before this diff and of the kind Q-252 leaves to review rather than rules: a fully qualified member spelling, and a ternary whose `?` ends one line with the member on the next.\n- WindowCases' CheckSeamRow uses a case-sensitive switch that fails on a kind it has no words for. Get-OracleRow tests OpenedNothingListed before the code-5 open. W-001's byKind values are integers, so the record's stray-string guard is not tripped.\n- No script, test or count pins the plants.json row total.\n- A case-insensitive search of tests/window found no 'listedPartway' or 'could not be read in full' left.\n\n**Boundaries**\n- ScanResult.Unreadable defaults to `[]` and Finish assigns the scanner's list, so FolderTreeSession's ThrowIfNull cannot fire from MainWindow.\n- ShowFolderTree runs only for a finished scan.\n- FolderTreeSession.None and a closed session return \"\" before the lookup is reached.\n- KindText takes a nullable kind, and all three callers compile against it.\n- The three bug projects that compile App sources pass: SL-063 10/10, SL-100 29/29, SL-106 1/1.\n\n**Error paths the design did not list**\n- A keep-last-access open whose set is refused closes its handle and falls back to the plain open (SynchronousIoCancel.cs:532-546). Opened therefore means that open's handle.\n- A cancel already requested makes Enter fail; a cancel issued during the open makes Open return through Settle. Either way Opened stays false and FolderDone classifies the result as Cancelled before any stamp.\n- If a first page holds only '.' and '..' and the second page fails, the count is 0 and the folder is stamped OpenedNothingListed, which is the correct phase.\n- An abort clears what List read, and FolderDone returns Cancelled before the stamp.\n\nNo new defect was found. First-round finding m1 (extra) stands.",
+  "matches_design": true,
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "over-engineering",
+    "nature": "extra",
+    "claim": "FirstPageFailure.OnThisThread (and the declared deviation that justifies it) assumes SynchronousIoCancel.Created is a process-wide static that a parallel test class could reach. It is not: Created is declared [ThreadStatic] (src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs:62-63), and Scans.WithGuard already documents that it 'Runs scan on this thread' (tests/FsAnalyser.Core.Tests/Scans.cs:108-113). So the wrapper filters nothing: a guard made on another thread, such as a probe worker or another test's scan, never sees this thread's Created. The build recorded the deviation as 'the seam is a process-wide static and other test classes run in parallel; the repro test does not do this'. That puts a false fact about the seam into the slice's record, and implies the acceptance test is exposed to parallel classes when it is not. No behaviour is wrong; the risk is that the premise gets copied into later helpers or lessons.",
+    "evidence": "tests/FsAnalyser.Core.Tests/ScannerFailedKindTests.cs:114-120 (class doc) and :183-195 (OnThisThread) against src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs:61-63 `[ThreadStatic] internal static Action<SynchronousIoCancel>? Created;` and tests/FsAnalyser.Core.Tests/Scans.cs:107-122.",
+    "fix": "Keep the [ThreadStatic] field as the one scoping mechanism. Either pass the arm straight to Scans.WithGuard and delete OnThisThread, or correct the FirstPageFailure doc to say Created is [ThreadStatic], so the wrapper is redundant belt-and-braces.",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/ScannerFailedKindTests.cs",
+     "line": 117,
+     "text": "/// a local folder open and then fail (lesson #309), and FailListingOf refuses page 1 by design. The seam is a static, so it"
+    }
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "I ran `eng/dotnet.ps1 test tests/bugs/SL-106-OpenedThenFailedKind/SL-106-OpenedThenFailedKind.Tests.csproj`: Passed 1/1. It exited 1 at the repro stage."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "UnreadableFolderTests.cs:83-107 denies FILE_LIST_DIRECTORY on a-refused. It asserts UnreadableFolder(entry, 5, NothingListed), the list text 'could not be opened: access denied' and the title 'a-refused  (could not be opened)'. Passes in the 964 run."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "The same Fact, plus the bug test: b-opened's first query is forced to 59 through FirstPageFailure/OverrideQueryError. It is recorded as OpenedNothingListed with ChildCount 0, the list reads 'opened, but nothing could be listed: network or share error', and the title reads 'b-opened  (opened, but nothing could be listed)'."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "UnreadableFolderTests.cs:116-140 denies FILE_WRITE_ATTRIBUTES. Before injecting, its dry run asserts Unreadable is empty and LastAccessAsked-LastAccessKept == 1, so the folder's keep open was refused and its plain fallback listed it. It then injects 59 and expects OpenedNothingListed. DirectoryReader.cs:108-111 sets Opened after Open returns, and Open includes the fallback."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "TopLevelRowTextTests.cs:20-60 injects 995 at the third buffer. It expects FailedKind ListedPartway with 'b-big  (only partly read)', and c-top Done with UnreadableBelow 2 and FailedKind null. T-007, which I re-ran, shows P 'only partly read' in the published exe."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "ScannerFailedKindTests.cs:83-111. An unasked 995 on b's first page gives OpenedNothingListed and the title 'b  (opened, but nothing could be listed)'. A cancel during that same call gives Cancelled with Unreadable empty. Scanner.cs:370-371 returns on Cancelled before the stamp."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "The ScannerFailedKindTests.cs:26-41 Theory has rows for 5/32/363/1920 with opened=false giving NothingListed. HeldFolderReasonTests.cs:51 asserts NothingListed on a real code-32 hold. The rule never reads the code (Scanner.cs:85-89)."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "ContainerLayerStoreTests.cs:659 asserts reader.Opened is false for the backstop refusal and true for the sibling. StoreSkipped passes failed: null (Scanner.cs:339), and the -1 path continues before FolderDone (Scanner.cs:216-222)."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "UnreadableRowsTests.cs:246-263 enumerates Enum.GetValues<UnreadableKind>() and asserts 3 members, distinct words, none the fallback, and only NothingListed contains 'could not be opened'. It also checks that (UnreadableKind)99 and null give 'could not be read'."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "FolderTreeSessionTests.cs (linked FolderTreeSession.cs, csproj:96) covers: an entry in the record, entries not in it (4, 0, -1), a duplicate keeping its first kind, Close() and None returning null, and a real scan."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "I re-ran WindowCases.ps1 -Case T-007: PASSED. P reads 'only partly read' with an expander and 355 children. R reads 'could not be opened' with no expander, through the session lookup."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "W001OracleCorpus.json has F16 (OpenedNothingListed, 5, listable, expecting opened-nothing-listed). Get-OracleRow at WindowCases.ps1:6134 returns that class before any open. W001OracleTests feeds row kinds from the corpus and passes in the 964 run."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "The twin pattern is widened to `UnreadableKind\\.\\w+` in ArchitectureRulesTests.cs:222 and fitness.yaml:253. I ran harness.py --only F52,F29 under the engine venv: F52 fire/fire in both engines, AS-RECORDED. Parity AGREE 18/22/48. RuleCases C-001 and C-003 held. Fitness 94 rules hold."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "ChildCount no longer feeds any kind decision:\n- FolderTreeNode.cs:90-95: Note reads _session.FailedKind(_entry).\n- TopLevelRowText.cs:28: TitleOf reads row.FailedKind.\n- TopLevelTracker.cs:96-100 stores the passed `failed` as OwnFailed, and :193 and :201 read it.\n\nOn the rule side: Fitness shows both settled rules hold (Core names a member only in Scanner.cs; App kind words only in UnreadableRows.cs), and the widened twin fires on the planted OpenedNothingListed ternary (harness F52)."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "DoneRowFinalityTests.cs:226-228 sets FailedKind=NothingListed by reflection for an Unreadable row. I re-ran the SL-063 project: 10/10."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "TopLevelRowText.cs:28 has an unconditional Unreadable arm through KindText(UnreadableKind?), where null gives 'could not be read'. TopLevelRowTextTests.cs:67-79 pins the three kinds, null and 99."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "These checks were added to the slice's checks (docs/design/SL-106-opened-then-failed.md:111-114). I re-ran T-007 (passed) and TEST-NET-1: the same 2 CancellationTests fail in about 530 ms inside the root open, which this slice does not change. I did not re-run WindowMutants All or T-003; I rely on the builder's report for those."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "UnreadableFolderTests.cs:129-131 asserts the dry run asked to keep (LastAccessAsked >= 2) and was refused for exactly one folder before injecting, and :136 asserts it again after injection."
+   },
+   {
+    "key": "O-019",
+    "discharged": "no",
+    "evidence": "Waived by decision to SC-337, not built. plants.json has no S-rows for the two settled rules, and rule 2's delimiters are unchanged (fitness.yaml, the SL-106 settled block). It is not owed on this slice."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "docs/design/SL-106-opened-then-failed.md:95-101 ('Prior art, corrected') restates gnulib fts as a counter-example."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "UnreadableFolderTests.AFolderThatOpenedAndFailedItsFirstPageIsOpenedNothingListedBesideARefusedOne and the bug test: a real deny FILE_LIST_DIRECTORY ACE gives error 5 at the open. They assert NothingListed and 'could not be opened' on the list and the title."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "The bug test and the same Fact: b opens for real, and its first query is forced to 59 by call index through OverrideQueryError (injected == 1 is asserted). ChildCount 0 and OpenedNothingListed are asserted on the list and the title."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "UnreadableFolderTests.cs:116-140 uses a real deny-WriteAttributes ACE. The dry run proves the keep open was asked and refused for that folder, and that the plain open listed it in full, before 59 is injected on its first page."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "TopLevelRowTextTests.cs:20-60 injects 995 at b-big's third buffer, after entries were kept, and expects ListedPartway and 'only partly read'. c-top covers failures below a row (UnreadableBelow 2, FailedKind null). T-007 re-run: P fails at page 2 and reads 'only partly read'."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "ScannerFailedKindTests.cs:83-111. An override 995 on b's first page with no cancel (LastCallAborted false) gives OpenedNothingListed. CancelAt(..., during: true) at the same call index gives Cancelled with no record."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "The pure Theory rows feed 32/363/1920/5 with opened=false and get NothingListed. HeldFolderReasonTests scans a real code-32 hold and asserts NothingListed. Real 363 folders were exercised only by the builder's W-001 run, which I did not repeat."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "ContainerLayerStoreTests.TheReaderRefusesAndCountsAFolderUnderTheStoreWithNoOpen asserts Read gives -1 and Opened is false for the backstop path. The walk's own path goes through StoreSkipped with failed: null, which TheStoreAsATopLevelRowIsNotScannedNeitherDoneNorUnreadable pins."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "UnreadableRowsTests.EveryKindHasWordsOfItsOwnAndOnlyARefusedOpenSaysItCouldNotBeOpened enumerates every enum member, (UnreadableKind)99 and null."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "FolderTreeSessionTests feeds an entry in the record, entries not in it, entries held twice (4 and 9 with different kinds), Close() and None, and a real scan's record."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "I re-ran WindowCases.ps1 -Case T-007 against the published exe: P (failpoint at page 2) reads 'only partly read', and R (denied) reads 'could not be opened' through the session lookup."
+   },
+   {
+    "key": "C-011",
+    "exercised": "no",
+    "evidence": "Deferred as not material, and the reason still holds: SynchronousIoCancel.FailListingOf still refuses page < 2 (only its doc changed). The words and the lookup halves are pinned by C-008 and C-009."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "W001OracleCorpus.json F16 (OpenedNothingListed, code 5, plant listable). W001OracleTests builds the plant and passes the row's kind into the script's own Get-OracleRow, which returns opened-nothing-listed before any open."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "I ran eng/rules-harness/harness.py --only F52,F29: F52 (a one-line ternary choosing UnreadableKind.OpenedNothingListed in MainWindow.xaml.cs) fires in xUnit and Fitness. Parity AGREE, RuleCases C-001 and C-003 held. Fitness shows both appended settled rules hold on the tree."
+   },
+   {
+    "key": "C-014",
+    "exercised": "no",
+    "evidence": "Deferred as not material, and the reason still holds: Scanner.ListRoot returns the error before AppendRoot when error != 0 and Count == 0 (Scanner.cs:276-277), so an opened root that fails its first page never reaches FolderDone or the stamp."
+   }
+  ],
+  "drift": [
+   "No undeclared departure from the design found. Every component, contract and case row is present as designed, or as amended by the accepted findings M1, m1, m2, m3 and m6. m4 was waived to SC-337.",
+   "One declared deviation rests on a false premise. FirstPageFailure's thread filter was justified as 'the seam is a process-wide static', but SynchronousIoCancel.Created is [ThreadStatic] (filed as m1, extra).",
+   "No new undeclared departure from the design found in the second pass. Round 1's note stands: the declared FirstPageFailure deviation rests on a false premise, since Created is [ThreadStatic] (m1, extra)."
+  ],
+  "unreviewed": [
+   "tests/bugs/SL-106-OpenedThenFailedKind/OpenedThenFailedKindTests.cs: written by the repro stage and not changed by this build. I ran it (passes) but did not re-read it line by line.",
+   "tests/window/WindowCases.ps1: I read the CheckSeamRow, Get-OracleRow and W-001 hunks. I verified the T-007 expectation hunk by running T-007 rather than reading it."
+  ],
+  "second_round": {
+   "run_id": 3594,
+   "filed": 0
+  }
+ }
+}

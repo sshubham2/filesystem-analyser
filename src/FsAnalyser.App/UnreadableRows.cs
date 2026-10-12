@@ -29,7 +29,8 @@ public sealed record NotScannedRow(string Path, NotScannedReason Reason, string 
 /// <summary>
 /// The unreadable-folders list (SL-087), from the scan's record of failed folders and nothing else: one row per folder
 /// in the record, flat and in path order, none left out and none added. Each says what the engine recorded of it,
-/// could not be opened or only partly read, and why in words a person can read. It never asks the disk about a
+/// could not be opened, opened but nothing could be listed, or only partly read, and why in words a person can
+/// read. The same words, from the same function, are the folder tree's note and the results list's row. It never asks the disk about a
 /// folder: the list is of the scan it belongs to, and asking again could hang on a dropped share or meet the same
 /// refusals on the UI thread. No WPF either, so Core.Tests compiles it as source.
 /// </summary>
@@ -108,11 +109,20 @@ public static partial class UnreadableRows
         _ => "size not counted: Windows container layers, skipped to avoid a leak in Windows' wcifs.sys driver; see Settings",
     };
 
-    /// <summary>What the engine recorded of the folder, in the list's words. Read from the kind, never worked out again.</summary>
-    internal static string KindText(UnreadableKind kind) => kind switch
+    /// <summary>
+    /// What the engine recorded of the folder, in words. Read from the kind, never worked out again, and the one place
+    /// these words are written: the list, the folder tree's note and the top-level row's title all word a failed folder
+    /// through here, so they cannot disagree about it (SL-106). One arm per named kind. A kind with no arm, and no kind
+    /// at all, get the plain 'could not be read', which is true of every failed folder: this runs in the results list's
+    /// converter while a scan is on, where a throw would end the app, and a forgotten arm must not word a folder as one
+    /// whose open was refused. UnreadableRowsTests turns a forgotten arm red.
+    /// </summary>
+    internal static string KindText(UnreadableKind? kind) => kind switch
     {
+        UnreadableKind.NothingListed => "could not be opened",
+        UnreadableKind.OpenedNothingListed => "opened, but nothing could be listed",
         UnreadableKind.ListedPartway => "only partly read",
-        _ => "could not be opened",
+        _ => "could not be read",
     };
 
     /// <summary>

@@ -83,15 +83,16 @@ internal sealed class FolderTreeNode : INotifyPropertyChanged
     public bool NotScanned => _session.Store is { } store && (store.Flags(_entry) & EntryFlags.NotScanned) != 0;
 
     /// <summary>
-    /// Why a row has no children to open, or fewer than it holds, when the name alone does not say. A folder whose
-    /// listing failed partway keeps what was listed, so it was opened and has rows; it was not read in full.
+    /// Why a row has no children to open, or fewer than it holds, when the name alone does not say. A folder that could
+    /// not be read in full is worded from the kind the scanner stamped (the session's record), through the one
+    /// function the unreadable-folders list and the top-level row use too, so the three cannot disagree about it
+    /// (SL-106). A folder listed partway keeps what was listed, so it was opened and has rows.
     /// </summary>
     public string Note => _session.Store is not { } store ? ""
         : store.Kind(_entry) == EntryKind.Link ? "link, not followed"
         : (store.Flags(_entry) & EntryFlags.NotScanned) != 0 ? "size not counted: Windows container layers, skipped to avoid a leak in Windows' wcifs.sys driver; see Settings"
-        : (store.Flags(_entry) & EntryFlags.Unreadable) == 0 ? ""
-        : store.ChildCount(_entry) > 0 ? "could not be read in full"
-        : "could not be opened";
+        : _session.FailedKind(_entry) is { } failed ? UnreadableRows.KindText(failed)
+        : "";
 
     /// <summary>What the row ranks by: its charged on-disk bytes, everything below it for a folder.</summary>
     public long OnDisk { get; }

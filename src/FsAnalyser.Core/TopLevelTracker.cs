@@ -76,8 +76,10 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
     /// A folder under the root has committed its listing: <paramref name="row"/> is its top-level row. The
     /// one call for every folder that exits a listing, readable or not, so pending moves once per folder. A folder left
     /// out on purpose (<paramref name="notScanned"/>, SL-095) exits here too, with nothing listed and nothing pushed.
+    /// <paramref name="failed"/> is how the scanner stamped the folder when it could not be read in full, or null: the
+    /// row carries that stamp as it is and never works the kind out again (SL-106).
     /// </summary>
-    public void FolderExited(int folder, int row, bool unreadable, int subfoldersPushed, in ScanTotals totals, bool notScanned = false)
+    public void FolderExited(int folder, int row, UnreadableKind? failed, int subfoldersPushed, in ScanTotals totals, bool notScanned = false)
     {
         ref Row r = ref _rows[row];
         r.Bytes += totals.Bytes - _credited.Bytes;
@@ -93,11 +95,10 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
         if (folder == _first + row)
         {
             r.Started = true;
-            r.OwnUnreadable = unreadable;
+            r.OwnFailed = failed;
             r.OwnNotScanned = notScanned;
-            r.OwnListedPartway = unreadable && _store!.ChildCount(folder) > 0; // its listing is committed by now
         }
-        else if (unreadable)
+        else if (failed is not null)
         {
             r.UnreadableBelow++;
         }
@@ -189,7 +190,7 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
             _ when !r.Started => TopLevelState.NotRead,
             _ when r.Pending > 0 => final ? TopLevelState.StoppedPartway : TopLevelState.Reading,
             _ when r.OwnNotScanned => TopLevelState.NotScanned,
-            _ => r.OwnUnreadable ? TopLevelState.Unreadable : TopLevelState.Done,
+            _ => r.OwnFailed is not null ? TopLevelState.Unreadable : TopLevelState.Done,
         };
         if (state == TopLevelState.Done && (r.Bytes, r.OnDisk) != (r.SettledBytes, r.SettledOnDisk))
             r.Revised = true;
@@ -197,7 +198,7 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
         return new TopLevelRow(r.Name, path, r.Kind, state, r.Bytes, r.OnDisk, r.Files, r.Folders, r.UnreadableBelow)
         {
             Revised = r.Revised,
-            ListedPartway = state == TopLevelState.Unreadable && r.OwnListedPartway,
+            FailedKind = state == TopLevelState.Unreadable ? r.OwnFailed : null,
         };
     }
 
@@ -212,9 +213,8 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
         public long SettledBytes, SettledOnDisk; // Bytes and OnDisk when its pending count reached 0
         public int Pending; // its own folder and every folder pushed under it, less those that exited a listing
         public bool Started; // its own folder has exited its listing
-        public bool OwnUnreadable;
+        public UnreadableKind? OwnFailed; // how the scanner stamped its own folder when it could not be read in full (SL-106)
         public bool OwnNotScanned; // its own folder is the store, left out on purpose (SL-095)
-        public bool OwnListedPartway; // its own folder's listing failed after something was listed in it
         public bool Revised; // built Done with figures other than the settled ones; never cleared
         public bool Dirty;
     }
