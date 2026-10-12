@@ -300,7 +300,8 @@ public class DefenderStateRecordTests(ITestOutputHelper output)
     [Fact]
     public void AnExecutableThatCannotBeStartedIsNotRead()
     {
-        string missing = Path.Combine(Path.GetTempPath(), $"fsa-no-such-program-{Guid.NewGuid():N}.exe");
+        // Nothing is created: a name that no folder holds, beside the tests' own binaries (no temp folder is touched).
+        string missing = Path.Combine(AppContext.BaseDirectory, $"fsa-no-such-program-{Guid.NewGuid():N}.exe");
         string line = Read(missing, ["-NoProfile"], TimeSpan.FromSeconds(5));
         output.WriteLine(line);
 
