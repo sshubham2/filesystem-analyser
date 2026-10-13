@@ -1,0 +1,145 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-111",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-10-13T15:25:11.234Z",
+ "head": "1e45edc0667305218c4d83af6a8df9c15177c291",
+ "run_id": 3803,
+ "summary": "The core of the design is sound. I checked it against the tree: Scanner.cs:168 holds the Stack, :383-387 makes one append and one SetChildren per folder, :399-406 pushes subfolders last-first, :380-381 commits nothing when a read is cancelled, and :346 is StoreSkipped. Every child of kind Folder gets pushed, so a Completed scan leaves nothing NotListed. The proof for following the last folder child holds for every prefix of that order. I recounted the 60,002 figure from NotListedBudgetTests' generator: W is the root's last child and lies at the bottom of the stack, so the 8 top folders read false. Every numbered and derived criterion has a case with a committed command. Both outside claims I checked hold up. The cited @pierre/path-store page does list markDirectoryUnloaded, beginChildLoad and applyChildPatch. Microsoft Learn documents GC.GetAllocatedBytesForCurrentThread as \"the total number of bytes allocated to the current thread since the beginning of its lifetime\", and the 64 KiB bound absorbs the small noise counts reported in runtime issue #134724. What remains is minor:\n- The Kind-byte rule's `because` claims only one escape. It misses `+=`/`-=`, which the lesson #446 checklist names, plus a helper-returned value and a column alias.\n- The design says StopAt is made internal, but the component list drops it and Options. That is where the sweep's m\\Layers planting lives, and the NotScanned case depends on it.\n- The contract says the read is false for a scan that \"ran to the end\". A RootUnreadable store reads true at its root.\n- No case puts a block across the 65,536-entry page boundary, and the 5M shapes give the right answer whether or not the page is read correctly.\n- The loop ends only because SetChildren is never handed a block at or before the folder, and SetChildren does not check that. This slice writes three new feeders.\n- The order dependency is recorded in the store and the design doc. It is not recorded at Scanner._pending or FolderDone, where a later slice would change it, which is the gap lesson #485 named.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The core of the design is sound. I checked it against the tree: Scanner.cs:168 holds the Stack, :383-387 makes one append and one SetChildren per folder, :399-406 pushes subfolders last-first, :380-381 commits nothing when a read is cancelled, and :346 is StoreSkipped. Every child of kind Folder gets pushed, so a Completed scan leaves nothing NotListed. The proof for following the last folder child holds for every prefix of that order. I recounted the 60,002 figure from NotListedBudgetTests' generator: W is the root's last child and lies at the bottom of the stack, so the 8 top folders read false. Every numbered and derived criterion has a case with a committed command. Both outside claims I checked hold up. The cited @pierre/path-store page does list markDirectoryUnloaded, beginChildLoad and applyChildPatch. Microsoft Learn documents GC.GetAllocatedBytesForCurrentThread as \"the total number of bytes allocated to the current thread since the beginning of its lifetime\", and the 64 KiB bound absorbs the small noise counts reported in runtime issue #134724. What remains is minor:\n- The Kind-byte rule's `because` claims only one escape. It misses `+=`/`-=`, which the lesson #446 checklist names, plus a helper-returned value and a column alias.\n- The design says StopAt is made internal, but the component list drops it and Options. That is where the sweep's m\\Layers planting lives, and the NotScanned case depends on it.\n- The contract says the read is false for a scan that \"ran to the end\". A RootUnreadable store reads true at its root.\n- No case puts a block across the 65,536-entry page boundary, and the 5M shapes give the right answer whether or not the page is read correctly.\n- The loop ends only because SetChildren is never handed a block at or before the folder, and SetChildren does not check that. This slice writes three new feeders.\n- The order dependency is recorded in the store and the design doc. It is not recorded at Scanner._pending or FolderDone, where a later slice would change it, which is the gap lesson #485 named.",
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "claim": "The new Kind-byte rule catches only `|=`, `&=`, `^=` and a plain `=` whose right side contains `|`. Its `because` names a single escape: 'Known gap, held by review: a write through a `ref byte` local.' Several ordinary spellings of a marker write match neither pattern: `page.Kind[i] += 0x80` and `-=` (both on lesson #446's syntax checklist: 'op= += -= |= &= ^='), `page.Kind[i] = (byte)(kind + 0x80)`, `page.Kind[i] = Marked(kind)` (the OR inside a helper), and `byte[] kinds = page.Kind; kinds[i] |= 0x80` (no `.Kind[` before the operator). So the rule is a tripwire for a few spellings, not the closed check its text implies. It also edits .taad/fitness.yaml, which brings Q-027's eng/rules-harness run into validate. The design does not plan for that, and lesson #486 puts fitness edits at 3+ runs. The rule serves no numbered criterion; the derived criterion asks only that the design record the masking requirement.",
+    "evidence": ".taad/fitness.yaml:1381-1401 (appended under '# settled by SL-111'). Lesson #446/#448 checklist. The SL-110 rule at :1361-1363 shows the house style: 'a tripwire for the two spellings named, not a closed class (#486)'. Q-027 (human).",
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1384,
+     "text": "- \\.Kind\\s*\\[[^\\]]*\\]\\s*(?:\\|=|&=|\\^=)"
+    },
+    "fix": "Either widen pattern 1 to `(?:\\|=|&=|\\^=|\\+=|-=)` and rewrite the `because` as 'a tripwire for the spellings named, not a closed class', listing the escapes (helper-returned value, column alias, ref local, span/Unsafe). Or drop the rule and leave the record to docs/design/SL-111-not-listed-below.md, which is all the derived criterion asks for. That also avoids the Q-027 harness run.",
+    "class_of": "Kind-byte marker write spellings",
+    "threat": "accident"
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "drift-from-design",
+    "nature": "defect",
+    "claim": "The selection rationale says 'Baseline, RunBaseline, StopAt and SweepOrder are private ... They are made internal'. The component 'Shared sweep fixtures made internal' lists SweepTree, SweepOrder, Store, Baseline and RunBaseline, and drops both StopAt and Options. Options is what sets ContainerLayerStorePath = tree.PathOf(Store) on every stop run. The SweepTree theory is specified 'with m\\Layers planted' and indexes its stops against RunBaseline(planted: true). If the new file stops through Scans.RunCancellingAt with default options, Layers and L1 get listed. Calls after m then shift past baseline.Calls, and the named case 'the skipped container store (NotScanned, SetChildren(Count, 0)) as m's only subfolder' is quietly never exercised. The read-versus-walk comparison still passes, so nothing reports it.",
+    "evidence": "Selection rationale change 1 against the component list. NotListedTests.cs:67-71 (Options plants the store) and :92-97 (StopAt). The design's case 'A listed folder with no children of its own kind ... the skipped container store'.",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/NotListedTests.cs",
+     "line": 92,
+     "text": "private static ScanResult StopAt(TempTree tree, int call, bool during, List<string>? listed = null)"
+    },
+    "fix": "Add StopAt and Options to the list of members made internal, and have the SweepTree theory stop through StopAt. Also assert in the theory that at least one stop sees m\\Layers committed as NotScanned, reading false."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "claim": "The contract notes say the read is 'False for files and links, and for every entry of a store whose scan ran to the end, or whose Stop landed in sizing.' A scan whose root opened, answered as a directory and then listed nothing ends RootUnreadable. It leaves Count 1 with the root NotListed (AppendRoot at :261, then the return at :286-287; Q-271). The read therefore returns true for that root although no Stop happened. 'Ran to the end' does not say whether RootUnreadable counts, and a later App consumer reading the contract would expect false.",
+    "evidence": "Scanner.cs:257-261 (the root is appended before its listing), :286-287, Execute :197-202 (Finish RootUnreadable). The NotListed doc at ScanStore.cs:105-112 does name this case ('the root when the scan stopped or failed in the root's own handling').",
+    "quote": {
+     "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+     "line": 286,
+     "text": "if (error != 0 && _reader.Count == 0)"
+    },
+    "fix": "Word the doc comment and the contract as 'false for every entry once a scan has Completed, or was stopped in sizing'. Add that a RootUnreadable root which opened but listed nothing reads true, matching NotListed's own doc."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "extra",
+    "claim": "No case puts a child block across the 65,536-entry page boundary where the answer depends on reading the right page. The design leaves the read free to be 'a non-recursive loop over the page arrays'. A plausible optimisation looks up the page once at FirstChild and indexes `p.Kind[c & PageMask]` for the whole backward scan, which reads the wrong page past a boundary. Every planned test passes that bug:\n- the sweeps' stores are about 2,000 entries, all within one page;\n- in the criterion-5 shape, any index inside W's block is a NotListed folder, so a misread still yields true;\n- in the criterion-3 shape, misreads on complete chains still yield false, and the one true chain's 240 entries cross a boundary with probability of about 0.4%.\nOnly an unmasked index throws.",
+    "evidence": "ScanStore.cs:33-35 (PageSize 65,536). ChildrenLargestFirst's per-child page lookup at ScanStore.Rollup.cs:69-70. The design's criterion-3 and criterion-5 components.",
+    "quote": {
+     "path": "src/FsAnalyser.Core/Store/ScanStore.Rollup.cs",
+     "line": 70,
+     "text": "long onDisk = OnDiskAtOrBelow(_pages[child >> PageShift]!, child & PageMask);"
+    },
+    "fix": "Have the design require the backward scan to look up each entry's page as ChildrenLargestFirst does (`_pages[c >> PageShift]`). Add one small synthetic Fact: a folder block of about 70,000 entries that straddles a page, whose last folder child sits past the boundary and is NotListed, with files at the wrapped offsets. Assert that the read is true and equals Walked. It takes well under a second."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "nature": "extra",
+    "claim": "The read's loop ends only because each chain step moves to a strictly higher index. Nothing enforces that. SetChildren writes any firstChild it is given and checks neither `firstChild > folder` nor `firstChild + childCount <= Count`. A malformed registration would make the public read spin forever instead of throwing, for example a feeder slip passing a block that starts at or before the folder. This slice writes three new replay feeders (queue, interleave, first-first), and a hang there shows up as a 120 s case kill (Q-222), not a failed assert.",
+    "evidence": "ScanStore.cs:291-297. The design's 'The feeder is written fresh'. Every existing caller (Scanner.cs:346, :387; RollupOracle.cs:65; ScanStoreRollupTimingTests.cs:27/45/51; NotListedTests.cs:674) already passes a block after the folder, or a count of 0.",
+    "quote": {
+     "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+     "line": 294,
+     "text": "page.FirstChild[i] = childCount == 0 ? -1 : firstChild;"
+    },
+    "fix": "Put one comparison in the read's loop: if the next child index is not greater than the current one, throw InvalidOperationException. That makes termination hold by construction at no measurable cost. Optionally, SetChildren could refuse firstChild <= folder for a non-zero count."
+   },
+   {
+    "id": "m6",
+    "severity": "minor",
+    "dimension": "under-engineering",
+    "nature": "extra",
+    "claim": "The read's only unproven precondition ('Future scanner slices keep the same registration order and the single SetChildren per folder') is written in ScanStore's doc comment, the class remarks and docs/design/SL-111. It is not written at the two lines a pause/resume, read-ahead or parallel slice would edit: Scanner._pending and FolderDone's push loop. If the precondition fails by block-wise registration (lesson #485), the Walked oracle reads the same marks and agrees with the wrong answer, so no test catches it. Order changes are caught only on the 15-folder RaggedTree and the SweepTree. Lesson #485's own evidence complains that the SL-109 invariant 'is written only in SetChildren's doc comment and docs/design/SL-109-not-listed.md'. This design repeats that pattern for a second invariant.",
+    "evidence": "cross_domain_transfer.invariants[4] (must-verify). Lesson #485 and lesson #484 ('Any later scanner slice ... must re-read ListRoot and FolderDone first'). Scanner.cs:168, :397.",
+    "quote": {
+     "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+     "line": 397,
+     "text": "// Pushed last-first so folders are visited in listing order. A root child is its own row."
+    },
+    "fix": "Add a comment line at Scanner.cs:168 and :397 (comment only, no behaviour change) saying that ScanStore.NotListedAtOrBelow is exact only for this preorder, one-SetChildren-per-whole-block registration, and pointing to docs/design/SL-111-not-listed-below.md and the TheScannerRegistersFoldersDepthFirstInListingOrder guard."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "The load-bearing premises are measured and the code confirms them: the Stack (Scanner.cs:168), the last-first push (:399-406), one SetChildren per folder (:387), nothing committed on cancel (:380-381), and every Folder child pushed (:401), so Completed scans leave no mark. The expected count of 60,002 follows from NotListedBudgetTests :93-101 (W is the root's last child and sits at the bottom of the stack). Recalled claims: GC.GetAllocatedBytesForCurrentThread, per learn.microsoft.com, returns 'the total number of bytes allocated to the current thread since the beginning of its lifetime', and the 64 KiB bound absorbs the small deltas reported in dotnet/runtime#134724. xUnit's DisableParallelization is already relied on by existing code. The cited prior art (npmjs.com/package/@pierre/path-store) does list markDirectoryUnloaded, beginChildLoad and applyChildPatch. The must-verify precondition is attacked in m6: if it fails by block-wise registration, the read and the Walked oracle share the marks and agree on the wrong answer."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "The planned trees already cover the root cut in its own listing, a cut multi-buffer folder, deep chains of listed last subfolders, a deep first subfolder with an empty last one, blocks ending in files or a junction, Unreadable, NotScanned and empty folders, Stops in sizing, and Count 0 stores. One edge is missing: a block straddling a page boundary (m4)."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "The order invariant is held by tests and documentation. A runtime preorder check in SetChildren is rightly rejected, because RollupOracle.Feed registers per child and would break. The one gap is that the invariant is not stated at the Scanner lines that would change it (m6)."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "Three replay feeders plus a control are proportionate to criterion 2's 'queue or made parallel'. The Kind-byte rule serves no numbered criterion, since the derived criterion asks only for a record, and it pulls Q-027's rules-harness run into validate. This is folded into m1's fix as the option to drop the rule."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "The contract mirrors NotListed's own (ScanStore.cs:113-117). The wording 'ran to the end' leaves the RootUnreadable root (true) unstated (m3)."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "At throws for index >= Count, and the empty store is never asked. Termination depends on SetChildren never being handed a block at or before the folder, which nothing enforces (m5)."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "The selection rationale's list of helpers made internal includes StopAt; the component's list omits it and Options, which carry the m\\Layers planting (m2). The remaining code_claims match the tree: Append :259/:261, SetChildren :291-297, AddFlags :307-308, the Kind reads at :96/:336/:353-354 and Rollup.cs :22/:42/:61/:79, and RollupOracle.Feed :65."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "The doc comment must avoid the word 'Scanner': fitness.yaml:532-535 is case-sensitive, and the design already plans for it. SL-109's 0x80 rule exempts ScanStore.cs. The new rule is settled (no xUnit twin by project convention) and is quiet on the current Store code; its stated coverage is overclaimed (m1). No App, ChildrenLargestFirst or window change is made, so Q-114 and Q-128 do not apply. The new tests use TempTree (CC-008/CC-009)."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "Every criterion and derived criterion has a case with a committed command (CC-004). The non-vacuity floors trace through to reachable states (CC-005). The criterion-1 root floor of >= 4 matches the existing passing floor at NotListedTests.cs:208. Gaps: page-straddle (m4), and block-wise SetChildren, which the design itself acknowledges and files for later."
+   },
+   {
+    "dimension": "security",
+    "result": "none: an in-process, allocation-free read over in-memory columns with no input from outside the process, no file-system access and no new public write; writes stay internal to Core (InternalsVisibleTo goes only to Core.Tests)."
+   }
+  ]
+ }
+}

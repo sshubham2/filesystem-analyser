@@ -1,0 +1,536 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-111",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-10-13T15:08:31.812Z",
+ "head": "1e45edc0667305218c4d83af6a8df9c15177c291",
+ "run_id": 3798,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "There was one proposal, from `practice`, and it is taken as the core. It was selected against what the tree and the spikes measured, not on taste.\n\nWhat it relies on, and how each was checked:\n- The read can be computed from what the store already holds. Spike 121 exp 1 found 0 differences in 501,265 folder checks over 2,550 real Scanner stores. That covered every guarded-call Stop on SweepTree and on a long-path tree, a 400-folder ragged tree, Stops inside a 100k-file listing, Stops during sizing, Stops in the root's listing, and completed scans. A planted defect and a queue-order feeder both fired, so the check has teeth.\n- It fits the timing budget. Exp 2 measured the worst 5M shape at 29 ms in Release and 27 ms in Debug against 250 ms.\n- It matches the shipped write path, read today:\n  - Scanner.cs:168 holds a Stack. Subfolders are pushed last-first at :398-406.\n  - FolderDone appends one block per folder and calls SetChildren once (:383-387). A cancelled read returns before any append (:380-381).\n  - StoreSkipped registers (Count, 0) (:346).\n  - AppendRoot runs before the root's listing (:261).\n  - SetChildren is the only place the mark is cleared (ScanStore.cs:291-297), and AddFlags refuses the bit (:307-308).\n- Nothing is stored, so criterion 5 holds by construction. The measured stopped-peak baseline (637.1 MiB retained) does not move.\n- The practice designer raised over_engineering_flag against the usual stored-marker answer: U-201's Kind bit 0x80 needs masking at seven raw Kind reads plus the write, or a 4 B column costs about +19.2 MiB. Both buy order-independence this scanner does not need while it stays depth-first. That flag is taken as a real signal, and the trimmed version is what is selected.\n\nChanges made against reality:\n1. The new tests cannot reuse SweepTree alone. Baseline, RunBaseline, StopAt and SweepOrder are private in NotListedTests.cs too. They are made internal, following the TraversalTests.AssertChildrenAreContiguous precedent.\n2. The FirstChild order pin has a gap: it skips folders listed empty. A queue order whose only out-of-order folders are empty passes it. The listing-order assertion (FolderEnds against a fixed RaggedOrder, as the existing SweepOrder assertion does) closes the gap, and both are kept.\n3. Criterion 2 says 'made parallel'. Queue and first-first replays do not model that literally, so a two-at-a-time interleave feeder is added. It models two listers that each pop a folder before either commits.\n4. The zero-allocation assert becomes a bound (under 64 KiB, exact figure printed). A per-entry cost of even 1 byte would be 4.6 MiB, so the bound still decides criterion 5, and it does not hang on a runtime counter's incidental bytes.\n5. One architecture rule is added: the Kind byte is written whole, never OR-ed. It makes the derived criterion's recorded statement fail loudly, because a Kind-bit marker breaks every raw Kind read, the new one included, unless all of them are masked.",
+  "components": [
+   {
+    "name": "ScanStore.NotListedAtOrBelow",
+    "lives_at": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "responsibility": "A public read placed directly after NotListed. It is a non-recursive loop over the page arrays. If the entry reads NotListed, return true. Otherwise read ChildCount, then Kind. If the entry is not a Folder, or ChildCount is 0, return false. Otherwise read FirstChild and scan the block backward from first+count-1 to the last entry whose raw Kind byte is Folder; files and links are skipped. If there is none, return false; otherwise continue from that child. It allocates nothing and writes nothing.\n\nThe doc comment states five things:\n(1) 'At or below' includes the folder itself, and the read is false for files and links.\n(2) It is exact on NotListed's terms: between appends on the writing thread, and after Scan has returned. Reads from another thread during appends are excluded.\n(3) It is exact only for stores registered in the shipped order: one writer, folders listed depth-first with subfolders taken in listing order, and each folder's children one contiguous block registered by one SetChildren after the whole block. Stores built by RollupOracle.Feed or the ScanStoreTests generators are excluded.\n(4) Over all rows of one folder, it reads each entry below that folder at most once, because the chains of different children lie in disjoint subtrees.\n(5) The order requirement is described in words. The doc does not cref the Scanner type: the existing rule 'the store does not know about the Scanner' governs Store/**.",
+    "key_interactions": "It reads the Flags (NotListedBit), Kind, ChildCount and FirstChild columns through At and _pages. It adds raw Kind-byte reads in one more method, so a stored Kind-bit marker would now need masking at eight read sites. No caller in src during this slice."
+   },
+   {
+    "name": "Class remarks touch-up",
+    "lives_at": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "responsibility": "Extend the NotListed paragraph of the ScanStore class remarks (lines 26-29) with one sentence: NotListedAtOrBelow derives the subtree answer from the marks and the depth-first, one-block-per-folder registration order; it stores nothing, and it is exact on the same terms. ScanStore.Rollup.cs is not touched, so its header ('a read never walks below the entry except to list one folder's children') stays true."
+   },
+   {
+    "name": "Shared sweep fixtures made internal",
+    "lives_at": "tests/FsAnalyser.Core.Tests/NotListedTests.cs",
+    "responsibility": "SweepTree, SweepOrder, the Store constant, the Baseline record and RunBaseline go from private to internal static. This follows the TraversalTests.AssertChildrenAreContiguous precedent, so the new test file sweeps the same tree with the same baseline machinery: FolderEnds from AfterFolder, and the guard's call count. No behaviour change to SL-109's tests."
+   },
+   {
+    "name": "Walk oracle, ragged tree, listing-order and block-order pins",
+    "lives_at": "tests/FsAnalyser.Core.Tests/NotListedBelowTests.cs",
+    "responsibility": "Four helpers.\n\n(a) Walked(ScanStore) returns a bool[]. It walks from the root over FirstChild/ChildCount with an explicit Stack (RollupOracle.CheckStructure's idiom), then runs a reverse pass. An entry is true if it reads NotListed or any registered child is true. It looks at every child, so it shares no logic with the chain read.\n\n(b) RaggedTree() builds a small real NTFS tree, about 15 folders, of ragged depth. Shapes it must contain:\n- a folder whose first subfolder is 3 deep and whose last subfolder is empty (a: a1\\a11\\a111\\leaf.txt, a2);\n- a folder whose last subfolder is the deepest, 4 levels (c: c1\\c11\\x.txt, c2\\c21\\c211\\c2111\\y.txt);\n- an empty folder (b);\n- a last folder that holds only files (e);\n- blocks that end in files, and one block that ends in a junction to TempTree.Outside after its last subfolder. The backward scan has to skip both.\nThe ragged depth is required: spike 1 measured 0 queue mismatches on a uniform 3-ary tree.\n\n(c) RaggedOrder is the expected folder listing preorder. It is asserted equal to the baseline's FolderEnds, exactly as SweepOrder is. This pins the order, including empty folders, and it fails loudly if NTFS orders the names differently.\n\n(d) AssertListedDepthFirst(ScanStore) walks preorder with children in block order. It requires the FirstChild of every folder with ChildCount > 0 to strictly increase. That holds for every prefix of a depth-first registration. It fires on queue, first-first or interleaved order whenever two non-empty folders are registered out of preorder.",
+    "key_interactions": "Uses TempTree (Folder, File, Junction, Outside, PathOf), Scans.Run, Scans.WithGuard, Scans.RunCancellingAt, Scans.ByPath, Scans.WaitForAbortedCloses, NotListedTests.RunBaseline/SweepTree/SweepOrder. RaggedTree runs with ContainerLayerStorePath null (planted: false)."
+   },
+   {
+    "name": "Criterion 1: stop-at-every-call sweeps",
+    "lives_at": "tests/FsAnalyser.Core.Tests/NotListedBelowTests.cs",
+    "responsibility": "Two Theories, each with InlineData false (before the call) and true (during it).\n- CancelAtAnyCallOfTheSweepTreeAnswersAsAWalk runs over SweepTree with m\\Layers planted.\n- CancelAtAnyCallOfTheRaggedTreeAnswersAsAWalk runs over RaggedTree.\n\nEach takes one uncancelled baseline, then stops at every guarded call k through Scans.RunCancellingAt. For every store with Count > 0:\n- NotListedAtOrBelow(e) equals Walked(store)[e] for every entry;\n- every file and link reads false;\n- AssertListedDepthFirst holds.\nA store with Count 0 (k <= 2) is counted and skipped.\n\nNon-vacuity floors, counted and printed.\nSweep:\n- stops inside big's multi-buffer listing >= big's buffer count, with big and the root reading true;\n- stops that leave the root not listed >= 4, with the root reading true.\nRagged:\n- at least one stop leaves a NotListed folder 4 or more levels below the root under listed ancestors, so a chain of 3 or more listed steps answered true;\n- at least one stop has a listed folder with folder children reading false while a later sibling subtree is still unlisted;\n- the number of listed folders reading true is at least the number of stops that left a root.\nEach Theory ends with Scans.WaitForAbortedCloses."
+   },
+   {
+    "name": "Criterion 2: traversal guard",
+    "lives_at": "tests/FsAnalyser.Core.Tests/NotListedBelowTests.cs",
+    "responsibility": "Three Facts.\n\n(a) TheScannerRegistersFoldersDepthFirstInListingOrder. Completed real scans of RaggedTree and SweepTree:\n- the FolderEnds order equals RaggedOrder and SweepOrder;\n- AssertListedDepthFirst passes;\n- NotListedAtOrBelow is false for every entry (criterion 4 for the ragged tree).\n\n(b) AQueueOrderedStoreBreaksTheAnswerAndTheGuardSeesIt. It records the completed RaggedTree store's shape (each folder's children by name and kind, in block order). It then replays that shape into fresh ScanStores, appending one whole block per folder with one SetChildren, and checks NotListedAtOrBelow against Walked after every SetChildren.\n- Stack last-first (the shipped order), the feeder control: 0 differing states; the final store equals the scanner's entry by entry (Parent, Name, Kind); AssertListedDepthFirst passes.\n- Queue (BFS): at least 1 differing state, and AssertListedDepthFirst throws on the final store.\n\n(c) AParallelOrderedStoreBreaksTheAnswerAndTheGuardSeesIt. The same replay in two more orders, each needing at least 1 differing state and a pin that throws:\n- a two-at-a-time interleave (pop two folders, list both, then push each one's subfolders), which models two listers that each take a folder before either commits;\n- stack first-first push.\n\nThe feeder is written fresh, because RollupOracle.Feed calls SetChildren after every child and clears the mark at the first child (lesson #485, SL-109 doc)."
+   },
+   {
+    "name": "Criterion 4: completed scans and sizing-phase Stops",
+    "lives_at": "tests/FsAnalyser.Core.Tests/NotListedTests.cs",
+    "responsibility": "Add a check inside AssertNothingNotListed: Assert.False(result.Store.NotListedAtOrBelow(e), ...) for every entry. ACompletedScanLeavesNothingNotListed already runs it on the sweep tree and on the long-path/junction tree. Add the same per-entry check after AStopDuringSizingLeavesEveryFolderListed's NotListed loop, because a Stop in sizing has listed everything. The completed RaggedTree is covered by guard (a)."
+   },
+   {
+    "name": "Criterion 3: timing on a 5M stopped-late store",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ScanStoreRollupTimingTests.cs",
+    "responsibility": "New Fact AnsweringEveryRowOfAHundredThousandChildFolderInAStoppedFiveMillionStoreFitsTheBudget, in the existing MemoryBudget-collection class, reusing BudgetMs = 250 and Reads = 10.\n\nThe generator drives the store the way the scanner does: an explicit Stack, each folder's children one block, one SetChildren after the block, subfolders pushed last-first. It holds no per-entry state.\n\nShape (spike 2's worst case): root > A > [Pad, S].\n- Pad is a listed files-only folder, sized so the store reaches exactly 5,000,000 entries.\n- S has 100,000 children, every tenth a folder.\n- Each folder child roots a 48-level chain. Each chain block lists 1 subfolder first, then 9 files, so the backward scan reads the whole block.\n- Chains 1 to 9,999 are complete. The last chain stops right after its 24th block is registered.\n- File sizes are seeded from the index, so largest-first order scrambles chain access.\n\nAsserted shape: Count == 5,000,000; ChildCount(S) == 100,000; exactly one NotListed entry; root, A and S read true; Pad reads false.\n\nEach of 10 passes, the first cold one included, times ChildrenLargestFirst(S) plus NotListedAtOrBelow on every row. Each must be under 250 ms with exactly 1 true row. The test prints the per-pass times, the answer-only time and the build configuration. The read's cost bound (each entry below S is read at most once) makes this shape cover every shape at or under 5M entries."
+   },
+   {
+    "name": "Criterion 5: memory at the U-201 stopped peak",
+    "lives_at": "tests/FsAnalyser.Core.Tests/NotListedBudgetTests.cs",
+    "responsibility": "Extend AStoreStoppedAtItsUnlistedPeakFitsTheBudget right after the existing NotListed loop and before `retained` is measured.\n- Warm the read once, then take GC.GetAllocatedBytesForCurrentThread().\n- Call NotListedAtOrBelow on every entry, only counting trues inside the loop: no per-iteration Assert, whose interpolated message would allocate.\n- Take the allocation delta.\n\nAsserts:\n- the delta is under 64 KiB, and the exact figure is printed (expected 0). Any per-entry cost would be at least 4.6 MiB;\n- the true count is WSubfolders + 2 = 60,002 (the 60,000 queued folders, W and the root);\n- root and W are true, and each of the 8 top folders is false.\n\nNo oracle array is built there, because Debug keeps locals alive and would inflate `retained`. The existing retained < 800 MiB, peak < 800 MiB and commit < 1,024 MiB asserts then run with the read already done. The test prints the read's elapsed time and the true count."
+   },
+   {
+    "name": "Design record",
+    "lives_at": "docs/design/SL-111-not-listed-below.md",
+    "responsibility": "Records the following.\n- The derivation, and why it is exact. In depth-first, last-first order, folders are registered in preorder, and a cut folder commits nothing. So a listed last subfolder implies every earlier sibling's subtree is complete, and the last-folder-child chain reaches every unlisted folder below.\n- That it holds only while the traversal stays depth-first: one writer, one SetChildren after each whole block. Pause/resume (U-197, U-180), read-ahead, a block-wise flush (lesson #485) and reordering parallel listing must keep that, or replace the read.\n- The rejected stored alternatives and what they cost.\n  - A Kind-byte bit (U-201). It needs masking at Kind() ScanStore.cs:96, Charges :336, CheckParent :353 (plus the cast in :354's message), Rollup.cs RolledSize :22, FilesBelow :42, ChildrenLargestFirst :61 and OnDiskAtOrBelow :79, now NotListedAtOrBelow too, and the write at :259. The new Kind-byte rule fails it until that is done.\n  - A 4 B per-entry column, about +19.2 MiB at 5M (U-201).\n  - The per-folder pending-subfolder count that any queue or parallel order would need.\n- The per-open cost bound, and the 250 ms Core share of the window's 0.5 s open.\n- The guard tests, and what they do not catch: a per-block SetChildren inside a folder larger than the sweep's 2,000-entry folder."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Compute the answer on read from NotListed and the last-folder-child chain. Store nothing: no Kind bit, no column, no change to Append, SetChildren or AddFlags.",
+    "reversibility": "cheap",
+    "rationale": "Spike 121 exp 1 found 0 differences in 501,265 folder checks across 2,550 real Scanner stores, and exp 2 measured 29 ms Release and 27 ms Debug for 100k rows in the worst shape. Criterion 5 (no per-entry storage) is then true by construction, and the measured 637.1 MiB stopped-peak baseline is unchanged (lesson #483). A later move to a stored marker would sit behind the same public signature."
+   },
+   {
+    "decision": "Accept that the answer depends on depth-first, one-SetChildren-per-whole-block registration. State the dependency in the doc comment, the class remarks and the design record, and guard it with tests.",
+    "reversibility": "expensive",
+    "rationale": "This binds every later scanner slice. Pause/resume, read-ahead, block-wise flush and parallel listing must keep exact preorder registration with a single SetChildren, or replace this read with a stored pending-subfolder count and a new memory test. Queue order broke the answer in 283 of 401 states on a ragged tree (spike 1) and in 74,908 of 82,533 (U-201)."
+   },
+   {
+    "decision": "'At or below' includes the folder itself. Files and links read false.",
+    "reversibility": "cheap",
+    "rationale": "It matches the goal ('some folder at or below it') and spike 1's definition. It differs from U-204's strict-descendant reading, which SL-109 did not ship. There are no consumers yet."
+   },
+   {
+    "decision": "Place the read in ScanStore.cs beside NotListed, over the page arrays, not in ScanStore.Rollup.cs and not through the public reads.",
+    "reversibility": "cheap",
+    "rationale": "It shares NotListed's contract. Rollup.cs's header says its reads never walk below an entry, and this one does. Spike 2 timed the page-array variant faster: 29 vs 39 ms Release, 27 vs 72 ms Debug."
+   },
+   {
+    "decision": "The traversal guard is tests. A listing-order pin (FolderEnds against SweepOrder and RaggedOrder) and a block-order pin on real scanner stores, plus queue, interleave and first-first replays that must make both the answer check and the block-order pin fire. There is no runtime check in SetChildren and no fitness rule on Scanner's Stack.",
+    "reversibility": "cheap",
+    "rationale": "A runtime check would put block scans on the append path, which the spike kept untouched. A text rule on `Stack<` misses a reordering that keeps a Stack (first-first push), and fitness.yaml edits cost 3+ harness runs (lesson #486). The listing-order pin also covers empty folders, which the block-order pin cannot see."
+   },
+   {
+    "decision": "Add one architecture rule: the store writes the Kind byte whole and never ORs a bit into it.",
+    "reversibility": "cheap",
+    "rationale": "Turns the derived criterion's recorded statement (a Kind-bit marker needs masking across the raw Kind reads) into something that fails loudly. It matches only wrong code: a compound assignment to Kind[...] or an assignment to it containing '|'. The one correct write, `page.Kind[i] = (byte)kind;`, and every compare stay quiet. A slice that does the masking edits the rule deliberately."
+   },
+   {
+    "decision": "Criterion 3's budget is ChildrenLargestFirst(S) plus the answer for every row, under 250 ms per pass in the test host, the first cold pass included.",
+    "reversibility": "cheap",
+    "rationale": "The 0.5 s open is the window's. Its WPF part measured about 150-230 ms (U-001 median 230 ms; SL-044 97.9-141.9 ms), and ScanStoreRollupTimingTests already holds Core's share to 250 ms. Expected cost is about 40 + 27 ms in Debug."
+   },
+   {
+    "decision": "Criterion 5 asserts an allocation bound (under 64 KiB, exact figure printed) instead of an exact 0.",
+    "reversibility": "cheap",
+    "rationale": "A per-entry cost of even 1 byte over 4.88M entries is 4.6 MiB, so the bound decides 'no per-entry storage' as surely as 0 would, without hanging the slice on incidental runtime bytes a remembered counter guarantee might not exclude."
+   },
+   {
+    "decision": "Do not wire the App (FolderTreeNode, row text) in this slice.",
+    "reversibility": "cheap",
+    "rationale": "The goal and criteria are store-level. Leaving src/FsAnalyser.App alone keeps T-003 (red at HEAD, lesson #505), the window cases and Q-114's WindowMutants requirement out of this slice. ChildrenLargestFirst is not changed, so Q-128's T-003 trigger does not apply."
+   },
+   {
+    "decision": "Sweep and guard on the existing SweepTree plus a purpose-built ragged real tree of about 15 folders. Do not build a 100k-entry on-disk folder.",
+    "reversibility": "cheap",
+    "rationale": "A uniform-depth tree cannot tell queue order from stack order (spike 1), so the guard tree must be ragged. A 100k on-disk fixture costs 28-30 s against a 120 s case cap (lesson #503, Q-222). Spike 1 covered in-listing Stops of a 100k folder (0 differences), and big's multi-buffer cut exercises the same branch."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal. Taken as the core. Adjustments:\n- the NotListedTests helpers it needs are private, so they are made internal, not SweepTree alone;\n- a listing-order pin is added, because the FirstChild pin skips folders listed empty;\n- an interleave feeder is added for 'made parallel';\n- the allocation assert is a bound, not exactly 0;\n- one Kind-byte architecture rule is added;\n- RaggedTree gets a junction after a last subfolder."
+   }
+  ],
+  "coherence_check": "There was one proposal, so no composition to check. Nothing in this design has yet survived a disagreement, and the reviewer downstream is the first to argue with it.\n\nInternal consistency, checked against the tree:\n1. Contract. The read's contract (exact between appends on the writing thread and after Scan returns) is NotListed's own (ScanStore.cs:113-117), word for word. It adds no new consistency model.\n2. Order dependency. The read assumes depth-first, one-SetChildren-per-block order, and the shipped Scanner does exactly that: Stack at Scanner.cs:168, push last-first at :398-406, one SetChildren at :387, StoreSkipped's (Count, 0) at :346, cancel before append at :380-381.\n3. Test feeders. RollupOracle.Feed violates the order assumption (it calls SetChildren per child, RollupOracle.cs:65). It is therefore excluded in the doc comment and not used as the guard feeder.\n4. Order pin. The block-order pin (FirstChild increasing in preorder) holds for every prefix of the shipped order, so it can run on every stopped store. It cannot see folders listed empty, so the listing-order pin (FolderEnds against SweepOrder and RaggedOrder) is kept beside it.\n5. Memory test. The criterion-5 read runs before `retained` is measured and builds no array, so it cannot inflate the bound it is checked against.\n6. Fitness rules. The new Kind-byte rule matches no line of the current Store/** code, and none of the planned read (it only compares Kind). The existing rule 'the store does not know about the Scanner' constrains the doc comment to describe the order in words. SL-109's not-listed-bit rule exempts ScanStore.cs, where the new read uses NotListedBit by name.\n7. Workarounds. No known-workaround entry applies: no outside defect is avoided.\n8. Decidable disagreements. None is recorded. The two questions whose losing answer would have changed the design (is the computed read exact on every shipped store, does it fit the open budget) were settled by spike 121 before this design.",
+  "architecture_rules": [
+   {
+    "name": "the store writes the Kind byte whole: no marker bit is OR-ed into it",
+    "files": "src/FsAnalyser.Core/Store/**/*.cs",
+    "must_not_match": [
+     "\\.Kind\\s*\\[[^\\]]*\\]\\s*(?:\\|=|&=|\\^=)",
+     "\\.Kind\\s*\\[[^\\]]*\\]\\s*=(?!=)[^;]*\\|"
+    ],
+    "because": "Many reads compare the raw Kind byte with EntryKind values: Kind(), Charges, CheckParent, RolledSize, FilesBelow, ChildrenLargestFirst, OnDiskAtOrBelow, and now NotListedAtOrBelow's entry check and its backward block scan.\n\nA marker bit OR-ed into the byte (U-201's SubtreeUnfinished at 0x80) makes every marked folder read as a non-folder in all of them. Charges, rollups and child lists then go silently wrong, and the subtree read returns false for exactly the folders it exists to report.\n\nSL-111 chose to compute the answer instead of storing it. A slice that later stores a Kind-byte marker must mask every one of those reads first, and edit this rule as part of that work.\n\nKnown gap, held by review: a write through a `ref byte` local."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "say whether anything at or below a folder is unlisted, in a store a Stop left",
+    "shape": "Stop before or during a call inside a folder whose listing spans several buffers (SweepTree's 2,000-file big), so the cut folder committed nothing",
+    "why": "The cut folder is popped but never registered, so it is not on the pending stack. The read must still answer true for it, and through the last-folder chain for every ancestor. A read that tracked only queued folders would miss it.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~NotListedBelowTests.CancelAtAnyCallOfTheSweepTreeAnswersAsAWalk\""
+   },
+   {
+    "behaviour": "say whether anything at or below a folder is unlisted, in a store a Stop left",
+    "shape": "Stop inside the root's own handling after its directory check: Count 1, the root reads NotListed. Stops in calls 1-2 leave Count 0 and are skipped",
+    "why": "The read's first branch (the entry itself is NotListed) must answer true with no children to walk. The empty store must not be asked at all, because At throws on index 0 when Count is 0.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~NotListedBelowTests.CancelAtAnyCallOfTheSweepTreeAnswersAsAWalk|FullyQualifiedName~NotListedBelowTests.CancelAtAnyCallOfTheRaggedTreeAnswersAsAWalk\""
+   },
+   {
+    "behaviour": "say whether anything at or below a folder is unlisted, in a store a Stop left",
+    "shape": "An unlisted folder 4 or more levels down, under a chain of listed last subfolders (RaggedTree c > c2 > c21 > c211 > c2111)",
+    "why": "The loop must keep following the last folder child through several listed steps. An implementation that stopped after one level would read false for c and the root while the walk says true.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~NotListedBelowTests.CancelAtAnyCallOfTheRaggedTreeAnswersAsAWalk\""
+   },
+   {
+    "behaviour": "say whether anything at or below a folder is unlisted, in a store a Stop left",
+    "shape": "A folder whose first subfolder is deep and whose last subfolder is empty (RaggedTree a: a1\\a11\\a111, a2), stopped before and after a2 is listed",
+    "why": "Following only the last folder child is sound only because a listed a2 implies a1's whole subtree finished first. Stops while a1's subtree is in progress must read true (a2 is still queued), and stops after a2 is listed must read false. This is the ragged-depth shape the spike showed a uniform tree cannot exercise.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~NotListedBelowTests.CancelAtAnyCallOfTheRaggedTreeAnswersAsAWalk\""
+   },
+   {
+    "behaviour": "say whether anything at or below a folder is unlisted, in a store a Stop left",
+    "shape": "A block whose last entries after the last subfolder are files and a junction (Link)",
+    "why": "The backward scan must skip non-folder kinds to find the last folder child. Taking the block's last entry, or treating a junction as a folder, would end the chain early (false) or descend into a link that has no children.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~NotListedBelowTests.CancelAtAnyCallOfTheRaggedTreeAnswersAsAWalk\""
+   },
+   {
+    "behaviour": "say whether anything at or below a folder is unlisted, in a store a Stop left",
+    "shape": "A listed folder with no children of its own kind: an empty folder, the denied (Unreadable, 0 children) folder, the skipped container store (NotScanned, SetChildren(Count, 0)) as m's only subfolder. Also files and links",
+    "why": "These hit the 'no children' and 'no folder child' exits. m's chain must reach Layers and stop there, reading false. A folder with ChildCount 0 and FirstChild -1 must never index the block. Files and links must read false.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~NotListedBelowTests.CancelAtAnyCallOfTheSweepTreeAnswersAsAWalk\""
+   },
+   {
+    "behaviour": "pin the shipped traversal the answer relies on",
+    "shape": "Completed real scans of RaggedTree and SweepTree: folder listing order (FolderEnds) and block order (FirstChild increasing in preorder)",
+    "why": "A change of Scanner._pending to a queue, a first-first push, or a reordering parallel lister must fail directly on real scanner output, whatever the stop points. The listing-order pin also covers folders listed empty, which the block-order pin skips.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~NotListedBelowTests.TheScannerRegistersFoldersDepthFirstInListingOrder\""
+   },
+   {
+    "behaviour": "see the guard fire when the traversal becomes a queue",
+    "shape": "The ragged tree's shape replayed in queue (BFS) order, one block and one SetChildren per folder. The same shape replayed in stack last-first order is the control",
+    "why": "Criterion 2's named check. The queue replay must give at least 1 state where the answer differs from the walk, and the block-order pin must throw. The last-first control must give 0 differing states and reproduce the scanner's store entry for entry, which proves the feeder models the scanner and a passing guard is not vacuous.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~NotListedBelowTests.AQueueOrderedStoreBreaksTheAnswerAndTheGuardSeesIt\""
+   },
+   {
+    "behaviour": "see the guard fire when the traversal is made parallel",
+    "shape": "The ragged tree's shape replayed two-at-a-time (two listers each pop a folder before either commits), and with a first-first push",
+    "why": "'Made parallel' in criterion 2 means folders committed out of preorder. The interleave reads a listed last subfolder as 'earlier siblings done' while an earlier sibling's children are still queued, so the answer must differ in at least 1 state and the pin must throw.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~NotListedBelowTests.AParallelOrderedStoreBreaksTheAnswerAndTheGuardSeesIt\""
+   },
+   {
+    "behaviour": "answer every row of an open 100k-child folder within the open budget",
+    "shape": "A 5,000,000-entry store stopped late. S has 100,000 children, 10,000 of them heading 48-deep chains whose blocks list the subfolder first and 9 files after it. The last chain is half listed. Rows are taken largest first, and the first pass is cold",
+    "why": "This is the read's worst cost: about 5.4M Kind reads, scattered by the sort order. Criterion 3 asks for 0.5 s for the window. Core's share (sort plus answers) must stay under 250 ms on every pass, the first cold Debug pass included.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~ScanStoreRollupTimingTests.AnsweringEveryRowOfAHundredThousandChildFolderInAStoppedFiveMillionStoreFitsTheBudget\" --logger \"console;verbosity=detailed\""
+   },
+   {
+    "behaviour": "report nothing unlisted after a scan that ran to the end",
+    "shape": "Completed scans of the sweep tree (denied folder, skipped store, junction, hardlinks), the long-path/junction tree and the ragged tree",
+    "why": "Criterion 4. Every folder is registered on a Completed scan, so every entry must read false. A read that mistook links, Unreadable or NotScanned folders, or an empty block, for unfinished would show a finished scan as partial.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~NotListedTests.ACompletedScanLeavesNothingNotListed|FullyQualifiedName~NotListedBelowTests.TheScannerRegistersFoldersDepthFirstInListingOrder\""
+   },
+   {
+    "behaviour": "report nothing unlisted after a Stop that landed in sizing",
+    "shape": "Stop during the size probes, after every listing committed (status Cancelled)",
+    "why": "A Cancelled status does not mean something is unread. The read must follow the marks, not the status, and read false everywhere. This serves criterion 1 (a stop point) and criterion 4 (nothing unlisted when every listing committed).",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~NotListedTests.AStopDuringSizingLeavesEveryFolderListed\""
+   },
+   {
+    "behaviour": "answer without adding per-entry storage at the stopped peak",
+    "shape": "U-201's 5M stopped-peak store (4.88M entries, 60,000 queued folders under W), the read asked of every entry before `retained` is measured",
+    "why": "Criterion 5. The read must allocate nothing per entry (bound 64 KiB against at least 4.6 MiB for any per-entry cost). The store must stay under the 800 MiB retained and peak bounds and the 1,024 MiB commit bound. The exact true count (60,002) shows the read actually ran over the shape.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~NotListedBudgetTests.AStoreStoppedAtItsUnlistedPeakFitsTheBudget\" --logger \"console;verbosity=detailed\""
+   },
+   {
+    "behaviour": "say whether anything at or below a folder is unlisted, in a store a Stop left",
+    "shape": "Stop inside the listing of a real on-disk 100,000-entry folder",
+    "why": "It serves criterion 1, but it takes the same branch as SweepTree's multi-buffer big (a cut folder commits nothing and reads true). Spike 121 exp 1 ran 10 such Stops with 0 differences. Building the fixture costs 28-30 s against Q-222's 120 s case cap (lesson #503), so it is not worth a standing test.",
+    "material": false
+   }
+  ],
+  "channeled_experts": [
+   "Robert Tarjan (DFS structure: the unfinished set is one root-to-frontier path)",
+   "SAX/StAX streaming-parser practice (only the open-element stack is incomplete)",
+   "WinDirStat-style scanners (stored per-item pending counts, the order-independent alternative)"
+  ],
+  "code_claims": [
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "NotListed",
+    "claim": "NotListed(int) returns whether bit 0x80 of the entry's Flags byte is set, read through At, and its remarks state it is exact between appends on the writing thread and after the scan has returned."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "NotListedBit",
+    "claim": "NotListedBit is the private const byte 0x80, and ListedMask (0x7F) is used to clear it."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "SetChildren",
+    "claim": "SetChildren sets FirstChild (-1 for a count of 0) and ChildCount and clears the not-listed bit, without checking that the block is contiguous or belongs to the folder."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "Append",
+    "claim": "Append throws ArgumentException for flags carrying 0x80 before writing anything, writes the raw Kind byte once with `page.Kind[i] = (byte)kind;`, and ORs the not-listed bit into a folder's Flags byte before publishing Count with Volatile.Write."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "AddFlags",
+    "claim": "AddFlags throws ArgumentException for HardlinkDuplicate or bit 0x80, so it never sets or clears the not-listed mark."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "At",
+    "claim": "At throws ArgumentOutOfRangeException when (uint)index >= Count and otherwise returns the entry's Page and its offset in the page."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "Kind",
+    "claim": "The public Kind(int) casts the raw Kind byte to EntryKind with no masking."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "Charges",
+    "claim": "Charges compares the raw Kind byte with (byte)EntryKind.File, one of the raw Kind reads a Kind-bit marker would have to mask."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "CheckParent",
+    "claim": "CheckParent compares the parent's raw Kind byte with EntryKind.Folder and casts it again in its exception message."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "Page",
+    "claim": "Page holds the per-entry columns as fixed PageSize (65,536) arrays: Parent, NameOffset, NameLength, Kind, Flags, Attributes, Size, OnDisk, IdLow, IdHigh, FirstChild, ChildCount, RolledSize, RolledOnDisk, FilesBelow."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.Rollup.cs",
+    "symbol": "ChildrenLargestFirst",
+    "claim": "ChildrenLargestFirst reads ChildCount before FirstChild, returns an empty array for a non-folder or a folder with no children, and sorts a fresh ChildRow[] on every call."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.Rollup.cs",
+    "symbol": "OnDiskAtOrBelow",
+    "claim": "The private helper OnDiskAtOrBelow compares the raw Kind byte with EntryKind.Folder, as RolledSize and FilesBelow in the same file also do."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.Rollup.cs",
+    "symbol": "ScanStore",
+    "claim": "The partial's header comment says a rolled-up read never walks below the entry except to list one folder's children, which is why the new walking read goes in ScanStore.cs instead."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "_pending",
+    "claim": "The scanner's pending folders are a Stack<(int Entry, string Path, int Row)>, popped one at a time in Execute's loop."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "FolderDone",
+    "claim": "FolderDone returns before any append for a Cancelled read, otherwise appends the whole listing as one block from first = Count, calls SetChildren once, and pushes subfolders last-first so they are visited in listing order."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "StoreSkipped",
+    "claim": "StoreSkipped registers the skipped container store with SetChildren(folder, Count, 0) and flags it NotScanned, so it reads listed with no children."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "ListRoot",
+    "claim": "ListRoot calls AppendRoot only after the attribute query shows a directory, before DecideLastAccess and before the root's listing."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "_owner",
+    "claim": "The ThreadOwner _owner is documented as the store's one writer, with Correct and Credit refusing any other thread."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/NotListedTests.cs",
+    "symbol": "SweepTree",
+    "claim": "SweepTree is a private static TempTree builder with an empty folder, a 2,000-file multi-buffer folder 'big', nested deep\\inner, a denied folder, a hardlink pair, a junction, the planted m\\Layers container store and a last folder z."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/NotListedTests.cs",
+    "symbol": "SweepOrder",
+    "claim": "SweepOrder is the private expected folder listing preorder, which CancelAtAnyCallMarksExactlyTheFoldersNotCommitted asserts equal to the baseline's FolderEnds."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/NotListedTests.cs",
+    "symbol": "RunBaseline",
+    "claim": "The private RunBaseline runs one uncancelled scan, records each committed folder with the guard's call count through AfterFolder and ScanProgress.CurrentFolder, and returns them in a private Baseline record."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/NotListedTests.cs",
+    "symbol": "AssertNothingNotListed",
+    "claim": "AssertNothingNotListed asserts a Completed status and NotListed false on every entry, and ACompletedScanLeavesNothingNotListed calls it on the sweep tree and on a long-path/junction tree."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/NotListedTests.cs",
+    "symbol": "AStopDuringSizingLeavesEveryFolderListed",
+    "claim": "AStopDuringSizingLeavesEveryFolderListed cancels from a Probe stub during sizing and asserts NotListed is false for every entry."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/NotListedBudgetTests.cs",
+    "symbol": "AStoreStoppedAtItsUnlistedPeakFitsTheBudget",
+    "claim": "This Fact drives a 5M-shaped store with a Stack, one SetChildren per block and a last-first push, stops right after W's 60,000-subfolder block is registered, and asserts 60,000 marked, retained and peak below 800 MiB and commit below 1,024 MiB."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ScanStoreRollupTimingTests.cs",
+    "symbol": "BudgetMs",
+    "claim": "ScanStoreRollupTimingTests holds the 100,000-child largest-first read to BudgetMs = 250 over Reads = 10 reads, the first cold, in the MemoryBudget collection."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ScanStoreTests.cs",
+    "symbol": "MemoryBudget",
+    "claim": "MemoryBudget is a CollectionDefinition with DisableParallelization = true."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/RollupOracle.cs",
+    "symbol": "Feed",
+    "claim": "RollupOracle.Feed calls SetChildren with the growing count after each child append, so it clears a folder's not-listed mark at its first child and cannot drive the guard feeder."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/RollupOracle.cs",
+    "symbol": "CheckStructure",
+    "claim": "CheckStructure walks the tree from the root over FirstChild and ChildCount with an explicit Stack<int>, not recursion."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/TraversalTests.cs",
+    "symbol": "AssertChildrenAreContiguous",
+    "claim": "AssertChildrenAreContiguous is an internal static helper shared across test classes, the precedent for making NotListedTests' sweep helpers internal."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "the store does not know about the Scanner",
+    "claim": "A settled rule over src/FsAnalyser.Core/Store/**/*.cs forbids the words Scanner, DirectoryReader, SizeProbe and TopLevelTracker, so the new read's doc comment describes the required order in words."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "ScanStore.NotListedAtOrBelow(int index) : bool",
+    "kind": "function",
+    "auth_model": "An in-process public read on Core's ScanStore. Writes stay internal to Core (InternalsVisibleTo goes only to FsAnalyser.Core.Tests), so the scanner remains the only writer.",
+    "error_cases": "Throws ArgumentOutOfRangeException when (uint)index >= Count, thrown by At, like every read.\n\nNot exact, and outside the contract:\n- a read from another thread while appends go on (the same exclusion as NotListed and the rolled totals);\n- a store registered in any other order than depth-first preorder with one SetChildren per whole block. That covers RollupOracle.Feed, the ScanStoreTests generators, and any future queue, reordering-parallel, block-wise or read-ahead writer.",
+    "notes": "True if the entry, or any folder reached through registered child blocks below it, reads NotListed. False for files and links, and for every entry of a store whose scan ran to the end, or whose Stop landed in sizing.\n\nIt allocates nothing and costs no storage. Over all rows of one folder it reads each entry below that folder at most once.\n\nNo App consumer in this slice."
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Streaming tree construction and depth-first search (SAX/StAX parsers, DFS white/gray/black colouring)",
+   "pattern": "A tree committed append-only in preorder has its unfinished nodes on one rightmost path, plus their pending siblings: the open-element stack, or the gray nodes. Everything committed earlier in document order is closed. So 'is anything below X unfinished?' is answered by following X's rightmost committed child down, not by walking X's subtree.",
+   "transfer_found": true,
+   "rationale": "The scanner is exactly such a builder.\n- Its _pending Stack with a last-first push makes listing order the preorder of folders, in listing order.\n- FolderDone commits each folder's children as one block, then calls SetChildren once.\n- A cut folder commits nothing.\nSo a listed last subfolder implies its earlier siblings' subtrees are closed, and the rightmost-folder-child chain reaches every unfinished folder below.\n\nOrder-independent scanners pay for this with a stored per-node pending count propagated up. This store has no free Flags bit and about 146 MiB of headroom, and while the order holds it does not need to pay that.",
+   "invariants": [
+    {
+     "precondition": "Folders are listed in preorder with subfolders taken in listing order (stack, last-first push).",
+     "status": "holds",
+     "evidence": "Scanner.cs:168 holds a Stack, popped at :210 and pushed last-first at :398-406. Spike 121 exp 1: the stack-last-first feeder reproduced the real scanner's entry indices exactly, with 0 mismatches. NotListedTests asserts SweepOrder against the real baseline."
+    },
+    {
+     "precondition": "One writing thread.",
+     "status": "holds",
+     "evidence": "Execute runs on the caller's thread. The ThreadOwner _owner (Scanner.cs:164-166) refuses other threads in Correct and Credit. Lesson #144."
+    },
+    {
+     "precondition": "Each folder's children are one contiguous block, registered by a single SetChildren after the whole block is appended.",
+     "status": "holds",
+     "evidence": "FolderDone at Scanner.cs:383-387. StoreSkipped at :346 registers (Count, 0). The store itself does not enforce contiguity: SetChildren at ScanStore.cs:291-297 checks nothing."
+    },
+    {
+     "precondition": "A folder cut by Stop commits nothing and stays NotListed.",
+     "status": "holds",
+     "evidence": "FolderDone returns at Scanner.cs:380-381 before any append. AddFlags refuses bit 0x80 (ScanStore.cs:307-308)."
+    },
+    {
+     "precondition": "Future scanner slices keep the same registration order and the single SetChildren per folder.",
+     "status": "must-verify",
+     "evidence": "Not enforced by code. Guarded by TheScannerRegistersFoldersDepthFirstInListingOrder (listing-order and block-order pins) and by the criterion-1 sweeps on SweepTree and RaggedTree. A per-block SetChildren inside a folder larger than the sweep's 2,000-entry 'big' would not be caught (lesson #485). This is filed for the pause/resume slices."
+    }
+   ]
+  },
+  "prior_art": [
+   {
+    "pattern": "Explicit per-directory child-load state in a file-tree store (markDirectoryUnloaded, beginChildLoad, applyChildPatch). It is the counterpart of the existing per-folder NotListed mark. Nothing fetched suggests it stores a subtree aggregate.",
+    "where": "https://www.npmjs.com/package/@pierre/path-store",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "page fetched 2026-10-13 (1.0.0-beta.1, 'published 3 months ago')"
+   },
+   {
+    "pattern": "DFS colouring: at any moment the gray (started, unfinished) vertices form a single root-to-current path, and black vertices' subtrees are complete.",
+    "where": "Standard algorithms texts (Cormen et al., Introduction to Algorithms, DFS chapter)",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Streaming XML parsing keeps an open-element stack. Every element earlier in document order and not on it is closed, so subtree completeness is a stack question, not a subtree walk.",
+    "where": "SAX / StAX streaming parser practice (e.g. expat, java.xml.stream)",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Disk-usage scanners that read folders in no fixed order keep a per-item count of outstanding reads, propagated to ancestors, and call an item done at zero. This is the stored, order-independent version of this answer, paid on every write.",
+    "where": "WinDirStat-style directory scanners (exact identifiers not checked)",
+    "authority": "oss",
+    "basis": "recalled"
+   }
+  ],
+  "outside_claims": [
+   {
+    "claim": "NTFS returns a directory's entries in a stable, name-collated order, so a test tree's planned folder preorder (SweepOrder, RaggedOrder) is what the scanner sees.",
+    "evidence": "measured",
+    "source": "U-190: 40 listings of a 100,000-entry folder hashed identical. NotListedTests asserts the alphabetical SweepOrder against a real baseline, and the suite passed 1023/1023 at baseline.",
+    "if_wrong": "The RaggedOrder assertion fails loudly. The fix is renaming the fixture's entries; the design is unchanged."
+   },
+   {
+    "claim": "In Debug, answering 'anything unlisted at or below' for all 100,000 rows of the worst 5M stopped-late shape takes at most about 27 ms (29 ms Release), and ChildrenLargestFirst on 100k children about 40 ms.",
+    "evidence": "measured",
+    "source": "Spike 121 exp 2 (computed-unlisted-below-100k-rows-worst-shape-timing). Survey: ScanStoreRollupTimingTests read 21.1-40.5 ms.",
+    "if_wrong": "The criterion-3 test fails its 250 ms per-pass budget, and a stored marker (Kind bit or column) would have to be reconsidered."
+   },
+   {
+    "claim": "The WPF part of opening a 100k-child folder costs about 100-230 ms, which leaves at least 250 ms of the window's 0.5 s for Core's sort and answers.",
+    "evidence": "measured",
+    "source": "U-001 (median 230 ms Release expansion). SL-044 T-003 (97.9-141.9 ms). U-182 (100k opens 14-50 ms median at a gate).",
+    "if_wrong": "The 250 ms Core share is too generous. The measured Core cost (about 70 ms) still leaves room, and a later App slice re-times the whole open."
+   },
+   {
+    "claim": "GC.GetAllocatedBytesForCurrentThread counts the managed bytes allocated on the calling thread, including the current allocation context, so a loop that allocates nothing leaves it changed by at most incidental runtime bytes.",
+    "evidence": "recalled",
+    "source": "memory",
+    "if_wrong": "The criterion-5 allocation bound becomes noise. Criterion 5 is still held by retained and peak < 800 MiB, and by the read storing nothing by construction."
+   },
+   {
+    "claim": "xUnit runs the tests of a CollectionDefinition with DisableParallelization = true alone, not concurrently with other collections.",
+    "evidence": "recalled",
+    "source": "memory (the existing MemoryBudget-collection tests already rely on it)",
+    "if_wrong": "Timing and memory figures pick up noise from concurrent tests. Both 5M tests already sit in this collection with existing 5M fixtures."
+   },
+   {
+    "claim": "Unelevated junction creation in %TEMP% works on this PC under Developer Mode, so RaggedTree can hold a junction.",
+    "evidence": "measured",
+    "source": "Q-001. SweepTree's junction is used by NotListedTests, which passed at baseline.",
+    "if_wrong": "RaggedTree cannot build. Drop the junction and rely on SweepTree's junction for the skip-a-link shape."
+   }
+  ],
+  "filed_for_later": [
+   {
+    "what": "Show the subtree-unread answer in the App: a mark on stopped-tree rows and stopped-list rows whose folder has something below it not read. This includes the window cases (T-003, T-012 neighbourhood) and Q-114's WindowMutants run for an App diff.",
+    "why": "This slice's goal and criteria are store-level ('the store can say'). Wiring the App brings window cases (T-003 is red at HEAD, lesson #505) and App mutants that belong to the next slice on this lineage.",
+    "who": "slice"
+   },
+   {
+    "what": "Before any pause/resume, read-ahead, block-wise flush or parallel-listing slice changes how folders are registered, it must either:\n- keep depth-first preorder with one SetChildren after each whole block, and add a sweep folder larger than one flush block to NotListedBelowTests; or\n- replace NotListedAtOrBelow with a stored pending-subfolder count, plus a 5M memory test.\nThis extends SC-368's block-wise-writer invariant (lesson #485, #487) to the subtree read.",
+    "why": "It is a constraint on future scanner work, not something this slice changes. The read is correct for the shipped traversal and is guarded by tests.",
+    "who": "slice"
+   }
+  ],
+  "stack_chosen": [],
+  "taste_disagreements": [
+   "The name NotListedAtOrBelow, against AnyNotListedAtOrBelow or SubtreeUnfinished. Uncontested; the reviewer may prefer another.",
+   "Placement in ScanStore.cs beside NotListed, rather than in ScanStore.Rollup.cs. The rationale is Rollup.cs's 'never walks below' header, but it is a layering call.",
+   "A new NotListedBelowTests.cs that reaches into NotListedTests' now-internal sweep helpers, against putting the new Theories inside NotListedTests (or a shared fixture class).",
+   "Self-inclusive 'at or below', against U-204's strict-descendant reading. This is a semantic choice with no consumer yet.",
+   "A Kind-byte architecture rule as a tripwire for a future Kind-bit marker. A reviewer may judge it premature, since U-201 shows masking makes the marker valid."
+  ],
+  "whats_new": [
+   "ScanStore.NotListedAtOrBelow(int): a public, allocation-free read in src/FsAnalyser.Core/Store/ScanStore.cs, plus one sentence in the class remarks",
+   "NotListedTests: SweepTree, SweepOrder, Store, Baseline and RunBaseline made internal; NotListedAtOrBelow-false checks added to AssertNothingNotListed and AStopDuringSizingLeavesEveryFolderListed",
+   "tests/FsAnalyser.Core.Tests/NotListedBelowTests.cs: the Walked() oracle, RaggedTree() with RaggedOrder, and the AssertListedDepthFirst() block-order pin",
+   "Criterion 1: Theories CancelAtAnyCallOfTheSweepTreeAnswersAsAWalk and CancelAtAnyCallOfTheRaggedTreeAnswersAsAWalk, before and during every guarded call, with non-vacuity floors",
+   "Criterion 2: Facts TheScannerRegistersFoldersDepthFirstInListingOrder, AQueueOrderedStoreBreaksTheAnswerAndTheGuardSeesIt (with the last-first control) and AParallelOrderedStoreBreaksTheAnswerAndTheGuardSeesIt (interleave and first-first)",
+   "Criterion 3: a Fact in ScanStoreRollupTimingTests on a 5,000,000-entry stopped-late store with a 100k-child folder of 48-deep chains; sort plus all answers under 250 ms per pass",
+   "Criterion 5: NotListedBudgetTests extended with a read over every entry, an allocation bound and the exact true count 60,002, before the 800 MiB asserts",
+   "Architecture rule: the store writes the Kind byte whole, with no bit OR-ed into it",
+   "docs/design/SL-111-not-listed-below.md: the derivation, depth-first-only validity, the Kind-bit masking sites, the column and pending-count alternatives, the cost bound and guard coverage"
+  ],
+  "whats_reused": [
+   "ScanStore.NotListed and the NotListedBit mark (SL-109): the only stored fact the answer needs",
+   "The page arrays, At(), and the FirstChild/ChildCount block layout",
+   "Scanner's shipped traversal, unchanged: Stack _pending, last-first push, FolderDone's single SetChildren",
+   "NotListedTests.SweepTree and SweepOrder, and RunBaseline's FolderEnds and guard-call machinery",
+   "Scans.RunCancellingAt, Scans.WithGuard, Scans.Run, Scans.ByPath, Scans.WaitForAbortedCloses",
+   "RollupOracle.CheckStructure's explicit-Stack walk idiom, for the Walked oracle",
+   "TempTree (Folder, File, Junction, Outside, PathOf)",
+   "NotListedBudgetTests' U-201 stopped-peak generator and its retained, peak and commit asserts",
+   "ScanStoreRollupTimingTests' BudgetMs and Reads constants and its configuration print",
+   "The MemoryBudget collection (DisableParallelization), so the 5M fixtures run alone",
+   "eng/dotnet.ps1 for every build and test run (lesson #72)"
+  ],
+  "decidable_disagreements": [],
+  "open_questions": [],
+  "reason": "The single practice proposal is selected as the core. Spike 121 measured both of its claims: the computed read matched the full walk in all 501,265 folder checks, and 100k rows took 27-29 ms against 250 ms. The tree read today matches its premises.\n\nAdjustments made where the tree differs from the proposal:\n- The sweep helpers it needs are private in NotListedTests, so they are made internal.\n- A listing-order pin is added for folders listed empty, which the FirstChild pin skips.\n- An interleave feeder is added for 'made parallel'.\n- The allocation check is a bound instead of an exact 0.\n- One Kind-byte rule makes the recorded masking constraint fail loudly."
+ }
+}

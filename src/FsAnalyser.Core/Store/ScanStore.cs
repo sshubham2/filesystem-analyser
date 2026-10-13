@@ -26,7 +26,9 @@ namespace FsAnalyser.Core.Store;
 /// <para>A folder is appended not listed and stays so until <see cref="SetChildren"/> registers its children, which is
 /// how a store a scan stopped in tells a folder it never listed from one it listed and found empty
 /// (<see cref="NotListed"/>). The mark lives in a bit the flags byte had free, so it costs no storage, and it is exact on
-/// the same terms as the rolled totals: between appends on the writing thread and once the scan has returned.</para>
+/// the same terms as the rolled totals: between appends on the writing thread and once the scan has returned.
+/// <see cref="NotListedAtOrBelow"/> derives the answer for a whole subtree from the marks and from the depth-first,
+/// one-block-per-folder order a scan registers folders in; it stores nothing and is exact on the same terms.</para>
 /// </remarks>
 public sealed partial class ScanStore
 {
@@ -116,6 +118,49 @@ public sealed partial class ScanStore
     /// sets the mark, on a folder, and only <see cref="SetChildren"/> clears it.
     /// </remarks>
     public bool NotListed(int index) => (At(index, out int i).Flags[i] & NotListedBit) != 0;
+
+    /// <summary>
+    /// Whether this folder, or any folder below it at any depth, is not listed (<see cref="NotListed"/>): something a
+    /// stopped scan never read lies at or under it. False for every file and link, and for every entry once a scan has
+    /// Completed or was stopped in the size probes, after every listing had committed. A root that was picked, opened and
+    /// listed nothing (the scan ends unreadable) is still not listed, so it reads true, as <see cref="NotListed"/> does.
+    /// </summary>
+    /// <remarks>
+    /// Exact on the same terms as <see cref="NotListed"/>: between appends on the writing thread, and after the scan has
+    /// returned; a read from another thread while appends go on is not part of the contract.
+    /// <para>It stores nothing and is derived from the marks, and it is exact only for a store registered in the order a
+    /// scan registers it: one writing thread, folders listed depth-first with each folder's subfolders taken in listing
+    /// order, and each folder's children appended as one contiguous block and registered by one
+    /// <see cref="SetChildren"/> after the whole block. Then the folders listed so far are a prefix of the preorder of the
+    /// folder tree, a folder cut part-way commits nothing, and so a listed last subfolder means every earlier sibling's
+    /// subtree is finished: the last subfolder is the only one to follow, down to the first folder not listed. A store
+    /// registered in any other order (a queue, folders listed two at a time, a block registered child by child, as the
+    /// test oracle's feeder does) gets a wrong answer here and no error. Whoever changes that order must replace this read.</para>
+    /// <para>It allocates nothing. Over all the rows of one folder it reads each entry below that folder at most once,
+    /// because the chains of two children lie in disjoint subtrees.</para>
+    /// </remarks>
+    public bool NotListedAtOrBelow(int index)
+    {
+        Page page = At(index, out int i);
+        while (true)
+        {
+            if ((page.Flags[i] & NotListedBit) != 0)
+                return true;
+            int count = page.ChildCount[i];
+            if (count == 0 || page.Kind[i] != (byte)EntryKind.Folder)
+                return false;
+
+            // The block's last folder, each entry's page looked up on its own: a block can straddle two pages.
+            int first = page.FirstChild[i];
+            int last = first + count - 1;
+            while (last >= first && _pages[last >> PageShift]!.Kind[last & PageMask] != (byte)EntryKind.Folder)
+                last--;
+            if (last < first)
+                return false;
+            page = _pages[last >> PageShift]!;
+            i = last & PageMask;
+        }
+    }
 
     /// <summary>The Win32 attributes as listed, including bits <see cref="FileAttributes"/> does not name.</summary>
     public FileAttributes Attributes(int index) => (FileAttributes)At(index, out int i).Attributes[i];

@@ -120,6 +120,21 @@ public class NotListedBudgetTests(ITestOutputHelper output)
         }
         int pendingFolders = pending.Count;
 
+        // SL-111: the subtree read, asked of every entry at the stop and before anything is measured. It builds no array and
+        // keeps no result but a count, so nothing it does can count against `retained`; and it must allocate nothing per entry.
+        // The first call is made before the allocation counter is read, so JIT and one-off runtime work are not charged to it.
+        _ = store.NotListedAtOrBelow(0);
+        long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        long readStart = Stopwatch.GetTimestamp();
+        int unlistedBelow = 0;
+        for (int e = 0; e < store.Count; e++)
+        {
+            if (store.NotListedAtOrBelow(e))
+                unlistedBelow++;
+        }
+        TimeSpan readTime = Stopwatch.GetElapsedTime(readStart);
+        long readAllocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+
         long retained = GC.GetTotalMemory(forceFullCollection: true) - before;
         peak = Math.Max(peak, retained);
         output.WriteLine($"entries {store.Count:N0}, files {files:N0}, duplicate names {duplicates:N0}, folders listed {foldersListed:N0}, " +
@@ -128,7 +143,16 @@ public class NotListedBudgetTests(ITestOutputHelper output)
         output.WriteLine($"test-host commit: {commitBefore / 1048576.0:N1} MiB before the build (GC committed {committedBefore / 1048576.0:N1} MiB), " +
             $"{commitAtStop / 1048576.0:N1} MiB at the stop, bound {AppBudget / 1048576:N0} MiB for the app (the host has no WPF window; the published app adds about 106 MB)");
 
+        output.WriteLine($"subtree read of every entry: {readTime.TotalMilliseconds:N1} ms, {readAllocated:N0} bytes allocated, {unlistedBelow:N0} entries with something not listed at or below");
+
         Assert.True(store.Count is >= 4_800_000 and <= 5_000_000, $"the stop landed at {store.Count:N0} entries, not about 4.88M");
+        // The 60,000 queued folders, W (whose last subfolder is queued) and the root (whose last folder is W): the eight top
+        // folders were listed to their ends, so nothing below them is unlisted. One byte per entry would be 4.6 MiB.
+        Assert.Equal(WSubfolders + 2, unlistedBelow);
+        Assert.True(store.NotListedAtOrBelow(0) && store.NotListedAtOrBelow(w));
+        for (int top = 0; top < TopFolders; top++)
+            Assert.False(store.NotListedAtOrBelow(store.FirstChild(0) + top), $"top folder {top} reads something unlisted below it");
+        Assert.True(readAllocated < 64 * 1024, $"the subtree read allocated {readAllocated:N0} bytes over {store.Count:N0} entries");
         Assert.Equal(WSubfolders, marked);
         Assert.Equal(pendingFolders, marked); // the marks are exactly the folders the stack still holds
         Assert.False(store.NotListed(w)); // W was listed, with 60,000 subfolders
