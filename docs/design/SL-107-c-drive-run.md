@@ -45,12 +45,18 @@ From the checkout's root:
 
 ```powershell
 New-Item -ItemType Directory -Force artifacts | Out-Null
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new()
 pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case W-001 -Root C:\ 2>&1 | Tee-Object -FilePath artifacts\c-drive-console.txt
 ```
 
 The first line is there because a checkout that has never built has no `artifacts\`, and `Tee-Object` does not create it. The
 tee is the only place a leaked row's path survives (the hook's log is deleted when the run ends, and the record holds no path
 at all); `artifacts/` is gitignored, so the capture never reaches a commit.
+
+The second line is there because the window decodes what the run prints with its console's output code page (OEM 437 on this
+PC), and a character outside it in a leaked path (a CJK or accented letter in an app or user folder name) would come out as `?`
+or a lookalike, in the capture and on the screen alike, and the folder could not be found again. Set to UTF-8 for this window,
+the run writes UTF-8 and the window reads UTF-8, so the path survives. It lasts for this window only.
 
 Judge the ending by the **last line printed**, not by the pipeline's exit code. `-Root C:` (no backslash) is also read as the
 whole drive, but this page names only `C:\`. The precaution below is on at every launch; there is nothing to set.
@@ -104,7 +110,8 @@ Also expected, from the same record:
   reads `Unreadable folders (N), not scanned (1)`, and N is what `header` holds.
 - `byKind.openedNothingListed` is **0** and `byKind.listedPartway` **0**. The 27-28 code-363 rows are cloud-placeholder
   fixtures that fail at `CreateFile` (Q-164, lesson #465); a non-zero `openedNothingListed` is news (Q-258), not those rows.
-- `oracle.leftoverRows.code363` is **27-28** and `oracle.leftoverRows.reparse` is **0**; `oracle.notARefusedKeepShape` is `[]`
+- `oracle.leftoverRows.code363` is **equal to the same-session Temp anchor's code-363 count** (27-28 at bd6572f; section 5) and
+  `oracle.leftoverRows.reparse` is **0**; `oracle.notARefusedKeepShape` is `[]`
   or holds one entry, code 1920, with `count` 2 or less. **SC-136's "about 30 leftover rows" is not the sum of the first two
   numbers**: a code-1920 row is classed `other-code`, so it can only ever appear under `notARefusedKeepShape`.
 - `kernelPoolBytes` (before and after) is the pool growth. Q-193 (still open) can cite it, with `notScanned` and `header`.
@@ -127,14 +134,21 @@ entered**. This run leaves it out, so the figure cannot be reproduced. Q-261, de
 accepts criterion 5 as met when the committed record shows all of:
 
 - `notScanned` exactly **1**;
-- code 363: **27-28** rows (`byCode`, and `oracle.leftoverRows.code363`);
+- code 363: **equal to the same-session Temp anchor's code-363 count** (27-28 at bd6572f), in `byCode` and in
+  `oracle.leftoverRows.code363`;
 - code 1920: **0-2** rows;
 - `rows` at most **682** (about 660 expected);
 - and every difference from 682 is named below, by path group.
 
-If any count is outside those ranges, or any part of the gap cannot be named, criterion 5 is **not met, and that is a finding
-about the scanner**, not a reconciliation. The decision changes if the owner wants the like-for-like figure (a scan with the
-precaution off, which brings the pool growth back) or if the run lands outside the ranges.
+The same-session anchor (the floor, below; review M2) **replaces Q-261's fixed 27-28 range for the code-363 count only**: that
+range was the count on this PC at bd6572f, and later cloud cases leave more placeholders (lesson #360). Every other count keeps
+Q-261's range.
+
+If any count is outside its range, or any part of the gap cannot be named, criterion 5 is **not met, and that is a finding
+about the scanner**, not a reconciliation. For code 363 that means a C: count that differs from the Temp anchor's; a count
+above 28 that equals the anchor's is fixture growth, named as such, and criterion 5 is met. The decision changes if the owner
+wants the like-for-like figure (a scan with the precaution off, which brings the pool growth back) or if the run lands outside
+the ranges.
 
 Start from 682 and name each difference:
 
@@ -143,7 +157,7 @@ Start from 682 and name each difference:
 | (a) | Rows under `Containers\Layers`, now one `notScanned` folder | down by at least 25 | U-112's three groups under the store: 10, 8, 7. The rest is **not measurable**: the path lists of those scans (`failed-folders-C.csv` and the like) are gone, so the old Layers share cannot be re-derived. |
 | (b) | WER: the whole of `ProgramData\Microsoft\Windows\WER` is 438 rows now; `ReportArchive` alone was 451 | down by 13 or more | survey at bd6572f, W-001 over WER (438 = header = `core.unreadable`, all code 5) |
 | (c) | Code 1920: the guard tests' stand-in folders are no longer reparse points | 2 down to 0 (at most 2) | spike 3: the 0x123 tag cannot be planted unelevated |
-| (d) | Code 363: the stuck cloud placeholders under `Temp\fsa-guard-tests`, plus `fsa-validate-2\dirtag\nonempty` | 27-28 | survey: 27 in W-001 over `fsa-guard-tests`; the 28th folder exists on this PC |
+| (d) | Code 363: the stuck cloud placeholders under `Temp\fsa-guard-tests`, plus `fsa-validate-2\dirtag\nonempty` | the Temp anchor's count (27-28 at bd6572f) | survey: 27 in W-001 over `fsa-guard-tests`; the 28th folder exists on this PC |
 | (e) | W-001's own `control-denied` folder under `Temp\fsa-window-cases\<guid>`, code 5, still refused | up by 1 | `Get-CheckerControls` |
 | (f) | Other cases' leftovers under `Temp\fsa-window-cases` (12 in U-112), and whatever else changed on the drive | up or down | measured the same day by the Temp anchor below |
 
@@ -174,10 +188,10 @@ Then:
    contains its own `control-denied` row, as the C: run did, so the +1 of item (e) is on both sides and cancels. Churn is rows
    that appeared or vanished in the minutes between the runs (a case's ACL cleanup, a cache folder); more than a handful is a
    finding to look at, not to put down to churn.
-2. **Code 363 is the day's fixture count.** The C: record's `byCode` 363 count equals the Temp anchor's (and the other two
-   anchors have none). Q-261's 27-28 is what that count was on this PC at bd6572f; later cloud cases leave more placeholders
-   (lesson #360). More than 28, with the Temp anchor showing the same, is fixture growth, named as such; more than 28 on C:
-   and fewer in the Temp anchor is a finding.
+2. **Code 363 is the day's fixture count, and this step is the rule for it.** The C: record's `byCode` 363 count must equal the
+   Temp anchor's (and the other two anchors have none). 27-28 is what that count was on this PC at bd6572f; later cloud cases
+   leave more placeholders (lesson #360). More than 28 on C: with the Temp anchor showing the same is fixture growth, named as
+   such, and not a scanner finding; a C: count that differs from the Temp anchor's is a finding, at 27 or at 40.
 3. **The remainder** is `rows(C:)` minus the three anchors: the rows outside them (the folders a standard user cannot open in
    `C:\` itself, in the rest of `C:\Users` and in Program Files, `$Recycle.Bin`, `System Volume Information`). Expect tens,
    not hundreds (U-098 listed 9 under `C:\` itself). A remainder over about 50 is split further by running W-001 over `C:\Users`,
@@ -207,8 +221,8 @@ unmeasurable, and bounded only below.
 | `notScanned` | 1 | |
 | `oracle.openRefusedButOpenable`, `LEAK:` lines | 0, none | |
 | `emptyReasons`, `duplicates` | 0, 0 | |
-| code 5 / 363 / 1920 (`byCode`) | rest / 27-28 / 0-2 | |
-| `oracle.leftoverRows` code363 / reparse, `notARefusedKeepShape` | 27-28 / 0 / `[]` or code 1920 (2 or less) | |
+| code 5 / 363 / 1920 (`byCode`) | rest / equal to the Temp anchor's (27-28 at bd6572f) / 0-2 | |
+| `oracle.leftoverRows` code363 / reparse, `notARefusedKeepShape` | equal to the Temp anchor's (27-28 at bd6572f) / 0 / `[]` or code 1920 (2 or less) | |
 | `byKind.openedNothingListed`, `listedPartway` | 0, 0 | |
 | `kernelPoolBytes` growth | about 537 MB or more | |
 | Anchors `rows`: C:\Windows / C:\ProgramData / Temp | about 52 / about 500 (WER alone is 438) / about 40 (27-28 code 363, 1 control, the fixtures) | |

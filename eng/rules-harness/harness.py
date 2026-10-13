@@ -307,9 +307,10 @@ def plain(line: bytes) -> str:
 class Planting:
     """One batch of rows applied to the scratch copy, and undone against a SHA-256 manifest."""
 
-    def __init__(self, tree: str, rows: list):
+    def __init__(self, tree: str, rows: list, awaiting_files: set):
         self.tree = tree
         self.rows = rows
+        self.awaiting_files = awaiting_files  # lower-case rel of every file a person's run produces (awaiting_file)
         self.manifest: dict = {}  # rel -> sha256 of every existing file a row edits or renames
         self.saved: dict = {}  # rel -> original bytes of every file a row edited
         self.created: list = []  # rel of every file a row created
@@ -397,7 +398,10 @@ class Planting:
         if encoding not in ENCODINGS:
             self.broken[row["id"]] = f"encoding {encoding!r} is not one of {', '.join(ENCODINGS)}"
             return
-        if os.path.lexists(full):
+        # A file a person's run produces (awaiting_file) is absent until they commit it and present from then on, and
+        # the rows that plant it must keep working: they plant over it, and restore() writes its bytes back.
+        over = os.path.isfile(full) and rel.lower() in self.awaiting_files
+        if os.path.lexists(full) and not over:
             self.broken[row["id"]] = f"{rel} already exists, so it cannot be created"
             return
         text = "\r\n".join(new) + "\r\n"
@@ -406,6 +410,11 @@ class Planting:
         if pad:
             unit = encode(PADDING + "\r\n", encoding, bom=False)
             data += unit * max(0, -(-(int(pad) - len(data)) // len(unit)))
+        if over:
+            with open(full, "rb") as handle:
+                original = handle.read()
+            self.manifest[rel] = sha256(original)
+            self.saved[rel] = original
         parent, missing = os.path.dirname(full), None
         probe = parent
         while not os.path.isdir(probe):
@@ -415,7 +424,8 @@ class Planting:
             self.created_dirs.append(missing)
         with open(full, "wb") as handle:
             handle.write(data)
-        self.created.append(rel)
+        if not over:
+            self.created.append(rel)
         with open(full, "rb") as handle:
             if handle.read() != data:
                 self.broken[row["id"]] = "the planted bytes are not in the file after planting"
@@ -583,7 +593,8 @@ def load_awaiting(path: str) -> dict:
     A rule over a file that only a person's run produces (SL-107's counts-only rule over the committed
     .taad/slices/SL-089/c-drive-run.json) matches nothing until that file is committed, and Fitness takes that
     for a pass. It is listed under 'awaiting_file' in plants.json, and is allowed to match no file only while
-    its file is absent from the scratch copy: once the file exists, the rule must match it like any other.
+    its file is absent from the scratch copy: once the file exists, the rule must match it like any other. The
+    rows that plant that file (op new-file) plant over it when it exists, and put its bytes back (Planting._create).
     """
     try:
         with open(path, encoding="utf-8") as handle:
@@ -685,7 +696,7 @@ def measure(args, root: str, dotnet_from: str, work: str) -> int:
     matrix, strays = [], []
     for scenario in ("plants", "divergences"):
         for number, batch in enumerate(batches([r for r in rows if r["scenario"] == scenario]), start=1):
-            planting = Planting(tree, batch)
+            planting = Planting(tree, batch, {name.lower() for name in awaiting.values()})
             try:
                 planting.apply()
                 x = run_xunit(dotnet_from, tree, results, f"{scenario}-{number}")

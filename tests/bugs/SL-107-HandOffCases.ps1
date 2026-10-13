@@ -135,9 +135,17 @@ function Test-C003 {
         '0.5 GB', '3 GB', '537 MB', '3-4.4 GiB', 'under both',
         # Q-261, SC-136's correction, the precaution and its notice
         'Q-261', '27-28', 'notARefusedKeepShape', 'other-code', 'wcifs-layer-store', 'not scanned (1)', 'W001OracleCorpus.json',
-        'tests/bugs/SL-107-RecordPathRule.Tests.ps1'
+        'tests/bugs/SL-107-RecordPathRule.Tests.ps1',
+        # review R2-m2: the capture keeps a path outside the console's code page
+        '[Console]::OutputEncoding = [Text.UTF8Encoding]::new()',
+        # review m1: one rule for the code-363 count, the same-session anchor
+        "equal to the same-session Temp anchor's code-363 count", "replaces Q-261's fixed 27-28 range for the code-363 count only"
     )
     foreach ($must in $musts) { Check ($text.Contains($must)) "the doc holds: $must" }
+    $encoding = $text.IndexOf('[Console]::OutputEncoding = [Text.UTF8Encoding]::new()')
+    $tee = $text.IndexOf('Tee-Object -FilePath artifacts')
+    Check ($encoding -ge 0 -and $tee -ge 0 -and $encoding -lt $tee) 'the UTF-8 line comes before the teed command'
+    Check (-not $text.Contains('code 363: **27-28**') -and -not $text.Contains('| rest / 27-28 /') -and -not $text.Contains('| 27-28 / 0 /')) 'no fixed 27-28 pass range for the code-363 count is left beside the anchor rule'
     $why = Get-Section $Doc '## Why this run is the person''s'
     Check ($why.Contains('3 GB') -and $why.Contains('0.5 GB') -and $why.Contains('disagree')) 'its reason section states that the 0.5 GB and 3 GB figures disagree'
     Check ($why.Contains('537 MB') -and $why.Contains('3-4.4 GiB') -and $why.Contains('restart')) 'and rests on the measured scan cost and on pool kept until a restart'
