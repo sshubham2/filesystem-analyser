@@ -21,7 +21,7 @@ public class NotListedTests
     // folder, so a Stop in either leaves no root to mark. Every later call of the root's handling has a root.
     private const int RootOpenAndQuery = 2;
 
-    private const string Store = @"m\Layers";
+    internal const string Store = @"m\Layers";
 
     // ---- The scan's stop points ----
 
@@ -31,7 +31,7 @@ public class NotListedTests
     /// subfolder is the planted container layer store, and a last folder. The store is m's only subfolder, so it is skipped
     /// (committed) exactly when m is: skipping it makes no guarded call and fires no AfterFolder.
     /// </summary>
-    private static TempTree SweepTree()
+    internal static TempTree SweepTree()
     {
         var tree = new TempTree();
         tree.Folder("a-empty");
@@ -55,22 +55,22 @@ public class NotListedTests
         return tree;
     }
 
-    private static readonly string[] SweepOrder = ["", "a-empty", "big", "deep", @"deep\inner", "denied", "h1", "h2", "m", "z"];
+    internal static readonly string[] SweepOrder = ["", "a-empty", "big", "deep", @"deep\inner", "denied", "h1", "h2", "m", "z"];
 
     /// <summary>One uncancelled scan with the last guarded call of each folder it committed.</summary>
-    private sealed record Baseline(ScanResult Result, List<(string Folder, int LastCall)> FolderEnds, int Calls)
+    internal sealed record Baseline(ScanResult Result, List<(string Folder, int LastCall)> FolderEnds, int Calls)
     {
         public int LastCallOf(TempTree tree, string relative) =>
             FolderEnds.Single(f => f.Folder == tree.PathOf(relative)).LastCall;
     }
 
-    private static ScanOptions Options(TempTree tree, ScanProgress? progress = null, List<string>? listed = null) => new()
+    internal static ScanOptions Options(TempTree tree, ScanProgress? progress = null, List<string>? listed = null) => new()
     {
         ContainerLayerStorePath = tree.PathOf(Store),
         AfterFolder = listed is null ? null : _ => listed.Add(progress!.CurrentFolder!),
     };
 
-    private static Baseline RunBaseline(TempTree tree, bool planted)
+    internal static Baseline RunBaseline(TempTree tree, bool planted)
     {
         var progress = new ScanProgress();
         var ends = new List<(string, int)>();
@@ -89,7 +89,7 @@ public class NotListedTests
         return new Baseline(result, ends, guard.Calls);
     }
 
-    private static ScanResult StopAt(TempTree tree, int call, bool during, List<string>? listed = null)
+    internal static ScanResult StopAt(TempTree tree, int call, bool during, List<string>? listed = null)
     {
         var progress = new ScanProgress();
         return Scans.RunCancellingAt(tree.Root, call, during,
@@ -423,7 +423,10 @@ public class NotListedTests
         Assert.Equal(0, result.Probes); // the batch the Stop landed in commits nothing
         Assert.Equal(5, Scans.ByPath(result.Store).Count(p => result.Store.Kind(p.Value) == EntryKind.Folder));
         for (int e = 0; e < result.Store.Count; e++)
+        {
             Assert.False(result.Store.NotListed(e), $"{result.Store.GetPath(e)} reads not listed, though every listing committed");
+            Assert.False(result.Store.NotListedAtOrBelow(e), $"{result.Store.GetPath(e)} reads something not listed below it, though every listing committed");
+        }
         Scans.AssertChargedBytesAreTheTotals(result);
     }
 
@@ -751,6 +754,8 @@ public class NotListedTests
         {
             Assert.False(result.Store.NotListed(e), $"{what}: {result.Store.GetPath(e)} reads not listed after a scan that ran to the end");
             Assert.True(((byte)result.Store.Flags(e) & 0x80) == 0, $"{what}: {result.Store.GetPath(e)} shows the mark");
+            // SL-111: nothing is unlisted below any folder either.
+            Assert.False(result.Store.NotListedAtOrBelow(e), $"{what}: {result.Store.GetPath(e)} reads something not listed at or below it after a scan that ran to the end");
         }
     }
 }
