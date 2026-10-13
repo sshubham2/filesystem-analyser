@@ -1,0 +1,312 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-110",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-10-13T14:30:49.923Z",
+ "head": "82e6692038269b91dcf7aeed577d7b6649beca1c",
+ "run_id": 3776,
+ "summary": "SL-110 lets a person pick a 'Folder tree' view after Stop (a third ViewPicker radio; the list stays the default per Q-273). In that tree, any folder ScanStore.NotListed marks reads 'not read yet' with blank figures, no bar and no expander. This runs through one HasFigures gate in FolderTreeNode and one shared TopLevelRowText.NotReadYet constant. Also added: OffersStoppedTree, a spin-polled hook Stop trigger (StoppedTree.StopAt/StopTarget), window cases T-010/T-011/T-012/R-004, 39 new Core tests and two fitness rules (25 files, 82e6692, Core untouched). The path was long: 2 spike trips, 3 designs, 4 critique rounds and 2 builds. The first fork spec defined a Stop 'cut' in a way that could not be satisfied, because CurrentFolder names the last committed folder.",
+ "payload": {
+  "status": "complete",
+  "reason": "Built, code-reviewed and validated at 82e6692. T-003 red only on an environmental VOID check that also fails at HEAD; network pass, Q-270 memory, hardware click, R-001..R-003 and Windows 10 were not reached.",
+  "summary": "SL-110 lets a person pick a 'Folder tree' view after Stop (a third ViewPicker radio; the list stays the default per Q-273). In that tree, any folder ScanStore.NotListed marks reads 'not read yet' with blank figures, no bar and no expander. This runs through one HasFigures gate in FolderTreeNode and one shared TopLevelRowText.NotReadYet constant. Also added: OffersStoppedTree, a spin-polled hook Stop trigger (StoppedTree.StopAt/StopTarget), window cases T-010/T-011/T-012/R-004, 39 new Core tests and two fitness rules (25 files, 82e6692, Core untouched). The path was long: 2 spike trips, 3 designs, 4 critique rounds and 2 builds. The first fork spec defined a Stop 'cut' in a way that could not be satisfied, because CurrentFolder names the last committed folder.",
+  "estimate_error": "Opened medium risk, medium size, 1 designer, sized by a person. The product-code size was about right: 5 App files changed, no Core change, and the high-risk seams (DirectoryReader, SynchronousIoCancel.cs) stayed untouched because the design refused the listing-abort seam. The risk tier held: 1023/1023 tests and 12/12 mutants passed. The loop and test surface was under-sized. The diff was 25 files (git diff f764c3476..82e669203), including a new hook file, 4 window cases and 39 new tests. It took 2 spike trips, 3 designs, 4 critiques, 2 builds and 2 code reviews. Validate alone ran WindowMutants (391 s) and four new cases, plus the rules harness and a published-exe run on C:\\ProgramData. Lessons #176 and #408 predicted this and were handed in, but the sizing did not change. The error is too small, in process and case surface and not in product risk.",
+  "learned": [
+   {
+    "kind": "codebase",
+    "lesson": "ScanProgress.CurrentFolder is the last COMMITTED folder, published after SetChildren (Scanner.cs:415 in FolderDone). It is not the folder being listed. Any Stop trigger, spike or case about a Stop 'inside X's listing' must key on X's predecessor (pressedAt == j-before). CurrentFolder == X means X has already committed. The doc comment ('the folder most recently listed') invites the wrong reading.",
+    "evidence": "Spike 120, both experiments: 0/20 'strict' hits because conditions (2) CurrentFolder==m-big and (3) m-big NotRead cannot both hold. Re-spelled as CurrentFolder==j-before at callback entry, the hit was 20/20 cold and 20/20 warm. The m-big-trigger control found m-big committed with 100,000 children."
+   },
+   {
+    "kind": "process",
+    "lesson": "A fork spec's hit definition needs one control run, and a check that its conditions can hold together, before counted runs. Both counted arms of spike trip 2 returned 'no-go' against a self-contradictory strict hit, and only the uncounted control showed why. The design then had to be re-synthesised from the spike's LEFT OPEN text.",
+    "evidence": "risk-spike #2 detail: 'Conditions (2) and (3) as written cannot both hold.' Cost: one extra spike trip, design #3, critique #3 (4 findings) and #4 (12 findings), on top of the first design/critique pair."
+   },
+   {
+    "kind": "design",
+    "lesson": "A hook Stop trigger fires only while CurrentFolder equals the target, and a one-file or 20-file successor commits in 50-230 µs against a spin gap of 4.6-10 ms. So every window-case target is a prefix (trailing backslash) except j-before, whose successor m-big lists for about 53 ms. Every fixture needs a slow successor after the Stop target (n-slow with 3,000 subfolders in R-004), plus a void rule that the asserted row reads storeNotListed. A later pause, resume or subtree-mark case should reuse StoppedTree.StopAt and StopTarget and follow this rule.",
+    "evidence": "Critique M1 and M2 were both confirmed. StopTargetTests: 21 of 35 fail with an exact-only matcher, all green restored. R-004 with n-slow emptied gave 3 VOID launches then FAIL. T-011 pressedAt == j-before in the passing runs."
+   },
+   {
+    "kind": "estimate",
+    "lesson": "New window cases that build a 100k-child fixture run 60-75 s against the engine's 120 s cap (Q-222). The fixture is 28-30 s of that. Plan to split such cases (cut vs open) from the start and give each its own fixture. T-012 is the case nearest the cap.",
+    "evidence": "T-010 13-14 s, T-011 59-61 s (28 s fixture), T-012 60 s (validate), 61-63 s (build), 75 s (code review, cold publish and hook build), R-004 9-10 s. WindowMutants -Mutant All 391-446 s."
+   },
+   {
+    "kind": "estimate",
+    "lesson": "For a window-adjacent slice, size by the number of new cases and hook surface, not by the App diff. Here 5 App files drove a new hook file (StoppedTree.cs, StopTarget.cs), changes to TreeMode/RevealMode/StartupHook, 4 cases, a corpus test and 2 fitness rules, which meant a rules-harness run (167 rows) plus RuleCases C-001/C-003 at build and validate. Lessons #176 and #408 said so, and the medium/medium opening still under-counted it.",
+    "evidence": "git diff f764c3476..82e669203 lists 25 files. Suite 984 to 1023 (StopTargetTests + StoppedTreeOfferTests). Validate ran roughly 15 command families."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "T-003, which Q-128 makes the required validate watch for any slice touching FolderTreeNode, the tree or ChildrenLargestFirst, is red on this display at HEAD. Its 'VOID unless the taller window gave the tree more room' check compares 241.9 px with 241.9 px because the default window already fills the 816 px work area. Its five opens pass (96-104 ms). Until it is fixed, every tree slice will show a red required check, and the completed-tree open is carried by T-012 run 2 (67-73 ms).",
+    "evidence": "Build: failure identical at HEAD in a scratch copy. Validate: all five opens pass, 101.6 and 104.4 ms cold. T-012 completed run: 0 not-listed rows, opens 73.2/2.2/2.1/1.6/1.8 ms."
+   },
+   {
+    "kind": "process",
+    "lesson": "Finding ids m1-m4 are reused across review rounds, and the engine's disposition keyed on the string. The first review's m4 (HasFigures gate) was accepted and built, yet O-021 was waived to SC-382 as if unbuilt. The second review's m4 (rule 2 spellings) is O-038/SC-388. SC-382 is therefore a stale duplicate of shipped work: drop it. When reading a waived obligation, check the diff before trusting that its work is undone.",
+    "evidence": "O-021 'waived ... carried to SC-382' versus code-review: 'OnDiskText, SizeText, ShareText and ShareShown all go through one HasFigures gate' (FolderTreeNode.cs). O-038 is the real rule-2 waiver (SC-388)."
+   },
+   {
+    "kind": "process",
+    "lesson": "On this slice the critique earned its cost on reachability. M1 (prefix targets), M2 (slow successor), M3 (view-switch gate) and M4 (120 s sizing) each turned into a mutation-proved fix. A critique prompt for the next stop-driven case should ask directly: what work remains after the target, and can the asserted branch be reached? Critique-review did not run (medium risk, 1 designer), so there is nothing to measure for that gate. All 20 findings were disposed by a model, and none by a person.",
+    "evidence": "O-015: 21 of 35 StopTargetTests fail without the fix. O-016: R-004 went red with n-slow removed. O-017: T-010 went red with the ShowTreeButton gate mutated to false. critique-review #1 and #2: 'does not get its review reviewed'."
+   },
+   {
+    "kind": "design",
+    "lesson": "Where the stopped tree now lives, for the next stopped-view slice. FolderTreeNode.Note arm order is Link, NotScanned, NotListed ('not read yet'), then FailedKind. The figure texts and ShareShown all read HasFigures, so a new column blanks for unread folders by default. The word lives once in TopLevelRowText.NotReadYet. StartScan's ResetTreeChoice resets only the tree choice (the File kinds choice outlasts a scan, per SL-046). WindowReport is written at the first ending before any pick, so schema 1 is unchanged. Lesson #482's premise that 'a stopped ending builds no tree' is no longer true: a memory measurement of the stopped window must now choose the tree.",
+    "evidence": "Code review of 82e6692 (Note arm, HasFigures, ResetTreeChoice at MainWindow.xaml.cs:534-540). Design record docs/design/SL-110-stopped-tree.md. SC-387 (the 5M stopped-tree memory measurement) is still unbuilt."
+   },
+   {
+    "kind": "process",
+    "lesson": "A build halted by a provider session limit leaves a dirty tree and an engine-appended .taad/fitness.yaml entry (lesson #367). Attempt 2 audited that tree against the design and kept it; only the missing parts were added (StopTarget corpus, in-place rule text fix, tree-then-Folders step, completed-run open). Also, a mutation-proof that restores a file with its original mtime makes dotnet reuse the DLL built from the mutated source, so a restored file must be touched before the rebuild.",
+    "evidence": "build-slice #1 halted ('session limit'); build-slice #2 deviations list. The StopTarget.cs restore needed a manual touch before the suite went green."
+   }
+  ],
+  "candidates": [
+   {
+    "title": "Make T-003's 'taller window' VOID check skip, recorded as not measured, when the default window already fills the work area",
+    "urgency": "soon",
+    "why": "tests/window/WindowCases.ps1, Test-T003, the check 'VOID unless the taller window gave the tree more room'. Build and validate both measured 241.9 px against 241.9 px on this display (default window 816 px = work area 816 px). The failure is identical at HEAD f764c34 (scratch copy) and at 82e6692. All five cold opens pass (96-104 ms). Q-128 requires T-003 at validate for any slice touching FolderTreeNode, MainWindow's tree or ChildrenLargestFirst, so each such slice will show a red required check on this PC, and the taller-viewport half of the 500 ms watch is unmeasured. Changing a VOID rule alters what the case proves, so a person should confirm the skip is acceptable, and WindowMutants -Mutant All (Q-114) applies to the edit."
+   },
+   {
+    "title": "Re-run R-001 to R-003 against RevealMode.FindInTreeItem's new exact direct-child pass, or revert the pass",
+    "urgency": "soon",
+    "why": "tests/window/FsaWindowHook/RevealMode.cs:815-826 gained an exact direct-child pass before its depth-first search. That changes tree-target navigation for every reveal case, although the design said tree targets run 'exactly as after a completed scan'. Code review flagged it as undeclared drift, and validate lists R-001 to R-003 as not run: they open real Explorer windows (#336), and Q-275's unattended allowance covers R-004 only. The review traced the current targets and found no name collision, but nothing ran. Either a person runs them, or the allowance is extended in a new question; do not re-ask Q-275."
+   },
+   {
+    "title": "Check whether a stopped top-level row marked '(not read yet)' still draws '0 bytes (0 bytes on disk) in 0 files and 0 folders' as its second line",
+    "urgency": "soon",
+    "why": "Build-check #2's narrowed scope said this line for a never-read top-level row 'changes'. The list is still the default view after Stop (Q-273). TopLevelRowText.FiguresOf (TopLevelRowText.cs:35-46) is not named in any design component or whats_new. The recorded 82e6692 change to TopLevelRowText is the NotReadYet constant. T-010 and validate compared top-level titles and states with the tree (59 rows, 29 NotRead on ProgramData), not the figures line. Criterion 3 as agreed asks only for the same word, so it is MET, but the slice goal is 'instead of looking empty'. Verify on the stopped list first. If the zeros are still drawn, route them through the same unread-state decision and pin it in T-010."
+   }
+  ],
+  "lessons_judged": [
+   {
+    "id": 310,
+    "verdict": "used",
+    "why": "Row evidence comes from tree mode WALK lines plus storeNotListed read through the store, not the schema-1 report; this is why criterion 1's report-based check was replaced (T-010, T-011)."
+   },
+   {
+    "id": 482,
+    "verdict": "wrong",
+    "why": "Its premise that a stopped ending builds no tree (MainWindow.xaml.cs:606-607) no longer holds after this slice: choosing 'Folder tree' builds a session over the stopped store, so a scratch-hook memory measurement must also pick the tree (SC-387)."
+   },
+   {
+    "id": 484,
+    "verdict": "used",
+    "why": "The design relied on SL-109's ListRoot/AppendRoot facts (Count 1 and NotListed(0) for a Stop in the root listing) to build OffersStoppedTree, and StoppedTreeOfferTests sweeps those shapes."
+   },
+   {
+    "id": 329,
+    "verdict": "used",
+    "why": "The unread word is one constant, TopLevelRowText.NotReadYet, read by TitleOf, the tree Note and the headers, with an architecture rule fencing it, so the list and tree cannot drift on the same folder."
+   },
+   {
+    "id": 200,
+    "verdict": "not relevant",
+    "why": "No cloud or stalled-folder path was exercised; the stalled-share Stop remains unclaimed (Q-274)."
+   },
+   {
+    "id": 469,
+    "verdict": "not relevant",
+    "why": "OpenedNothingListed is not drawn and no UnreadableKind wording changed in this slice."
+   },
+   {
+    "id": 245,
+    "verdict": "used",
+    "why": "It explains why a mark only on top-level rows is visible just after a Cancel, which is the reason the 'not read yet' rule had to reach the tree rows."
+   },
+   {
+    "id": 170,
+    "verdict": "used",
+    "why": "The tree's settled shape (rows built once on first expand, a session not the store, StartScan closing it) was kept; T-010 run 3 confirmed the stopped store is released twice."
+   },
+   {
+    "id": 171,
+    "verdict": "not relevant",
+    "why": "No live tree during a scan was built; the stopped tree reads a store whose scan has returned."
+   },
+   {
+    "id": 328,
+    "verdict": "used",
+    "why": "The design verified the public shape (ScanStore.NotListed public and O(1), ScanResult.TopLevel documented null only for a never-committed root) before depending on it."
+   },
+   {
+    "id": 85,
+    "verdict": "used",
+    "why": "Fixtures size the Stop window by folder count: 5,000 and 3,000 empty c-prefix folders and 10,000 in T-011, because scan time is driven by folders and the trigger needs a lead."
+   },
+   {
+    "id": 124,
+    "verdict": "not relevant",
+    "why": "No SMB rig was used."
+   },
+   {
+    "id": 136,
+    "verdict": "used",
+    "why": "The network pass was filed as a person-run item (SC-383, Q-274 not run), and nothing here claims Stop safety on a stalled share."
+   },
+   {
+    "id": 84,
+    "verdict": "used",
+    "why": "The checks name WindowCases.ps1 cases and a published exe, because dotnet test never runs the window cases."
+   },
+   {
+    "id": 360,
+    "verdict": "used",
+    "why": "Every new fixture is rooted under %LOCALAPPDATA%\\Temp; the one leak shape found (the deny ACE in T-010's fixture, SC-390) is exactly the scratch-leak risk this lesson names."
+   },
+   {
+    "id": 355,
+    "verdict": "used",
+    "why": "All new cases launch through Format-AppArgument, and the StopTarget census was written to catch hand-quoted launches."
+   },
+   {
+    "id": 411,
+    "verdict": "used",
+    "why": "SL-100 (29/29) and SL-063 (10/10) were added to the checks because the slice edits ShowTopLevel and ShowOutcome, and both passed."
+   },
+   {
+    "id": 90,
+    "verdict": "not relevant",
+    "why": "The schema-1 report was deliberately left unchanged; row evidence went through hook logs."
+   },
+   {
+    "id": 167,
+    "verdict": "used",
+    "why": "The new radio sits on the header line and takes no height; the width cost was measured instead (header characters shown at 880 px and at the 560 px minimum in T-010)."
+   },
+   {
+    "id": 336,
+    "verdict": "used",
+    "why": "R-004 was first planned as a person-run, then Q-275 extended the unattended allowance to it, which avoids the validate wall this lesson predicts; R-001 to R-003 still have no unattended allowance."
+   },
+   {
+    "id": 486,
+    "verdict": "used",
+    "why": "Rule 1's text was reworded as a tripwire and counted as multiple runs (rules harness 167/167, RuleCases C-001/C-003 at build and validate), but rule 2's text still claims the class and was waived to SC-388."
+   },
+   {
+    "id": 408,
+    "verdict": "used",
+    "why": "Validate was budgeted as a long run (suite, mutants 391 s, four new cases, 12 existing cases), and the test and hook surface dominated the slice as predicted."
+   },
+   {
+    "id": 176,
+    "verdict": "used",
+    "why": "The hook and case work (StoppedTree.cs, StopTarget.cs, TreeMode/RevealMode changes, 4 cases) was the main body of work, although the opening size did not reflect it."
+   },
+   {
+    "id": 133,
+    "verdict": "not relevant",
+    "why": "The stopped list's snapshot pattern was reused unchanged; no new progress-channel snapshot was added."
+   },
+   {
+    "id": 179,
+    "verdict": "used",
+    "why": "The critique cited the real TreeMode order and refusal and Scanner.cs publish lines, and its findings were confirmed in code, with none overridden on code facts."
+   }
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "dimension": "unfounded-assumptions",
+    "severity": "minor",
+    "what": "The design's cases list named WindowCases.ps1 -Case T-003 as the check for the material case 'open a 100k-child folder in a completed tree' (Q-128), but nobody had run T-003 at HEAD. It fails there on its 'taller window' VOID check (241.9 px vs 241.9 px; default window 816 px = work area 816 px), so the named check could never go green. Critique M4 told the build to time T-003 but not to confirm it passes. A check would be: for every case command a design cites as a discharging check, record a green run at the base commit.",
+    "caught_by": "build (the builder ran T-003 in a scratch copy at HEAD, saw it red, and added a completed-scan second run to T-012 to discharge O-029)"
+   },
+   {
+    "gate": "critique",
+    "dimension": "cross-cutting-conformance",
+    "severity": "minor",
+    "what": "The design said 'StartScan checks ShowFoldersButton' on every scan. That contradicts SL-046's rule that a File kinds choice outlasts a scan. The built ResetTreeChoice (MainWindow.xaml.cs:534-540) resets Folders only when the tree was the choice and keeps the kinds choice. The critique did not compare the design's StartScan/radio-state sentences with the existing K-series cases and SL-046 behaviour.",
+    "caught_by": "code-review (listed as undeclared drift)"
+   },
+   {
+    "gate": "code-review",
+    "dimension": "error-paths",
+    "severity": "minor",
+    "what": "The first code-review lap reported 'no defects', but New-StoppedTreeFixture (WindowCases.ps1, near line 6431) calls Deny-Listing on b-listed\\denied before building about 9,000 more entries. If a later step throws, T-010's $denied is still $null, so Undo-DenyListing is skipped and Remove-CaseFolder cannot delete the folder. The ACE and folder stay under %LOCALAPPDATA%\\Temp, the #333/Q-266 scratch-leak shape. It is fixture code added in this slice, and the first lap did not ask what happens if the build throws after the deny.",
+    "caught_by": "code-review second lap (filed as R2-m2, then waived to SC-390)"
+   }
+  ],
+  "unknowns": [
+   "Does the stopped list's '(not read yet)' top-level row still draw '0 bytes (0 bytes on disk) in 0 files and 0 folders' as its second line? Build-check #2's scope said that line changes, but no design component or validation line shows that it did.",
+   "Which view does a person reach for first after Stop, the list or the tree? Q-273 (list-first) was decided by a model while the owner was away on the assumption that it is a matter of taste. If the answer is the tree, the flip is one line in ShowOutcome plus edits to T-006, L-001, L-002 and EndingObeysSkip.",
+   "Does a real hardware click on the 'Folder tree' radio, and on tree to File kinds to Folders switches, behave like the hook's in-process IsChecked set? Validate made no SendInput click, and the WPF RadioButton event order was recalled and then read in code, not observed."
+  ],
+  "what_went_wrong": [
+   "The first fork spec (O-001) defined a strict Stop 'cut' hit that no run could satisfy, because it needed CurrentFolder == m-big while m-big was still uncommitted. Both spike arms returned 'no-go' for that spec bug, and only a control run showed it. Cost: a second spike trip, design #3, and critiques #3 and #4. The design had to be re-synthesised, and the 20/20 hit was recovered from the spikes' LEFT OPEN text.",
+   "The epic's agreed checks were unbuildable as written on two counts. Criterion 1 named the schema-1 report, which carries no rows (Q-016). Criterion 7's 'existing cases unchanged' conflicted with T-006 once any stopped tree existed. Build-check found both, not epic division, and design #1 then halted on Q-273, which a model decided while the owner was away.",
+   "Build-check #1 was dropped by the engine because its reply said 'unbuilt' while reporting criterion 7 as already present. A second build-check was needed, and the narrowing was decided by a model.",
+   "The design's M1/M2 trigger flaws (exact targets followed by one-file or 20-file folders, a reveal fixture with no work after its target) survived two design rounds and were caught only by the critique. Had they reached build, T-010, T-011 run B and R-004 would have failed or gone void almost every time.",
+   "Build attempt 1 was halted by a provider session limit and left uncommitted work. Attempt 2 had to audit it against the design before extending it. Disposition-id reuse (m1-m4 in three rounds) then waived an already-built finding (O-021 to SC-382), so the backlog holds a stale duplicate.",
+   "The first code-review lap said 'no defects' and the second found the fixture error path (R2-m2). One undeclared hook change, RevealMode.FindInTreeItem, affects R-001 to R-003; validate could not re-run them, so the shipped hook change is unverified for those cases.",
+   "T-003, which Q-128 requires for tree slices, was never run by the build-check and was first found red at HEAD during build. The completed-tree open check had to move into T-012 run 2.",
+   "All 20 critique findings were disposed by a model and none by a person, so the critique's precision on this slice is unaudited. Critique-review ran twice as a no-op by sizing."
+  ],
+  "filed": [
+   {
+    "key": "SC-375",
+    "title": "Check by hand: Run R-004: after a Stop, pick the tree and Open in Explorer on a 'not read yet' row (tree:z-unread). Confirm the status line is empty, LastRevealOutcome is Exact, and Explorer shows the root with z-unread as its only selection.",
+    "urgency": "soon",
+    "source": "design"
+   },
+   {
+    "key": "SC-381",
+    "title": "The stopped tree is now built on demand from a person's click (BuildFolderTree(LastResult!) in OnResultsViewChanged).",
+    "urgency": "soon",
+    "source": "finding"
+   },
+   {
+    "key": "SC-383",
+    "title": "Check by hand: The network pass again (#136). This slice touches MainWindow*, FsaWindowHook/** and WindowCases.ps1. Cancel on a stalled share stays unmeasured, and nothing here claims cancel-safety. The TEST-NET-1 guard is red at baseline (Q-259).",
+    "urgency": "soon",
+    "source": "design"
+   },
+   {
+    "key": "SC-384",
+    "title": "Wrap the on-demand stopped-tree build in Q-071's per-pass containment, so a throw hides only that view and says 'Couldn't show this view'.",
+    "urgency": "soon",
+    "source": "design"
+   },
+   {
+    "key": "SC-385",
+    "title": "A subtree-unfinished mark, so a listed folder that holds unread folders says so in the stopped tree instead of showing short figures with no note.",
+    "urgency": "soon",
+    "source": "design"
+   },
+   {
+    "key": "SC-386",
+    "title": "Distinct wording for a folder Stop cut inside its own listing versus one still queued.",
+    "urgency": "soon",
+    "source": "design"
+   },
+   {
+    "key": "SC-387",
+    "title": "Measure the app's peak memory with a stopped 5M-entry store and the stopped tree opened on a 100k-child folder (Q-270's shape plus the tree's rows).",
+    "urgency": "soon",
+    "source": "design"
+   },
+   {
+    "key": "SC-388",
+    "title": "Rule 2's pattern was written against the four guards in the file today and was not tried against a corpus of other spellings, as CC-007 asks.",
+    "urgency": "soon",
+    "source": "obligation"
+   },
+   {
+    "key": "SC-389",
+    "title": "The StopTarget census that guards against the M1 shape reads only single-quoted assignments in WindowCases.ps1.",
+    "urgency": "soon",
+    "source": "obligation"
+   },
+   {
+    "key": "SC-390",
+    "title": "R2-m2 (minor): New-StoppedTreeFixture denies the listing of b-listed\\denied at line 6431, then builds most of the tree: 5,000 c-prefix folders, about 4,000 m-mid files and 250 p-folder files.",
+    "urgency": "soon",
+    "source": "obligation"
+   }
+  ]
+ }
+}
