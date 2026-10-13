@@ -1,0 +1,220 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-111",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-10-13T17:22:52.364Z",
+ "head": "beb67ff42a4f862398535bee85a6bada004b377a",
+ "run_id": 3809,
+ "summary": "SL-111 adds ScanStore.NotListedAtOrBelow (ScanStore.cs:142-163). It is an allocation-free read that follows the last-folder-child chain over the NotListed marks. The backward scan looks up each entry's page separately. I read it against Scanner.Execute, ListRoot, FolderDone and StoreSkipped (Scanner.cs:185-418). The read's premises hold in the shipped code:\n- every appended Folder is either pushed and later listed, or StoreSkipped through SetChildren(Count, 0);\n- a cancelled read commits nothing;\n- a stack with last-first push gives preorder;\n- AppendRoot runs before the root's listing.\nSo a Completed scan reads false everywhere by construction.\n\nWhat I ran:\n- Full suite (eng/dotnet.ps1 test FsAnalyser.slnx): 1088 passed, 0 failed.\n- Detailed timing and budget run. Criterion 3: slowest pass 58.3 ms against 250 ms, answers alone at most 17.7 ms, exactly 1 true row per pass. Criterion 5: 0 bytes allocated, 60,002 true, retained 637.1 MiB, peak 653.6 MiB.\n- Two mutations of my own, each reverted (git status clean afterwards). (1) In the real Scanner.FolderDone, subfolders pushed first-first: TheScannerRegistersFoldersDepthFirstInListingOrder goes red on real scanner output, so criterion 2's guard bites on the scanner, not only on replays. (2) In the read, a backward scan that stops on a Link: both ragged-tree sweeps and the queue test go red, so the junction-after-last-subfolder shape (C-005) is actually fed.\n\nEvery matrix row's test feeds its shape: cut big inside its buffers, a root-only store, the c > c2 > c21 > c211 > c2111 chain, a before and after a2, a junction after the last subfolder, Layers NotScanned as m's only subfolder, queue/interleave/first-first replays with a last-first control that reproduces the scanner's store entry for entry.\n\nFitness: 99 rules hold. .taad/fitness.yaml is unchanged, as m1's disposition required.\n\nThe build's departures are all declared: the fitness rule was replaced by the KindByteWriteCorpusTests grammar and its corpus (O-015), the sweep stops through StopAt (m2), the allocation check is a 64 KiB bound, and m4-m6 were waived to SC-395..397. NotListedAtOrBelow has no caller in src, which is the designed scope; App wiring is filed for the next slice.\n\nO-014 is owed to validate-slice and is a forward-looking precondition. The order guards it names exist and fire.\n\nI found nothing that needs fixing.\n\nSecond round: Second round: I went back over each new matcher and boundary, this time trying to break them. The one parser this diff adds is the closed grammar in KindByteWriteCorpusTests (Grammar.Check). It has one defect the first round missed: its comment stripper does not tokenise the way C# does. I compiled a verbatim copy of Grammar.Check (lines 38-83) with Add-Type under pwsh 7.6.6 on .NET 10.0.12 and fed it lines where the marker write is live C#. All six came back with 0 refusals; the control `page.Kind[i] |= 0x80;` came back with 1:\n- `Log(\"http://x\"); page.Kind[i] |= 0x80;`\n- `var sep = \"//\"; page.Kind[i] |= 0x80;`\n- `var a = \"/*\"; page.Kind[i] |= 0x80; var b = \"*/\";`\n- a `//` comment holding `/*` (e.g. `tests/*.cs`) with a later `*/` (e.g. `src/**/x`): the code between them is blanked\n- a `//` comment ended by U+2028\n- a `//` comment ended by U+0085\n\nNo Store file holds `/*`, `*/` or a string containing `//` today (grep), so the census is still right for the current tree. The gap is latent. But O-015 was closed as a whole family (\"Kind-byte marker write spellings\") against this grammar and corpus, so these are missing members of a family the build claimed was closed.\n\nNothing else new turned up:\n- NotListedAtOrBelow's boundaries are At's: a negative index, an index at or past Count, or an empty store all throw ArgumentOutOfRangeException. A malformed block was waived to SC-396.\n- The grammar's accept branches (declaration, compare with `(byte)EntryKind.X`, switch, cast to EntryKind, the one whole write) cannot carry a write. Every nested or deconstructed use of `Kind` is matched on its own and refused by default.\n- File.ReadAllText strips a BOM.\n- Lone CR line endings only shift the reported line numbers.\n- A ScanStore partial outside Store/** would already be refused by the fitness rule 'Core does not publish a live ScanStore before the scan ends' (except in its five listed files).\n- The JSON corpus reader fails loudly on a missing key or a duplicate id.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "SL-111 adds ScanStore.NotListedAtOrBelow (ScanStore.cs:142-163). It is an allocation-free read that follows the last-folder-child chain over the NotListed marks. The backward scan looks up each entry's page separately. I read it against Scanner.Execute, ListRoot, FolderDone and StoreSkipped (Scanner.cs:185-418). The read's premises hold in the shipped code:\n- every appended Folder is either pushed and later listed, or StoreSkipped through SetChildren(Count, 0);\n- a cancelled read commits nothing;\n- a stack with last-first push gives preorder;\n- AppendRoot runs before the root's listing.\nSo a Completed scan reads false everywhere by construction.\n\nWhat I ran:\n- Full suite (eng/dotnet.ps1 test FsAnalyser.slnx): 1088 passed, 0 failed.\n- Detailed timing and budget run. Criterion 3: slowest pass 58.3 ms against 250 ms, answers alone at most 17.7 ms, exactly 1 true row per pass. Criterion 5: 0 bytes allocated, 60,002 true, retained 637.1 MiB, peak 653.6 MiB.\n- Two mutations of my own, each reverted (git status clean afterwards). (1) In the real Scanner.FolderDone, subfolders pushed first-first: TheScannerRegistersFoldersDepthFirstInListingOrder goes red on real scanner output, so criterion 2's guard bites on the scanner, not only on replays. (2) In the read, a backward scan that stops on a Link: both ragged-tree sweeps and the queue test go red, so the junction-after-last-subfolder shape (C-005) is actually fed.\n\nEvery matrix row's test feeds its shape: cut big inside its buffers, a root-only store, the c > c2 > c21 > c211 > c2111 chain, a before and after a2, a junction after the last subfolder, Layers NotScanned as m's only subfolder, queue/interleave/first-first replays with a last-first control that reproduces the scanner's store entry for entry.\n\nFitness: 99 rules hold. .taad/fitness.yaml is unchanged, as m1's disposition required.\n\nThe build's departures are all declared: the fitness rule was replaced by the KindByteWriteCorpusTests grammar and its corpus (O-015), the sweep stops through StopAt (m2), the allocation check is a 64 KiB bound, and m4-m6 were waived to SC-395..397. NotListedAtOrBelow has no caller in src, which is the designed scope; App wiring is filed for the next slice.\n\nO-014 is owed to validate-slice and is a forward-looking precondition. The order guards it names exist and fire.\n\nI found nothing that needs fixing.\n\nSecond round: Second round: I went back over each new matcher and boundary, this time trying to break them. The one parser this diff adds is the closed grammar in KindByteWriteCorpusTests (Grammar.Check). It has one defect the first round missed: its comment stripper does not tokenise the way C# does. I compiled a verbatim copy of Grammar.Check (lines 38-83) with Add-Type under pwsh 7.6.6 on .NET 10.0.12 and fed it lines where the marker write is live C#. All six came back with 0 refusals; the control `page.Kind[i] |= 0x80;` came back with 1:\n- `Log(\"http://x\"); page.Kind[i] |= 0x80;`\n- `var sep = \"//\"; page.Kind[i] |= 0x80;`\n- `var a = \"/*\"; page.Kind[i] |= 0x80; var b = \"*/\";`\n- a `//` comment holding `/*` (e.g. `tests/*.cs`) with a later `*/` (e.g. `src/**/x`): the code between them is blanked\n- a `//` comment ended by U+2028\n- a `//` comment ended by U+0085\n\nNo Store file holds `/*`, `*/` or a string containing `//` today (grep), so the census is still right for the current tree. The gap is latent. But O-015 was closed as a whole family (\"Kind-byte marker write spellings\") against this grammar and corpus, so these are missing members of a family the build claimed was closed.\n\nNothing else new turned up:\n- NotListedAtOrBelow's boundaries are At's: a negative index, an index at or past Count, or an empty store all throw ArgumentOutOfRangeException. A malformed block was waived to SC-396.\n- The grammar's accept branches (declaration, compare with `(byte)EntryKind.X`, switch, cast to EntryKind, the one whole write) cannot carry a write. Every nested or deconstructed use of `Kind` is matched on its own and refused by default.\n- File.ReadAllText strips a BOM.\n- Lone CR line endings only shift the reported line numbers.\n- A ScanStore partial outside Store/** would already be refused by the fitness rule 'Core does not publish a live ScanStore before the scan ends' (except in its five listed files).\n- The JSON corpus reader fails loudly on a missing key or a duplicate id.",
+  "findings": [
+   {
+    "id": "R2-R2-1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "claim": "Grammar.Check removes block comments with one regex, then line comments with another. Neither skips string or char literals, and a `//` comment ends only at \\r or \\n. C# lexes left to right: a `//` or `/*` inside a string literal opens no comment; a `/*` inside a `//` comment opens nothing; a `//` comment also ends at U+0085, U+2028 and U+2029. So the grammar blanks live code that the compiler builds, and any Kind-byte marker write in that blanked text is accepted.\n\nRun on a verbatim copy of Check, each of these gets 0 refusals while the control `page.Kind[i] |= 0x80;` gets 1:\n- `Log(\"http://x\"); page.Kind[i] |= 0x80;`\n- `var sep = \"//\"; page.Kind[i] |= 0x80;`\n- `var a = \"/*\"; page.Kind[i] |= 0x80; var b = \"*/\";`\n- `// over tests/*.cs` + newline + `page.Kind[i] |= 0x80;` + newline + `// and src/**/x`: the block regex runs from the `/*` in the first comment to the `*/` inside `**/`, across real code\n- `// note` followed by U+2028 and the marker write\n- the same with U+0085\n\nThe glob case is the one most likely to happen by accident: this repo's comments cite globs often. It hides every line between two such comments, not just one. NothingInTheStoreWritesAMarkerIntoTheKindByte would then pass over a stored marker, which is the one thing O-015's corpus was accepted to hold. No Store file has such text today, so the census is right for the current tree.",
+    "evidence": "tests/FsAnalyser.Core.Tests/KindByteWriteCorpusTests.cs:41-42 (comment stripping), :46 (the uses are matched on the stripped text). Verified with Add-Type of lines 38-83 under pwsh 7.6.6 / .NET 10.0.12. A grep of src/FsAnalyser.Core/Store for `/*`, `*/` and a string containing `//` found nothing.",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/KindByteWriteCorpusTests.cs",
+     "line": 41,
+     "text": "            string code = Regex.Replace(source, @\"/\\*[\\s\\S]*?\\*/\", m => Regex.Replace(m.Value, @\"[^\\r\\n]\", \" \"));\n            code = Regex.Replace(code, @\"//[^\\r\\n]*\", m => new string(' ', m.Length));"
+    },
+    "fix": "Replace the two Regex.Replace calls with one left-to-right pass:\n- skip regular string literals (with backslash escapes), verbatim strings @\"...\" (\"\" escapes), interpolated and raw (\"\"\") strings, and char literals, keeping them as code;\n- blank a `//` comment up to the first of \\r, \\n, U+0085, U+2028, U+2029;\n- blank a `/*...*/` comment only when `/*` is met outside a string and outside a `//` comment.\nAdd these refused rows to KindByteWriteCorpus.json under a new alias, 'a marker write the comment stripper blanks':\n- `Log(\"http://x\"); page.Kind[i] |= 0x80;`\n- `var a = \"/*\"; page.Kind[i] |= 0x80; var b = \"*/\";`\n- `// over tests/*.cs\\npage.Kind[i] |= 0x80;\\n// and src/**/x`\n- `// note page.Kind[i] |= 0x80;`\nKeep Q11 and Q12 (real comments) accepted.",
+    "class_of": "Kind-byte marker write spellings",
+    "threat": "accident"
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "tests/FsAnalyser.Core.Tests/NotListedBelowTests.cs:194-199 counts stops inside big's buffers and asserts big and the root read true; :215 requires cutInsideBig >= bigBuffers, with bigBuffers > 1 asserted at :168. It ran green in the full suite."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "NotListedBelowTests.cs:179-183 skips Count-0 stores, and :214 asserts exactly 2 of them. :189-193 asserts the root reads true when NotListed, and :216 requires at least 4 such stops. The ragged sweep (:295, :300) does the same."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "NotListedBelowTests.cs:264-274: when c2111 is NotListed and c211 is listed, it asserts c, c2, c21 and c211 are listed and read true. :296 requires at least one such stop. In RaggedTree, c's last folder child is c2: c3.txt and the junction zj sort after it."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "NotListedBelowTests.cs:276-292: a reads true while a2 is NotListed and false once a2 is listed. :297 requires both states, and :298 requires a listed-false folder under a root that is still true."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "RaggedTree at NotListedBelowTests.cs:46-47 puts c3.txt and the junction c\\zj after c's last subfolder; the root's block ends in z.txt and e holds only files. :299 requires a store holding the junction. My mutation (the backward scan stops on a Link) made CancelAtAnyCallOfTheRaggedTreeAnswersAsAWalk fail in both variants."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "NotListedBelowTests.cs:200-205 asserts Layers (NotScanned) and m read false, and :217 requires at least one such stop. a-empty and denied (Unreadable, 0 children) are held to the walk at every stop by AssertAnswersAsAWalk (:138-148), which also requires every non-folder to read false."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "NotListedBelowTests.cs:312-326 runs completed real scans of both trees: FolderEnds against RaggedOrder and SweepOrder, DepthFirstViolation null, and nothing unlisted below. My mutation of Scanner.cs:399 to a first-first push made this test fail ('Collections differ') on real scanner output."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "NotListedBelowTests.cs:448-464. The last-first control has 0 differing states, AssertSameStore against the scanned store, and the pin passes. The queue replay has Differing >= 1 and DepthFirstViolation non-null. The Replay feeder (:343-426) makes one block and one SetChildren per folder and checks the walk after every SetChildren."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "NotListedBelowTests.cs:471-484: TwoAtATime (pop two, commit both, then push each one's subfolders) and StackFirstFirst each need Differing >= 1 and a firing pin. Traced by hand: after a11 and c commit, the read says a is false while the walk says true (a111 is unlisted)."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "ScanStoreRollupTimingTests.cs:96-198 builds exactly 5,000,000 entries: S with 100,000 children, 10,000 chains 48 deep, each block with the subfolder first and 9 files, the last chain stopped after block 24. It asserts one NotListed entry and one true row per pass. My run: slowest pass 58.3 ms, budget 250 ms."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "NotListedTests.cs:757-758 adds the per-entry NotListedAtOrBelow-false check to AssertNothingNotListed (sweep tree and long-path tree). NotListedBelowTests.cs:319 and :325 cover the ragged and sweep trees on completed scans."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "NotListedTests.cs:425-429: AStopDuringSizingLeavesEveryFolderListed asserts NotListedAtOrBelow false for every entry of the Cancelled store."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "NotListedBudgetTests.cs:123-155 reads every entry before `retained`: one warm-up call, then the allocation delta (< 64 KiB), WSubfolders + 2 trues, and each top folder false. My run: 0 bytes, 60,002 true, retained 637.1 MiB, peak 653.6 MiB."
+   },
+   {
+    "key": "O-014",
+    "discharged": "no",
+    "evidence": "Owed to validate-slice, not this stage. It is a precondition on future scanner slices that no code here can prove. The guards it relies on exist and fire: TheScannerRegistersFoldersDepthFirstInListingOrder went red under my first-first push mutation of Scanner.cs."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": ".taad/fitness.yaml is unchanged (git diff HEAD~1 --stat shows no entry), so no Q-027 run is needed. tests/FsAnalyser.Core.Tests/KindByteWriteCorpusTests.cs holds a closed grammar over Store/**/*.cs with a census (1 declaration, 1 whole write, >= 8 reads), plus KindByteWriteCorpus.json: K01-K38 refused, K39-K41 pinned miss, Q01-Q14. The 'before' column counts 9 of 38 for the dropped patterns, which I verified. The escapes are listed in docs/design/SL-111-not-listed-below.md:82-108. All tests pass."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "NotListedTests.cs:67 (Options) and :92 (StopAt) are now internal. The sweep-tree theory stops through NotListedTests.StopAt (NotListedBelowTests.cs:174), so ContainerLayerStorePath is planted, and :200-205 and :217 require a NotScanned Layers stop that reads false."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "ScanStore.cs:123-126 says 'False for every file and link, and for every entry once a scan has Completed or was stopped in the size probes ... A root that was picked, opened and listed nothing ... reads true, as NotListed does.' The same wording is at docs/design/SL-111-not-listed-below.md:11-16. It matches ListRoot (Scanner.cs:261, :286-287)."
+   },
+   {
+    "key": "O-018",
+    "discharged": "no",
+    "evidence": "Waived to SC-395. No straddling-page test exists. The code nonetheless looks up each entry's page in the backward scan and in the chain step (ScanStore.cs:156, :160)."
+   },
+   {
+    "key": "O-019",
+    "discharged": "no",
+    "evidence": "Waived to SC-396. The read's loop (ScanStore.cs:146-162) has no forward-progress check."
+   },
+   {
+    "key": "O-020",
+    "discharged": "no",
+    "evidence": "Waived to SC-397. Scanner.cs is untouched, and no comment at _pending (:168) or FolderDone's push loop (:397-406) points to the new read."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "NotListedBelowTests.CancelAtAnyCallOfTheSweepTreeAnswersAsAWalk stops at every guarded call inside big (2,000 files with 100-char names; bigBuffers > 1 asserted). Each cut store is held to the walk, and big and the root must read true. cutInsideBig >= bigBuffers is enforced."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "Both sweeps skip the Count-0 stores and assert there are exactly 2 (calls 1-2). Stores whose root is NotListed (DecideLastAccess, reopen and root-listing calls) must read true, and the sweep tree requires at least 4 such stops."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "The ragged sweep requires a stop with c2111 NotListed under listed c, c2, c21 and c211, and asserts each of those four reads true. In RaggedTree, c2 is c's last folder child: c3.txt and zj sort after it."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "The ragged sweep meets a with a2 unlisted (asserts true) and with a2 listed (asserts false) at least once each, and every entry is held to the walk at every stop."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "RaggedTree's c block ends with c3.txt and the junction zj after c2; the root's block ends in z.txt. A store holding the junction is required. My mutation making the backward scan stop on a Link turned both ragged sweeps red."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "The sweep tree holds a-empty, denied (Unreadable, 0 children) and m\\Layers, which is skipped as NotScanned through StopAt's planted options. At least one stop must see Layers NotScanned with Layers and m reading false. Files and links are asserted false at every stop."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "TheScannerRegistersFoldersDepthFirstInListingOrder runs completed real scans of RaggedTree and SweepTree and pins FolderEnds against RaggedOrder and SweepOrder plus DepthFirstViolation. Verified to go red with Scanner.cs's push changed to first-first."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "AQueueOrderedStoreBreaksTheAnswerAndTheGuardSeesIt replays the ragged shape. The queue gives Differing >= 1 and a non-null violation. The last-first control gives 0 differing states and is entry-for-entry equal to the scanned store (Parent, Name, Kind, block, mark)."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "AParallelOrderedStoreBreaksTheAnswerAndTheGuardSeesIt replays TwoAtATime (both popped before either commits) and StackFirstFirst; each must differ in at least one state and fire the pin."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "ScanStoreRollupTimingTests.AnsweringEveryRow... builds the exact 5M shape: 100k children, 10k chains 48 deep, subfolder-first blocks, last chain half listed, index-seeded sizes. It takes ChildrenLargestFirst rows and asserts 10 passes under 250 ms with 1 true row each. One caveat: the read is called on root, A, S and Pad before the timed passes, so the first timed pass is not JIT-cold for the read itself. The data is cold. Immaterial at 58 ms against 250."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "NotListedTests.AssertNothingNotListed (sweep tree with denied folder, skipped store, junction and hardlinks; long-path/junction tree) now asserts NotListedAtOrBelow false per entry. The ragged tree is covered in TheScannerRegistersFoldersDepthFirstInListingOrder."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "AStopDuringSizingLeavesEveryFolderListed cancels from the Probe stub during sizing (status Cancelled) and asserts NotListedAtOrBelow false for every entry."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "NotListedBudgetTests.AStoreStoppedAtItsUnlistedPeakFitsTheBudget reads all 4,879,990 entries before `retained` and asserts 60,002 true, the top folders false and under 64 KiB allocated. My run: 0 bytes. The 800/800/1,024 MiB asserts follow."
+   },
+   {
+    "key": "C-014",
+    "exercised": "no",
+    "evidence": "Deferred as material:false: there is no on-disk 100k-entry folder test. The reason still holds against the code. A Stop inside any folder's listing takes FolderDone's Cancelled return (Scanner.cs:380-381) whatever the folder's size, which is the branch big's multi-buffer cut exercises in C-001."
+   }
+  ],
+  "matches_design": true,
+  "drift": [
+   "The criterion-1 non-vacuity floor is written as `listedTrue >= stores - rootsNotListed` (NotListedBelowTests.cs:218, :301). The design says 'the number of listed folders reading true is at least the number of stops that left a root'. That is weaker than the literal wording, but the literal floor cannot be met: a store whose root is NotListed holds no listed folder. Not declared.",
+   "The criterion-3 Fact asserts NotListedAtOrBelow on root, A, S and Pad (ScanStoreRollupTimingTests.cs:170-171) before its timed passes, so the 'first pass cold' that the design and matrix row describe is cold for data but not for the read's JIT. Not declared. Immaterial: the first pass was 58.3 ms against 250 ms.",
+   "KindByteWriteCorpusTests' closed grammar also refuses read spellings it does not know (`is (byte)EntryKind.X`, a read into a local; corpus Q13 and Q14). Any later Store/** edit that adds such a read goes red until the grammar is edited. This is declared in the design doc (:107-108), recorded here so the next Store slice expects it."
+  ],
+  "unreviewed": [
+   ".taad/slices/SL-111/design-slice-1.json, critique-1.json, critique-review-1.json, build-slice-1.json: stage records, not code. Not opened, following the instruction to judge the code independently of other stages' accounts. index.json was only skimmed for caused_by/changed, and shows no loop."
+  ],
+  "second_round": {
+   "run_id": 3810,
+   "filed": 1
+  }
+ }
+}

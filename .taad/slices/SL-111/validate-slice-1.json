@@ -1,0 +1,216 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-111",
+ "stage": "validate-slice",
+ "attempt": 1,
+ "at": "2026-10-13T17:34:51.685Z",
+ "head": "beb67ff42a4f862398535bee85a6bada004b377a",
+ "run_id": 3812,
+ "summary": "SL-111 adds `ScanStore.NotListedAtOrBelow` (ScanStore.cs:142-163). It stores nothing and allocates nothing. It follows each folder's last subfolder down through the NotListed marks. Every acceptance criterion and every planned item was met against the tree, and part of that was against real data.\n\n**Suite and named tests**\n- Full suite: 1088 of 1088 passed.\n- Criterion 3 (5M-entry store, open 100k-child folder): slowest pass 51.0 ms against 250 ms; the answers alone 20.3 ms.\n- Criterion 5: reading every one of 4,879,990 entries allocated 0 bytes. 60,002 entries read true. Retained 637.1 MiB, peak 653.6 MiB against the 800 MiB bound.\n- Fitness: 99 rules hold.\n\n**Order guard on the real Scanner**\n- I changed the shipped Scanner itself (not a replay) from a stack to a queue: `_pending` became a Queue, with Dequeue and forward Enqueue.\n- 6 of the 7 NotListedBelowTests went red, including TheScannerRegistersFoldersDepthFirstInListingOrder and both Stop sweeps. The parallel-replay test stayed green, as expected, because it replays a recorded shape.\n- Scanner.cs was then restored and rebuilt. Reflection confirms `_pending` is a `Stack` again.\n\n**Real data**\n- A harness ran the shipped Scanner with Stops by folder count and by time. Its ground truth is the folders reported by the AfterFolder callback, matched by path and pushed up through Parent. It shares nothing with the marks or the child blocks.\n- Trees: C:\\Program Files\\Common Files, C:\\Windows\\Microsoft.NET, C:\\Windows\\SysWOW64, the worktree's SDK folder, and a real 100,000-entry folder I created in temp and deleted afterwards.\n- 209 runs, 0 differences, 0 mark disagreements, 0 files or links reading true:\n  - 23 Stops landed in sizing and read false everywhere.\n  - Every completed scan read false everywhere.\n  - 12 Stops cut the 100k folder's listing. That folder committed nothing and read true, and so did the root.\n\n**One mistake of mine, disclosed**\n- My first real-folder run accidentally used the Core DLL left over from my queue mutation: `git checkout` restored the source but nothing rebuilt it.\n- That run showed 13 of 31 stopped stores reading false at the root over unlisted folders. So the harness does catch a queue-ordered scanner on real data.\n- After a clean rebuild the same tree gave 0 differences.\n\n**Other checks**\n- The App was published as a single file. eng/read-window.ps1 ended with EXIT 0 and 'Finished'.\n- T-003, WindowMutants and the rules harness were not required: the diff does not touch the App, ChildrenLargestFirst or fitness.yaml.\n- O-014 is verified for everything that can be checked today. The one gap is a future registration in blocks with a SetChildren after each. The tests cannot see that, and it is waived to SC-397 and written into the design doc.\n- Cleanup: no stray files or processes, and the git tree is clean apart from the stage records.",
+ "payload": {
+  "status": "complete",
+  "verdict": "passes",
+  "contact": "real",
+  "summary": "SL-111 adds `ScanStore.NotListedAtOrBelow` (ScanStore.cs:142-163). It stores nothing and allocates nothing. It follows each folder's last subfolder down through the NotListed marks. Every acceptance criterion and every planned item was met against the tree, and part of that was against real data.\n\n**Suite and named tests**\n- Full suite: 1088 of 1088 passed.\n- Criterion 3 (5M-entry store, open 100k-child folder): slowest pass 51.0 ms against 250 ms; the answers alone 20.3 ms.\n- Criterion 5: reading every one of 4,879,990 entries allocated 0 bytes. 60,002 entries read true. Retained 637.1 MiB, peak 653.6 MiB against the 800 MiB bound.\n- Fitness: 99 rules hold.\n\n**Order guard on the real Scanner**\n- I changed the shipped Scanner itself (not a replay) from a stack to a queue: `_pending` became a Queue, with Dequeue and forward Enqueue.\n- 6 of the 7 NotListedBelowTests went red, including TheScannerRegistersFoldersDepthFirstInListingOrder and both Stop sweeps. The parallel-replay test stayed green, as expected, because it replays a recorded shape.\n- Scanner.cs was then restored and rebuilt. Reflection confirms `_pending` is a `Stack` again.\n\n**Real data**\n- A harness ran the shipped Scanner with Stops by folder count and by time. Its ground truth is the folders reported by the AfterFolder callback, matched by path and pushed up through Parent. It shares nothing with the marks or the child blocks.\n- Trees: C:\\Program Files\\Common Files, C:\\Windows\\Microsoft.NET, C:\\Windows\\SysWOW64, the worktree's SDK folder, and a real 100,000-entry folder I created in temp and deleted afterwards.\n- 209 runs, 0 differences, 0 mark disagreements, 0 files or links reading true:\n  - 23 Stops landed in sizing and read false everywhere.\n  - Every completed scan read false everywhere.\n  - 12 Stops cut the 100k folder's listing. That folder committed nothing and read true, and so did the root.\n\n**One mistake of mine, disclosed**\n- My first real-folder run accidentally used the Core DLL left over from my queue mutation: `git checkout` restored the source but nothing rebuilt it.\n- That run showed 13 of 31 stopped stores reading false at the root over unlisted folders. So the harness does catch a queue-ordered scanner on real data.\n- After a clean rebuild the same tree gave 0 differences.\n\n**Other checks**\n- The App was published as a single file. eng/read-window.ps1 ended with EXIT 0 and 'Finished'.\n- T-003, WindowMutants and the rules harness were not required: the diff does not touch the App, ChildrenLargestFirst or fitness.yaml.\n- O-014 is verified for everything that can be checked today. The one gap is a future registration in blocks with a SetChildren after each. The tests cannot see that, and it is waived to SC-397 and written into the design doc.\n- Cleanup: no stray files or processes, and the git tree is clean apart from the stage records.",
+  "checks": [
+   {
+    "what": "Whole suite on the slice tree",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx --logger \"console;verbosity=minimal\"",
+    "outcome": "passed",
+    "evidence": "Passed! Failed 0, Passed 1088, Skipped 0, Total 1088, 33 s (baseline 1023 + 65 new)."
+   },
+   {
+    "what": "Criterion 3/5 timing and memory tests plus all NotListedBelowTests, with their printed figures",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --no-build --filter \"FullyQualifiedName~NotListedBudgetTests|FullyQualifiedName~ScanStoreRollupTimingTests|FullyQualifiedName~NotListedBelowTests\" --logger \"console;verbosity=detailed\"",
+    "outcome": "passed",
+    "evidence": "10 passed. 5M-store Fact (Debug): 10 passes of sort + every row's answer 40.19-51.00 ms (first cold 41.87), answers alone 17.35-20.28 ms, budget 250. Stopped-peak store: 4,879,990 entries, 60,000 marked, subtree read of every entry 105.7 ms, 0 bytes allocated, 60,002 true, retained 637.1 MiB, sampled peak 653.6 MiB vs 800, test-host commit 697.8 MiB at the stop vs 1,024."
+   },
+   {
+    "what": "Architecture rules",
+    "command": "Fitness op=check",
+    "outcome": "passed",
+    "evidence": "99 rules checked over 179 parsed files; every declared rule holds. One rule matches no files (SL-089 c-drive-run.json). That predates this slice, which changed no fitness.yaml."
+   },
+   {
+    "what": "Criterion 2 guard on the real Scanner: change the shipped stack to a queue (Stack->Queue, Pop->Dequeue, push loop forward with Enqueue in Scanner.cs:168/210/399-403), run NotListedBelowTests, then restore",
+    "command": "edit src/FsAnalyser.Core/Scanning/Scanner.cs; eng/dotnet.ps1 test ... --filter FullyQualifiedName~NotListedBelowTests; git checkout -- src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "outcome": "passed",
+    "evidence": "6 of 7 went red. Red: both SweepTree sweeps, both RaggedTree sweeps ('Collections differ' on listing order), TheScannerRegistersFoldersDepthFirstInListingOrder, and AQueueOrdered...(AssertSameStore control at :437). Green: AParallelOrderedStore..., as expected, since it replays a recorded shape. Restored; git status shows only .taad files; Core rebuilt, and reflection shows _pending is Stack`1."
+   },
+   {
+    "what": "Incidental: the marks-independent real-data harness detects a queue-ordered scanner (my first run accidentally used the queue-mutated Core DLL left in bin\\Debug, because git checkout restored the source but did not rebuild it)",
+    "command": "harness (temp console, AssemblyName FsAnalyser.Core.Tests for the internals grant) on 'C:\\Program Files\\Common Files', 20 count-Stops + 10 time-Stops, seed 1111, against the stale mutated FsAnalyser.Core.dll",
+    "outcome": "passed",
+    "evidence": "The store showed level-order registration (root children's blocks at 10, 12, 13, 14, 15, 25, 27, 34 before any grandchild). 13 of 31 stopped stores had the root read False with truth True (badTotal 19), markDiffs 0. This run was discarded as a judgement of the slice; it only shows the harness has teeth on real data."
+   },
+   {
+    "what": "Criterion 1/4/12 on real data: shipped Scanner (clean rebuild) stopped at random folder counts and random times on C:\\Program Files\\Common Files; every entry's answer is compared with ground truth from the AfterFolder listing record, pushed up through Parent",
+    "command": "dotnet bin2\\FsAnalyser.Core.Tests.dll 'C:\\Program Files\\Common Files' 20 10 1111",
+    "outcome": "passed",
+    "evidence": "32 runs (778 entries, 189 folders when complete), badTotal=0: DIFFS 0, markDiffs 0, unmatched listed paths 0, nonFolderTrue 0. Baseline and END Completed with 0 true rows."
+   },
+   {
+    "what": "Same harness on three larger real trees",
+    "command": "dotnet bin2\\FsAnalyser.Core.Tests.dll <root> 30 15 <random seed> for C:\\Windows\\Microsoft.NET, <worktree>\\.dotnet, C:\\Windows\\SysWOW64",
+    "outcome": "passed",
+    "evidence": "47 runs each, badTotal=0 for all three. Microsoft.NET (2,778 entries, 976 folders): 37 stopped in listing (6-384 folders unlisted), 10 completed, 127 listed folders read true. SDK folder (6,393 entries, 815 folders): 36 in listing, 4 in sizing, 7 completed, 194 listed-true. SysWOW64 (5,731 entries, 414 folders): 32 in listing, 8 in sizing, 7 completed, 102 listed-true. Every sizing-phase Stop and every completed scan read false everywhere."
+   },
+   {
+    "what": "Design case 14: Stop inside the listing of a real on-disk 100,000-entry folder (root with a1\\a11\\a111, a2, big = 100,000 empty files, z1\\z11, z2), created in my temp folder and deleted after",
+    "command": "dotnet bin2\\FsAnalyser.Core.Tests.dll <temp>\\big100k-tree 4 30 4242",
+    "outcome": "passed",
+    "evidence": "36 runs, badTotal=0. Fixture made in 26 s. Baseline Completed: 100,011 entries, listing 96 ms. 12 stores were cut in big's listing: entries=9, big committed nothing and reads true, as do z1, z2 and the root. 10 stores were stopped after big committed (100,009 entries; big's 100,000-entry block crosses the 65,536 page boundary and its backward scan read false correctly). 10 stores were stopped in sizing (0 true). Fixture removed; free-space change -3 MB."
+   },
+   {
+    "what": "Derived criterion: the design records the depth-first dependency and the Kind-bit masking sites",
+    "command": "Read docs/design/SL-111-not-listed-below.md:48-80",
+    "outcome": "passed",
+    "evidence": ":48 'It holds only while the traversal stays depth-first'. :55-62 say what a registration-changing slice owes. :66-71 list the masking sites: Kind(), Charges, CheckParent, RolledSize, FilesBelow, ChildrenLargestFirst, OnDiskAtOrBelow, NotListedAtOrBelow, plus the write in Append."
+   },
+   {
+    "what": "Single-file publish and a real window run of the published exe",
+    "command": "eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o artifacts/publish; eng/read-window.ps1 -Root <worktree>\\tests\\FsAnalyser.Core.Tests",
+    "outcome": "passed",
+    "evidence": "Exe is 139,956,376 bytes. EXIT 0, schema 1, OutcomeTitle 'Finished: ...', 200 files and 22 folders. 0 FsAnalyser.App processes left. The App has no consumer of the new read, so this only shows the changed Core still ships and scans."
+   },
+   {
+    "what": "Validate-time checks that the project's decisions require for certain diffs: Q-128 (T-003, for FolderTreeNode, MainWindow tree or ChildrenLargestFirst), Q-114 (WindowMutants -Mutant All, for App or TopLevel*/window diffs), Q-027 (rules harness, for fitness.yaml or ArchitectureRulesTests changes)",
+    "command": "git diff --stat 1e45edc06 HEAD",
+    "outcome": "not-run",
+    "evidence": "None was triggered. The diff touches only ScanStore.cs (a new method beside NotListed; Rollup.cs and ChildrenLargestFirst untouched), tests, the corpus and the design doc. No App, TopLevel*, window-test or .taad/fitness.yaml file changed."
+   },
+   {
+    "what": "Criterion 3 timing in a Release build",
+    "outcome": "not-run",
+    "evidence": "The shipped Fact runs in the suite's Debug build (51.0 ms vs 250). Spike 121 exp 2 measured Release at 29 ms on the same shape; I did not re-run it in Release."
+   },
+   {
+    "what": "A literally parallel or paused scanner fed through the guard",
+    "outcome": "not-run",
+    "evidence": "No parallel lister or pause exists in src to mutate. 'Made parallel' is modelled only by the two-at-a-time and first-first replays (AParallelOrderedStoreBreaksTheAnswerAndTheGuardSeesIt passed). Code review's first-first mutation of the real FolderDone went red."
+   },
+   {
+    "what": "Cleanup after the real runs",
+    "command": "[IO.Directory]::Delete(<temp>\\fsa-sl111-validate); git status --short; Get-Process FsAnalyser.App",
+    "outcome": "passed",
+    "evidence": "Harness folder and 100k fixture removed. git status shows only the .taad/slices/SL-111 records (as at start). Scanner.cs restored with no diff. 0 App processes."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "1. Stop before or during a call inside a folder whose listing spans several buffers (SweepTree's 2,000-file big): the cut folder committed nothing",
+    "met": "yes",
+    "how": "CancelAtAnyCallOfTheSweepTreeAnswersAsAWalk (before and during) passed; it asserts at least bigBuffers stops inside big, with big and the root reading true. On real data, 12 stores cut a real 100,000-entry folder's listing with 0 differences."
+   },
+   {
+    "criterion": "2. Stop inside the root's own handling after its directory check: Count 1, the root reads NotListed; Stops in calls 1-2 leave Count 0",
+    "met": "yes",
+    "how": "The same sweep asserts exactly 2 empty stores and at least 4 NotListed roots, each reading true. It passed."
+   },
+   {
+    "criterion": "3. An unlisted folder 4 or more levels down, under a chain of listed last subfolders (c > c2 > c21 > c211 > c2111)",
+    "met": "yes",
+    "how": "CancelAtAnyCallOfTheRaggedTreeAnswersAsAWalk passed with deepChain >= 1; c, c2, c21 and c211 each read true there."
+   },
+   {
+    "criterion": "4. A folder whose first subfolder is deep and whose last is empty (a: a1\\a11\\a111, a2), stopped before and after a2 is listed",
+    "met": "yes",
+    "how": "The ragged sweep passed: aBeforeA2 >= 1 (a reads true) and aAfterA2 >= 1 (a reads false), with a listed folder reading false under a true root."
+   },
+   {
+    "criterion": "5. A block whose entries after the last subfolder are files and a junction",
+    "met": "yes",
+    "how": "The ragged sweep passed with junctions >= 1. Every Link and file read false (AssertAnswersAsAWalk). The real trees were also clean: 0 non-folders read true in 209 runs."
+   },
+   {
+    "criterion": "6. A listed folder with no children of its kind: empty, denied (Unreadable), the skipped container store (NotScanned) as m's only subfolder; also files and links",
+    "met": "yes",
+    "how": "The sweep-tree sweep passed. It stops through NotListedTests.StopAt so m\\Layers is planted, and asserts layersSkipped >= 1 with Layers and m reading false."
+   },
+   {
+    "criterion": "7. Pin the shipped traversal: completed real scans of RaggedTree and SweepTree, listing order and block order",
+    "met": "yes",
+    "how": "TheScannerRegistersFoldersDepthFirstInListingOrder passed at HEAD. It went red when I made the real Scanner's stack a queue."
+   },
+   {
+    "criterion": "8. The guard fires when the traversal becomes a queue (replay), with a last-first control",
+    "met": "yes",
+    "how": "AQueueOrderedStoreBreaksTheAnswerAndTheGuardSeesIt passed: the control equals the scanned store with 0 differing states, and the queue replay differs and fires the pin. Making the real Scanner a queue also turned 6 of 7 tests red."
+   },
+   {
+    "criterion": "9. The guard fires when the traversal is made parallel (two-at-a-time replay, first-first push)",
+    "met": "yes",
+    "how": "AParallelOrderedStoreBreaksTheAnswerAndTheGuardSeesIt passed: both replays differ and fire the pin. This is a model; no parallel scanner exists to test."
+   },
+   {
+    "criterion": "10. Answer every row of an open 100k-child folder within the open budget (5M-entry store stopped late, 48-deep chains, last chain half listed, largest first, first pass cold)",
+    "met": "yes",
+    "how": "The ScanStoreRollupTimingTests Fact passed in Debug: slowest of 10 passes was 51.00 ms (sort + answers) against 250 ms, answers alone 20.28 ms, 1 true row per pass."
+   },
+   {
+    "criterion": "11. Report nothing unlisted after a scan that ran to the end",
+    "met": "yes",
+    "how": "ACompletedScanLeavesNothingNotListed and the pin test passed. Every completed real scan (Common Files, Microsoft.NET, SDK folder, SysWOW64, 100k tree) had 0 true rows."
+   },
+   {
+    "criterion": "12. Report nothing unlisted after a Stop that landed in sizing",
+    "met": "yes",
+    "how": "AStopDuringSizingLeavesEveryFolderListed passed. 23 real Stops landed in sizing (1 Common Files, 4 SDK folder, 8 SysWOW64, 10 100k tree), all Cancelled with 0 true rows."
+   },
+   {
+    "criterion": "13. Answer without per-entry storage at U-201's 5M stopped peak",
+    "met": "yes",
+    "how": "NotListedBudgetTests passed: 0 bytes allocated over 4,879,990 reads, 60,002 true, retained 637.1 MiB, peak 653.6 MiB against 800 MiB."
+   },
+   {
+    "criterion": "14. Stop inside the listing of a real on-disk 100,000-entry folder",
+    "met": "yes",
+    "how": "Run by this stage, not by a shipped test (build left the fixture out as C-014). On a real 100,000-file folder in temp, 30 time-based Stops gave 12 stores with the folder cut part-way (it committed nothing; it, z1, z2 and the root read true) and 10 stopped after it. 0 differences against the listing-record truth. CancelAfter's ~15 ms timer means a cut just before the folder's first call is not told apart from one inside it; the timing (folder reached in a few ms, listing ~60 of 96 ms) puts these inside."
+   }
+  ],
+  "planned": [
+   {
+    "ordinal": 1,
+    "met": "yes",
+    "evidence": "Shipped sweeps over every guarded call, before and during, on SweepTree and RaggedTree all passed. On top of that, 209 real-data runs of the shipped Scanner on 5 real trees, stopped at random folder counts and times, gave 0 differences. Their ground truth came from the AfterFolder listing record, independent of the marks."
+   },
+   {
+    "ordinal": 2,
+    "met": "yes",
+    "evidence": "The queue and parallel replay guards passed. Changing the real Scanner from a stack to a queue turned 6 of 7 NotListedBelowTests red. Code review's first-first mutation of the real FolderDone also went red. 'Made parallel' is modelled by replays only; no parallel scanner exists."
+   },
+   {
+    "ordinal": 3,
+    "met": "yes",
+    "evidence": "5M-entry store stopped late with a 100k-child folder: slowest pass 51.00 ms (answers alone 20.28 ms) against the 250 ms share of the 0.5 s open budget, Debug build."
+   },
+   {
+    "ordinal": 4,
+    "met": "yes",
+    "evidence": "The completed-scan tests passed, and every completed real scan on 5 real trees read false for every entry."
+   },
+   {
+    "ordinal": 5,
+    "met": "yes",
+    "evidence": "The read stores nothing (ScanStore.cs diff adds one method, no column). At U-201's stopped peak (4,879,990 entries) it allocated 0 bytes; retained 637.1 MiB and sampled peak 653.6 MiB against 800 MiB."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-014",
+    "verified": "yes",
+    "evidence": "At HEAD the precondition holds, checked by reading and by measurement:\n- Scanner.cs:168 is a Stack, :210 pops, and :399-406 push subfolders last-first.\n- :383-387 appends each folder's children as one block and calls SetChildren once; a cancelled read commits nothing (:380-381).\n- Real scans of 5 real trees registered in that order, with 0 differences in 209 runs.\n\nChanges to the order are caught:\n- Making the real Scanner a queue turned 6 of 7 guard tests red.\n- Code review's first-first mutation also went red.\n\nNot caught by any test: a future registration made block by block, with a SetChildren per block. The walk oracle reads the same marks, so it agrees with the wrong answer. That case is waived to SC-397 and written into docs/design/SL-111-not-listed-below.md:55-62 as a duty on any slice that changes registration."
+   }
+  ],
+  "not_reached": [
+   "A whole-drive or multi-million-entry real scan with Stops. The 5M figures (criteria 3 and 5) are synthetic stores; the largest real store here was 100,011 entries.",
+   "A reader on another thread while the scanner appends. That is outside the read's contract and was not exercised.",
+   "A real parallel, read-ahead or pause/resume scanner. None exists, so criterion 2's 'made parallel' rests on replays.",
+   "A registration made block by block (a SetChildren per flush block) inside a folder larger than one block. The tests would not catch it (O-020, waived to SC-397).",
+   "A block straddling a page boundary where a wrong page would change the answer. It is not deterministically tested (SC-395). The 100k real folder's block does cross the boundary and read correctly, but only for a folder with no subfolders.",
+   "Windows 10, ReFS/FAT, SMB shares and cloud-placeholder folders. Everything ran on local NTFS, Windows 11 26200.",
+   "Any App consumer of the read. Nothing in src calls NotListedAtOrBelow yet, so no person has seen the answer on screen.",
+   "Criterion 3 timing in a Release build (only Debug was run here; spike 121 measured Release at 29 ms)."
+  ]
+ }
+}
