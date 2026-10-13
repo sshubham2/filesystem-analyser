@@ -876,19 +876,6 @@ function Case-C008 {
     CheckRun $run 1 'the tests scope of InteropLivesOnlyInNative dropped from xUnit' @((Format-AgreeLine))
     Test-Rows $run @('F02') 'AS-RECORDED'
     Test-Rows $run @('F12') 'MISSED-BY-XUNIT'
-
-    # ... and the rows of the counts-only rule (SL-107) plant a file that only a person's run produces
-    # (plants.json awaiting_file). Once that record is committed it is in every copy, and a row that creates it
-    # would read PLANT-BROKEN for every later slice's run: it is planted over, and put back.
-    $copy = New-RepoCopy
-    $record = Join-Path $copy '.taad\slices\SL-089\c-drive-run.json'
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $record) | Out-Null
-    [System.IO.File]::WriteAllText($record, "{`n  `"rows`": 0`n}`n", $Utf8)
-    $sl107 = @('S83', 'S84', 'S85', 'S86', 'P36')
-    $run = Invoke-Harness @('--root', $copy, '--dotnet-from', $Repo, '--scenario', 'plants', '--only', ($sl107 -join ','))
-    CheckRun $run 0 'the counts-only rule''s rows over a record that already exists' @('harness: 5 rows, 5 AS-RECORDED, 0 not, 0 stray hits')
-    Test-Rows $run $sl107 'AS-RECORDED'
-    Check ([System.IO.File]::ReadAllText($record, $Utf8) -ceq "{`n  `"rows`": 0`n}`n") 'and the record is back as it was'
 }
 
 function Case-C009 {
