@@ -1309,3 +1309,39 @@ rules:
       tests/bugs/SL-107-RecordPathRuleCorpus.json, run by tests/bugs/SL-107-RecordPathRule.Tests.ps1.
       The rule matches no file until the person commits the record, which Fitness takes as a
       pass (Q-012); eng/rules-harness/plants.json lists it under awaiting_file for that reason.
+
+  # settled by SL-109
+  - name: no code outside the store spells the not-listed bit as an entry flag
+    files: src/**/*.cs
+    must_not_match:
+    - '\(\s*(?:global::)?(?:[A-Za-z_]\w*\s*\.\s*)*EntryFlags\s*\)\s*(?:\(\s*(?:byte|sbyte|short|ushort|int|uint|long|ulong)\s*\)\s*|\(\s*)*(?<![\w.])(?:0[xX][0_]*8_*0|0*1_*2_*8|0[bB][0_]*1(?:_*0){7}|(?:0[xX][0_]*1|0[bB][0_]*1|0*1)[uUlL]{0,2}\s*<<\s*7)[uUlL]{0,2}(?![\w.])'
+    - '\bEnum\s*\.\s*ToObject\s*\(\s*typeof\s*\(\s*(?:global::)?(?:[A-Za-z_]\w*\s*\.\s*)*EntryFlags\s*\)\s*,\s*(?:\(\s*(?:byte|sbyte|short|ushort|int|uint|long|ulong)\s*\)\s*|\(\s*)*(?<![\w.])(?:0[xX][0_]*8_*0|0*1_*2_*8|0[bB][0_]*1(?:_*0){7}|(?:0[xX][0_]*1|0[bB][0_]*1|0*1)[uUlL]{0,2}\s*<<\s*7)[uUlL]{0,2}(?![\w.])'
+    - '(?<!&)&=?(?!&)\s*(?:\(\s*(?:byte|sbyte|short|ushort|int|uint|long|ulong)\s*\)\s*|\(\s*)*(?<![\w.])(?:0[xX][0_]*8_*0|0*1_*2_*8|0[bB][0_]*1(?:_*0){7}|(?:0[xX][0_]*1|0[bB][0_]*1|0*1)[uUlL]{0,2}\s*<<\s*7)[uUlL]{0,2}(?![\w.])'
+    - '(?<![\w.])(?:0[xX][0_]*8_*0|0*1_*2_*8|0[bB][0_]*1(?:_*0){7}|(?:0[xX][0_]*1|0[bB][0_]*1|0*1)[uUlL]{0,2}\s*<<\s*7)[uUlL]{0,2}(?![\w.])\s*\)*\s*(?<!&)&(?!&)'
+    because: 'ScanStore.Flags() masks bit 0x80 off, and Append and AddFlags refuse it. Outside the store, a test of that
+      bit against Flags() compiles and is always false, so it silently reads every never-listed
+      folder as listed. Passing the bit to a store write throws mid-scan. The one read of the
+      mark is ScanStore.NotListed. The patterns name the spellings a later view reaches for by
+      accident, closed as a class in tests/bugs/SL-109-NotListedBitRuleCorpus.json, whose test
+      reads these patterns from this entry: a cast of the bit to EntryFlags, written as a hex,
+      decimal or binary literal in any case, with a suffix, digit separators, leading zeros, a
+      shift of 1 by 7, an inner numeric cast or parentheses, and a qualified or global:: type
+      name; Enum.ToObject of it; and a mask with the bit, the literal on either side of & or &=,
+      which is how the bit is tested through a numeric cast of Flags(). They are a tripwire for
+      the bit, not for one call: any & with a literal 128 anywhere in src outside the store
+      fires, and a real second use moves out of the store file or into except_files. Known gaps,
+      held by review and kept as residual rows in the corpus: a magnitude test of the flags byte
+      (>= 128, a sign test), a 128 computed rather than written, a name that holds the value
+      (const byte HighBit = 0x80), Enum.Parse of the text 128, and a mask written across
+      two statements through a local.'
+    except_files:
+    - src/FsAnalyser.Core/Store/ScanStore.cs
+  - name: EntryFlags names no member at the store's reserved bit
+    files: src/FsAnalyser.Core/Store/EntryKind.cs
+    must_not_match:
+    - (?m)^\s*\w+\s*=\s*(128|0x80|1\s*<<\s*7)\s*,?\s*$
+    because: Bit 0x80 of the flags byte is the not-listed mark. Flags() strips it from every
+      read and Append and AddFlags refuse it on every write. A member named at that value would
+      vanish from every read and throw on every write, and enumerating EntryFlags would start
+      listing the mark, which criterion 5 forbids. The next flag needs a new byte column or
+      Kind's free bits (U-201).

@@ -23,6 +23,10 @@ namespace FsAnalyser.Core.Store;
 /// into each folder's <see cref="RolledSize"/>, <see cref="RolledOnDisk"/> and <see cref="FilesBelow"/>.
 /// Those are exact between appends: on the writing thread, and once the scan has ended or was
 /// cancelled. Reading them from another thread while appends go on is not part of this contract.</para>
+/// <para>A folder is appended not listed and stays so until <see cref="SetChildren"/> registers its children, which is
+/// how a store a scan stopped in tells a folder it never listed from one it listed and found empty
+/// (<see cref="NotListed"/>). The mark lives in a bit the flags byte had free, so it costs no storage, and it is exact on
+/// the same terms as the rolled totals: between appends on the writing thread and once the scan has returned.</para>
 /// </remarks>
 public sealed partial class ScanStore
 {
@@ -35,6 +39,11 @@ public sealed partial class ScanStore
     internal const int NamePageChars = 1 << NamePageShift;
     private const int NamePageMask = NamePageChars - 1;
     private const int MaxNamePages = int.MaxValue / NamePageChars + 1;
+
+    // Bit 7 of the per-entry flags byte, the one bit EntryFlags leaves free (EntryKind.cs): set on a folder by its append,
+    // cleared by SetChildren, hidden from Flags(). It costs no column.
+    private const byte NotListedBit = 0x80;
+    private const byte ListedMask = 0x7F;
 
     // The page directories are allocated at full size up front (256 KiB and 16 KiB of references), so
     // they never resize either.
@@ -86,7 +95,27 @@ public sealed partial class ScanStore
 
     public EntryKind Kind(int index) => (EntryKind)At(index, out int i).Kind[i];
 
-    public EntryFlags Flags(int index) => (EntryFlags)At(index, out int i).Flags[i];
+    /// <summary>
+    /// The entry's flags, without the store's own not-listed mark (bit 0x80): that is never an
+    /// <see cref="EntryFlags"/> member and never shows here, so every comparison and test of these flags sees the
+    /// values it always has. Read the mark through <see cref="NotListed"/>.
+    /// </summary>
+    public EntryFlags Flags(int index) => (EntryFlags)(At(index, out int i).Flags[i] & ~NotListedBit);
+
+    /// <summary>
+    /// Whether this folder was appended and its children were never registered: still queued when the scan
+    /// stopped, cut by Stop part-way through its listing (which commits nothing), the root when the scan stopped or
+    /// failed in the root's own handling after its directory check, or, by construction, a folder a reader listed
+    /// ahead without writing. False for a folder whose listing committed, empty or not, an Unreadable folder and the
+    /// NotScanned container store included (their children are registered, with none), for every file and link, and
+    /// for every entry once a scan has run to the end.
+    /// </summary>
+    /// <remarks>
+    /// Exact between appends on the writing thread and after the scan has returned, the same contract as the rolled
+    /// totals; a read from another thread while appends go on is not part of it. Only <see cref="Append(int, ReadOnlySpan{char}, EntryKind, EntryFlags, uint, long, long, UInt128, out int, out Posted)"/>
+    /// sets the mark, on a folder, and only <see cref="SetChildren"/> clears it.
+    /// </remarks>
+    public bool NotListed(int index) => (At(index, out int i).Flags[i] & NotListedBit) != 0;
 
     /// <summary>The Win32 attributes as listed, including bits <see cref="FileAttributes"/> does not name.</summary>
     public FileAttributes Attributes(int index) => (FileAttributes)At(index, out int i).Attributes[i];
@@ -215,6 +244,9 @@ public sealed partial class ScanStore
         int index = _count;
         if (index == int.MaxValue)
             throw new InvalidOperationException("The scan store is full.");
+        // Before anything is written: the mark is the store's, set below for a folder and by nobody else.
+        if (((byte)flags & NotListedBit) != 0)
+            throw new ArgumentException("Bit 0x80 of the flags is the store's not-listed mark: an append sets it on a folder itself.", nameof(flags));
         CheckParent(parent, index);
 
         int pageIndex = index >> PageShift;
@@ -225,7 +257,8 @@ public sealed partial class ScanStore
         page.NameOffset[i] = StoreName(name);
         page.NameLength[i] = (ushort)name.Length;
         page.Kind[i] = (byte)kind;
-        page.Flags[i] = (byte)(flags & ~EntryFlags.HardlinkDuplicate);
+        // A folder is born not listed. The byte is written before the count is published, so no reader sees a folder without it.
+        page.Flags[i] = (byte)((byte)(flags & ~EntryFlags.HardlinkDuplicate) | (kind == EntryKind.Folder ? NotListedBit : 0));
         page.Attributes[i] = attributes;
         page.Size[i] = size;
         page.OnDisk[i] = onDisk;
@@ -251,14 +284,19 @@ public sealed partial class ScanStore
         return index;
     }
 
+    /// <summary>
+    /// Registers a folder's children: the whole of them, in one call, once they are all appended. Clears the
+    /// folder's not-listed mark, for any count including 0, and nothing else does (<see cref="NotListed"/>).
+    /// </summary>
     internal void SetChildren(int folder, int firstChild, int childCount)
     {
         Page page = At(folder, out int i);
         page.FirstChild[i] = childCount == 0 ? -1 : firstChild;
         page.ChildCount[i] = childCount;
+        page.Flags[i] &= ListedMask;
     }
 
-    /// <summary>Adds flags other than HardlinkDuplicate, which only an append sets.</summary>
+    /// <summary>Adds flags other than HardlinkDuplicate, which only an append sets, and the not-listed mark, which only an append sets and only SetChildren clears.</summary>
     internal void AddFlags(int index, EntryFlags flags)
     {
         if ((flags & EntryFlags.HardlinkDuplicate) != 0)
@@ -266,6 +304,8 @@ public sealed partial class ScanStore
             throw new ArgumentException("Only an append flags a hardlink duplicate: the flag changes what the entry charges, " +
                 "and its charge is already in every folder above it.", nameof(flags));
         }
+        if (((byte)flags & NotListedBit) != 0)
+            throw new ArgumentException("Bit 0x80 of the flags is the store's not-listed mark: only an append sets it and only SetChildren clears it.", nameof(flags));
         Page page = At(index, out int i);
         page.Flags[i] |= (byte)flags;
     }

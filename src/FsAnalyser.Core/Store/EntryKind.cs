@@ -23,6 +23,12 @@ public enum EntryKind : byte
 }
 
 /// <summary>What the scan learned about an entry beyond its kind.</summary>
+/// <remarks>
+/// Bit 0x80 of the flags byte belongs to the store: it is the not-listed mark on a folder whose children were never
+/// registered. It is not a member of this enum and <see cref="ScanStore.Flags"/> never returns it, so no comparison,
+/// mask or enumeration of these flags can meet it; read it through <see cref="ScanStore.NotListed"/>. It is the last free
+/// bit in the byte: the next flag needs a column of its own, or Kind's free bits with every raw Kind test masked (U-201).
+/// </remarks>
 [Flags]
 public enum EntryFlags : byte
 {
