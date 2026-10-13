@@ -30,7 +30,10 @@ namespace FsAnalyser.Core.Scanning;
 /// <see cref="SynchronousIoCancel"/>, and is otherwise checked once per folder. An interrupted call is
 /// reported as ERROR_OPERATION_ABORTED (995). Under a requested cancel 995 is cancellation, never an
 /// unreadable folder, and the folder it hit commits nothing: it stays as the scan left every folder it
-/// never reached. With no cancel requested, 995 is an unreadable folder like any other error.</para>
+/// never reached, and so does the root when the stop lands in its own handling. Both read
+/// <see cref="ScanStore.NotListed"/>, as does every folder still queued: only registering a folder's children
+/// clears that, so a stopped store can tell a folder it never listed from one it listed and found empty. With no
+/// cancel requested, 995 is an unreadable folder like any other error.</para>
 /// <para>For a scan of a whole drive, the volume's used space is read as the scan starts, on a thread of
 /// its own (<see cref="VolumeSpace"/>), and lands in <see cref="ScanStore.VolumeUsed"/>. The scan never waits
 /// for it: it ends, completed or cancelled, whether or not the volume has answered.</para>
@@ -232,7 +235,8 @@ public static class Scanner
         }
 
         // Opens the root, checks it is a folder, decides from its volume whether folders' last-access times are
-        // kept, and picks the listing class from its first call. Returns the root's entry, or -1 with the error
+        // kept, and picks the listing class from its first call. The root enters the store once it is known to be a
+        // folder (not listed yet); rootEntry is its entry when there is a listing to commit, or -1 with the error
         // when the root cannot be read at all.
         private int ListRoot(out int rootEntry)
         {
@@ -249,6 +253,12 @@ public static class Scanner
                 // Checked before the class is picked: error 87 must only ever mean "class unsupported".
                 if ((attributes & Kernel32.FILE_ATTRIBUTE_DIRECTORY) == 0)
                     return Kernel32.ERROR_DIRECTORY;
+
+                // From here the root is a folder the store knows, reading not listed until FolderDone registers its children:
+                // a Stop in any call below, or a listing that fails with nothing kept, leaves a root that says it was never
+                // listed instead of a store with no root at all. Earlier ends (the open, the attributes, a file picked as the
+                // root) still leave the store empty, because until the attributes answer nothing is known to be a folder.
+                int root = _store.AppendRoot(display, attributes);
 
                 error = DecideLastAccess(handle!);
                 if (error != 0)
@@ -276,7 +286,7 @@ public static class Scanner
                 if (error != 0 && _reader.Count == 0)
                     return error;
 
-                rootEntry = _store.AppendRoot(display, attributes);
+                rootEntry = root;
                 return error;
             }
             finally

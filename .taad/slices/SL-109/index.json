@@ -1,0 +1,388 @@
+{
+ "schema": "slice-record@1",
+ "slice": "SL-109",
+ "title": "Scan store marks every folder it has not listed yet, so a stopped store can tell unread from empty",
+ "status": "active",
+ "branch": "slice/SL-109",
+ "opened_at": "2026-10-13T03:57:54.310Z",
+ "merge_commit": null,
+ "how_to_read": "Each attempt is one line and a `details` filename in this same directory. Open a detail file ONLY when this index points you at one -- the summaries are here so you do not have to. `caused_by` is what sent the stage back; `changed` is what the attempt then touched, counted by kind. Several attempts in a row that were caused by the same stage and changed no `src` is a loop, not progress.",
+ "open": [
+  {
+   "stage": "build-check",
+   "issue": "1. In a stopped store, every folder whose children were never registered reports 'not listed' (queued, listed-ahead-but-unwritten, cut part-way): missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "2. A folder listed and found empty reports 'listed', in stopped and completed stores alike: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "3. Only appending a folder sets the mark; only registering its children clears it; every other flag-setting/clearing path refuses it: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "4. Every folder-dependent store figure reads a marked folder as a folder (rolled size, on-disk at or below, files below, children largest first, parent checks); a recount of a stopped store finds 0 differences: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "5. Code comparing flags for equality or listing every flag ignores the mark; in a stopped store, unreadable, left-out and hardlink-charged entries classify exactly as without it: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "6. A scan run to the end leaves the mark clear on every entry; existing store, counting-rule and last-access tests pass with no edits: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "7. The mark adds no per-entry storage; a 5M-entry store stopped at its unlisted peak stays within 800 MiB, and the app within 1 GiB: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "D1 (derived from 1-2: 'reports not listed / listed'). The store exposes a read that reports a folder as listed or not listed: missing"
+  },
+  {
+   "stage": "risk-spike",
+   "issue": "stop-marks-match-disk-and-suite-stays-green: needs first: Scanner.ListRoot must append the root entry, marked NotListed, before its first _reader.List call, so a Stop anywhere in the root's listing leaves a root that reads not-listed. In scratch this made all 20 root-listing Stops leave a root and the 964 tests still passed."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Rules or none: the proposal declined any fitness rule, to stay out of rules-harness and RuleCases cost (lessons #472, #212). The composer added two settled text rules, because the bit-test-outside-the-store defect is silent. Reverting them costs nothing but the guard."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Refuse vs strip: Append could strip a caller's 0x80 silently, as it does HardlinkDuplicate, instead of throwing. The design throws because criterion 3 says the other paths 'refuse' it. Either choice is a one-line change."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Root boundary: 'append after the directory check', which covers calls 3-5, vs the spike's validated 'append before the first List call'. The design takes the earlier point. The sweep test settles whether it holds."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Naming: NotListed(int) reports the negative state, where IsListed(int) would report the positive. The negative was chosen so the default for a never-touched folder reads true. Nobody else has weighed in."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "No App view of NotListed (a 'not read yet' note): the design builds only the store's read (D1)."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "No SubtreeUnfinished marker, as designed (U-204 impossible as stated)."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "The real App's commit at a stopped 5M-entry store: see deviations and follow_ups."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "The RootUnreadable one-entry result (a root whose first List call fails with a non-cancel error and keeps nothing) has no Fact: finding m7 was waived to SC-370. The behaviour is in the code and stated in the design record."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "The block-wise-writer invariant (finding m4) is stated in SetChildren's doc comment and docs/design/SL-109-not-listed.md only; the waiver carried any further work to SC-368."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "Cancel on a stalled share and Network=SMB-LOOPBACK were not re-run (a person's run; the TEST-NET-1 guard is red at baseline, Q-259). The record says so and makes no stop-safety claim on shares."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "No read-ahead reader and no test for 'listed ahead but not yet written': no code path produces the shape (material: false in the design)."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "Measure the published WPF app's own commit with a stopped 5M-entry store at its unlisted peak: needs a FsaWindowHook mode that feeds a synthetic store to the real window (gated by Q-114's WindowMutants run). Until then criterion 7's app half is a composed bound of about 755 MiB, or the brief's wording has to change."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "A 'not read yet' view that consumes ScanStore.NotListed in the stopped or paused results (U-182's last condition): unlisted folders still show '0 bytes' with no note."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "If a view needs it, a 'subtree not finished' marker derived from NotListed plus the depth-first order (not done here; needs Kind masking if stored)."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "Person-run network pass (Network=SMB-LOOPBACK, Cancel on a stalled share) is stale again because Scanner.cs changed."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "The next flag needs a new byte column or Kind bits: bit 0x80 of Flags is now the last free one."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "Findings m4, m6 and m7 are on the backlog as SC-368, SC-369 and SC-370."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: PLAN-7 / critique finding M1 (accepted-fixed): the disposition says the design adds a case that records the real App process's private commit at the 5M unlisted-peak shape, driven through FsaWindowHook (stop) and the schema-1 report path, and withdraws the filed-for-later item. The design handed to me still has that item filed for later and a Core-test-host measurement, and the disposition's own assumption (the hook can bring the app to that state without a person and without an impractical tree) does not hold: Core keeps the store private to Scanner.Run, a 5M-entry stopped store in the real window needs a new hook mode feeding a synthetic store (tests/window/FsaWindowHook/**, StartupHook.cs, WindowCases.ps1 parity, gated by Q-114 and lesson #472), or a real tree of about 4.9M entries on disk. I built the earlier version: the Core Fact labelled 'test-host commit', plus a composition with the published window's idle commit (64.9 MiB, measured). Recording it under the app's name would be wrong. The M1 text says that if the assumption is wrong, criterion 7's app half has to be reworded at the brief level; that is not a builder's call."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: Rule 1 (fitness.yaml) was widened from one pattern to four and given a corpus (O-015). The design had accepted the narrow pattern; the obligation, decided later, requires the class closed. Rule 2 is left as appended (finding m2 was overridden)."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: The sweep tree includes a junction (design's list had none) so that 'no file or link reads NotListed' is exercised on a stopped store; completed-scan coverage of a junction and a long path is a second tree, as designed."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: The memory Fact's generator caps listings at 12 deep and lists folders empty at the cap and once the entries-before-W budget is spent, so the stack drains and W is listed last; the shape is 4.34M files and 0.54M folders (U-001: 4.5M and 0.5M) with 300,000 names sharing 100,000 IDs. It also records GC.GetGCMemoryInfo().TotalCommittedBytes and collects twice before the before-build reading, which finding m6 asked for and the person waived to SC-369; both are output-only."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: The store tests use a few more files than the design listed: O-002 and O-004 each got their own Fact (AFolderCutPartwayThroughItsBuffersReadsNotListed, ARootNotYetKnownToBeAFolderLeavesNoRootToMark) so each obligation has a command that runs only its shape."
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: No undeclared departure was found. Every difference between code and design is one the builder listed under deviations: the M1 app-commit case not built, rule 1 widened, a junction added to the sweep tree, the generator shape, and two extra Facts."
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: The design export still carries 'measure the published WPF app's own commit' under filed_for_later, while critique M1's disposition is recorded 'accepted-fixed', which said that item was withdrawn. The design record and the disposition disagree. The code follows the design record."
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: Minor inconsistency in the slice's own wording: the NotListedBudgetTests remarks (lines 20-22) use U-001's ~106 MB window baseline, while docs/design/SL-109-not-listed.md:70 records the published window's measured idle commit as 64.9 MiB and composes the bound from that."
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: Nothing new beyond round 1: every departure was declared by the builder."
+  },
+  {
+   "stage": "code-review",
+   "issue": "not reviewed: .taad/slices/SL-109/*.json (engine exports of earlier stages, not code; only index.json was relied on, through the prompt)"
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The app's commit was measured with a synthetic 4.88M-entry store handed to the real published window through ShowOutcome, not with a real 5M-entry drive scan stopped at its unlisted peak. The real Scanner also holds the pending stack's path strings and the top-level snapshot, a few tens of MB at most, unmeasured."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: No in-tree test records the app's own commit at this shape. A later change could push it past 1 GiB unseen (filed as extra)."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A cancel on a stalled SMB share and the Network=SMB-LOOPBACK opt-in tests were not re-run, though Scanner.cs changed (person-run; the TEST-NET-1 guard is red at baseline, Q-259)."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A RootUnreadable result whose root passed the directory check and whose first listing failed with a non-cancel error, now a 1-entry store, was not produced (waived to SC-370; local NTFS cannot easily produce it)."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Windows 10: every run here is Windows 11 26200 (no machine available)."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A read-ahead reader does not exist, so criterion 14's listed-ahead shape was never exercised."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The real-data stops covered C:\\ProgramData and C:\\Windows\\System32 only (bounded samples), not a whole drive, OneDrive or cloud-placeholder folders, or shares."
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique-review missed: M1's `accepted-fixed` disposition promised a case measuring the real App's commit at the 5M stopped shape through FsaWindowHook, and withdrew filed_for_later #2. It rested on an explicitly unchecked assumption that the hook can reach that state unattended. No obligation or design edit followed. A check of the disposition against the tree would have found that Core keeps the store private to Scanner.Run and that FsaWindowHook has no synthetic-store mode. The gate did not run (a sizing decision for a medium-risk, one-designer slice), and the disposition was model-answered."
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: Critique m1 listed several spellings of the always-false 'bit tested against Flags() outside the store' defect but not a using-alias of EntryFlags (`using NL = ...EntryFlags;` then `(NL)0x80`), an @-prefixed type name, `global ::` with spaces, or the complement mask `((byte)Flags(e) & ~0x7F) != 0`. Lesson #446 already names alias and @identifier, so the critique's spelling checklist was incomplete. The builder's 97-row corpus then inherited the same gaps while claiming to close the class."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does the epic's pause/resume work (U-197's 100,000-entry block flushes, U-180) register a listing in blocks or call SetChildren per block? If it does, the 'SetChildren clears the mark' contract fails silently and needs a separate commit call or a kept mark. This must be settled before that slice is designed."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does the real Scanner stopped at the unlisted 5M shape stay under 1 GiB inside the real window? Validate used a synthetic 4,879,990-entry store and left the pending stack's path strings and the top-level snapshot (a few tens of MB) unmeasured, against about 281 MiB spare. Nothing guards it in-tree."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Can the one-entry RootUnreadable result (root passed the directory check, first List call failed with a non-cancel error, nothing kept) be produced with the OverrideQueryError guard seam, as critique m7 proposed? Validate says local NTFS cannot easily produce it, and nobody ran the seam route."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does a Stop on a real SMB share, or on Windows 10, still leave the cut folder NotListed? The go spike held 20/20 only on an SMBLibrary rig, Sandbox build 26100. The person-run network pass is stale because Scanner.cs changed, and the TEST-NET-1 guard is red at baseline (Q-259)."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Critique finding M1 was disposed `accepted-fixed` with the clause 'Assumption, unchecked: the hook can bring the app to that state'. Nothing was built for it. No obligation was raised: O-015 to O-021 cover critique m1, m3, m4, m5, m6, m7 and the review's m1, and none covers M1. The design export the builder received still carried filed_for_later #2. The builder had to declare a deviation, code review re-raised it, and a second disposition at code review overrode the first. Validate then measured the app half by hand in a scratch hook outside the tree. The ledger holds two opposite dispositions on one finding."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Rule 1 was declared a closed class through a 97-row corpus (O-015 discharged). Code review found four spelling families the corpus lacks: a using-alias type, an @-prefixed type name, `global ::` with spaces, and the complement mask `& ~0x7F` / `& ~127`. Lesson #446 already names alias and @identifier. Q-251, from an earlier slice, shows the same pattern of gaps found after a text-rule slice. The gaps were waived to SC-371 and the rule still claims the class."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Four of the six accepted-pending findings were waived at build (O-017 m4, O-019 m6, O-020 m7, O-021 review m1). Two of those were partly built anyway. The build already collects twice (Aggressive) and records GC.GetGCMemoryInfo().TotalCommittedBytes (m6/SC-369), and SetChildren's doc comment and docs/design/SL-109-not-listed.md already state the one-whole-registration invariant (m4/SC-368). So those backlog items describe work already in the tree."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: m7 (the one-entry RootUnreadable result) was waived, and validate reports it as 'local NTFS cannot easily produce it'. The critique's fix used the existing guard seam (OverrideQueryError returns 5 at the root's first List call), which needs no special NTFS state. A new Scanner.Scan result shape therefore ships with no test of its own. It is carried only by SC-370 and was not run at validate."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The risk spike halted the slice on falsifier (h), which its own text called 'expected as Core stands (U-189)'. The same run had already validated the fixed variant (root appended first: 20/20 roots NotListed, 964/964 tests). The halt added a stage lap and a 'built anyway despite a no-go spike' entry but no information."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Figures in the tree disagree with the validated measurement. docs/design/SL-109-not-listed.md:70 composes ~755 MiB from a 64.9 MiB idle window, and NotListedBudgetTests.cs:20-22 uses U-001's ~106 MB window baseline. Validate measured the real published window at 66.1-66.3 MiB idle and at most 742.8 MiB peak. Code review noted the inconsistency as drift, but nobody reconciled it."
+  }
+ ],
+ "stages": [
+  {
+   "stage": "repro",
+   "title": "Repro",
+   "order": 1,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "build-check",
+   "title": "Build check",
+   "order": 2,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "risk-spike",
+   "title": "Risk spike",
+   "order": 3,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "design-slice",
+   "title": "Design",
+   "order": 4,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-13T06:28:58.162Z",
+     "head": "6ce263e3fd76cb0d46814eede03eb739a4e560d3",
+     "summary": "Only one proposal came in (practice), and its own over_engineering_flag is the reason it was selected and not set aside.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique",
+   "title": "Critique",
+   "order": 5,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-13T06:48:09.507Z",
+     "head": "6ce263e3fd76cb0d46814eede03eb739a4e560d3",
+     "summary": "I checked the design against the tree and it holds up.",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique-review",
+   "title": "Critique review",
+   "order": 6,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-13T07:00:13.327Z",
+     "head": "6ce263e3fd76cb0d46814eede03eb739a4e560d3",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-review-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "build-slice",
+   "title": "Build",
+   "order": 7,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-13T07:00:14.031Z",
+     "head": "e12008e306ec1d28fdabc08276067b52066ac325",
+     "summary": "ScanStore now marks every folder not listed when it is appended (bit 0x80 of the existing Flags byte) and SetChildren clears the mark.",
+     "caused_by": null,
+     "changed": {
+      "src": 3,
+      "config": 1,
+      "tests": 4,
+      "docs": 1,
+      "listed": 9,
+      "measured_by_git": 13
+     },
+     "details": "build-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "code-review",
+   "title": "Code review",
+   "order": 8,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-13T07:35:24.746Z",
+     "head": "e12008e306ec1d28fdabc08276067b52066ac325",
+     "summary": "The code does what the design asks.",
+     "caused_by": null,
+     "changed": {},
+     "details": "code-review-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "validate-slice",
+   "title": "Validate",
+   "order": 9,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-13T07:47:37.582Z",
+     "head": "e12008e306ec1d28fdabc08276067b52066ac325",
+     "summary": "The slice does what it promised.",
+     "caused_by": null,
+     "changed": {},
+     "details": "validate-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "reflect",
+   "title": "Reflect",
+   "order": 10,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-13T08:00:52.261Z",
+     "head": "e12008e306ec1d28fdabc08276067b52066ac325",
+     "summary": "SL-109 gave ScanStore a \"not listed\" mark in bit 0x80 of the existing Flags byte.",
+     "caused_by": null,
+     "changed": {},
+     "details": "reflect-1.json"
+    }
+   ]
+  }
+ ]
+}

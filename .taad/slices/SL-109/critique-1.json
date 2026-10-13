@@ -1,0 +1,168 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-109",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-10-13T06:48:09.507Z",
+ "head": "6ce263e3fd76cb0d46814eede03eb739a4e560d3",
+ "run_id": 3701,
+ "summary": "I checked the design against the tree and it holds up. Every code claim I opened is accurate: Append, SetChildren, AddFlags, CheckParent and Charges in ScanStore.cs, ListRoot/Execute/FolderDone/StoreSkipped in Scanner.cs, ShowOutcome's early return, Scans.Snapshot/EntryState, RollupOracle.Feed's per-child SetChildren, and ContainerLayerStore's announce:false guard. Close is not a counted guarded call, so test (3)'s 'k ≤ 2 → Count 0; every later root call → Count 1, NotListed(0)' is right in both modes. The early root append keeps CancelledFolderTests and TopLevelTests green unedited: the root's snapshot equals the baseline root with ChildCount 0, and TopLevelTests already allows Count ≤ 1. Making Unreadable and NotScanned folders read 'listed' is forced by criteria 3 and 6 together. The cited bztmon article exists and says what the design claims.\n\nOne major finding. Criterion 7's 'the app stays within 1 GiB' is not served by any case: the design measures the Core test host's commit instead and files the app figure for later, so validate will meet a done criterion left unmeasured.\n\nMinor findings:\n- Architecture rule 1 fences only one spelling of the silent always-false bit test.\n- Rule 2 is weaker than the runtime Enum.GetValues assertion the design already plans.\n- The human-decided rules-harness run (Q-026/Q-027) for slices that change .taad/fitness.yaml is missing from the checks.\n- 'Only SetChildren clears it' assumes SetChildren is always a whole registration, which nothing enforces. A block-wise writer, as in U-197, or the per-child pattern RollupOracle.Feed already uses, would clear the mark silently.\n- The no-edits check diffs against a pinned SHA.\n- The memory Fact's commit figure rests on a GC decommit behaviour that has a documented caveat for the large-object heap.\n- The new RootUnreadable one-entry contract has no case.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "I checked the design against the tree and it holds up. Every code claim I opened is accurate: Append, SetChildren, AddFlags, CheckParent and Charges in ScanStore.cs, ListRoot/Execute/FolderDone/StoreSkipped in Scanner.cs, ShowOutcome's early return, Scans.Snapshot/EntryState, RollupOracle.Feed's per-child SetChildren, and ContainerLayerStore's announce:false guard. Close is not a counted guarded call, so test (3)'s 'k ≤ 2 → Count 0; every later root call → Count 1, NotListed(0)' is right in both modes. The early root append keeps CancelledFolderTests and TopLevelTests green unedited: the root's snapshot equals the baseline root with ChildCount 0, and TopLevelTests already allows Count ≤ 1. Making Unreadable and NotScanned folders read 'listed' is forced by criteria 3 and 6 together. The cited bztmon article exists and says what the design claims.\n\nOne major finding. Criterion 7's 'the app stays within 1 GiB' is not served by any case: the design measures the Core test host's commit instead and files the app figure for later, so validate will meet a done criterion left unmeasured.\n\nMinor findings:\n- Architecture rule 1 fences only one spelling of the silent always-false bit test.\n- Rule 2 is weaker than the runtime Enum.GetValues assertion the design already plans.\n- The human-decided rules-harness run (Q-026/Q-027) for slices that change .taad/fitness.yaml is missing from the checks.\n- 'Only SetChildren clears it' assumes SetChildren is always a whole registration, which nothing enforces. A block-wise writer, as in U-197, or the per-child pattern RollupOracle.Feed already uses, would clear the mark silently.\n- The no-edits check diffs against a pinned SHA.\n- The memory Fact's commit figure rests on a GC decommit behaviour that has a documented caveat for the large-object heap.\n- The new RootUnreadable one-entry contract has no case.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "test-coverage",
+    "nature": "required",
+    "claim": "Criterion 7 says 'the app stays within 1 GiB', and its checker asks for 'app commit recorded'. The design swaps in the Core test host's private commit as 'App commit' and files the WPF app's own figure for later (filed_for_later #2). No case serves the app half of the criterion, and open_questions is empty, so nobody is asked to accept the swap. At validate the done criterion will read unmeasured or partial, and this project has repeatedly halted validate on that (lessons #331, #470).",
+    "evidence": "Design key_decisions: \"'App commit' is recorded as the test host's private commit while it holds the stopped 5M store, and the WPF app's own figure is filed for later\". Criterion 7: \"A 5M-entry store stopped at its unlisted peak stays within the 800 MiB store bound, and the app stays within 1 GiB.\" The repo already derives the store bound from the app limit as store + ~106 MB window + ~160 MB tree (ScanStoreTests.cs:128-130). A stopped ending builds no tree (MainWindow.xaml.cs:606-607).",
+    "fix": "Pick one before build and record it in the design. (a) Raise an open question asking the person to accept the app half as: the test-host commit at the stopped peak, plus U-001's measured ~106 MB window baseline (no tree is built on a stopped ending), against 1 GiB. Record that composed figure as the criterion's measure. (b) Or keep the app half as a person-checked item marked as such now, not filed silently. Do not report the test-host figure as 'app commit'.",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/ScanStoreTests.cs",
+     "line": 128,
+     "text": "// The app must stay under 1 GiB. U-001 measured the WPF window alone at about 106 MB of commit and"
+    }
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "claim": "Architecture rule 1 claims to guard the silent defect that a test of the bit against Flags() outside the store is always false. Its regex catches only a cast written exactly '(EntryFlags)0x80' or '(EntryFlags)128'. It misses the most natural spellings of the same always-false test:\n- `((byte)store.Flags(e) & 0x80) != 0` or `((int)Flags(e) & 128) != 0`, which have no EntryFlags cast at all\n- `(EntryFlags)(1 << 7)`\n- `(EntryFlags)0b1000_0000`\n- `(EntryFlags)0x80u`, where \\b fails before 'u'\n- `(EntryFlags)(byte)0x80`\n- `(Store.EntryFlags)0x80` and other qualified casts\n- `Enum.ToObject(typeof(EntryFlags), 128)`\nThe check would pass on exactly the code the later 'not read yet' view slice is most likely to write by accident.",
+    "evidence": ".taad/fitness.yaml:1317 (rule 1 as the engine appended it). Lesson #446 (text-rule spelling checklist) and CC-007 (test rule regexes against a corpus of syntactic variants).",
+    "fix": "Either widen the rule to a corpus-tested family: any 0x80/0X80/128/0b1000_?0000/1<<7 literal in an expression that also names Flags( or EntryFlags, outside ScanStore.cs. Run it against a small plant corpus of the spellings above, per CC-007. Or keep the narrow pattern and reword `because` to say it is a tripwire for one spelling and that the int/byte-cast spellings are held by review.",
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1317,
+     "text": "- \\(EntryFlags\\)\\s*\\(?\\s*(0x80|128)\\b"
+    },
+    "class_of": "spellings of a test of the not-listed bit outside the store",
+    "threat": "accident"
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "over-engineering",
+    "nature": "extra",
+    "claim": "Rule 2 (no EntryFlags member at 0x80) is weaker than a check the design already plans. Test (7) asserts that Enum.GetValues<EntryFlags>() has no member carrying 0x80, which catches every spelling at run time. The line-anchored regex misses:\n- `X = 0b1000_0000,`\n- `X = NotScanned << 1,`\n- `X = 0X80,` (case)\n- `X = 0x0080,`\n- `X = (byte)128,`\n- two members on one line\nThe rule still adds settled-count and harness surface (lessons #212, #471).",
+    "evidence": ".taad/fitness.yaml:1327. Design NotListedTests (7): \"Enum.GetValues<EntryFlags>() has no member carrying 0x80\".",
+    "fix": "Make the Enum.GetValues assertion its own Fact, named for criterion 5's 'lists every flag'. Drop rule 2, or keep it as a cheap tripwire and say in its `because` that the Fact is the real guard.",
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1327,
+     "text": "- (?m)^\\s*\\w+\\s*=\\s*(128|0x80|1\\s*<<\\s*7)\\s*,?\\s*$"
+    }
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "required",
+    "claim": "This slice changes .taad/fitness.yaml (two settled rules are already appended). Q-026 and Q-027, both human decisions, require eng/rules-harness/harness.py to run at validate for any slice that changes that file, printing the engine commit. The design names only RuleCases C-001 and C-003 (lesson #212) and mentions the harness only to argue that its unmatched-rule refusal cannot fire. Neither command was run on the worktree's current fitness.yaml before being mandated (CC-010).",
+    "evidence": "Q-027 (human): 'run eng/rules-harness/harness.py --engine-root at validate of slices changing those files'. Q-026: 'scope/exemption edits caught by rules harness at gates changing .taad/fitness.yaml'. The worktree's fitness.yaml already holds '# settled by SL-109' at line 1313 (git status: M .taad/fitness.yaml).",
+    "fix": "Add the harness run, `--scenario all` under the engine's interpreter with the engine commit printed (about 26 s per #451), to the validate checks next to RuleCases -Case C-001 and -Case C-003. Run all three once now against the worktree's fitness.yaml so the gate starts green.",
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1313,
+     "text": "# settled by SL-109"
+    }
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "under-engineering",
+    "nature": "extra",
+    "claim": "'Only SetChildren clears the mark' is correct only while every SetChildren call is a folder's single, whole registration. Nothing makes that so. RollupOracle.Feed already registers incrementally (count + 1 after every child), and U-197's cut-and-relist prototype flushes a listing in 100,000-entry blocks. A later pause slice in this epic that registers a partial block would clear the mark on a folder still being listed, so a Stop then reads that cut folder as listed: the very defect this slice removes. This slice's sweep could not catch it, because its largest folder (2,000 entries) is far below one block. This also answers the transfer's must-verify precondition ('no other path sets or clears the mark'): it fails silently exactly this way.",
+    "evidence": "tests/FsAnalyser.Core.Tests/RollupOracle.cs:65 (per-child SetChildren). U-197 evidence: 'The writer flushes a folder's listing in 100,000-entry blocks'. Design contract 'ScanStore.SetChildren clears the mark': 'The only write that clears the mark, for any count including 0.'",
+    "fix": "State the invariant at the seam. Add a SetChildren doc sentence and a line in docs/design/SL-109-not-listed.md: 'SetChildren is the folder's one, whole registration; it clears NotListed, so a writer that commits a listing in blocks must not call it before the last block (or must keep its own mark).' Name block-wise writers next to the read-ahead reader in the record's 'what a future slice must keep' section.",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/RollupOracle.cs",
+     "line": 65,
+     "text": "store.SetChildren(e.Parent, first, count + 1);"
+    }
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "defect",
+    "claim": "Criterion 6's 'no edits' check is `git diff --diff-filter=M --name-only 6ce263e -- tests`, pinned to today's HEAD. If uat moves and is merged into slice/SL-109 before validate, as SL-109 merges have done before (lesson #13), other slices' test edits show up as M, and the check fails falsely.",
+    "evidence": "Design case 'complete a scan': \"`git diff --diff-filter=M --name-only 6ce263e -- tests` must print nothing.\"",
+    "fix": "Diff against the branch point instead: `git diff --diff-filter=M --name-only $(git merge-base HEAD uat) -- tests`. Or state that the SHA is replaced by the merge-base if uat is merged in."
+   },
+   {
+    "id": "m6",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "nature": "extra",
+    "claim": "The memory Fact's absolute 'private commit < 1 GiB' check rests on a recalled claim: one blocking, compacting GCCollectionMode.Aggressive collection returns what the earlier 5M Fact committed. The docs do say Aggressive 'decommit[s] as much memory as possible'. But dotnet/runtime#78679 reports that large-object-heap memory was not decommitted until a second GC (closed Dec 2022), and the store's page columns are LOH arrays (65,536 × 8 B = 512 KiB each). Separately, the design does not require the scanner-order generator to stream. A generator holding a per-entry plan, for example a 5M-element Fed list as the recount tests use, lands inside both the GC-heap delta measured from `before` and the commit, and would fail or skew the budget.",
+    "evidence": "Design outside_claims #5 (recalled). https://learn.microsoft.com/en-us/dotnet/api/system.gc.collect and https://github.com/dotnet/runtime/issues/78679 (\"Aggressive GC: No Memory Decommit until 2nd GC (LOH only?)\"). The existing Fact measures GC heap from a single `before` (ScanStoreTests.cs:142) and streams names from stackalloc.",
+    "fix": "Collect twice (Aggressive, blocking, compacting) before the 'before build' reading. Record GC.GetGCMemoryInfo().TotalCommittedBytes next to PrivateMemorySize64. State in the Fact's remarks that the generator holds no per-entry state: names and IDs computed from the index, as FiveMillionEntriesFitTheMemoryBudget does, and only a per-folder plan plus the pending stack.",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/ScanStoreTests.cs",
+     "line": 142,
+     "text": "long before = GC.GetTotalMemory(forceFullCollection: true);"
+    }
+   },
+   {
+    "id": "m7",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "extra",
+    "claim": "The design adds a new result shape to its Scanner.Scan contract: a RootUnreadable result whose root passed the directory check but whose listing failed with nothing kept now holds one entry, the root, reading NotListed, where today it holds none. No case pins it. Every root case in the design is a Cancelled stop, the k ≤ 2 boundary, or a file root, all of which still leave Count 0. Today this path is reached by a root whose first List call fails with a non-cancel error.",
+    "evidence": "Design contract 'Scanner.Scan result shape when the root fails or is stopped'. Scanner.cs:276-277 returns the error with rootEntry -1 once the root is (newly) already appended. Existing RootUnreadable tests (RootTests.cs:16-18, ContainerLayerStoreTests.cs:628-631) all fail at the open or the directory check.",
+    "fix": "Add one Fact using the existing guard seam, as CancelledFolderTests.A995WindowsReturnsWithNoCancel... does: OverrideQueryError returns 5 at the root's first List call, with no cancel. Assert RootUnreadable, RootError 5, Count 1, NotListed(0), ChildCount(0) 0 and FileIdsAvailable false.",
+    "quote": {
+     "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+     "line": 276,
+     "text": "if (error != 0 && _reader.Count == 0)"
+    }
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "Cited sources:\n- https://www.bztmon.com/blog/the-scan-that-scanned-nothing/ exists (17 Sept 2026, 'A finished scan can have walked nothing') and supports the stated pattern.\n- The syncthing folderstate.go link is decorative and was not checked.\n\nRecalled claims:\n- GCCollectionMode.Aggressive is load-bearing for the commit figure. The docs support it, but dotnet/runtime#78679 is a LOH caveat (m6).\n- Enum.GetValues returns only named members. That is correct and test (7) asserts it anyway.\n\nMeasured claims (SMB stall 995 + LastCallAborted, multi-buffer 2,000-entry folder, TempTree.Deny → error 5) rest on the spike and the suite.\n\nCode claims I verified at their lines: Append :212-252, SetChildren :254-259, AddFlags :262-271, Charges :295-296, CheckParent :300-317, ListRoot :237-286, FolderDone :368-408, StoreSkipped :334-341, IsDue :494-495, ShowOutcome :531-611, ContainerLayerStore :122 announce:false, Scans.Snapshot/EntryState, RollupOracle.Feed. No (EntryFlags) numeric casts or flag-enumerating code exist in src or tests."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "Traced test (3): Close is not a counted call (SynchronousIoCancel.Close never calls Enter), so the root's last counted call is the final ERROR_NO_MORE_FILES query. In 'during' mode that call is discarded to Aborted and List zeroes its count, so 'every later root call → Count 1, NotListed(0)' holds.\n\nTraced the container store: it is pushed last and popped right after m with no guarded call between, so 'committed iff m committed' holds.\n\nTraced the denied folder in 'during' mode: Settle turns error 5 into Aborted, consistent with the oracle.\n\nGap: the new RootUnreadable one-entry contract has no case (m7)."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "'Only SetChildren clears the mark' relies on SetChildren always being a whole registration, which nothing enforces. A block-wise writer (U-197) or the per-child pattern Feed already uses would clear the mark early, silently (m4). Flags() masking holds by construction: one public read, and the internal raw reads (Charges, CheckParent) are bit masks."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "Rule 2 is weaker than the planned runtime Enum.GetValues assertion (m2). Everything else is the trimmed form: one bit, three guards, a masked read, one new read, one moved call. SubtreeUnfinished is correctly dropped (U-204 IMPOSSIBLE)."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "Criterion 7's app half is unserved (M1). The NotListed contract (false for Unreadable and NotScanned folders) is forced by criteria 3 and 6 together: an Unreadable folder that kept its mark would violate criterion 6 in a Completed scan. The design documents this disjointness. The root of a RootUnreadable result reading NotListed is documented, and the App returns early there (MainWindow.xaml.cs:534)."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "Append and AddFlags throw ArgumentException before any column or _count is written. No src caller can pass 0x80 (EntryClassifier gives CloudOnly or None; Correct passes named flags), and no test passes a value carrying 0x80 to a write: the `~EntryFlags.X` masks exist only on read values. The early append leaves Count 1 on Cancelled and RootUnreadable endings. TopLevelTests already allows Count ≤ 1, AssertChargedBytesAreTheTotals passes at 0 == 0, LargestFiles and KindBreakdown yield nothing, and the App reads nothing for RootUnreadable. No defect found."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "The spike's no-go prerequisite (h) is met at an earlier point, after the directory check. That point also covers calls 3-5; the spike's validated placement was 'before List'. U-201's Flags-bit conditions are all met, and its Kind-mask condition does not apply. Q-080 is consistent: Unreadable is unchanged and the SL-049 assertion still passes through the masked Flags(). Lessons #136 and #468 are honoured (no stop-safety claim on shares). No drift found."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "Rule 1's regex fences one spelling (m1). Q-026 and Q-027 (human) require the rules harness at validate when fitness.yaml changes, which is missing (m3).\n\nCC-002 asks for an xUnit twin per rule. The project's convention since SL-053 keeps engine-appended settled rules untwinned (#204, #273), and RuleCases counts are derived (RuleCases.ps1:374, :453), so no tests/rules edit is needed.\n\nCC-008: the new tests use TempTree with no GetTempPath, P/Invoke, Trait or Skip, so no existing tests/** rule is crossed."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "Every criterion maps to at least one case, apart from criterion 7's app half (M1). The no-edits git-diff check is pinned to a SHA (m5). Baseline suite: 964/964 measured by the build check (CC-010 satisfied for the suite command). The RuleCases and harness commands were not run on the worktree's current fitness.yaml (m3)."
+   },
+   {
+    "dimension": "security",
+    "result": "None: no new input surface, no file system or network behaviour change, no elevation. The slice adds an in-memory bit and a moved in-memory append."
+   }
+  ]
+ }
+}
