@@ -577,8 +577,31 @@ def describe_not_run(names: list) -> str:
             f"graph, which the scratch copy has none of: {quoted}")
 
 
-def check_clean(x: dict, f: dict, parity: dict) -> None:
+def load_awaiting(path: str) -> dict:
+    """The rules allowed to match no file in the clean baseline: rule name -> the file they match once it exists.
+
+    A rule over a file that only a person's run produces (SL-107's counts-only rule over the committed
+    .taad/slices/SL-089/c-drive-run.json) matches nothing until that file is committed, and Fitness takes that
+    for a pass. It is listed under 'awaiting_file' in plants.json, and is allowed to match no file only while
+    its file is absent from the scratch copy: once the file exists, the rule must match it like any other.
+    """
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError) as e:
+        raise CannotMeasure(f"{path}: {e}")
+    awaiting = data.get("awaiting_file", {}) if isinstance(data, dict) else {}
+    if not isinstance(awaiting, dict) or not all(isinstance(k, str) and isinstance(v, str) and v for k, v in awaiting.items()):
+        raise CannotMeasure(f"{path}: 'awaiting_file' is not a map of rule name to file")
+    return awaiting
+
+
+def check_clean(x: dict, f: dict, parity: dict, awaiting: dict, tree: str) -> list:
+    """Raises unless the baseline is clean; returns the rules that matched no file for want of one that is not there yet."""
     entries = parity["twinned"] + parity["settled"]
+    waiting = [name for name in f["unmatched"]
+               if name in awaiting and not os.path.lexists(os.path.join(tree, *awaiting[name].split("/")))]
+    f = {**f, "unmatched": [name for name in f["unmatched"] if name not in waiting]}
     problems = []
     if x["hits"]:
         problems.append("xunit hits " + ", ".join(f"{a} at {b}:{c}" for a, b, c in sorted(x["hits"])[:SHOWN]))
@@ -598,6 +621,14 @@ def check_clean(x: dict, f: dict, parity: dict) -> None:
         problems.append(f"xunit ran {x['total']} tests where ArchitectureRulesTests has {parity['facts']} Facts")
     if problems:
         raise CannotMeasure("the clean baseline is not clean, so no row can be judged: " + "; ".join(problems))
+    return waiting
+
+
+def describe_unmatched(waiting: list, awaiting: dict) -> str:
+    if not waiting:
+        return "none unmatched"
+    quoted = ", ".join(f"'{name}' (until {awaiting[name]} exists)" for name in waiting)
+    return f"none unmatched but {len(waiting)} awaiting a file a person's run produces: {quoted}"
 
 
 def select_rows(args) -> list:
@@ -644,10 +675,12 @@ def measure(args, root: str, dotnet_from: str, work: str) -> int:
     results = os.path.join(work, "results")
     x = run_xunit(dotnet_from, tree, results, "clean")
     f = run_fitness(fitness, tree, engine_root)
-    check_clean(x, f, parity)
+    awaiting = load_awaiting(args.plants)
+    waiting = check_clean(x, f, parity, awaiting, tree)
     not_run = not_run_on_scratch(f)
     say(f"harness: clean: xunit {x['total']} Facts, 0 hits | fitness {f['verdict']}, {f['rules']} rules, "
-        f"{f['files_read']} files read, 0 hits, none unmatched, {describe_not_run(not_run)} | CLEAN")
+        f"{f['files_read']} files read, 0 hits, {describe_unmatched(waiting, awaiting)}, "
+        f"{describe_not_run(not_run)} | CLEAN")
 
     matrix, strays = [], []
     for scenario in ("plants", "divergences"):

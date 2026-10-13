@@ -52,6 +52,10 @@ wcifs-layer-store precaution on (it is at every launch), and W-001 writes `.taad
 
     pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case W-001 -Root C:\
 
+Run it from pwsh with `-Root C:\`: typed in cmd.exe, `-Root "C:\"` arrives as `C:"`, and W-001 stops with 'is not a
+folder', exit 1, nothing written. The expected counts, the endings of the run and what to commit are in
+`docs/design/SL-107-c-drive-run.md`.
+
 The trailing backslash is safe: every case hands the app its paths through `Format-AppArgument`, which doubles it as
 `eng/read-window.ps1` does (review M1: quoted by hand, `"C:\" --report "<file>"` reached the app as one argument and no
 report was ever written). `tests/window/AppArgumentCorpus.json` lists the roots, the launch-line plants and every script
