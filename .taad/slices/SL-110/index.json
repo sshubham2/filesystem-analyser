@@ -1,0 +1,220 @@
+{
+ "schema": "slice-record@1",
+ "slice": "SL-110",
+ "title": "After Stop, folders the scan never read say 'not read yet' instead of '0 bytes'",
+ "status": "active",
+ "branch": "slice/SL-110",
+ "opened_at": "2026-10-13T08:09:51.324Z",
+ "merge_commit": null,
+ "how_to_read": "Each attempt is one line and a `details` filename in this same directory. Open a detail file ONLY when this index points you at one -- the summaries are here so you do not have to. `caused_by` is what sent the stage back; `changed` is what the attempt then touched, counted by kind. Several attempts in a row that were caused by the same stage and changed no `src` is a loop, not progress.",
+ "open": [
+  {
+   "stage": "build-check",
+   "issue": "D1 (derived from 1, 2, 4, 5 and 6, which all presuppose it): after Stop the window shows a results tree over the stopped store: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "1. In the stopped results tree, every folder the store reports as not listed reads 'not read yet', never '0 bytes' or empty: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "2. A folder that was listed and is empty still reads as empty after Stop: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "3. Unread folders among the stopped ending's top-level rows carry the same 'not read yet' as in the tree: partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "4. A folder Stop cut part-way through its listing reads as not finished because of the stop, never as unreadable or 'could not be read in full': partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "5. In a stopped scan, opening a 100k-child folder with many unread subfolders takes under 0.5 s: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "6. 'Open in Explorer' still lands on a folder marked 'not read yet': partial"
+  },
+  {
+   "stage": "risk-spike",
+   "issue": "same-scan-prefix-stop-cuts-m-big-mid-listing: needs first: Re-spell the strict-hit test before it is used again. ScanProgress.CurrentFolder is published only after a folder's listing commits (Scanner.cs:415 in FolderDone, after SetChildren), so it names the last COMMITTED folder. The state 'j-before committed, m-big begun, not committed' is CurrentFolder == j-before at callback entry. CurrentFolder == m-big means m-big has already committed (control: StoppedPartway, 100,000 children). Conditions (2) and (3) as written cannot both hold."
+  },
+  {
+   "stage": "risk-spike",
+   "issue": "throwaway-warmup-scan-stop-cuts-m-big-mid-listing: needs first: Re-spell the strict-hit test before any arm is judged on it. Conditions (2) and (3) cannot both hold, so 15 of 20 cannot be reached. Use CurrentFolder == j-before at callback entry (the last committed folder), with m-big NotRead and NotListed. With that spelling the cold arm (rank 1) and this warm arm are both 20/20, so the warm-up is not needed on this fixture."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Whether 'not read yet' satisfies criterion 4's 'reads as not finished because the scan was stopped' for a folder Stop cut inside its own listing, or whether a distinct word ('stopped while reading') is owed. This design uses the shared word plus the stopped tree's header, because U-189 says the engine cannot tell a cut folder from a queued one without Core changes."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "List-first versus tree-first at a stopped ending: decided list-first by Q-273 (a model, while the owner was away). The flip is one line in ShowOutcome plus edits to T-006, L-001, L-002 and EndingObeysSkip."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Blank figures for a not-listed row versus a placeholder such as '—' in the On disk and Size columns."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "A third ViewPicker radio for the tree versus a separate button beside the header."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Superseding SL-044's 'no tree after a stop, because a share would be of an incomplete whole': the stopped tree shows shares of what was read, and the header and the 'Stopped:' title say so."
+  }
+ ],
+ "stages": [
+  {
+   "stage": "repro",
+   "title": "Repro",
+   "order": 1,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "build-check",
+   "title": "Build check",
+   "order": 2,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "risk-spike",
+   "title": "Risk spike",
+   "order": 3,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "design-slice",
+   "title": "Design",
+   "order": 4,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-13T09:09:03.141Z",
+     "head": "f764c3476739866f2ec6ac757d02ab3148c2707b",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-10-13T10:13:43.119Z",
+     "head": "f764c3476739866f2ec6ac757d02ab3148c2707b",
+     "summary": "Only one proposal was handed in, so selection means testing it against what the tree and the spike show.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "Trip 1 of 2 back to the risk spike: the design left 1 fork that only a measurement can settle. O-001: unsettled design fork: Can the shipped window, driven by a 1 ms poll of ScanProgress.CurrentFolder with a 10,000-folder warm-up prefix in the same scan, land a Stop after j-before commits and before m-big commits, at least once in 3 attempts on this PC? Its context: The design assumes yes. U-207 measured 5 of 5 warm hits with a throwaway warm-up scan and delays of 8-25 ms after the predecessor folder, and 0 of 20 cold hits. A same-scan prefix as warm-up is unmeasured. If no attempt lands, criterion 4's window half needs a forced cut: a listing-abort seam in DirectoryReader or SynchronousIoCancel.cs (high risk, #214, #469), or a throwaway warm-up scan in the hook. Either changes the hook and seam component boundary. The synthesis marked this as forcing a re-synthesis: the losing answer moves a component boundary, a contract or the data model. How the fork decider would measure it: MEASURE, in the risk spike on this PC, before anything is built. Use the published exe from HEAD f764c34 (slice/SL-110), built with eng/dotnet.ps1 publish and the repo-local .dotnet, as U-207 did. The trigger is scratch startup-hook code outside the repo. Nothing in the repo is written. FIXTURE. Build T-011 run A's fixture exactly, under %LOCALAPPDATA%\\Temp (lesson #360): - c-prefix\\ with 10,000 empty folders - j-before\\ (empty) - m-big\\ with 90,000 empty files and 10,000 subfolders holding one 1-byte file each (100,000 children) - z-tail\\ LAUNCH. Use a fresh process for every attempt. Pass the root as the launch argument, quoted the way Format-AppArgument quotes it. Do not run a throwaway scan first: the c-prefix part of the same scan is the only warm-up. TRIGGER. Use the trigger the build will ship once O-015 and O-019 are applied: - A hook thread spins on a Volatile read of ScanProgress.CurrentFolder, reached by reflection on MainWindow._progress. It uses a SpinWait or Stopwatch loop, not Thread.Sleep(1). - When the value exactly equals root\\j-before, it posts a callback at DispatcherPriority.Send. The callback raises ButtonBase.ClickEvent on CancelButton, as stop mode's Act does. RECORD FOR EACH PROCESS: - the CurrentFolder values seen just before and after the target, to confirm the walk order c-prefix\\*, then j-before, then m-big - the measured poll interval - time from detecting j-before to the Send callback running - time from the callback to Scanner.Scan returning - whether the 250 ms progress-timer tick was running when the callback was posted - the final status, store.NotListed(m-big), ChildCount(m-big), and whether m-big is in result.Unreadable - the wall time of the launch A process is void only if the scan ends before the trigger fires, or if CurrentFolder never equals j-before. Redraw voids and report how many there were. ARM A (this design). Run 20 counted processes. A hit means: status Cancelled, m-big NotListed, ChildCount 0, and m-big not in Unreadable. HOW THE RESULT DECIDES THE FORK: 1. Arm A hits in at least 15 of 20. The same-scan prefix stands and the design is kept as it is. T-011 run A keeps exact equality on j-before and up to 3 attempts. At a hit rate of 0.75 or more, all 3 attempts miss about 1.6% of the time or less. 2. Arm A hits in fewer than 15 of 20. In the same spike lap, run arm B: the same fixture and trigger, but with a throwaway scan of a small folder first in the same process (U-207's warm protocol, through the existing rescan idiom), then the fixture scan. Run 20 processes. - If arm B hits in at least 15 of 20, the design is rewritten to put the throwaway warm-up scan inside the hook's StopAt path. That is a hook-only change, with no change to Core, DirectoryReader or SynchronousIoCancel.cs. The rewrite also states how tree mode treats the warm-up scan's ending, which comes first, and confirms that EndingShown/--report is not written for it. 3. Both arms hit in fewer than 15 of 20. Report both rates and the latency breakdown. The design is rewritten without a window-drawn cut. A forced cut would mean a listing-abort seam in SynchronousIoCancel.cs or DirectoryReader (#214, #469). That moves this slice's risk tier and is put to a person at that point, not chosen by the builder. Nothing measured so far answers this. U-207's 5 of 5 cuts used a throwaway warm-up scan and a trigger that stamped c-denied and then waited 5-40 ms. Its cold protocol cut 0 of 20. A same-scan prefix with an immediate press on j-before's commit has never been run. Two things on its path are untested: whether the UI thread is warm after about 0.5 s of its own scan, and how long the first, cold OnCancel takes. Both decide whether the press lands inside the roughly 25-33 ms window U-207 found before m-big commits. The losing answer moves a component boundary: it adds a warm-up scan to the hook or a seam in high-risk Core files. Building the case to find out would settle the fork in code, which is the outcome this step exists to prevent. The measurement costs about one fixture build (U-207 built a fixture twice this size in 57 s) and 20-40 short launches on local NTFS. It uses the spin-poll trigger accepted in O-019, so the 15.6 ms Sleep(1) lag does not bias the result. The same runs also check the recalled walk-order claim behind the fixture, and they give per-launch wall times that O-018's 120 s sizing can use. The 15-of-20 threshold makes the design's 3-attempt void-and-retry rule mean a case that is red about 1.6% of the time or less, rather than a coin flip. The risk spike measures these first. Write the design again with what it measured: its experiments are under what reality already said about this slice.",
+      "cause": "fork-measure",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "design-slice-2.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique",
+   "title": "Critique",
+   "order": 5,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-13T09:33:33.450Z",
+     "head": "f764c3476739866f2ec6ac757d02ab3148c2707b",
+     "summary": "The product half of the design is sound and matches the code.",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-10-13T10:25:48.407Z",
+     "head": "f764c3476739866f2ec6ac757d02ab3148c2707b",
+     "summary": "The rework answers every finding that was accepted: - **M1:** the Stop trigger now spin-polls and matches by prefix.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "critique passed on 2026-10-13T09:42:55.753Z, and design-slice has judged since (2026-10-13T10:25:47.071Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "cause": "knock-on",
+      "stage": "design-slice",
+      "from": [
+       "design-slice"
+      ]
+     },
+     "changed": {},
+     "details": "critique-2.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique-review",
+   "title": "Critique review",
+   "order": 6,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-13T09:42:55.783Z",
+     "head": "f764c3476739866f2ec6ac757d02ab3148c2707b",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-review-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-10-13T10:30:46.756Z",
+     "head": "f764c3476739866f2ec6ac757d02ab3148c2707b",
+     "summary": "",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "critique-review passed on 2026-10-13T09:42:55.821Z, and design-slice has judged since (2026-10-13T10:25:47.071Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "cause": "knock-on",
+      "stage": "design-slice",
+      "from": [
+       "design-slice"
+      ]
+     },
+     "changed": {},
+     "details": "critique-review-2.json"
+    }
+   ]
+  },
+  {
+   "stage": "build-slice",
+   "title": "Build",
+   "order": 7,
+   "state": "waiting",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "waiting",
+     "at": "2026-10-13T10:30:47.190Z",
+     "head": "f764c3476739866f2ec6ac757d02ab3148c2707b",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 5:40pm (Asia/Kolkata)",
+     "caused_by": null,
+     "changed": {},
+     "details": "build-slice-1.json"
+    }
+   ]
+  }
+ ]
+}

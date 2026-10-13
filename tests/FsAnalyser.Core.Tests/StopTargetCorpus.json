@@ -1,0 +1,39 @@
+{
+  "note": "SL-110 review M1 (O-015), closed as a class: the values of ScanProgress.CurrentFolder that FSA_HOOK_TREE_STOP's target is compared with. CurrentFolder names the folder most recently COMMITTED and every commit overwrites it, so a target written as one exact folder is current for only as long as the scan takes to list and commit the NEXT folder: 50 to 230 microseconds when that folder holds a handful of entries (lesson #85, about 53 microseconds a folder), against a poll that can stall for 5 ms (spike 120, worst gap 4.6 to 10 ms). Such a stop is missed in nearly every run, the scan ends first, and tree mode refuses an ending with no tree. Each row is a target and a value CurrentFolder takes, fed to StopTarget.Matches under the root C:\\fsa-corpus\\r. 'expect' is what the matcher must answer. 'exactOnly' is what the matcher the design handed to build gave for the same row (the value equals root\\target and nothing else), so the rows where exactOnly differs from expect are the ones the prefix match closed (kind under) and every other row is one the prefix match must leave alone.",
+  "bounded_by": "Who produces the members: the case author writes the target, and the scan produces the value. The targets are the ones the window cases name (T-010 m-mid\\, T-011 run A j-before, T-012 m-big\\, R-004 n-slow\\), which StopTargetTests reads out of tests/window/WindowCases.ps1 by census, so a new FSA_HOOK_TREE_STOP in a case that names one exact folder, whose successor is not named a long listing in 'exactAllowed' below, fails the census. The values are the folders the walk visits (NTFS lists a folder's entries in name order, spike 120 pilots 6/6): the target itself, a folder under it at any depth, a sibling that shares its leading characters, its parent, the root, folders before and after it, with the path spelt in another case or with a trailing backslash. Not covered: a value that is not a folder path (CurrentFolder is null before the first commit, which the hook does not pass to the matcher), a different root, a path through a junction, an 8.3 alias or a \\\\?\\ prefix (the scan names the root as LongPath.NormalizeRoot's display form and the hook compares the same form).",
+  "exactAllowed": [
+    { "target": "j-before", "case": "T-011", "why": "the folder after it is m-big, whose 100,000 entries take 52 to 57 ms to list (spike 120, 6 pilots), so j-before is current for that long, against a spin whose worst gap is 4.6 to 10 ms; the press must land while m-big is being listed, so it is the one folder named exactly" }
+  ],
+  "rows": [
+    { "id": "E01", "kind": "exact", "target": "j-before", "seen": "j-before", "expect": true, "exactOnly": true, "note": "T-011 run A's own target: the one folder, seen" },
+    { "id": "E02", "kind": "exact", "target": "j-before", "seen": "j-before\\", "expect": true, "exactOnly": true, "note": "a trailing backslash on the value is the same folder" },
+    { "id": "E03", "kind": "exact", "target": "j-before", "seen": "J-BEFORE", "expect": true, "exactOnly": true, "note": "Windows compares paths without case" },
+    { "id": "E04", "kind": "exact", "target": "j-before", "seen": "j-before\\sub", "expect": false, "exactOnly": false, "note": "an exact target is not a subtree: a folder under it is not it" },
+    { "id": "E05", "kind": "exact", "target": "j-before", "seen": "j-before2", "expect": false, "exactOnly": false, "note": "a sibling that shares the leading characters" },
+    { "id": "E06", "kind": "exact", "target": "j-before", "seen": "c-prefix\\c09999", "expect": false, "exactOnly": false, "note": "the last folder of the lead before it" },
+    { "id": "E07", "kind": "exact", "target": "j-before", "seen": "m-big", "expect": false, "exactOnly": false, "note": "the folder after it: committed, so m-big is no longer in flight" },
+    { "id": "E08", "kind": "exact", "target": "j-before", "seen": "", "expect": false, "exactOnly": false, "note": "the root itself" },
+    { "id": "E09", "kind": "exact", "target": "m-mid\\d05", "seen": "m-mid\\d05", "expect": true, "exactOnly": true, "note": "an exact target deep in a subtree matches only for the 50 to 230 microseconds before d06 commits" },
+    { "id": "E10", "kind": "exact", "target": "m-mid\\d05", "seen": "m-mid\\d06", "expect": false, "exactOnly": false, "note": "and d06, 20 files, replaces it at once: this is the miss M1 found, which no exact target can avoid" },
+    { "id": "S01", "kind": "under", "target": "m-mid\\", "seen": "m-mid", "expect": true, "exactOnly": true, "note": "T-010's target, seen as the folder itself" },
+    { "id": "S02", "kind": "under", "target": "m-mid\\", "seen": "m-mid\\d05", "expect": true, "exactOnly": false, "note": "M1: a folder under the target, the one T-010 lands on" },
+    { "id": "S03", "kind": "under", "target": "m-mid\\", "seen": "m-mid\\d39", "expect": true, "exactOnly": false, "note": "the last of the subfolders" },
+    { "id": "S04", "kind": "under", "target": "m-mid\\", "seen": "m-mid\\d39\\deeper\\still", "expect": true, "exactOnly": false, "note": "at any depth" },
+    { "id": "S05", "kind": "under", "target": "m-mid\\", "seen": "M-MID\\D05", "expect": true, "exactOnly": false, "note": "in another case" },
+    { "id": "S06", "kind": "under", "target": "m-mid\\", "seen": "m-mid\\d05\\", "expect": true, "exactOnly": false, "note": "with a trailing backslash on the value" },
+    { "id": "S07", "kind": "under", "target": "m-mid\\", "seen": "m-mid2", "expect": false, "exactOnly": false, "note": "a sibling that shares the target's leading characters is not under it" },
+    { "id": "S08", "kind": "under", "target": "m-mid\\", "seen": "m-mid2\\d05", "expect": false, "exactOnly": false, "note": "nor is anything under that sibling" },
+    { "id": "S09", "kind": "under", "target": "m-mid\\", "seen": "m-mi", "expect": false, "exactOnly": false, "note": "nor a name that is a prefix of the target's" },
+    { "id": "S10", "kind": "under", "target": "m-mid\\", "seen": "a-empty", "expect": false, "exactOnly": false, "note": "a folder before it" },
+    { "id": "S11", "kind": "under", "target": "m-mid\\", "seen": "p00", "expect": false, "exactOnly": false, "note": "a folder after it" },
+    { "id": "S12", "kind": "under", "target": "m-mid\\", "seen": "", "expect": false, "exactOnly": false, "note": "the root, its parent" },
+    { "id": "S13", "kind": "under", "target": "m-mid\\", "seen": "b-listed\\m-mid", "expect": false, "exactOnly": false, "note": "the same name under another folder" },
+    { "id": "S14", "kind": "under", "target": "n-slow\\", "seen": "n-slow\\s02999", "expect": true, "exactOnly": false, "note": "R-004's target: its 3,000 subfolders, one file each" },
+    { "id": "S15", "kind": "under", "target": "m-big\\", "seen": "m-big\\d00000", "expect": true, "exactOnly": false, "note": "T-012's target: the first of m-big's 10,000 subfolders, once m-big itself has committed" },
+    { "id": "S16", "kind": "under", "target": "m-big\\", "seen": "m-big", "expect": true, "exactOnly": true, "note": "or m-big itself, committed with its 100,000 children" },
+    { "id": "S17", "kind": "under", "target": "m-big\\", "seen": "j-before", "expect": false, "exactOnly": false, "note": "the folder before m-big: m-big's listing is only in flight, not committed (T-012 stops after it, so is void if the click ran here)" },
+    { "id": "S18", "kind": "under", "target": "b\\c\\", "seen": "b\\c\\x", "expect": true, "exactOnly": false, "note": "a target several folders deep" },
+    { "id": "S19", "kind": "under", "target": "b\\c\\", "seen": "b", "expect": false, "exactOnly": false, "note": "and its parent is not under it" },
+    { "id": "S20", "kind": "under", "target": "m-mid\\", "seenFull": "C:\\fsa-corpus\\r2\\m-mid\\d05", "expect": false, "exactOnly": false, "note": "the same relative path under a root that shares the first one's leading characters" }
+  ]
+}

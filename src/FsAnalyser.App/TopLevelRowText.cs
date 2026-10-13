@@ -20,10 +20,17 @@ namespace FsAnalyser.App;
 /// </remarks>
 public sealed partial class TopLevelRowText
 {
+    /// <summary>
+    /// The word for a folder the scan never listed (SL-109's mark, SL-110). The stopped list's title and the stopped
+    /// tree's note both read it, and the stopped headers build their lead from it, so no surface can word an unread
+    /// folder differently from another (the fitness rule 'the unread word is written once').
+    /// </summary>
+    internal const string NotReadYet = "not read yet";
+
     internal static string TitleOf(TopLevelRow row) => row.State switch
     {
         TopLevelState.Reading => $"{row.Name}  (reading...)",
-        TopLevelState.NotRead => $"{row.Name}  (not read yet)",
+        TopLevelState.NotRead => $"{row.Name}  ({NotReadYet})",
         TopLevelState.StoppedPartway => $"{row.Name}  (stopped partway)",
         TopLevelState.Unreadable => $"{row.Name}  ({UnreadableRows.KindText(row.FailedKind)})",
         TopLevelState.NotFollowed => $"{row.Name}  (link, not followed)",

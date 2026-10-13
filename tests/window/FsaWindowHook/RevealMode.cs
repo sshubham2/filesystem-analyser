@@ -32,6 +32,9 @@ internal static class RevealMode
         Window? window = null;
         try
         {
+            // SL-110: FSA_HOOK_TREE_STOP stops the scan at a folder the case names and chooses the tree beside the stopped list,
+            // before the targets run; armed here because the window's Loaded handler starts the scan.
+            StoppedTree.Run? stop = StoppedTree.Arm(app);
             Ui(() => EventManager.RegisterClassHandler(typeof(Window), CommandManager.PreviewExecutedEvent,
                 new ExecutedRoutedEventHandler(OnPreviewExecuted), handledEventsToo: true));
 
@@ -65,6 +68,16 @@ internal static class RevealMode
             {
                 // Wait for scan to complete normally
                 WaitForScanToEnd(window);
+            }
+
+            if (stop is not null)
+            {
+                if (hasTopTarget || hasTopLive)
+                    throw new InvalidOperationException("FSA_HOOK_TREE_STOP stops the scan itself: it takes tree: targets, not top: or top-live: ones");
+                stop.Join();
+                if (!stop.Pressed)
+                    throw new InvalidOperationException($"tree-stop: the stop did not land ({stop.Reason}): this run is void");
+                StoppedTree.Choose(app, window);
             }
 
             if (Environment.GetEnvironmentVariable("FSA_HOOK_REVEAL_GATE") is { Length: > 0 } gate)
@@ -252,6 +265,11 @@ internal static class RevealMode
         entry["via"] = via;
         entry["captured"] = captured;
         entry["enabled"] = enabled;
+        // SL-110: what a tree row says about itself and what the store marks for it, so a case can void a run whose target
+        // was listed after all (a row that is not 'not read yet' proves nothing about a reveal of one).
+        object? data = Ui(() => container.DataContext);
+        entry["note"] = Ui(() => data?.GetType().GetProperty("Note")?.GetValue(data) as string);
+        entry["storeNotListed"] = Ui(() => StoppedTree.NotListedOf(window, data));
         StartupHook.Log(JsonSerializer.Serialize(entry));
     }
 
@@ -793,6 +811,19 @@ internal static class RevealMode
         var children = parentNode.GetType().GetProperty("Children")?.GetValue(parentNode) as IEnumerable<object>;
         if (children == null)
             return null;
+
+        // SL-110: a child of this folder that is the target, by its name or its whole path, is taken before any sibling's
+        // subtree is opened. A target at the foot of a long list (a folder the stop came before sorts last, with nothing
+        // on disk) would otherwise be reached only after every sibling above it was opened, c-prefix's 5,000 included.
+        int direct = 0;
+        foreach (object child in children)
+        {
+            string? childName = child.GetType().GetProperty("Name")?.GetValue(child) as string;
+            string? childPath = child.GetType().GetProperty("FullPath")?.GetValue(child) as string;
+            if (childName == name || childPath == name)
+                return Realize(parentContainer, direct);
+            direct++;
+        }
 
         int index = 0;
         foreach (object child in children)

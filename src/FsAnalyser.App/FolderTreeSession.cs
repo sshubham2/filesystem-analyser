@@ -4,9 +4,10 @@ using FsAnalyser.Core.Store;
 namespace FsAnalyser.App;
 
 /// <summary>
-/// The one completed scan the folder tree reads (SL-044). Every row holds this, never the store, and the window
-/// closes it when the next scan starts: a row that WPF keeps after the tree is cleared (the selected item, a
-/// recycled container, an automation peer) then keeps a few bytes, not a store of hundreds of MiB (review M2).
+/// The one scan that has returned, completed or stopped, which the folder tree reads (SL-044, SL-110). Every row holds
+/// this, never the store, and the window closes it when the next scan starts: a row that WPF keeps after the tree is
+/// cleared (the selected item, a recycled container, an automation peer) then keeps a few bytes, not a store of hundreds
+/// of MiB (review M2).
 /// </summary>
 /// <remarks>
 /// Only a store whose scan has returned is ever given here, so no thread writes what the rows read. Once closed,
@@ -23,6 +24,16 @@ internal sealed class FolderTreeSession(ScanStore? store, IReadOnlyList<Unreadab
 
     // The first kind per entry, as UnreadableRows.Build keeps the first row; a map of about as many entries as folders failed.
     private Dictionary<int, UnreadableKind>? _failed = Index(unreadable);
+
+    /// <summary>
+    /// Whether a stopped scan's ending offers the folder tree (SL-110): the scan was stopped and its root's listing
+    /// committed. <see cref="ScanResult.TopLevel"/> is null exactly when it never did, so a Stop in the root's own
+    /// listing (the root is in the store, reading not listed) or before the root was appended (an empty store) offers
+    /// none: the first would head the tree "is empty" over a folder nobody read, the second has no root to open. A scan
+    /// that completed builds its tree without being asked.
+    /// </summary>
+    internal static bool OffersStoppedTree(ScanResult result) =>
+        result.Status == ScanStatus.Cancelled && result.TopLevel is not null;
 
     /// <summary>The store the rows read; null once the session is closed.</summary>
     internal ScanStore? Store => _store;
