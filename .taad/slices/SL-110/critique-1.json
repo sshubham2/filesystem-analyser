@@ -1,0 +1,168 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-110",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-10-13T09:33:33.450Z",
+ "head": "f764c3476739866f2ec6ac757d02ab3148c2707b",
+ "run_id": 3752,
+ "summary": "The product half of the design is sound and matches the code. The new Note arm comes ahead of FailedKind. The figures blank through ShareShown, which hides ShareTrack and the bar it contains. The offer predicate is pinned by a Core Fact. The SL-110 rule has been appended under '# settled by SL-110', and no other App file holds the word.\n\nThe observation half does not reach its own shapes, for three reasons:\n\n1. **The new Stop trigger cannot fire in most cases.** It fires only on exact equality with ScanProgress.CurrentFolder, and Scanner.FolderDone overwrites that value at every folder commit (Scanner.cs:415, not throttled). A target therefore stays visible only while the next folder is being listed. For T-010 (after m-mid\\d05), T-011 run B (after m-big) and R-004 (after m-mark), that window is about 100 µs, against a poll of at least 1 ms. These cases end in 'ended-first' refusals. T-011 run A works only because its successor is m-big's long listing, the same shape as U-207's trigger.\n2. **R-004 has no slow folder after its target**, so z-unread is always listed before any Stop can land.\n3. **The three-state view handler breaks a shipped feature.** As specified, picking 'Folders' hides the tree and shows the list. At a Completed ending, going from File kinds back to Folders would then hide the finished tree, and no existing case catches it.\n\nLesser findings:\n- The window cases may run past the engine's 120 s case limit (Q-222). This is unmeasured.\n- The '1 ms' poll is realistically about 15.6 ms under Windows' default timer resolution.\n- The new tree header puts its 'not read yet' clause where single-line trimming cuts it.\n- The on-demand tree build skips the human-decided Q-071 wrap.\n- The blanking of a not-listed row's figures is spread across separate properties instead of one gate.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The product half of the design is sound and matches the code. The new Note arm comes ahead of FailedKind. The figures blank through ShareShown, which hides ShareTrack and the bar it contains. The offer predicate is pinned by a Core Fact. The SL-110 rule has been appended under '# settled by SL-110', and no other App file holds the word.\n\nThe observation half does not reach its own shapes, for three reasons:\n\n1. **The new Stop trigger cannot fire in most cases.** It fires only on exact equality with ScanProgress.CurrentFolder, and Scanner.FolderDone overwrites that value at every folder commit (Scanner.cs:415, not throttled). A target therefore stays visible only while the next folder is being listed. For T-010 (after m-mid\\d05), T-011 run B (after m-big) and R-004 (after m-mark), that window is about 100 µs, against a poll of at least 1 ms. These cases end in 'ended-first' refusals. T-011 run A works only because its successor is m-big's long listing, the same shape as U-207's trigger.\n2. **R-004 has no slow folder after its target**, so z-unread is always listed before any Stop can land.\n3. **The three-state view handler breaks a shipped feature.** As specified, picking 'Folders' hides the tree and shows the list. At a Completed ending, going from File kinds back to Folders would then hide the finished tree, and no existing case catches it.\n\nLesser findings:\n- The window cases may run past the engine's 120 s case limit (Q-222). This is unmeasured.\n- The '1 ms' poll is realistically about 15.6 ms under Windows' default timer resolution.\n- The new tree header puts its 'not read yet' clause where single-line trimming cuts it.\n- The on-demand tree build skips the human-decided Q-071 wrap.\n- The blanking of a not-listed row's figures is spread across separate properties instead of one gate.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "claim": "FSA_HOOK_TREE_STOP presses Stop only when a poll (every 1 ms, or more) sees ScanProgress.CurrentFolder exactly equal to root\\target. CurrentFolder is rewritten at every folder commit, so a target is visible only while the next folder is opened, listed and committed.\n\nThree targets are followed by tiny folders:\n- T-010's m-mid\\d05 is followed by d06, 20 files, about 0.1 ms at lesson #85's ~53 µs per folder.\n- T-011 run B's m-big is followed by its first subfolder, which holds one 1-byte file.\n- R-004's m-mark is followed by z-unread, which holds one file.\n\nThe poll sees these targets only in a small fraction of runs. When it misses, CurrentFolder never comes back to the target. The scan ends, the hook logs 'tree-stop refused reason=ended-first', and TreeMode refuses with 'the ending shows no folder tree'.\n\nSo T-010 (retried once) and T-011 run B (no retry stated) fail nearly every time. Criteria 1, 2, 3, 5 and the unattended half of 6 are left with no passing case.\n\nOnly T-011 run A is sound, because j-before is followed by m-big's 50-130 ms listing. That is the shape U-207's trigger b used: c-denied followed by m-big. This is CC-005: an earlier precondition (the scan finishing first) cuts the path off before the asserted branch is reached.",
+    "evidence": "Scanner.FolderDone publishes the committed folder's path on every call, unthrottled (Scanner.cs:413-415). ScanProgress.Publish writes _currentFolder with Volatile.Write on each call (ScanProgress.cs:62-70). The design's StopAt: 'When it equals root\\relativePath, posts at Send priority a callback'. Its contract: 'If the scan ends first it logs tree-stop refused reason=ended-first, and tree mode then refuses'. The fixtures: T-010 'm-mid\\ with d00-d39 of 20 files each', T-011 'm-big\\ with ... 10,000 subfolders of one 1-byte file each', R-004 'm-mark\\ (empty), z-unread\\ (one file)'.",
+    "quote": {
+     "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+     "line": 415,
+     "text": "progress.Publish(Totals, _unreadable.Count, folderPath);"
+    },
+    "fix": "Change StopAt's match from 'equals the target' to 'is the target or lies under the target's prefix'. Use FSA_HOOK_TREE_STOP=m-mid\\ for T-010 and m-big\\ for T-011 run B: the window then lasts for the whole subtree, about 4 ms and about 0.5 s. Log the folder actually seen as pressedAt. Keep exact equality only for T-011 run A, whose successor is a long listing. Alternatively, give each target a successor that holds several thousand entries.",
+    "class_of": "Stop-trigger targets whose CurrentFolder window is only the next folder's listing",
+    "threat": "accident"
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "claim": "R-004's fixture leaves no work after its target that a Stop could cut. Once m-mark commits, the scan lists z-unread (one file) within microseconds, and then only a one-file sizing pass remains.\n\nThe Stop checks run at FolderDone's return, so even a perfect trigger cannot land before z-unread commits. z-unread is therefore never NotListed. Most runs end Completed, which offers no tree. Criterion 6's landing on a 'not read yet' row cannot be reached as the case is written, and the person who runs R-004 gets a refusal rather than a check.",
+    "evidence": "The design's R-004 fixture: 'c-prefix\\ (2,000 empty folders), m-mark\\ (empty), z-unread\\ (one file)', with FSA_HOOK_TREE_STOP=m-mark and target tree:z-unread. Each folder ends with the cancel check at Scanner.cs:417, after its commit.",
+    "quote": {
+     "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+     "line": 417,
+     "text": "return ct.IsCancellationRequested;"
+    },
+    "fix": "Put a slow folder between the target and the reveal target, so the Stop lands while that folder is being listed and z-unread is still queued. For example: m-mark, then n-slow (tens of thousands of entries, or a few thousand subfolders), then z-unread. Add the void rule T-010 uses: void unless z-unread reads storeNotListed true."
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "claim": "The new OnResultsViewChanged is specified as 'Folders: hides the tree and shows the list again with ListHeader(_shownTopLevel)', and it gives no condition for when that applies.\n\nToday the handler runs only on ShowKindsButton's Checked and Unchecked events, and 'Folders' just shows FoldersView, which at a Completed ending contains the tree. Under the new three-state handler, going from File kinds back to Folders at a Completed ending would take the Folders arm. That arm would collapse the finished tree, show an empty TopLevelList (ShowFolderTree set its ItemsSource and _shownTopLevel to null), and call ListHeader(null).\n\nNo existing case catches this: K-001 chooses File kinds through the hook and never switches back. T-010 run B does not toggle the view either. The shipped Folders/File kinds toggle on finished scans would break without any check going red.",
+    "evidence": "Today's handler at MainWindow.xaml.cs:719-724 toggles only FoldersView and KindsView. ShowFolderTree at MainWindow.xaml.cs:477-479 nulls TopLevelList.ItemsSource and _shownTopLevel. ShowFoldersButton has no handler, as MainWindow.xaml:400 shows, so the switch back runs through ShowKindsButton's Unchecked. Test-K001 (WindowCases.ps1:3302-) chooses File kinds and never returns to Folders.",
+    "quote": {
+     "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+     "line": 721,
+     "text": "bool kinds = ShowKindsButton.IsChecked == true;"
+    },
+    "fix": "Have the Folders arm swap the tree for the list only when the ending offered the stopped tree, that is, when ShowTreeButton is visible. Otherwise it keeps today's behaviour of showing FoldersView unchanged, with the completed tree in it. Add a step to T-010 run B: choose File kinds, then Folders, then check the tree is visible with one item and the header is unchanged."
+   },
+   {
+    "id": "M4",
+    "severity": "major",
+    "dimension": "under-engineering",
+    "nature": "defect",
+    "claim": "The design sizes the new cases' fixtures and attempts but never sizes their run time against the engine's 120 s case-measure limit.\n\n- **T-011.** It builds 20,000 folders and 100,000 files. Then it makes up to 3 run-A launches and 1 run-B launch, the run-B launch doing 5 timed opens.\n- **T-010.** It builds about 11,000 folders and makes 2 launches, one of which walks up to several thousand rows. Each row in the walk waits for a Loaded settle.\n\nBoth cases may also publish the app and build the hook first, as T-006 did in the survey. Q-222 recorded that any case whose check outlasts 120 s is killed, ends with exit_code NULL, and stays 'named', never 'covered'. If these do, build cannot discharge criteria 1-5 and validate halts as partial. This is unmeasured; settle it by timing first.",
+    "evidence": "Q-222: 'cases.measure runs each test_command via repro.measure, TIMEOUT = 120 s ... never covered'. Lesson #479 on the same bound. T-003 builds only 100,000 files before two launches (WindowCases.ps1:2735-2757). The survey's T-006 run 'published the app and built the hook' before its case. U-207 needed 57 s to build a fixture of comparable size.",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 2735,
+     "text": "New-HundredThousand $root"
+    },
+    "fix": "Before build, time `WindowCases.ps1 -Case T-003` and `-Case T-006` at HEAD, with publish and hook build already done and also from a cold start. If T-011's projected time exceeds 120 s, split it into two cases (T-011 cut, T-012 open) with separate fixtures, and cap the run-A retries so the worst case stays under the limit."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "nature": "defect",
+    "claim": "The design says the hook 'polls every 1 ms'. A Thread.Sleep(1) loop in the app's process waits the default timer period, about 15.6 ms, unless that process raises its own timer resolution. Since Windows 10 2004, timeBeginPeriod no longer has a global effect. On Windows 11, a window that is occluded or minimized is not guaranteed a resolution finer than the default, and lesson U-177 records the test window sitting under the person's terminal.\n\nThat lag of up to about 16 ms between j-before's commit and the press eats into U-207's measured 20-30 ms cut window for T-011 run A. It also makes M1's narrow windows narrower still. This is a recalled claim about the outside world that the design leans on.",
+    "evidence": "https://learn.microsoft.com/en-us/windows/win32/api/timeapi/nf-timeapi-timebeginperiod: 'Starting with Windows 10, version 2004, this function no longer affects global...' and 'Starting with Windows 11, if a window-owning process becomes fully occluded, minimized ... Windows does not guarantee a higher resolution than the default system resolution'. https://randomascii.wordpress.com/2020/10/04/windows-timer-resolution-the-great-rule-change/. U-207 constraint 3 gives the 20-30 ms cut window.",
+    "fix": "Make StopAt busy-wait with SpinWait or a Stopwatch loop over the Volatile read, rather than Thread.Sleep(1). Log the measured poll interval on the tree-stop line, so a missed cut can be attributed to the trigger rather than to the warm-up."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "claim": "The header line is a single line trimmed with CharacterEllipsis, and ViewPicker docks to its right. Adding a third radio button, 'Folder tree', at a stopped ending takes roughly 90 px more from the header. The new tree header, 'What was read of {root} before the stop, largest at the top, by space on disk. Folders marked not read yet were not reached.', runs to about 120 characters plus the root path. At the default 880 px width, and more so at the 560 px minimum, the trimming cuts exactly the clause that tells the person what 'not read yet' means. The stopped list's header (about 85 characters) is also cut sooner than it is today. CC-001 covers height only, so nothing checks this.",
+    "evidence": "MainWindow.xaml:399-406 puts ViewPicker (DockPanel.Dock=Right) on the same line as TopLevelHeader, with TextTrimming=CharacterEllipsis. The new header text is in the design's 'Stopped-ending tree choice' component.",
+    "quote": {
+     "path": "src/FsAnalyser.App/MainWindow.xaml",
+     "line": 405,
+     "text": "<TextBlock x:Name=\"TopLevelHeader\" FontWeight=\"SemiBold\" TextTrimming=\"CharacterEllipsis\""
+    },
+    "fix": "Put the clause first and keep the header short, for example 'Not read yet: folders the stop came before. Largest first, by space on disk, of what was read.' Have T-010 log the header's trimmed state (DesiredSize compared with ActualWidth) at the default and minimum sizes."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "nature": "defect",
+    "claim": "The stopped tree is now built on demand from a person's click (BuildFolderTree(LastResult!) in OnResultsViewChanged). The design sends any throw from that build 'to the dispatcher, as it does on the Completed path today'.\n\nIn interactive mode, no DispatcherUnhandledException handler is installed. App.xaml.cs installs one only on the --report path. A throw there therefore ends the app and loses the stopped results the person was reading.\n\nQ-071 (human) decided that interactive mode wraps each scan-end pass, the tree included: on a throw that panel is hidden and 'Could not show <panel>: ...' is shown. Q-158 says the same. That wrap was never built on the Completed path, and this slice adds a new tree-pass entry point without it.",
+    "evidence": "App.xaml.cs:84-89 installs the handler after the --report root is parsed, and it calls WindowReport.Discard(report) and then Shutdown(Crashed). There is no wrap around the tree pass (MainWindow.xaml.cs:603-608), and Grep finds no 'Could not show' in src/FsAnalyser.App. Q-071 is the human decision; Q-158 repeats it.",
+    "quote": {
+     "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+     "line": 603,
+     "text": "// Last, so that a failure here cannot take away what is already filled in above."
+    },
+    "fix": "Wrap the on-demand BuildFolderTree as Q-071 decided. On a throw, close the session, return to 'Folders' with the stopped list, and show 'Could not show the folder tree: <type>: <message>' in place of the tree header. Wrapping ShowFolderTree on the Completed path is the same debt and can be left to its own slice."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "under-engineering",
+    "nature": "extra",
+    "claim": "For a not-listed row, the 'unknown, not zero' rule is spread across four separately written properties: OnDiskText, SizeText, ShareText and ShareShown. Each one must remember to test NotListed, alongside the Note arm.\n\nThis invariant holds because each property was written correctly, not because the structure forces it. U-161's patched design already added a Files column to these rows. The next figure added this way would read '0 files' on an unread folder, and only T-010's per-row text checks would notice.",
+    "evidence": "FolderTreeNode.cs:108-117: each figure property repeats its own `_session.Store is null` guard. The design's contract 'FolderTreeNode texts for a not-listed folder' lists the four properties one by one.",
+    "quote": {
+     "path": "src/FsAnalyser.App/FolderTreeNode.cs",
+     "line": 108,
+     "text": "public string OnDiskText => _session.Store is null ? \"\" : FigureText.FormatSize(OnDisk);"
+    },
+    "fix": "Add one private gate, for example `private bool HasFigures => _session.Store is { } s && !s.NotListed(_entry);`, and have every figure text and ShareShown read it. A new figure column then blanks for unread folders by default."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "I checked the design's load-bearing recalled claims.\n- **NTFS order.** Microsoft and The Old New Thing say NTFS returns names sorted ('usually alphabetical', not guaranteed). The design's void rule covers the case where it is not, so this holds.\n- **RadioButton.IsChecked raising Checked/Unchecked.** Standard WPF behaviour; holds.\n- **The '1 ms poll'.** Not supported: Sleep granularity is the default ~15.6 ms timer period unless the process raises it (finding m1, with URLs).\n- **CurrentFolder semantics.** These match the code (Scanner.cs:415, ScanProgress.cs:62-70). It is exactly that 'last committed' meaning that defeats the equality trigger (M1)."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "- M1: the Stop trigger cannot see targets that are followed by a short listing (T-010, T-011 run B, R-004).\n- M2: R-004's fixture has no work after its target, so no Stop can leave z-unread unlisted.\n- The rest of the case table holds: the empty store and never-listed root (predicate plus Fact), links, the layer store, the denied folder, the depth-2 unlisted rows, and the switch back to the list."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "- M4: the new window cases are not sized against the engine's 120 s case-measure limit (Q-222).\n- m4: the not-listed blanking is held by four separate properties, with nothing forcing a fifth to follow.\n- The offer guard holds by construction: TopLevel is seeded only after the root's SetChildren, and the Fact pins it.\n- The 'result.Store' naming is fenced by the existing allow-list rule."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "None. The product change is one radio button, one Note arm, one constant and one predicate. The weight is in the hook and the cases, and the per-row, cut and timing criteria all need them. The new log lines are additive and each feeds one check."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "- M3: the three-state OnResultsViewChanged's 'Folders' arm, as specified, would hide the completed tree when a person goes from File kinds back to Folders at a Completed ending. ShowFoldersButton has no handler today, so the switch back runs through ShowKindsButton's Unchecked.\n- The other contracts (OffersStoppedTree, the tree-mode log additions, the hook environment variables) are consistent with the code I read."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "- m3: the on-demand BuildFolderTree throws straight to a dispatcher that has no interactive handler. App.xaml.cs:84 installs one only on the --report path, so a throw crashes the app, contrary to Q-071 and Q-158.\n- The empty store and never-listed root are excluded by the predicate before they can reach ShowFolderTree's throw."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "None that is undeclared.\n- The criterion 1 carrier (WALK instead of the schema-1 report) is a named deviation, backed by Q-016 and lesson #310.\n- List-first matches Q-273.\n- Superseding SL-044's 'no stopped tree' is recorded in the design doc.\n- The criterion 6 split into an unattended half and a person-run half is declared, with R-004 filed for a person."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "- The SL-110 rule is already appended under '# settled by SL-110' (fitness.yaml:1349-1363), so it needs no xUnit twin, and validate's RuleCases C-001/C-003 recount is planned.\n- No App .cs other than TopLevelRowText.cs holds the quoted literal. MainWindow.xaml.cs:391's prose does not match either pattern.\n- FolderTreeSession.cs is already linked into Core.Tests (csproj line 62).\n- m2: the third radio button narrows the single-line, trimmed header, which CC-001's height-only budget does not cover."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "- Every agreed criterion has a case on paper, but T-010 and T-011 run B depend on the broken trigger (M1), and R-004 cannot reach its shape (M2).\n- No case covers the Completed-ending switch from File kinds back to Folders, which the new handler puts at risk (M3; fix adds it to T-010 run B).\n- The planned guards (full suite, T-001, T-003, T-006, L-001, L-002, WindowMutants -Mutant All per Q-114, the rules harness) are appropriate."
+   },
+   {
+    "dimension": "security",
+    "result": "None. The change is a read-only local view over a store the scan has already returned. The hook and the cases run unelevated in %LOCALAPPDATA%\\Temp. The deny-ACE fixture is the existing helper, and no new privilege or network surface is added."
+   }
+  ]
+ }
+}

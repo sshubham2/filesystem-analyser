@@ -28,6 +28,9 @@ using System.Windows.Threading;
 ///   [FSA_HOOK_MAXIMIZE=1]  (watch, expand and size only)  [FSA_HOOK_BACK=1]  (expand, and watch with FSA_HOOK_EXPAND)
 ///   [FSA_HOOK_DRIVES=&lt;n&gt;]  (watch, expand, kinds and size only)
 ///   [FSA_HOOK_WALK, FSA_HOOK_RECYCLE, FSA_HOOK_MULTIPLY, FSA_HOOK_SELECT, FSA_HOOK_RELEASE, FSA_HOOK_GAP, FSA_HOOK_HEIGHT]  (tree only)
+///   [FSA_HOOK_TREE_STOP=&lt;folder under the root&gt;[\]]  (SL-110, tree and reveal only: StoppedTree.cs stops the scan at that folder, or
+///   with the trailing backslash anywhere under it, and chooses the folder tree beside the stopped list)
+///   [FSA_HOOK_CAN_REVEAL=&lt;row&gt;  FSA_HOOK_VIEWS=&lt;folders|tree|kinds,...&gt;]  (SL-110, tree only)
 ///   [FSA_HOOK_RENDER=software]  (SL-080: WPF draws the process in software, set before Main; tree mode's facts line says so)
 ///   [FSA_HOOK_FAIL_LISTING=&lt;folder name&gt;|&lt;page&gt;|&lt;Win32 error&gt;]  (SL-082, any mode: Core's listing failpoint, armed
 ///   before Main; see ArmFailListing)
@@ -339,6 +342,19 @@ internal class StartupHook
             if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "hide" or "kinds" or "size" or "tree" or "reveal" or "settings" or "rows"))
             {
                 Log($"refused mode={mode} reason=unknown mode");
+                return;
+            }
+            // FSA_HOOK_TREE_STOP (SL-110) stops the scan at a folder and chooses the stopped tree: tree and reveal modes only.
+            // FSA_HOOK_CAN_REVEAL and FSA_HOOK_VIEWS are tree mode's alone.
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("FSA_HOOK_TREE_STOP")) && mode is not ("tree" or "reveal"))
+            {
+                Log($"refused mode={mode} reason=FSA_HOOK_TREE_STOP is for tree and reveal only");
+                return;
+            }
+            if ((!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("FSA_HOOK_CAN_REVEAL"))
+                    || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("FSA_HOOK_VIEWS"))) && mode != "tree")
+            {
+                Log($"refused mode={mode} reason=FSA_HOOK_CAN_REVEAL and FSA_HOOK_VIEWS are for tree only");
                 return;
             }
             // FSA_HOOK_ROWS (SL-089): the panel's rows, beside stop's press or under rows mode's none.
@@ -825,7 +841,7 @@ internal class StartupHook
     // How much of the status line's text shows (SL-091, review n4): the text's own width, untrimmed, measured as the line
     // draws it, and how many of its characters come before the ellipsis in the width the line was given. Its DesiredSize
     // says neither: WPF clips it to the room given, and a trimmed line measures its trimmed text.
-    private static (double TextWidth, int Fits) StatusFit(TextBlock line)
+    internal static (double TextWidth, int Fits) StatusFit(TextBlock line)
     {
         var typeface = new Typeface(line.FontFamily, line.FontStyle, line.FontWeight, line.FontStretch);
         double pixelsPerDip = VisualTreeHelper.GetDpi(line).PixelsPerDip;

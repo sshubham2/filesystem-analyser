@@ -246,6 +246,7 @@ public partial class MainWindow : Window
         EnsureSelectedTabIsVisible(); // none is: the next ending opens on its own first section
         AwaitKinds(); // nor its kinds
         OutcomePanel.Visibility = Visibility.Collapsed;
+        ResetTreeChoice(); // a stopped ending's own choice goes with its scan, ahead of the tree it chose
         ClearFolderTree(); // and its store with it, before this scan builds another
         ClearTopLevel();
         SkippedRefreshes = 0;
@@ -386,9 +387,7 @@ public partial class MainWindow : Window
         TopLevelRow[] rows = [.. snapshot.Rows];
         Array.Sort(rows, LargestFirst);
         _shownTopLevel = snapshot;
-        TopLevelHeader.Text = !snapshot.Final
-            ? $"Largest at the top of {snapshot.Root}, so far. Rows marked reading are still growing."
-            : "What was read before the stop. Rows marked not read yet or stopped partway are short.";
+        TopLevelHeader.Text = ListHeader(snapshot);
         TopLevelList.ItemsSource = rows;
         if (selectedKey is not null && FindRow(rows, selectedKey) is { } selected && !ReferenceEquals(TopLevelList.SelectedItem, selected))
             TopLevelList.SelectedItem = selected;
@@ -402,6 +401,12 @@ public partial class MainWindow : Window
             _skipNextRefresh = LastRefresh > SlowRefresh;
         });
     }
+
+    // The results list's header: so far while the scan runs, and at a stopped ending what the rows are. The words for the
+    // unread rows come from the one place that words them (TopLevelRowText.NotReadYet).
+    private static string ListHeader(TopLevelSnapshot snapshot) => !snapshot.Final
+        ? $"Largest at the top of {snapshot.Root}, so far. Rows marked reading are still growing."
+        : $"What was read before the stop. Rows marked {TopLevelRowText.NotReadYet} or stopped partway are short.";
 
     // The Path of the row the keyboard focus is on, or of the selected row when the focus has come adrift (below);
     // null when it is anywhere else (an open row menu, a button, the folder tree, another window, nothing in an
@@ -468,11 +473,7 @@ public partial class MainWindow : Window
     // away from every one of them at once, whatever WPF still holds on to.
     private void ShowFolderTree(ScanResult result)
     {
-        var session = new FolderTreeSession(result.Store, result.Unreadable);
-        FolderTreeNode root = FolderTreeNode.Root(session);
-        root.EnsureChildren();
-        root.IsExpanded = true;
-        _treeSession = session;
+        FolderTreeNode root = BuildFolderTree(result);
 
         TopLevelList.ItemsSource = null;
         TopLevelList.Visibility = Visibility.Collapsed;
@@ -481,9 +482,61 @@ public partial class MainWindow : Window
             ? $"{result.Root} is empty."
             : $"Largest at the top of {result.Root}, by space on disk";
         FolderTreeHeadings.Visibility = Visibility.Visible;
-        FolderTree.ItemsSource = new[] { root };
         FolderTree.Visibility = Visibility.Visible;
         TopLevelPanel.Visibility = Visibility.Visible;
+    }
+
+    // The tree over the store of a scan that has returned, completed or stopped: the session, the root opened, and the
+    // tree's items. It shows nothing and touches neither the results list nor the header; each caller does (the parameter
+    // is named result, which is how this file may name the store).
+    private FolderTreeNode BuildFolderTree(ScanResult result)
+    {
+        var session = new FolderTreeSession(result.Store, result.Unreadable);
+        FolderTreeNode root = FolderTreeNode.Root(session);
+        root.EnsureChildren();
+        root.IsExpanded = true;
+        _treeSession = session;
+        FolderTree.ItemsSource = new[] { root };
+        return root;
+    }
+
+    // A stopped ending's tree (SL-110), when the person chooses it: built once, from the stopped store, and kept with the
+    // list it stands in for, which keeps its rows and its snapshot, so Folders brings it back as it was. The header leads
+    // with what the unread rows are, because it is cut at its end (the choice beside it takes room from it).
+    private void ShowStoppedTree(ScanResult result)
+    {
+        if (_treeSession is null)
+            BuildFolderTree(result);
+        TopLevelList.Visibility = Visibility.Collapsed;
+        TopLevelHeader.Text = StoppedTreeHeader(result.Root);
+        FolderTreeHeadings.Visibility = Visibility.Visible;
+        FolderTree.Visibility = Visibility.Visible;
+    }
+
+    private void ShowStoppedList()
+    {
+        FolderTree.Visibility = Visibility.Collapsed;
+        FolderTreeHeadings.Visibility = Visibility.Collapsed;
+        TopLevelList.Visibility = Visibility.Visible;
+        if (_shownTopLevel is { } snapshot)
+            TopLevelHeader.Text = ListHeader(snapshot);
+    }
+
+    private static string StoppedTreeHeader(string root)
+    {
+        string word = TopLevelRowText.NotReadYet;
+        return $"{char.ToUpperInvariant(word[0])}{word[1..]}: folders the stop came before. Largest first, by space on disk, of what was read in {root}";
+    }
+
+    // As a scan starts: the stopped ending's choice of the tree goes first, hidden and, if it was the one picked, replaced by
+    // Folders (File kinds, if picked, stays: the person's choice outlasts a scan). Hidden first, so that the change of
+    // choice swaps nothing in a view that is about to be cleared.
+    private void ResetTreeChoice()
+    {
+        bool picked = ShowTreeButton.IsChecked == true;
+        ShowTreeButton.Visibility = Visibility.Collapsed;
+        if (picked)
+            ShowFoldersButton.IsChecked = true;
     }
 
     // As a scan starts: the tree and its store go before the new scan builds another, so two stores are never held
@@ -603,8 +656,12 @@ public partial class MainWindow : Window
         // Last, so that a failure here cannot take away what is already filled in above.
         ShowLargestFiles(result);
         EnsureSelectedTabIsVisible(); // every section of this ending is in: its first is selected
+        // A stopped scan keeps its list as the view it opens on (Q-273), and offers the tree beside it when the root was
+        // listed, unchecked (SL-110): its shares are of what was read, which the tree's header and the title above say.
         if (finished)
-            ShowFolderTree(result); // a stopped scan keeps its list: a share would be of an incomplete whole
+            ShowFolderTree(result);
+        else if (FolderTreeSession.OffersStoppedTree(result))
+            ShowTreeButton.Visibility = Visibility.Visible;
         ShowKinds(result); // after the tree, which a failure here cannot take away; a stopped scan's kinds too
         OutcomePanel.Visibility = Visibility.Visible;
         ShowVolumeInUse(result.Store.VolumeUsed, _scanGeneration, detail); // and then EndingShown
@@ -714,13 +771,28 @@ public partial class MainWindow : Window
     // ---- The files by kind (SL-046) ----
 
     // The results cell shows one of two views, as the choice on its header line says: the folders (the results list
-    // while a scan runs and after a stop, the folder tree once a scan completes), or the files by kind. The choice is the
-    // person's and outlasts a scan; the kinds view says, while a scan runs, when its rows come.
+    // while a scan runs and after a stop, the folder tree once a scan completes, or after a stop when the person chooses it
+    // beside Folders, SL-110), or the files by kind. The choice of kinds is the person's and outlasts a scan; the kinds view
+    // says, while a scan runs, when its rows come.
     private void OnResultsViewChanged(object sender, RoutedEventArgs e)
     {
         bool kinds = ShowKindsButton.IsChecked == true;
         FoldersView.Visibility = kinds ? Visibility.Collapsed : Visibility.Visible;
         KindsView.Visibility = kinds ? Visibility.Visible : Visibility.Collapsed;
+        // The list and the tree swap only at a stopped ending that offers the tree (SL-110). At every other ending the
+        // folders are what they were: a completed scan's FoldersView holds its tree, and going File kinds and back to Folders
+        // must not blank it.
+        if (ShowTreeButton.Visibility != Visibility.Visible)
+            return;
+        if (ShowTreeButton.IsChecked == true)
+        {
+            if (LastResult is { } stopped)
+                ShowStoppedTree(stopped);
+        }
+        else
+        {
+            ShowStoppedList();
+        }
     }
 
     // Every file of the store of a scan that has returned, so nothing writes it any more, Completed or Cancelled: one

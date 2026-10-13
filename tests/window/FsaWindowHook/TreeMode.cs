@@ -79,6 +79,10 @@ internal static class TreeMode
 
     private static Application _app = null!;
 
+    // Whether this run stopped the scan and chose the stopped tree (FSA_HOOK_TREE_STOP, SL-110): Release then reads the
+    // radio buttons and the second tree after the second scan, which a completed run has no reason to.
+    private static bool _stoppedRun;
+
     /// <summary>A step that cannot go on, in words for the log.</summary>
     private sealed class Refusal(string reason) : Exception(reason);
 
@@ -106,10 +110,15 @@ internal static class TreeMode
             string? select = Text("FSA_HOOK_SELECT");
             string? release = Text("FSA_HOOK_RELEASE");
             string? gap = Text("FSA_HOOK_GAP");
+            string? canReveal = Text("FSA_HOOK_CAN_REVEAL");
+            string? views = Text("FSA_HOOK_VIEWS");
             if (release is not null && select is null)
                 throw new Refusal("FSA_HOOK_RELEASE needs FSA_HOOK_SELECT: the row a person had selected before picking a new folder");
 
             int? height = Number("FSA_HOOK_HEIGHT"); // applied by BeforeMain's watch, before the window had a handle
+            // SL-110: the stop is armed before the window is waited for, because the window's Loaded handler starts the scan.
+            StoppedTree.Run? stop = StoppedTree.Arm(app);
+            _stoppedRun = stop is not null;
             window = WaitForWindow();
             if (height is int wanted)
                 Sized(window, wanted);
@@ -118,7 +127,22 @@ internal static class TreeMode
                 Facts();
                 probe = Probe.Start(app);
             }
-            WaitForEnding(window, "ending", probe, first: true);
+            WaitForEnding(window, "ending", probe, first: true, stopped: stop is not null);
+            if (stop is not null)
+            {
+                // The stop must have landed, and the ending be the stopped one; then what the stopped list and panel and store
+                // hold, before the tree is chosen (which swaps the list out).
+                stop.Join();
+                if (!stop.Pressed)
+                    throw new Refusal($"the stop did not land ({stop.Reason}): this run is void");
+                StoppedTree.LogEnding(app, window);
+            }
+            if (views is not null)
+                StoppedTree.Views(app, window, views);
+            else if (stop is not null)
+                StoppedTree.Choose(app, window);
+            if ((stop is not null || views is not null) && !Ui(() => Tree(window).Visibility == Visibility.Visible && Tree(window).Items.Count == 1))
+                throw new Refusal("the ending shows no folder tree: end FSA_HOOK_VIEWS on tree for a stopped ending, or on folders for a completed one");
             if (probe is not null)
                 probe.Phase("handoff", TimeSpan.FromSeconds(1));
             if (walk > 0)
@@ -129,6 +153,8 @@ internal static class TreeMode
                 ExpandTimed(window, expand);
             if (multiply)
                 Multiply(window);
+            if (canReveal is not null)
+                CanReveal(window, canReveal);
             if (select is not null)
                 Select(window, select);
             if (release is not null)
@@ -251,7 +277,7 @@ internal static class TreeMode
 
     // Until the scan has returned and its ending is on screen. With a probe, the window is moved and resized every
     // 50 ms while the scan runs, as a person dragging it would (row 6).
-    private static void WaitForEnding(Window window, string kind, Probe? probe, bool first)
+    private static void WaitForEnding(Window window, string kind, Probe? probe, bool first, bool stopped = false)
     {
         var since = Stopwatch.StartNew();
         var moved = Stopwatch.StartNew();
@@ -298,6 +324,8 @@ internal static class TreeMode
                 ["headings"] = Shown(window, "FolderTreeHeadings"),
                 ["list"] = Shown(window, "TopLevelList"),
                 ["listItems"] = (window.FindName("TopLevelList") as ItemsControl)?.Items.Count,
+                ["treeChoice"] = Shown(window, "ShowTreeButton"), // SL-110: a stopped ending that offers the tree beside its list
+                ["stopRun"] = stopped,
                 ["moves"] = moves,
                 ["firstMoveAt"] = firstMoveAt,
                 ["longestMoveMs"] = longestMoveMs, // the longest a move and resize held the hook, on the UI thread
@@ -309,7 +337,8 @@ internal static class TreeMode
                 ["ms"] = StartupHook.Clock.ElapsedMilliseconds,
             };
         }));
-        if (!Ui(() => Tree(window).Visibility == Visibility.Visible && Tree(window).Items.Count == 1))
+        // A stopped ending shows its list: the tree is the person's choice, made by the caller (StoppedTree.Choose).
+        if (!stopped && !Ui(() => Tree(window).Visibility == Visibility.Visible && Tree(window).Items.Count == 1))
             throw new Refusal("the ending shows no folder tree");
     }
 
@@ -493,6 +522,8 @@ internal static class TreeMode
                 ["firstName"] = firstName,
                 ["firstOnDisk"] = firstOnDisk,
                 ["children"] = Ui(() => Children(NodeAt(window, indexes))?.Count),
+                // SL-110: how many of the folder's rows the store marks not listed (first open only: a count over 100,000 rows).
+                ["notListedChildren"] = open == 1 ? Ui(() => StoppedTree.NotListedChildren(_app.MainWindow, NodeAt(window, indexes))) : null,
                 ["realized"] = realized,
                 ["viewportHeight"] = Ui(() => Find<ScrollViewer>(Tree(window))?.ViewportHeight),
             });
@@ -582,6 +613,62 @@ internal static class TreeMode
         });
         WaitForEnding(window, "second-ending", null, first: false);
         Emit("store-released", new() { ["released"] = Collected(store), ["when"] = "the second scan ended" });
+        if (_stoppedRun)
+            AfterRelease(window);
+    }
+
+    // SL-110: after a stopped tree was chosen and a second scan completed: the window must have put the choice away (hidden,
+    // Folders checked) and shown the second scan's own tree, whose rows read the second store, none of them unread. The
+    // first level of that tree is read as WALK reads any (its tree-row lines follow the second-ending line).
+    private static void AfterRelease(Window window)
+    {
+        Emit("after-release", Ui(() => new Dictionary<string, object?>
+        {
+            ["treeChoice"] = Shown(window, "ShowTreeButton"),
+            ["foldersChecked"] = (window.FindName("ShowFoldersButton") as System.Windows.Controls.Primitives.ToggleButton)?.IsChecked == true,
+            ["treeChecked"] = (window.FindName("ShowTreeButton") as System.Windows.Controls.Primitives.ToggleButton)?.IsChecked == true,
+            ["tree"] = Tree(window).Visibility == Visibility.Visible,
+            ["treeItems"] = Tree(window).Items.Count,
+            ["list"] = Shown(window, "TopLevelList"),
+            ["marks"] = StoppedTree.StoreMarks(window),
+        }));
+        Walk(window, 1);
+    }
+
+    // ---- CAN_REVEAL ----
+
+    // SL-110, criterion 6: Open in Explorer on a row, without executing it. The row is selected and focused as a click leaves
+    // it, and the window's own command is asked whether it can run for it, and which path it would open, beside the path the
+    // store gives for the row's entry and the store's mark for it.
+    private static void CanReveal(Window window, string path)
+    {
+        int[] indexes = FindPath(window, path);
+        Ui(() => Resolve(window, indexes) is not null);
+        Settle(DispatcherPriority.Loaded);
+        Emit("can-reveal", Ui(() =>
+        {
+            TreeViewItem item = Resolve(window, indexes) ?? throw new Refusal($"{path} has no row to ask Open in Explorer about");
+            item.SetCurrentValue(TreeViewItem.IsSelectedProperty, true);
+            item.Focus();
+            object? node = item.DataContext;
+            var command = window.GetType().GetField("OpenInExplorer", BindingFlags.Static | BindingFlags.Public)?.GetValue(null) as RoutedUICommand
+                ?? throw new Refusal("the window has no OpenInExplorer command");
+            MethodInfo pathOf = window.GetType().GetMethod("PathOf", BindingFlags.Static | BindingFlags.NonPublic)
+                ?? throw new Refusal("the window has no PathOf");
+            return new Dictionary<string, object?>
+            {
+                ["path"] = path,
+                ["name"] = Prop(node, "Name"),
+                ["note"] = Prop(node, "Note"),
+                ["selected"] = item.IsSelected,
+                ["focused"] = item.IsKeyboardFocusWithin,
+                ["canExecute"] = command.CanExecute(node, window), // as the row's menu sends it: the row is the parameter
+                ["canExecuteFocused"] = command.CanExecute(null, window), // as the keyboard's Ctrl+Enter reaches it
+                ["pathOf"] = pathOf.Invoke(null, [node]) as string,
+                ["storePath"] = StoppedTree.StorePathOf(_app.MainWindow, node),
+                ["storeNotListed"] = StoppedTree.NotListedOf(_app.MainWindow, node),
+            };
+        }));
     }
 
     // Only a weak reference leaves this method, and it is not inlined, so no local of the caller keeps the store
@@ -883,6 +970,9 @@ internal static class TreeMode
         ["shareText"] = Prop(node, "ShareText"),
         ["barWidth"] = Prop(node, "BarWidth"),
         ["note"] = Prop(node, "Note"),
+        // SL-110: the store's own mark for the row's entry, read through the window's LastResult and the row's entry number,
+        // never through a property of the row, so a row that mis-reads its mark cannot vouch for itself.
+        ["storeNotListed"] = StoppedTree.NotListedOf(_app.MainWindow, node),
     };
 
     // What the row's container draws: the text of each named part of the row template, the bar's laid-out width,

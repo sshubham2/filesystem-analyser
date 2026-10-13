@@ -112,7 +112,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
         'L-001', 'L-002', 'L-003', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'N-001', 'N-002', 'N-003', 'N-004',
-        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003',
+        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'R-004',
         'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-001', 'X-002', 'X-003', 'X-004', 'X-005', 'X-006', 'N-005', 'N-006', 'W-001')]
     [string] $Case,
     [switch] $IncludeNetwork,
@@ -145,9 +145,9 @@ $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_H
     'FSA_HOOK_WALK', 'FSA_HOOK_RECYCLE', 'FSA_HOOK_MULTIPLY', 'FSA_HOOK_SELECT', 'FSA_HOOK_RELEASE', 'FSA_HOOK_GAP', 'FSA_HOOK_HEIGHT', 'FSA_HOOK_REVEAL', 'FSA_HOOK_STATUS',
     'FSA_HOOK_MAXIMIZE', 'FSA_HOOK_BACK', 'FSA_HOOK_READABLE', 'FSA_HOOK_BEFORE', 'FSA_HOOK_AFTER', 'FSA_HOOK_RENAMED', 'FSA_HOOK_RENDER', 'FSA_HOOK_FAIL_LISTING', 'FSA_HOOK_REVEAL_GATE',
     'FSA_HOOK_AT_FOLDERS', 'FSA_HOOK_PAST', 'FSA_HOOK_PAST_FOLDERS', 'FSA_HOOK_AT_SIZED', 'FSA_HOOK_TRIGGER_DEADLINE_S', 'FSA_HOOK_ANSWER', 'FSA_HOOK_ROWS',
-    'FSA_HOOK_EXPLORER_VIEW'
+    'FSA_HOOK_EXPLORER_VIEW', 'FSA_HOOK_TREE_STOP', 'FSA_HOOK_CAN_REVEAL', 'FSA_HOOK_VIEWS'
 $HookedCases = 'C-002', 'C-006', 'C-012', 'C-013', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
-    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003',
+    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'R-004',
     'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005', 'N-005', 'N-006', 'W-001'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004', 'N-005'
 $CloudCases = 'N-006'
@@ -6302,9 +6302,586 @@ function Test-W001 {
     }
 }
 
+# ---- The stopped tree (SL-110) ----
+
+# After Stop, the folders the scan never listed read 'not read yet' wherever they are shown. The stopped ending still opens
+# on the stopped list (Q-273); the tree is a choice beside it ('Folder tree'). Every row evidence comes from tree mode's
+# WALK lines, never from the report, which carries no row (Q-016, lesson #310); the store's own mark for each row is read by
+# the hook through LastResult.Store and the row's entry, never through the row, so a row cannot vouch for itself.
+#
+# The hook stops the scan from its own thread, which spins on the scan's progress and presses Cancel when the folder most
+# recently COMMITTED is the one named (FSA_HOOK_TREE_STOP, StoppedTree.cs). A name with a trailing backslash is that folder
+# or anything under it: a stop window as long as the subtree takes to walk. Only T-011 run A names one folder exactly, and
+# the folder after it is a 100,000-entry listing (tests/FsAnalyser.Core.Tests/StopTargetCorpus.json is the class of
+# targets and what each gives). Where the Stop lands is the scan's timing, not the case's, so every case states what must
+# have happened for its run to say anything (a VOID run is run again, at most three launches, and never passes).
+
+$NotReadYet = 'not read yet'
+$StoppedListHeader = 'What was read before the stop. Rows marked not read yet or stopped partway are short.'
+$StoppedTreeLead = 'Not read yet: folders the stop came before.'
+# UnreadableRows.KindText's words: a folder the scan never listed is never given one of them.
+$UnreadableWords = 'could not be opened', 'opened, but nothing could be listed', 'only partly read', 'could not be read'
+$StoppedAttempts = 3
+
+# Creates folders and files by the thousand without PowerShell's per-call cost.
+function Initialize-BulkTree {
+    if ('FsaWindowCases.Bulk' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Threading.Tasks;
+
+namespace FsaWindowCases
+{
+    public static class Bulk
+    {
+        // At most half the logical processors, so the person's machine keeps the rest while a tree is built.
+        private static readonly ParallelOptions Half = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2) };
+
+        public static void Folders(string parent, string prefix, int count, int bytesInEach)
+        {
+            Directory.CreateDirectory(parent);
+            byte[] content = new byte[bytesInEach];
+            Parallel.For(0, count, Half, i =>
+            {
+                string folder = Path.Combine(parent, prefix + i.ToString("D5"));
+                Directory.CreateDirectory(folder);
+                if (bytesInEach > 0)
+                    File.WriteAllBytes(Path.Combine(folder, "f.bin"), content);
+            });
+        }
+
+        public static void EmptyFiles(string folder, string prefix, int count)
+        {
+            Directory.CreateDirectory(folder);
+            Parallel.For(0, count, Half, i =>
+            {
+                using (File.Create(Path.Combine(folder, prefix + i.ToString("D6") + ".bin"))) { }
+            });
+        }
+    }
+}
+'@
+}
+
+function Show-HookLines($run) {
+    foreach ($line in $run.Log) {
+        if ($line -notmatch '^\{"kind":"(tree-row|top-row)"') { Write-Output "        hook: $line" }
+    }
+}
+
+# What every stopped run must show before its own checks: no error the hook did not call void, the window closed, the app
+# exited as a closed window does, and the ending the stop left: Stopped, on the list, with the tree offered beside it and not shown.
+function CheckStoppedRun($run, [string] $root) {
+    Show-HookLines $run
+    $errors = @(Lines-Of $run 'error')
+    Check ($errors.Count -eq 0) "the hook reported no error ($(Show (($errors | ForEach-Object reason) -join ' | ')))"
+    Check (@(Lines-Of $run 'closed').Count -eq 1) 'the hook closed the window'
+    CheckEqual '0' $run.Exit 'exit code (a closed window)'
+    $ending = @(Lines-Of $run 'ending')
+    Check ($ending.Count -eq 1) "the hook saw the ending ('ending')"
+    if ($ending.Count -ne 1) { return }
+    Check ("$($ending[0].title)".StartsWith("Stopped: $root")) "the ending is Stopped ($(Show $ending[0].title))"
+    CheckEqual $true $ending[0].list 'the stopped ending opens on the results list (Q-273)'
+    CheckEqual $false $ending[0].tree 'FolderTree is not shown until it is chosen'
+    CheckEqual $false $ending[0].headings "the tree's headings are not shown"
+    CheckEqual $true $ending[0].treeChoice "the ending offers 'Folder tree' beside Folders"
+}
+
+# Why a run proves nothing, or $null when it can be judged: the stop did not land (the scan ended first, or the click was
+# not pressable), or an error other than that. $needs is a scriptblock over the hook's rows that returns the reason a run
+# without the shape the case is about is void.
+function Get-StoppedVoid($run, [scriptblock] $needs) {
+    $stop = @(Lines-Of $run 'tree-stop')
+    if ($stop.Count -eq 0) { return 'the hook never logged a tree-stop line' }
+    if ($stop[0].pressed -ne $true) { return "the stop did not land ($($stop[0].refused))" }
+    $errors = @(Lines-Of $run 'error')
+    if ($errors.Count -gt 0) { return $null } # a real error: the run's own checks report it
+    & $needs $run
+}
+
+# Launches until a run has the shape the case is about, at most $StoppedAttempts times. Returns the last run and its void
+# reason ($null when it can be judged).
+function Invoke-StoppedTreeRun([string] $root, [hashtable] $variables, [scriptblock] $needs, [int] $timeoutSec = 120) {
+    $void = $null
+    $run = $null
+    for ($attempt = 1; $attempt -le $StoppedAttempts; $attempt++) {
+        $run = Invoke-TreeRun $root $variables $timeoutSec
+        $void = Get-StoppedVoid $run $needs
+        if ($null -eq $void) { break }
+        Write-Output "        attempt $attempt is VOID: $void"
+    }
+    [pscustomobject]@{ Run = $run; Void = $void }
+}
+
+# T-010's tree. The stop at m-mid\ lands within a millisecond of m-mid's own listing, so m-mid's 200 subfolders are listed in
+# part (depth 2: listed folders with the unlisted ones beside them) and everything after them is not (depth 1: p00 to p04).
+# Listed before the stop: an empty folder at both depths (a-empty, b-listed\empty), a folder with files, and a folder denied
+# its listing (the failed folder that the unread ones must not be mistaken for). c-prefix, 5,000 empty folders, gives the hook
+# the lead it needs to be reading before m-mid is reached. Returns the denied folder, for the caller to give back.
+function New-StoppedTreeFixture([string] $root) {
+    Initialize-BulkTree
+    [void][System.IO.Directory]::CreateDirectory((Join-Path $root 'a-empty'))
+    $b = Join-Path $root 'b-listed'
+    [void][System.IO.Directory]::CreateDirectory((Join-Path $b 'empty'))
+    foreach ($f in 1..3) { New-File (Join-Path $b "full\f$f.bin") $KiB64 }
+    foreach ($f in 1..5) { New-File (Join-Path $b "b$f.bin") $KiB4 }
+    $denied = Join-Path $b 'denied'
+    New-File (Join-Path $denied 'hidden.bin') $KiB4
+    Deny-Listing $denied
+    [FsaWindowCases.Bulk]::Folders((Join-Path $root 'c-prefix'), 'c', 5000, 0)
+    $empty = [byte[]]::new(0)
+    for ($d = 0; $d -lt 200; $d++) {
+        $mid = Join-Path $root ('m-mid\d{0:D3}' -f $d)
+        [void][System.IO.Directory]::CreateDirectory($mid)
+        New-File (Join-Path $mid 's.bin') $KiB4
+        for ($f = 0; $f -lt 19; $f++) { [System.IO.File]::WriteAllBytes((Join-Path $mid ('e{0:D2}.bin' -f $f)), $empty) }
+    }
+    for ($p = 0; $p -lt 5; $p++) {
+        for ($s = 0; $s -lt 10; $s++) {
+            $dir = Join-Path $root ('p{0:D2}\s{1}' -f $p, $s)
+            [void][System.IO.Directory]::CreateDirectory($dir)
+            for ($f = 0; $f -lt 5; $f++) { [System.IO.File]::WriteAllBytes((Join-Path $dir "f$f.bin"), $empty) }
+        }
+    }
+    $denied
+}
+
+# A stopped run of T-010's tree can be judged when the stop left an unread folder at depth 1, and unread and listed folders
+# side by side under m-mid at depth 2.
+$T010Needs = {
+    param($run)
+    $rows = @(Lines-Of $run 'tree-row')
+    if ($rows.Count -eq 0) { return 'no row was read' }
+    $d1 = @($rows | Where-Object { $_.depth -eq 1 -and $_.storeNotListed -eq $true })
+    $under = @($rows | Where-Object { $_.depth -eq 2 -and (Parent-Of $_.path) -ceq 'm-mid' })
+    $unread = @($under | Where-Object { $_.storeNotListed -eq $true })
+    $listed = @($under | Where-Object { $_.storeNotListed -eq $false })
+    if ($d1.Count -eq 0) { return 'no folder at depth 1 was left unread' }
+    if ($unread.Count -eq 0) { return 'the stop landed after m-mid''s subfolders were all listed' }
+    if ($listed.Count -eq 0) { return 'the stop landed before any of m-mid''s subfolders was listed' }
+    $null
+}
+
+# Criteria 1 to 4 and 6 over a stopped run of T-010's tree.
+function CheckStoppedRows($run, [string] $root) {
+    $stop = @(Lines-Of $run 'tree-stop')
+    Write-Output ("        stop: target {0}, seen {1}, pressed at {2}; detect to click {3:N0} us; poll {4:N0} ns a read, worst gap {5:N1} ms" -f $stop[0].target, (Leaf-Of $stop[0].seen), (Leaf-Of $stop[0].pressedAt), $stop[0].detectToCallbackUs, $stop[0].pollMeanNs, $stop[0].worstGapMs)
+    $walked = @(Lines-Of $run 'walked')
+    Check ($walked.Count -eq 1 -and $walked[0].unrendered -eq 0) "every row read had a container that drew it ($(Show ($walked | ConvertTo-Json -Compress)))"
+    $rows = @(Lines-Of $run 'tree-row')
+    $byPath = @{}
+    foreach ($row in $rows) { $byPath[$row.path] = $row }
+    $unread = @($rows | Where-Object { $_.storeNotListed -eq $true })
+    $listed = @($rows | Where-Object { $_.storeNotListed -eq $false })
+
+    # Criterion 1: every folder the store marks not listed draws 'not read yet', and nothing a figure or an expander.
+    $marks = @(Lines-Of $run 'store-marks')
+    Check ($marks.Count -eq 1) 'the hook counted the store''s marks (store-marks)'
+    if ($marks.Count -eq 1) {
+        CheckEqual $marks[0].notListed $unread.Count "every folder the store marks not listed was read as a drawn row (the store marks $($marks[0].notListed) of its $($marks[0].entries) entries; the walk read $($unread.Count))"
+    }
+    $bad = [System.Collections.Generic.List[string]]::new()
+    foreach ($row in $unread) {
+        $r = $row.rendered
+        if ($null -eq $r) { $bad.Add("$($row.path): no container"); continue }
+        $why = @()
+        if ($r.note -cne $NotReadYet) { $why += "note $(Show $r.note)" }
+        if ($r.onDisk -cne '' -or $r.size -cne '' -or $r.share -cne '') { $why += "figures $(Show $r.onDisk)/$(Show $r.size)/$(Show $r.share)" }
+        if ($r.barShown -ne $false) { $why += 'a bar is shown' }
+        if ($r.expander -ne $false) { $why += 'an expander is shown' }
+        if ($row.note -cne $NotReadYet -or $row.onDiskText -cne '' -or $row.sizeText -cne '' -or $row.shareText -cne '') { $why += "row properties $(Show $row.note)/$(Show $row.onDiskText)" }
+        if ([int]$row.childCount -ne 0) { $why += "childCount $($row.childCount)" }
+        if ($why.Count -gt 0) { $bad.Add("$($row.path): $($why -join ', ')") }
+    }
+    Check ($bad.Count -eq 0) "all $($unread.Count) not-listed rows draw '$NotReadYet', no figure, no bar and no expander ($(Show (($bad | Select-Object -First 3) -join ' | ')))"
+    $d1 = @($unread | Where-Object depth -eq 1 | ForEach-Object name | Sort-Object)
+    CheckEqual 'p00|p01|p02|p03|p04' ($d1 -join '|') 'depth 1: the folders after m-mid, p00 to p04, were never listed and read so'
+    $d2 = @($unread | Where-Object { $_.depth -eq 2 -and (Parent-Of $_.path) -ceq 'm-mid' })
+    Check ($d2.Count -gt 0) "depth 2: $($d2.Count) of m-mid's subfolders, under a listed folder, read so"
+    $leak = @($listed | Where-Object { $_.rendered.note -ceq $NotReadYet })
+    Check ($leak.Count -eq 0) "no listed row draws '$NotReadYet' ($(Show (($leak | ForEach-Object path) -join ', ')))"
+    $words = @($unread | Where-Object { $UnreadableWords -contains $_.rendered.note })
+    Check ($words.Count -eq 0) "no not-listed row carries a word of a folder that could not be read ($(Show (($words | ForEach-Object path) -join ', ')))"
+
+    # Criterion 2: listed and empty reads as empty, at both depths.
+    foreach ($path in 'a-empty', 'b-listed\empty') {
+        $row = $byPath[$path]
+        if ($null -eq $row -or $null -eq $row.rendered) { Check $false "$path was read and drawn"; continue }
+        $r = $row.rendered
+        Check ($row.storeNotListed -eq $false -and $r.note -ceq '' -and $r.onDisk -ceq '0 bytes' -and $r.size -ceq '0 bytes' -and $r.expander -eq $false -and [int]$row.childCount -eq 0) `
+            "$path, listed and found empty, reads as empty: no note, '0 bytes', no expander ($(Show ($r | ConvertTo-Json -Compress)))"
+    }
+
+    # A listed folder holding unread ones keeps its own reading: m-mid is not 'not read yet' for what is below it.
+    $mid = $byPath['m-mid']
+    Check ($null -ne $mid -and $mid.storeNotListed -eq $false -and $mid.rendered.note -ceq '' -and $mid.rendered.onDisk -cne '' -and $mid.rendered.expander -eq $true) `
+        "m-mid, listed, with listed and unread folders below it, has no note, draws its figures and has an expander ($(Show ($mid.rendered | ConvertTo-Json -Compress)))"
+
+    # Criterion 4's positive control: a folder that failed is a failed folder, and the panel names it and no unread one.
+    $denied = $byPath['b-listed\denied']
+    Check ($null -ne $denied -and $denied.storeNotListed -eq $false -and $denied.rendered.note -ceq 'could not be opened' -and $denied.rendered.expander -eq $false) `
+        "b-listed\denied, listed before the stop and denied its listing, reads 'could not be opened' ($(Show ($denied.rendered | ConvertTo-Json -Compress)))"
+    $panel = @(Lines-Of $run 'panel')
+    Check ($panel.Count -eq 1) 'the hook read the unreadable folders'' panel'
+    if ($panel.Count -eq 1) {
+        $paths = @($panel[0].paths)
+        Check ($paths -contains (Join-Path $root 'b-listed\denied')) "the panel names b-listed\denied ($(Show ($paths -join ' | ')))"
+        $named = @($unread | Where-Object { $paths -contains (Join-Path $root $_.path) })
+        Check ($named.Count -eq 0) "the panel names no folder the scan never listed ($(Show (($named | ForEach-Object path) -join ', ')))"
+    }
+
+    # Criterion 3: the list and the tree word the same folders the same way, from one constant.
+    $tops = @(Lines-Of $run 'top-row')
+    CheckEqual 9 $tops.Count 'the stopped list holds the root''s nine children'
+    $differ = [System.Collections.Generic.List[string]]::new()
+    foreach ($row in @($rows | Where-Object { $_.depth -eq 1 })) {
+        $top = @($tops | Where-Object { $_.name -ceq $row.name })
+        if ($top.Count -ne 1) { $differ.Add("$($row.name): no list row"); continue }
+        $notRead = $top[0].state -ceq 'NotRead'
+        if ($notRead -ne ($row.storeNotListed -eq $true)) { $differ.Add("$($row.name): list $($top[0].state), store $($row.storeNotListed)") }
+        if ($notRead -and ($top[0].title -cne "$($row.name)  ($($row.rendered.note))")) { $differ.Add("$($row.name): list says $(Show $top[0].title), tree says $(Show $row.rendered.note)") }
+    }
+    Check ($differ.Count -eq 0) "each top-level folder is not read in the list exactly when the store marks it, in the tree's own word ($(Show ($differ -join ' | ')))"
+    $states = (@($tops | Where-Object { $_.name -in 'a-empty', 'b-listed', 'c-prefix', 'm-mid', 'p04' } | Sort-Object name | ForEach-Object { "$($_.name)=$($_.state)" })) -join ' '
+    CheckEqual 'a-empty=Done b-listed=Done c-prefix=Done m-mid=StoppedPartway p04=NotRead' $states 'the list''s rows were in each state at once: Done, stopped partway and not read'
+
+    # Criterion 6, in the window: Open in Explorer is offered on a row marked 'not read yet'.
+    $can = @(Lines-Of $run 'can-reveal')
+    Check ($can.Count -eq 1) "the hook asked Open in Explorer about p04 (can-reveal)"
+    if ($can.Count -eq 1) {
+        $c = $can[0]
+        Check ($c.storeNotListed -eq $true -and $c.note -ceq $NotReadYet -and $c.selected -eq $true) "p04 is a not-read row, selected ($(Show ($c | ConvertTo-Json -Compress)))"
+        CheckEqual $true $c.canExecute 'Open in Explorer is enabled on a row marked not read yet'
+        CheckEqual (Join-Path $root 'p04') $c.pathOf 'and would open the folder itself'
+        CheckEqual $c.storePath $c.pathOf 'which is the path the store gives for the row''s entry'
+    }
+}
+
+# The views of T-010 run 1: File kinds, back to Folders, and the tree, in that order. The stopped list is the Folders view,
+# with its own header; the tree has the lead of its header showing at the default width and at the narrowest.
+function CheckStoppedViews($run) {
+    $views = @(Lines-Of $run 'view')
+    CheckEqual 'kinds|folders|tree|folders|tree' (($views | ForEach-Object choice) -join '|') 'the hook chose File kinds, Folders, Folder tree, Folders again and Folder tree in turn'
+    if ($views.Count -ne 5) { return }
+    $kinds, $folders, $tree, $back, $again = $views
+    Check ($kinds.kindsChecked -eq $true -and $kinds.kinds -eq $true) 'File kinds is the view chosen'
+    Check ($folders.foldersChecked -eq $true -and $folders.list -eq $true -and $folders.tree -eq $false -and $folders.kinds -eq $false) "Folders brings back the stopped list, not the tree ($(Show ($folders | ConvertTo-Json -Compress)))"
+    CheckEqual $StoppedListHeader $folders.header 'the stopped list has its own header again'
+    CheckEqual 9 $folders.listItems 'with its nine rows'
+    # Folder tree picked, then Folders: the list is back as it was, rows and titles, header and all (the tree stands in for it, it
+    # is not rebuilt from it).
+    Check ($back.foldersChecked -eq $true -and $back.list -eq $true -and $back.tree -eq $false -and $back.headings -eq $false -and $back.treeChoice -eq $true) "Folders after the tree brings back the stopped list and hides the tree ($(Show ($back | ConvertTo-Json -Compress)))"
+    CheckEqual $StoppedListHeader $back.header 'with the list''s own header'
+    CheckEqual ((@($folders.listTitles)) -join "`n") ((@($back.listTitles)) -join "`n") 'and the nine rows'' titles byte for byte as before the tree was chosen'
+    $notRead = @(@($back.listTitles) | Where-Object { $_ -clike "*($NotReadYet)" })
+    Check ($notRead.Count -gt 0) "of which $($notRead.Count) read '($NotReadYet)'"
+    Check ($again.treeChecked -eq $true -and $again.tree -eq $true -and $again.treeItems -eq 1 -and $again.list -eq $false) 'and the tree again, still one row at its top'
+    Check ($tree.treeChecked -eq $true -and $tree.tree -eq $true -and $tree.treeItems -eq 1 -and $tree.list -eq $false -and $tree.headings -eq $true) "Folder tree shows the tree over the stopped store ($(Show ($tree | ConvertTo-Json -Compress)))"
+    Check ("$($tree.header)".StartsWith($StoppedTreeLead)) "the tree's header leads with what the unread rows are ($(Show $tree.header))"
+    Check ([int]$tree.headerCharsShown -ge $StoppedTreeLead.Length) "at the default width the lead shows in full ($($tree.headerCharsShown) of $($tree.headerChars) characters, $([int]$tree.headerWidth) px for $([int]$tree.headerTextWidth) px of text)"
+    $min = @(Lines-Of $run 'view-min')
+    Check ($min.Count -eq 1) 'the hook read the header at the window''s narrowest'
+    if ($min.Count -eq 1) {
+        Write-Output ("        at the narrowest ({0:N0} px wide): {1} of {2} characters of the header show, {3:N0} px for {4:N0} px of text" -f $min[0].windowWidth, $min[0].headerCharsShown, $min[0].headerChars, $min[0].headerWidth, $min[0].headerTextWidth)
+        Check ([int]$min[0].headerCharsShown -ge $NotReadYet.Length) "at the narrowest width the header still shows the word it explains ($($min[0].headerCharsShown) characters)"
+    }
+}
+
+# T-010 (SL-110, criteria 1, 2, 3, 6 in the window, 7): the stopped tree's rows.
+# Run 1 stops the scan within a millisecond of m-mid's own listing and chooses the tree: every folder the store marks not listed
+# draws 'not read yet' with no figure and no expander, at depth 1 (p00 to p04) and at depth 2 under a listed folder (m-mid's);
+# listed empty folders read as empty; a denied folder reads as failed and is in the panel; the list and the tree word the unread
+# folders alike; Open in Explorer is enabled on one; the views switch (kinds, folders, tree) without losing either.
+# Run 2 is a completed scan of the same tree: no tree choice, the kinds-and-back switch leaves the finished tree as it was, and
+# no row says 'not read yet'. Run 3 stops, chooses the tree, selects a row and starts a second scan: the choice goes, the first
+# store is collected, and the second tree shows its own rows.
+function Test-T010 {
+    $case = New-CaseFolder
+    $denied = $null
+    try {
+        $root = Join-Path $case 'tree'
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        $denied = New-StoppedTreeFixture $root
+        Write-Output ("        built the tree in {0:N1} s" -f $clock.Elapsed.TotalSeconds)
+
+        Write-Output '  run 1: stopped at m-mid, the tree chosen'
+        $stopped = Invoke-StoppedTreeRun $root @{ FSA_HOOK_TREE_STOP = 'm-mid\'; FSA_HOOK_WALK = '2'; FSA_HOOK_CAN_REVEAL = 'p04'; FSA_HOOK_VIEWS = 'kinds,folders,tree,folders,tree' } $T010Needs
+        Check ($null -eq $stopped.Void) "the stop left unread folders at both depths within $StoppedAttempts launches (VOID otherwise: $($stopped.Void))"
+        if ($null -eq $stopped.Void) {
+            $before = $script:Failures.Count
+            CheckStoppedRun $stopped.Run $root
+            if ($script:Failures.Count -eq $before) {
+                CheckStoppedRows $stopped.Run $root
+                CheckStoppedViews $stopped.Run
+            }
+        }
+
+        Write-Output '  run 2: the same tree scanned to the end'
+        $run = Invoke-TreeRun $root @{ FSA_HOOK_WALK = '2'; FSA_HOOK_VIEWS = 'kinds,folders' } 120
+        $before = $script:Failures.Count
+        Show-HookLines $run
+        $errors = @(Lines-Of $run 'error')
+        Check ($errors.Count -eq 0) "the hook reported no error ($(Show (($errors | ForEach-Object reason) -join ' | ')))"
+        CheckTreeEnding $run $root 'ending'
+        if ($script:Failures.Count -eq $before) {
+            $ending = @(Lines-Of $run 'ending')[0]
+            CheckEqual $false $ending.treeChoice "a scan that ran to the end offers no 'Folder tree' choice"
+            $views = @(Lines-Of $run 'view')
+            CheckEqual 'kinds|folders' (($views | ForEach-Object choice) -join '|') 'the hook chose File kinds and then Folders'
+            if ($views.Count -eq 2) {
+                Check ($views[0].kinds -eq $true -and $views[0].kindsChecked -eq $true) 'File kinds is shown'
+                Check ($views[1].tree -eq $true -and $views[1].treeItems -eq 1 -and $views[1].list -eq $false -and $views[1].kinds -eq $false) "going back to Folders shows the finished tree again, one row at its top ($(Show ($views[1] | ConvertTo-Json -Compress)))"
+                CheckEqual $ending.header $views[1].header 'with the header it had'
+            }
+            $rows = @(Lines-Of $run 'tree-row')
+            Check ($rows.Count -gt 100) "the hook read the finished tree ($($rows.Count) rows)"
+            $says = @($rows | Where-Object { $_.storeNotListed -ne $false -or $_.note -ceq $NotReadYet -or $_.rendered.note -ceq $NotReadYet })
+            Check ($says.Count -eq 0) "no row of the finished tree is marked or says '$NotReadYet' ($(Show (($says | Select-Object -First 3 | ForEach-Object path) -join ', ')))"
+            $blank = @($rows | Where-Object { $_.depth -gt 0 -and $_.rendered.onDisk -ceq '' })
+            Check ($blank.Count -eq 0) "and every row draws its figures ($(Show (($blank | Select-Object -First 3 | ForEach-Object path) -join ', ')))"
+        }
+
+        Write-Output '  run 3: stopped, the tree chosen and a row selected, then a second scan'
+        $second = Join-Path $case 'second'
+        [void](New-SmallTree $second)
+        $needs3 = { param($run) if (@(Lines-Of $run 'tree-chosen').Count -eq 0) { 'the tree was not chosen' } else { $null } }
+        $stopped = Invoke-StoppedTreeRun $root @{ FSA_HOOK_TREE_STOP = 'm-mid\'; FSA_HOOK_WALK = '0'; FSA_HOOK_SELECT = 'p04'; FSA_HOOK_RELEASE = $second } $needs3
+        Check ($null -eq $stopped.Void) "the stop landed and the tree was chosen within $StoppedAttempts launches (VOID otherwise: $($stopped.Void))"
+        if ($null -eq $stopped.Void) {
+            $run = $stopped.Run
+            $before = $script:Failures.Count
+            CheckStoppedRun $run $root
+            CheckTreeEnding $run $second 'second-ending'
+            if ($script:Failures.Count -eq $before) {
+                $selected = @(Lines-Of $run 'selected')
+                Check ($selected.Count -eq 1 -and $selected[0].selected -and $selected[0].depth -eq 1) "p04, a row marked not read yet, was selected in the stopped tree ($(Show ($selected | ConvertTo-Json -Compress)))"
+                $released = @(Lines-Of $run 'store-released')
+                CheckEqual 2 $released.Count 'the hook checked the stopped scan''s store twice'
+                if ($released.Count -eq 2) {
+                    CheckEqual $true $released[0].released 'the stopped scan''s store was collectable once the second scan started'
+                    CheckEqual $true $released[1].released 'and after the second scan ended'
+                }
+                $after = @(Lines-Of $run 'after-release')
+                Check ($after.Count -eq 1) 'the hook read the choice after the second scan'
+                if ($after.Count -eq 1) {
+                    CheckEqual $false $after[0].treeChoice "the second scan's ending offers no 'Folder tree' choice: it went with the stopped scan"
+                    CheckEqual $true $after[0].foldersChecked 'Folders is the choice again'
+                    CheckEqual $false $after[0].treeChecked 'and Folder tree is not'
+                    Check ($after[0].tree -eq $true -and $after[0].treeItems -eq 1 -and $after[0].list -eq $false) "the second scan shows its own tree ($(Show ($after[0] | ConvertTo-Json -Compress)))"
+                    CheckEqual 0 $after[0].marks.notListed 'whose store marks nothing not listed'
+                }
+                $all = @($run.Lines)
+                $secondAt = @($all | Where-Object { $_.kind -ceq 'second-ending' } | Select-Object -First 1)
+                $index = if ($secondAt.Count -eq 1) { [array]::IndexOf($all, $secondAt[0]) } else { $all.Count }
+                $rows2 = @($all[($index + 1)..($all.Count - 1)] | Where-Object { $_.kind -ceq 'tree-row' })
+                Check ($rows2.Count -gt 1) "the hook read the second tree ($($rows2.Count) rows)"
+                $says = @($rows2 | Where-Object { $_.storeNotListed -ne $false -or $_.rendered.note -ceq $NotReadYet })
+                Check ($says.Count -eq 0) "no row of the second tree says '$NotReadYet' ($(Show (($says | ForEach-Object path) -join ', ')))"
+            }
+        }
+    }
+    finally {
+        if ($null -ne $denied) { Undo-DenyListing $denied }
+        Remove-CaseFolder $case
+    }
+}
+
+# The tree of T-011 and T-012: c-prefix, folders that give the hook the lead it needs, then j-before (empty), m-big (100,000
+# entries: 90,000 empty files and 10,000 subfolders each holding one byte) and z-tail, in the order the scan lists them
+# (spike 120, 20 launches: j-before is current for 52 to 57 ms, the length of m-big's listing).
+function New-BigStopFixture([string] $root, [int] $prefixFolders) {
+    Initialize-BulkTree
+    [FsaWindowCases.Bulk]::Folders((Join-Path $root 'c-prefix'), 'c', $prefixFolders, 0)
+    [void][System.IO.Directory]::CreateDirectory((Join-Path $root 'j-before'))
+    $big = Join-Path $root 'm-big'
+    [FsaWindowCases.Bulk]::EmptyFiles($big, 'f', 90000)
+    [FsaWindowCases.Bulk]::Folders($big, 'd', 10000, 1)
+    [void][System.IO.Directory]::CreateDirectory((Join-Path $root 'z-tail'))
+}
+
+# T-011 (SL-110, criterion 4): a folder Stop cut inside its own listing. The hook presses Cancel when the folder most recently
+# committed is j-before, exactly: the next folder is m-big, whose 100,000 entries take about 55 ms to list, so the click
+# (a millisecond or less after the match) lands inside that listing. Core commits nothing for a listing the Stop cut, and
+# does not record it as unreadable (Scanner.FolderDone returns at Cancelled before SetChildren and before the record), so m-big
+# reads 'not read yet', with no figure, no expander, outside the panel, and never as a folder that could not be read in full.
+# A run is VOID unless the click ran while j-before was the last committed folder (pressedAt, spike 120's re-spelled test:
+# the folder whose listing is in flight is the NEXT one).
+function Test-T011 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'tree'
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        New-BigStopFixture $root 5000
+        Write-Output ("        built the tree in {0:N1} s" -f $clock.Elapsed.TotalSeconds)
+        $jBefore = Join-Path $root 'j-before'
+        $needs = {
+            param($run)
+            $stop = @(Lines-Of $run 'tree-stop')[0]
+            if ($stop.pressedAt -cne $jBefore) { return "the click ran with $(Show $stop.pressedAt) the last folder committed, not j-before: m-big was not cut" }
+            $m = @(Lines-Of $run 'tree-row' | Where-Object { $_.depth -eq 1 -and $_.name -ceq 'm-big' })
+            if ($m.Count -ne 1 -or $m[0].storeNotListed -ne $true -or [int]$m[0].childCount -ne 0) { return 'm-big was committed or not read' }
+            $null
+        }
+        $result = Invoke-StoppedTreeRun $root @{ FSA_HOOK_TREE_STOP = 'j-before'; FSA_HOOK_WALK = '1' } $needs
+        Check ($null -eq $result.Void) "the Stop cut m-big's listing within $StoppedAttempts launches (VOID otherwise: $($result.Void))"
+        if ($null -ne $result.Void) { return }
+        $run = $result.Run
+        $before = $script:Failures.Count
+        CheckStoppedRun $run $root
+        if ($script:Failures.Count -gt $before) { return }
+        $stop = @(Lines-Of $run 'tree-stop')[0]
+        Write-Output ("        stop: pressed at {0}; detect to click {1:N0} us; poll {2:N0} ns a read, worst gap {3:N1} ms" -f (Leaf-Of $stop.pressedAt), $stop.detectToCallbackUs, $stop.pollMeanNs, $stop.worstGapMs)
+        $rows = @(Lines-Of $run 'tree-row')
+        $big = @($rows | Where-Object { $_.depth -eq 1 -and $_.name -ceq 'm-big' })[0]
+        $r = $big.rendered
+        Check ($null -ne $r -and $r.note -ceq $NotReadYet -and $r.onDisk -ceq '' -and $r.size -ceq '' -and $r.share -ceq '' -and $r.barShown -eq $false -and $r.expander -eq $false) `
+            "m-big, cut inside its listing, draws '$NotReadYet', no figure, no bar and no expander ($(Show ($r | ConvertTo-Json -Compress)))"
+        Check ($UnreadableWords -notcontains $r.note) "and carries no word of a folder that could not be read ($(Show $r.note))"
+        $j = @($rows | Where-Object { $_.depth -eq 1 -and $_.name -ceq 'j-before' })[0]
+        Check ($j.storeNotListed -eq $false -and $j.rendered.note -ceq '' -and $j.rendered.onDisk -ceq '0 bytes') "j-before, listed and found empty, reads as empty ($(Show ($j.rendered | ConvertTo-Json -Compress)))"
+        $z = @($rows | Where-Object { $_.depth -eq 1 -and $_.name -ceq 'z-tail' })[0]
+        Check ($z.storeNotListed -eq $true -and $z.rendered.note -ceq $NotReadYet) 'z-tail, still queued, reads the same'
+        $panel = @(Lines-Of $run 'panel')
+        Check ($panel.Count -eq 1 -and $panel[0].rows -eq 0 -and $panel[0].visible -eq $false) "the unreadable folders' panel is empty: Stop cut m-big and nothing failed ($(Show ($panel | ConvertTo-Json -Compress)))"
+        $tops = @(Lines-Of $run 'top-row')
+        $top = @($tops | Where-Object { $_.name -ceq 'm-big' })
+        Check ($top.Count -eq 1 -and $top[0].state -ceq 'NotRead' -and $top[0].title -ceq "m-big  ($NotReadYet)") "the stopped list says the same of m-big ($(Show ($top | ConvertTo-Json -Compress)))"
+        $marks = @(Lines-Of $run 'store-marks')
+        Check ($marks.Count -eq 1 -and $marks[0].notListed -ge 2) "the store marks m-big and z-tail ($(Show ($marks | ConvertTo-Json -Compress)))"
+    }
+    finally { Remove-CaseFolder $case }
+}
+
+# T-012 (SL-110, criterion 5): opening the 100,000-child folder in a stopped tree. The Stop is at m-big\ (the folder or anything
+# under it), so m-big is listed with its 100,000 children and most of its 10,000 subfolders are not. Five opens, the first
+# cold, each timed by the hook as T-003 times them: every one under 0.5 s with only a screenful of rows built. Void unless at
+# least 5,000 of m-big's rows are marked not listed by the store (the hook counts them on the first open). Then the same folder in a
+# scan that ran to the end: no row is marked, and the five opens stay under the same bar (the per-row mark is read there too).
+function Test-T012 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'tree'
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        New-BigStopFixture $root 3000
+        Write-Output ("        built the tree in {0:N1} s" -f $clock.Elapsed.TotalSeconds)
+        $needs = {
+            param($run)
+            $first = @(Lines-Of $run 'expand' | Where-Object { $_.open -eq 1 })
+            if ($first.Count -ne 1) { return 'm-big was not opened' }
+            if ($null -eq $first[0].notListedChildren -or [int]$first[0].notListedChildren -lt 5000) { return "only $($first[0].notListedChildren) of m-big's rows were left unread, not 5,000" }
+            $null
+        }
+        $result = Invoke-StoppedTreeRun $root @{ FSA_HOOK_TREE_STOP = 'm-big\'; FSA_HOOK_WALK = '0'; FSA_HOOK_EXPAND = 'm-big' } $needs 300
+        Check ($null -eq $result.Void) "the Stop left m-big listed with at least 5,000 rows unread within $StoppedAttempts launches (VOID otherwise: $($result.Void))"
+        if ($null -ne $result.Void) { return }
+        $run = $result.Run
+        $before = $script:Failures.Count
+        CheckStoppedRun $run $root
+        if ($script:Failures.Count -gt $before) { return }
+        $opens = @(Lines-Of $run 'expand')
+        CheckEqual 5 $opens.Count 'the hook opened m-big five times'
+        Write-Output ("        m-big: {0:N0} of its rows were not listed" -f $opens[0].notListedChildren)
+        foreach ($open in $opens) {
+            $split = if ($open.cold) { (' (sort {0:N1} ms, row build {1:N1} ms, the rest {2:N1} ms)' -f $open.sortMs, $open.buildMs, $open.layoutMs) } else { '' }
+            Write-Output ("        open {0}: {1:N1} ms{2}, {3} rows built, a viewport of {4:N0} px" -f $open.open, $open.ms, $split, $open.realized, $open.viewportHeight)
+            Check ($open.firstChild -and [double]$open.ms -lt 500) ("open {0} drew its first rows in {1:N1} ms (under 500)" -f $open.open, $open.ms)
+            Check ($open.realized -gt 0 -and $open.realized -le 200) "open $($open.open) built only a screenful of rows ($($open.realized))"
+            CheckEqual 100000 $open.children "open $($open.open): m-big holds 100,000 rows"
+        }
+        CheckEqual $true $opens[0].cold 'open 1 is cold, building its rows'
+
+        # The same folder in a tree that ran to the end: the per-row mark is read on the completed path too, and every read answers
+        # false (the scan listed all 10,000 subfolders), so no row is unread and the open stays under the same bar.
+        Write-Output '  the same folder, scanned to the end'
+        $done = Invoke-TreeRun $root @{ FSA_HOOK_WALK = '0'; FSA_HOOK_EXPAND = 'm-big' } 300
+        $before = $script:Failures.Count
+        CheckTreeRun $done $root
+        if ($script:Failures.Count -gt $before) { return }
+        $doneOpens = @(Lines-Of $done 'expand')
+        CheckEqual 5 $doneOpens.Count 'the hook opened m-big five times'
+        CheckEqual 0 $doneOpens[0].notListedChildren 'none of its 100,000 rows is marked not listed by the store'
+        foreach ($open in $doneOpens) {
+            Write-Output ("        open {0}: {1:N1} ms, {2} rows built" -f $open.open, $open.ms, $open.realized)
+            Check ($open.firstChild -and [double]$open.ms -lt 500) ("open {0} drew its first rows in {1:N1} ms (under 500)" -f $open.open, $open.ms)
+            CheckEqual 100000 $open.children "open $($open.open): m-big holds 100,000 rows"
+        }
+        CheckEqual 'Finished' ((@(Lines-Of $done 'ending')[0].title) -replace '^(\w+):.*$', '$1') 'and that scan ran to the end'
+    }
+    finally { Remove-CaseFolder $case }
+}
+
+# R-004 (SL-110, criterion 6, Q-275): 'Open in Explorer' on a row marked 'not read yet', from the stopped tree. The fixture is a
+# slow folder between the stop and the folder revealed: the hook stops at n-slow\ (3,000 subfolders of one file), so z-unread,
+# listed after them, is still queued. The reveal is the real one, through the row's menu, into a real Explorer window opened on
+# this case's own folder. The status line must be empty, the outcome Exact, and Explorer's selection the root with z-unread as
+# the only item. Void unless z-unread reads not listed by the store and by its row. It runs unattended (Q-275, extending Q-176): it
+# closes only the Explorer windows it opened, and an Explorer selection it cannot read is recorded as not verified, never as a pass.
+function Test-R004 {
+    Initialize-RevealWin32
+    Initialize-BulkTree
+    $case = New-CaseFolder
+    $caseRoots = [System.Collections.Generic.List[string]]::new()
+    $caseRoots.Add($case)
+    try {
+        $root = Join-Path $case 'reveal-stopped'
+        [FsaWindowCases.Bulk]::Folders((Join-Path $root 'c-prefix'), 'c', 3000, 0)
+        [FsaWindowCases.Bulk]::Folders((Join-Path $root 'n-slow'), 's', 3000, 1)
+        New-File (Join-Path $root 'z-unread\inside.bin') $KiB4
+        $target = Join-Path $root 'z-unread'
+
+        $run = $null
+        $void = $null
+        for ($attempt = 1; $attempt -le $StoppedAttempts; $attempt++) {
+            $left = @(Close-CaseWindows $caseRoots.ToArray())
+            Check ($left.Count -eq 0) "the Explorer windows the case opened are closed before the run ($($left.Count) left: $($left -join '; '))"
+            $run = Invoke-RevealRun $root 'tree:z-unread' 90 @{ FSA_HOOK_TREE_STOP = 'n-slow\' }
+            $row = @($run.Lines | Where-Object { $_.name -ceq 'z-unread' })
+            $stop = @($run.Lines | Where-Object { $_.kind -ceq 'tree-stop' })
+            $void = if ($stop.Count -eq 0 -or $stop[0].pressed -ne $true) { "the stop did not land ($(if ($stop.Count) { $stop[0].refused }))" }
+                elseif ($row.Count -ne 1) { 'the hook did not reveal z-unread' }
+                elseif ($row[0].storeNotListed -ne $true -or $row[0].note -cne $NotReadYet) { "z-unread was listed after all (store $($row[0].storeNotListed), note $(Show $row[0].note))" }
+                else { $null }
+            if ($null -eq $void) { break }
+            Write-Output "        attempt $attempt is VOID: $void"
+        }
+        foreach ($line in $run.Log) { Write-Output "        hook: $line" }
+        Check ($null -eq $void) "the stop left z-unread unread and it was revealed within $StoppedAttempts launches (VOID otherwise: $void)"
+        if ($null -ne $void) { return }
+
+        CheckEqual '0' $run.Exit 'exit code'
+        $row = @($run.Lines | Where-Object { $_.name -ceq 'z-unread' })[0]
+        CheckEqual 'menu' $row.via 'z-unread was revealed through the row''s menu'
+        CheckEqual $target $row.path 'the path Open in Explorer asked for is the folder itself'
+        CheckEqual 'Exact' $row.kind 'LastRevealOutcome is Exact'
+        CheckEqual '' $row.status 'the status line is empty'
+        Write-Output ("        status line: {0}; LastRevealOutcome: {1}; z-unread's row: {2}" -f (Show $row.status), $row.kind, (Show $row.note))
+
+        $sel = Wait-ExplorerSelection $root 'z-unread'
+        if ($sel.Matched) {
+            Check $true "Explorer shows the root with z-unread as its only selection (folder $(Show $sel.Folder), selected $(Show ($sel.Selected -join ', ')))"
+        }
+        else {
+            # An Explorer window on the root whose selection cannot be read says nothing either way: not verified (Q-275).
+            $windows = @(Get-ExplorerWindows | Where-Object { Test-Under $_.Folder @($root) })
+            if ($windows.Count -gt 0 -and @($windows | Where-Object { @($_.Selected).Count -gt 0 }).Count -eq 0) {
+                Inconclusive "R-004: Explorer opened the root ($(Show $windows[0].Folder)) but its selection could not be read through Shell.Application, so the landing on z-unread is not verified"
+            }
+            else {
+                Check $false "Explorer shows the root with z-unread as its only selection (windows: $(Show (($windows | ForEach-Object { "$($_.Folder) selecting $(($_.Selected | ForEach-Object Name) -join ',')" }) -join ' | ')))"
+            }
+        }
+    }
+    finally {
+        $left = @(Close-CaseWindows $caseRoots.ToArray())
+        if ($left.Count -gt 0) { Write-Output "        Explorer windows still open on this case's folders: $($left -join '; ')" }
+        Remove-CaseFolder $case
+    }
+}
+
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'T-009', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005') + $NetworkCases + $CloudCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'R-004', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005') + $NetworkCases + $CloudCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })

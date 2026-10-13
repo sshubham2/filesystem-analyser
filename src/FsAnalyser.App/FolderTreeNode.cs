@@ -6,7 +6,7 @@ using FsAnalyser.Core.Store;
 namespace FsAnalyser.App;
 
 /// <summary>
-/// One row of the folder tree (SL-044): an entry of a completed scan, with the on-disk bytes it ranks by and its
+/// One row of the folder tree (SL-044): an entry of a scan that has returned, with the on-disk bytes it ranks by and its
 /// share of its parent exactly as <see cref="ScanStore.ChildrenLargestFirst"/> returned them. The name and the
 /// sizes are read from the store when a row is drawn, not copied into the row.
 /// </summary>
@@ -17,6 +17,12 @@ namespace FsAnalyser.App;
 /// them again. A file, a link, and a folder with nothing listed in it (empty, or not readable) have no
 /// children and no expander. Expand state lives here and is bound TwoWay to the row's container, so it stays
 /// with the row when a virtualized container is reused for another.
+/// A stopped scan's tree (SL-110) holds folders the scan never listed. Such a folder has no children, no flags and no
+/// record, the same columns as a folder that was listed and found empty, so only the store's mark
+/// (<see cref="ScanStore.NotListed"/>) tells them apart. The mark is read once, as the row is built, into
+/// <c>_notListed</c>: the store has returned and nothing writes it. A row with it reads "not read yet" and draws no
+/// figure at all, through the one gate <see cref="HasFigures"/>, because a "0 bytes" beside a folder nobody read
+/// is a figure the scan never measured.
 /// </remarks>
 internal sealed class FolderTreeNode : INotifyPropertyChanged
 {
@@ -24,22 +30,24 @@ internal sealed class FolderTreeNode : INotifyPropertyChanged
 
     // Stands in for the children of every folder not opened yet. It reads nothing: its session holds no store,
     // so its texts are empty and its sizes 0 (review m4).
-    private static readonly FolderTreeNode NotOpenedYetRow = new(FolderTreeSession.None, 0, 0, 0, isRoot: false, openable: false);
+    private static readonly FolderTreeNode NotOpenedYetRow = new(FolderTreeSession.None, 0, 0, 0, isRoot: false, openable: false, notListed: false);
     private static readonly FolderTreeNode[] NotOpenedYet = [NotOpenedYetRow];
 
     private readonly FolderTreeSession _session;
     private readonly int _entry;
     private readonly bool _isRoot;
+    private readonly bool _notListed; // the store's mark for this entry, read as the row is built (SL-110)
     private IReadOnlyList<FolderTreeNode> _children;
     private bool _isExpanded;
 
-    private FolderTreeNode(FolderTreeSession session, int entry, long onDisk, double share, bool isRoot, bool openable)
+    private FolderTreeNode(FolderTreeSession session, int entry, long onDisk, double share, bool isRoot, bool openable, bool notListed)
     {
         _session = session;
         _entry = entry;
         OnDisk = onDisk;
         Share = share;
         _isRoot = isRoot;
+        _notListed = notListed;
         _children = openable ? NotOpenedYet : NoChildren;
     }
 
@@ -47,7 +55,8 @@ internal sealed class FolderTreeNode : INotifyPropertyChanged
     internal static FolderTreeNode Root(FolderTreeSession session)
     {
         ScanStore store = session.Store ?? throw new InvalidOperationException("The folder tree's session is closed.");
-        return new FolderTreeNode(session, 0, store.RolledOnDisk(0), 0, isRoot: true, openable: store.ChildCount(0) > 0);
+        return new FolderTreeNode(session, 0, store.RolledOnDisk(0), 0, isRoot: true, openable: store.ChildCount(0) > 0,
+            notListed: store.NotListed(0));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -86,11 +95,15 @@ internal sealed class FolderTreeNode : INotifyPropertyChanged
     /// Why a row has no children to open, or fewer than it holds, when the name alone does not say. A folder that could
     /// not be read in full is worded from the kind the scanner stamped (the session's record), through the one
     /// function the unreadable-folders list and the top-level row use too, so the three cannot disagree about it
-    /// (SL-106). A folder listed partway keeps what was listed, so it was opened and has rows.
+    /// (SL-106). A folder listed partway keeps what was listed, so it was opened and has rows. A folder the scan never
+    /// listed, queued behind a Stop or cut inside its own listing by it, says so (SL-110) in the stopped list's word,
+    /// and is placed before the unreadable words: Core stamps a failure only on a folder whose listing it committed,
+    /// which clears the mark, so the two never meet, and if they ever did the stop is the truer thing to say.
     /// </summary>
     public string Note => _session.Store is not { } store ? ""
         : store.Kind(_entry) == EntryKind.Link ? "link, not followed"
         : (store.Flags(_entry) & EntryFlags.NotScanned) != 0 ? "size not counted: Windows container layers, skipped to avoid a leak in Windows' wcifs.sys driver; see Settings"
+        : _notListed ? TopLevelRowText.NotReadYet
         : _session.FailedKind(_entry) is { } failed ? UnreadableRows.KindText(failed)
         : "";
 
@@ -105,16 +118,22 @@ internal sealed class FolderTreeNode : INotifyPropertyChanged
 
     public int ChildCount => _session.Store?.ChildCount(_entry) ?? 0;
 
-    public string OnDiskText => _session.Store is null ? "" : FigureText.FormatSize(OnDisk);
+    // The one gate every figure the row draws reads (SL-110): a closed session has no store to read them from, and a
+    // folder the scan never listed has no figure to give, only the 0 it holds. A figure property added later reads
+    // this too, so the next column blanks for an unread folder by default.
+    private bool HasFigures => _session.Store is not null && !_notListed;
 
-    public string SizeText => _session.Store is null ? "" : FigureText.FormatSize(Size);
+    public string OnDiskText => HasFigures ? FigureText.FormatSize(OnDisk) : "";
 
-    public string ShareText => _isRoot || _session.Store is null ? "" : FolderTreeRowText.Share(Share);
+    public string SizeText => HasFigures ? FigureText.FormatSize(Size) : "";
 
+    public string ShareText => _isRoot || !HasFigures ? "" : FolderTreeRowText.Share(Share);
+
+    /// <summary>0 for an unread folder: nothing was rolled into it, so its share is 0 and the bar is not drawn.</summary>
     public double BarWidth => _isRoot ? 0 : FolderTreeRowText.BarWidth(Share);
 
-    /// <summary>The root has no share, so no bar; its column keeps its width.</summary>
-    public Visibility ShareShown => _isRoot || _session.Store is null ? Visibility.Hidden : Visibility.Visible;
+    /// <summary>The root has no share, so no bar; its column keeps its width. Nor has a folder the scan never listed.</summary>
+    public Visibility ShareShown => _isRoot || !HasFigures ? Visibility.Hidden : Visibility.Visible;
 
     /// <summary>The rows under it: none, the one standing in until it is opened, or its children largest first.</summary>
     public IReadOnlyList<FolderTreeNode> Children
@@ -156,7 +175,7 @@ internal sealed class FolderTreeNode : INotifyPropertyChanged
         {
             ChildRow row = rows[i];
             nodes[i] = new FolderTreeNode(_session, row.Entry, row.OnDisk, row.Share, isRoot: false,
-                openable: store.ChildCount(row.Entry) > 0);
+                openable: store.ChildCount(row.Entry) > 0, notListed: store.NotListed(row.Entry));
         }
         _session.LastSortMs = Stopwatch.GetElapsedTime(start, sorted).TotalMilliseconds;
         _session.LastBuildMs = Stopwatch.GetElapsedTime(sorted).TotalMilliseconds;
