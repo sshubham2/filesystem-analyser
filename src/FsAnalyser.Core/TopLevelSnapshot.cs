@@ -140,6 +140,14 @@ public sealed class TopLevelSnapshot
     /// <summary>The scan read everything it could (<see cref="ScanStatus.Completed"/>). Only ever true when Final.</summary>
     public bool Completed { get; }
 
+    /// <summary>
+    /// A stopped scan's last snapshot, when every folder had been listed and Stop cancelled a batch of the size checks
+    /// (SL-112, Q-111): each row holds the listing's size for every file whose own size was not read, so a row's figures, on
+    /// disk especially, may be off whatever its state. False on every other snapshot, a Stop in the listing included, where no
+    /// file's size was read at all.
+    /// </summary>
+    public bool StoppedInSizeChecks { get; init; }
+
     /// <summary>A read-only copy that cannot be cast back to an array; setting an item throws.</summary>
     public IReadOnlyList<TopLevelRow> Rows { get; }
 

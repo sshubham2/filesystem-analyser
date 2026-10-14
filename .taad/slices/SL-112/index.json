@@ -1,0 +1,412 @@
+{
+ "schema": "slice-record@1",
+ "slice": "SL-112",
+ "title": "At Stop, mark folders that pending size checks or hardlink charges could still change as unfinished",
+ "status": "active",
+ "branch": "slice/SL-112",
+ "opened_at": "2026-10-13T18:10:33.559Z",
+ "merge_commit": null,
+ "how_to_read": "Each attempt is one line and a `details` filename in this same directory. Open a detail file ONLY when this index points you at one -- the summaries are here so you do not have to. `caused_by` is what sent the stage back; `changed` is what the attempt then touched, counted by kind. Several attempts in a row that were caused by the same stage and changed no `src` is a loop, not progress.",
+ "open": [
+  {
+   "stage": "build-check",
+   "issue": "1. Every folder at or above a file whose size check had not run, or had not finished, when Stop took effect is reported unfinished: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "2. Every folder whose figures a hardlink charge still pending at Stop could raise or lower is reported unfinished, and every folder above it, including a folder a pending charge would move bytes away from: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "3. On real temp trees stopped at several points, every folder reported final has the same size, on-disk size and file count as an uninterrupted scan: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "4. In the same runs, every folder reported unfinished has size, on-disk size and file count no greater than the uninterrupted scan gives it: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "5. Once Stop has taken effect nothing more is written to the store; figures and marks stay exactly as they were while the stopped results are open: partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "6. A scan that runs to the end reports no folder unfinished; existing counting-rule and last-access tests pass with no edits: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "7. Whatever tracing keeps at Stop adds no per-entry column; a 5M-entry store stopped late with work pending stays within 800 MiB: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "8. (derived from the merged SC-082) The stopped-scan header wording is settled by this change: either the cancelled-during-probe case is covered by the unfinished marking and shown, or the header names Done rows and on-disk size: missing"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Q-111 (human) limits the header change to Stops that land in the size checks. The survey's run A then measured a Done row (3-shrink, a stale-large hardlink first name) above its final figure after a Stop in the listing, where no file has been checked either. The listing-Stop header, 'Rows marked not read yet or stopped partway are short.', therefore implies unmarked rows are exact when they may be above final. Should the listing-Stop header also say unmarked rows may be off? This design keeps it unchanged per Q-111."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Where the 'sized from the file' predicate lives: in ScanStore (ChecksOwnSize, chosen) or in a neutral Core rules class both the store and SizeProbe read. Nobody contested it; a reviewer may prefer the neutral home."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "AtLeast as a separate read (chosen) versus making the at-least figure what RolledSize or ChargedSize return after a Stop. The latter changes every existing reader and the recount tests."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Derived criterion 8 by option (b), the header sentence (chosen), versus option (a), wiring Unfinished into the top-level rows and tree now. Option (a) is the SC-393 App slice's work."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The stopped tree header (StoppedTreeHeader) is left unchanged for a Stop in the size checks. Only the list header gets the new sentence, which is the surface Q-111 and Q-277 (list-first) name."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Header wording: 'unmarked ones included' names Done rows as the person sees them (bare names). The proposal's 'rows' sizes' named every row without singling them out."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "Review m2 (advance the watermark per applied batch rather than set it at the cancelled branch): waived, carried to SC-407."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "Review m3 (EndSizeChecks seals the store against later writes): waived, carried to SC-408; the fitness rule fences the writer by file only."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "Review m7 (a start-of-case sweep of orphaned L-004 roots): waived, carried to SC-409. L-004 does use a per-run GUID root under %LOCALAPPDATA%\\Temp and [IO.Directory]::Delete."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "Review m8 as a separate Core Fact: waived, carried to SC-410; Check and CompletedMarksNothing nonetheless assert StoppedInSizeChecks on every Stop and completed scan."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "App wiring of Unfinished and AtLeast (a note on unfinished rows, the at-least figure, a Count 0 guard) and the stopped tree header for a Stop in the size checks: filed by the design for the SC-393 App slice; nothing in src outside the store calls the three reads yet, as with NotListedAtOrBelow."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "The network pass (Cancel on a stalled share) was not run; it changes SMB mappings and is a person's run (lesson #136). No cancel-safety is claimed; the Stop path gains one O(1) write."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "SC-393 lineage: show Unfinished / AtLeast in the App (guard Count 0 first, lesson #517) and give the stopped tree header words for a Stop in the size checks."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "Any slice that applies size checks out of order, in parallel or partly (pause/resume, U-197) must replace the watermark with a per-entry or per-range structure and a 5M memory test; docs/design/SL-112-unfinished-at-stop.md names the obligation next to SL-111's."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "Person-run network pass for Cancel on a stalled share (lesson #136), still unmeasured."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: The 'sized from the file itself' predicate lives in a new neutral internal class EntryRules (Store/EntryRules.cs), not on ScanStore as designed. With SizeProbe.IsEligible calling ScanStore.ChecksOwnSize, the settled rule 'Core does not publish a live ScanStore before the scan ends' fired at SizeProbe.cs:28 and the rules harness's clean baseline was not clean. This is the neutral home the design listed as a taste choice; no fitness rule was widened."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: The listing-Stop header is the m1 (later) wording, not Q-283's literal sentence: Q-283 keeps 'Rows marked ... are short', which survey run A and the at-least spike contradict (a stale-large first name makes a marked row high). Q-283's departure from Q-111 is kept; only the clause is dropped."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: Tally.Bound is 15 s per Fact and is asserted at every Stop, not 60 s (design) or 25 s (finding M2) asserted once at the end: with 25 s the mklink-per-scan mutation still passed (24 s). The Facts take 0.7 to 2.6 s."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: Attempt 1's stray UTF-8 BOM on Scanner.cs was removed so the diff is only the change."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: Not read from the Q-160 assumption: Q-160 says Done rows' file sizes are complete and only on-disk is short; the measurements say Done rows can be above final in logical size too, so the header says 'may be off', not 'short'."
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: StopTree has an eighth group H whose LATER name is the stale one (UnfinishedTests.cs:414). Seven first names are made stale, so Reference.Take's void floor is ProbeCorrections >= 7, not the design's '>= 8'. Not declared; harmless, and it adds a shape: a stale later name charges nothing."
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: The listing sweep stops through Scans.RunCancellingAt with its own Options() (ContainerLayerStorePath \"\"), not through NotListedTests.StopAt as the design named (lesson #511). StopTree has no layer store, and Baseline and the stops use the same options, so the call numbers line up. Not declared."
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: NothingChangesOnceTheScanHasReturned's doc says 'every probe worker stuck', but StuckStop blocks one probe call, so in the 4-worker row three workers are free. The workers=1 row is the every-worker shape. The comment overstates the 4-worker row."
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: SizeCheckPending, Unfinished and AtLeast have no caller in src outside ScanStore; App wiring is filed to SC-393, as the design says, the same state as SL-111's NotListedAtOrBelow. Recorded so the next reader does not read the green suite as App coverage."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The shipped App was stopped only on L-004's 60,000-file temp tree. On real folders (System32, ProgramData) I ran the tree's own Core, not the App's results view."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: No real stale hardlink first name and no downward size correction occurred on real data (rolledAboveRef 0). The 'at least' subtraction and the hardlink-charge marking were therefore exercised only on the engineered temp trees."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A real 5M-entry or whole-drive Stop: memory was measured on a synthetic 4.88M-entry store."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Cancel on a stalled SMB share with the new Finish write (a person's run, lesson #136)."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Windows 10: everything ran on Windows 11 26200."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The App's use of Unfinished and AtLeast: nothing calls them yet (SC-393), so no on-screen at-least figure or per-row note was checked."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Late writes to the store long after the workers wind down: nothing seals the store (SC-408), and the Core test looks only through the wind-down window."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: W-001's assertion of the listing-Stop header on a whole-C:\\ run."
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The design placed ChecksOwnSize on ScanStore with SizeProbe.IsEligible calling it. Its coherence check named only the rule 'the store does not know about the Scanner'. It did not check the opposite direction. The fitness rule 'Core does not publish a live ScanStore before the scan ends' fires on SizeProbe.cs referencing ScanStore. The critique listed the neutral class as taste and never grepped the Scanning to Store direction against .taad/fitness.yaml."
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: Finding M2 prescribed 'about 25 s per row' without checking that the bound had teeth. The builder's mklink-per-scan mutant still passed at 24 s. A bound is only useful if it fails the slow variant it guards against. The critique did not ask what the slowest wrong implementation would score."
+  },
+  {
+   "stage": "reflect",
+   "issue": "code-review missed: The code review ran four mutations on the store reads and the cutoff. It ran none that writes the store after Scan returns, so NothingChangesOnceTheScanHasReturned went uninterrogated. It survives a watermark rewrite 300 ms after return, and its doc comment says 'every probe worker stuck' when StuckStop blocks one call. Criterion 5's test was reviewed by reading only."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: On a real drive, how often does AtLeast's subtraction differ from the rolled figure? System32, ProgramData and Program Files gave no stale hardlink first name and no downward correction (rolledAboveRef 0). Only engineered trees, and the OneDrive and LZNT1 first-scan cases, show the effect."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does SC-393's per-row AtLeast keep the 100k-child folder open under 0.5 s on a real ~1M-folder C:\\? The synthetic 4.88M-entry store gave 29 ms and 6 ms for 100k rows, and 18-25 ms in the spike when every child is a folder. Q-280 is still open."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does UnfinishedTests stay green on Windows 10 or on a build where NTFS does not list stale hardlink names? It fails as void on its ProbeCorrections floor and is never skipped. It was only run on Win11 26200."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Will a Pause (U-180/U-197) ever land in the sizing pass? If so, the one-int watermark will not describe it, because mid-scan it reads 0 and applied batches are not recorded. SC-407 or a per-range structure is needed first."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Did the owner want Q-111's and Q-283's header wording word for word? Q-283 says to revert if so, and the build dropped 'are short' on measurement grounds."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The design halted on an open question about the listing-Stop header. Q-283 answered it afterwards. design-slice #2 then accepted the attempt-1 design unchanged, with the header byte-identical. Critique M1 (major) found the contradiction, and the listing arm, L-001, $StoppedListHeader and a WindowMutants run had to be redone."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The design put ChecksOwnSize on ScanStore with SizeProbe calling it, and its coherence check said the fitness rules stayed unbroken. 'Core does not publish a live ScanStore before the scan ends' fired at SizeProbe.cs:28, and the rules harness's clean baseline was not clean. The build created EntryRules.cs to fix it."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Build ran three times. Two attempts were refused by the provider (session limit, then OAuth refresh), and the third had to review attempt 1's leftover code before keeping it. This cost time but is not a design fault."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The per-row time bound the critique prescribed (25 s, from M2) was too loose. The mklink-per-scan mutant passed at 24 s, and the builder only found this by mutating. The shipped bound is 15 s."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Two model-decided header answers (Q-160 and Q-283) contradicted the slice's own measurements. The shipped headers depart from Q-111, Q-160 and Q-283 by dropping 'are short' and using 'may be off'. The builder declared this, and Q-283 says to revert if the owner wanted its literal wording."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Code review found three undeclared departures: StopTree group H with a void floor of 7 instead of 8; the listing sweep stopping through RunCancellingAt instead of StopAt; and an overstated '4-worker row' comment. None changed behaviour."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Validate's mutation showed NothingChangesOnceTheScanHasReturned misses a watermark rewrite 300 ms after Scan returns. Review m3 had predicted this and it was waived to SC-408. Criterion 5 therefore rests on a window shorter than 'while the stopped results are open'."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: All 11 critique findings were dispositioned by a model, not a person, so they count as untriaged in that gate's precision. No gate between critique and code review checked those dispositions."
+  }
+ ],
+ "stages": [
+  {
+   "stage": "repro",
+   "title": "Repro",
+   "order": 1,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "build-check",
+   "title": "Build check",
+   "order": 2,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "risk-spike",
+   "title": "Risk spike",
+   "order": 3,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "design-slice",
+   "title": "Design",
+   "order": 4,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-13T19:18:27.999Z",
+     "head": "4df2b1c53cfed44b85e0f05606b2fc3210abc33f",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique",
+   "title": "Critique",
+   "order": 5,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-13T19:41:46.067Z",
+     "head": "4df2b1c53cfed44b85e0f05606b2fc3210abc33f",
+     "summary": "The core holds up when checked against the tree.",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique-review",
+   "title": "Critique review",
+   "order": 6,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-13T19:58:14.548Z",
+     "head": "4df2b1c53cfed44b85e0f05606b2fc3210abc33f",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-review-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "build-slice",
+   "title": "Build",
+   "order": 7,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-13T19:58:15.591Z",
+     "head": "172ab8bb4404167945475c0673b2572c26a2ba3d",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 3:40am (Asia/Kolkata)",
+     "caused_by": null,
+     "changed": {},
+     "details": "build-slice-1.json"
+    },
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-14T04:41:43.793Z",
+     "head": "172ab8bb4404167945475c0673b2572c26a2ba3d",
+     "summary": "the provider turned this away rather than running it -- Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh.",
+     "caused_by": null,
+     "changed": {},
+     "details": "build-slice-1.json"
+    },
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-14T04:51:48.899Z",
+     "head": "172ab8bb4404167945475c0673b2572c26a2ba3d",
+     "summary": "Attempt 1 never landed (the provider refused it twice) but left working Core, App and unit-test code; I built it, kept it after review and finished the rest.",
+     "caused_by": null,
+     "changed": {
+      "src": 7,
+      "config": 2,
+      "tests": 3,
+      "docs": 1,
+      "listed": 13,
+      "measured_by_git": 18
+     },
+     "details": "build-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "code-review",
+   "title": "Code review",
+   "order": 8,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-14T05:45:13.162Z",
+     "head": "172ab8bb4404167945475c0673b2572c26a2ba3d",
+     "summary": "SL-112 (build commit 172ab8b; the tree is clean apart from .taad/slices) does what the design says.",
+     "caused_by": null,
+     "changed": {},
+     "details": "code-review-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "validate-slice",
+   "title": "Validate",
+   "order": 9,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-14T06:08:57.042Z",
+     "head": "172ab8bb4404167945475c0673b2572c26a2ba3d",
+     "summary": "SL-112 (build 172ab8b) does what the slice owes.",
+     "caused_by": null,
+     "changed": {},
+     "details": "validate-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "reflect",
+   "title": "Reflect",
+   "order": 10,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-14T06:27:01.448Z",
+     "head": "172ab8bb4404167945475c0673b2572c26a2ba3d",
+     "summary": "SL-112 added one size-check watermark to ScanStore, written once as the first statement of Scanner.Run.Finish.",
+     "caused_by": null,
+     "changed": {},
+     "details": "reflect-1.json"
+    }
+   ]
+  }
+ ]
+}

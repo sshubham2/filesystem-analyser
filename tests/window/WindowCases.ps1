@@ -30,7 +30,8 @@
 # L-001 to L-003 (SL-039) are the results list, TopLevelList: the root's direct children filling in while
 # the scan runs. L-001 and L-002 read it mid-scan through the hook's watch mode, which presses Cancel once
 # rows show; L-002 also slows every refresh of it (FSA_HOOK_SLOW_REFRESH_MS) so that ticks are skipped and
-# the final snapshot arrives while a skip is armed. M-001 is a measurement, not a case: the list at 100,000
+# the final snapshot arrives while a skip is armed. L-004 (SL-112) is the same list after a Stop in the size
+# checks, where every folder was listed and the header says so in its own words. M-001 is a measurement, not a case: the list at 100,000
 # rows, timed by the hook's measure mode against the limits spike live-refresh-expanded-100k-folder passed
 # under. It builds 100,000 folders and runs only when named, never in All.
 #
@@ -111,7 +112,7 @@
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
-        'L-001', 'L-002', 'L-003', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'N-001', 'N-002', 'N-003', 'N-004',
+        'L-001', 'L-002', 'L-003', 'L-004', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'N-001', 'N-002', 'N-003', 'N-004',
         'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'R-004',
         'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-001', 'X-002', 'X-003', 'X-004', 'X-005', 'X-006', 'N-005', 'N-006', 'W-001')]
     [string] $Case,
@@ -146,7 +147,7 @@ $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_H
     'FSA_HOOK_MAXIMIZE', 'FSA_HOOK_BACK', 'FSA_HOOK_READABLE', 'FSA_HOOK_BEFORE', 'FSA_HOOK_AFTER', 'FSA_HOOK_RENAMED', 'FSA_HOOK_RENDER', 'FSA_HOOK_FAIL_LISTING', 'FSA_HOOK_REVEAL_GATE',
     'FSA_HOOK_AT_FOLDERS', 'FSA_HOOK_PAST', 'FSA_HOOK_PAST_FOLDERS', 'FSA_HOOK_AT_SIZED', 'FSA_HOOK_TRIGGER_DEADLINE_S', 'FSA_HOOK_ANSWER', 'FSA_HOOK_ROWS',
     'FSA_HOOK_EXPLORER_VIEW', 'FSA_HOOK_TREE_STOP', 'FSA_HOOK_CAN_REVEAL', 'FSA_HOOK_VIEWS'
-$HookedCases = 'C-002', 'C-006', 'C-012', 'C-013', 'O-016', 'L-001', 'L-002', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
+$HookedCases = 'C-002', 'C-006', 'C-012', 'C-013', 'O-016', 'L-001', 'L-002', 'L-004', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
     'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'R-004',
     'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005', 'N-005', 'N-006', 'W-001'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004', 'N-005'
@@ -1287,7 +1288,8 @@ function Test-L001 {
             $short = [int]$run.Report.topLevel.notRead + [int]$run.Report.topLevel.stoppedPartway
             Check ($short -ge 1) "some rows are short after the stop (notRead + stoppedPartway = $short)"
         }
-        CheckEqual 'What was read before the stop. Rows marked not read yet or stopped partway are short.' $run.Report.window.TopLevelHeader 'TopLevelHeader'
+        # A Stop in the listing has read no file's own size (SL-112, Q-283): an unmarked row may be off too.
+        CheckEqual $StoppedListHeader $run.Report.window.TopLevelHeader 'TopLevelHeader'
         $named = @($manifest.Names | Where-Object { $run.Text.Contains($_) })
         Check ($named.Count -eq 0 -and -not $run.Text.Contains('Recognizable-Top')) "no top-level name is in the report ($(Show ($named -join ', ')))"
     }
@@ -1363,6 +1365,55 @@ function Test-L003 {
         }
     }
     finally { Remove-CaseFolder $case }
+}
+
+# L-004 (SL-112, Q-111): a Stop that lands in the size checks. Every folder has been listed, so no row is marked, and a Done row
+# holds the listing's size for every file whose own size was not read: the header says so, in its own wording, where a Stop in the
+# listing (L-001) has the other. The hook presses Cancel at the first moment the scan reports sizing (FSA_HOOK_AT_SIZED=0), in a
+# tree of 60,000 empty files, whose sizing pass takes about 0.75 s on this PC, long enough for the press to land inside it. A
+# scan that ended first is VOID, never a pass: it is launched again, at most $StoppedAttempts times. The folder is made under
+# %LOCALAPPDATA%\Temp, not the engine's TEMP (lesson #360), and removed by [IO.Directory]::Delete, which the engine's TEMP does not refuse.
+function Test-L004 {
+    $case = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) ("Temp\fsa-window-cases\L004-{0}" -f [guid]::NewGuid().ToString('N'))
+    try {
+        Initialize-BulkTree
+        $root = Join-Path $case 'sizing'
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        for ($d = 0; $d -lt 30; $d++) {
+            [FsaWindowCases.Bulk]::EmptyFiles((Join-Path $root ('d{0:D2}' -f $d)), 'f', 2000)
+        }
+        Write-Output ("        built 60,000 files in 30 folders in {0:N1} s" -f $clock.Elapsed.TotalSeconds)
+        $report = Join-Path $case 'report.json'
+        $run = $null
+        $void = $null
+        for ($attempt = 1; $attempt -le $StoppedAttempts; $attempt++) {
+            if (Test-Path -LiteralPath $report) { Remove-Item -LiteralPath $report -Force }
+            $run = Invoke-HookedRun 'stop' $root $report @{ FSA_HOOK_AT_SIZED = '0' }
+            $acted = @($run.Log | Where-Object { $_.StartsWith('acted mode=stop ') })
+            $void = if ($acted.Count -ne 1) { "the hook never acted ($(Show (($run.Log | Where-Object { $_.StartsWith('refused ') }) -join ' | ')))" }
+                elseif ($null -eq $run.Report) { 'no report was written' }
+                elseif ($run.Report.core.status -ceq 'Completed') { "the scan ended before the Stop landed (hook: $($acted[0]))" }
+                else { $null }
+            if ($null -eq $void) { break }
+            Write-Output "        attempt $attempt is VOID: $void"
+        }
+        foreach ($line in $run.Log) { Write-Output "        hook: $line" }
+        Check ($null -eq $void) "a Stop landed in the sizing pass within $StoppedAttempts launches (VOID otherwise: $void)"
+        if ($null -ne $void) { return }
+
+        $acted = @($run.Log | Where-Object { $_.StartsWith('acted mode=stop ') })[0]
+        $sized = Field $acted 'sized'
+        Check ($sized -cmatch '^\d+$') "the hook acted in the sizing pass: its acted line carries a numeric sized= ($(Show $sized))"
+        CheckEqual '0' $run.Exit 'exit code'
+        CheckEqual 'Cancelled' $run.Report.core.status 'core.status'
+        # Every folder was listed: nothing is marked, so the unmarked rows are all of them.
+        CheckTopLevel $run.Report.topLevel @{ rows = 30; reading = 0; notRead = 0; stoppedPartway = 0; final = $true } 'every folder was listed before the Stop'
+        CheckEqual $StoppedSizingHeader $run.Report.window.TopLevelHeader 'TopLevelHeader after a Stop in the size checks'
+        Check ($run.Report.window.TopLevelHeader -cne $StoppedListHeader) 'it is not the header of a Stop in the listing'
+    }
+    finally {
+        if ([System.IO.Directory]::Exists($case)) { [System.IO.Directory]::Delete($case, $true) }
+    }
 }
 
 # M-001 (SL-039, named only): the results list at 100,000 rows. The hook's measure mode times every refresh
@@ -6317,7 +6368,11 @@ function Test-W001 {
 # have happened for its run to say anything (a VOID run is run again, at most three launches, and never passes).
 
 $NotReadYet = 'not read yet'
-$StoppedListHeader = 'What was read before the stop. Rows marked not read yet or stopped partway are short.'
+# The list's header after a Stop in the listing (SL-112, Q-283 with review m1): no file's own size has been read, and a listed size is
+# above a file's own as often as below it, so marked rows are not called short and every row may be off.
+$StoppedListHeader = 'What was read before the stop. Rows marked not read yet or stopped partway leave out what the scan did not reach. No sizes have been checked yet, so any row''s size may be off, on disk especially.'
+# After a Stop in the size checks (Q-111): every folder was listed, so no row is marked, and the rows an unmarked name stands for may be off.
+$StoppedSizingHeader = 'What was read before the stop. Every folder was listed, but not every file''s own size was read, so any row, unmarked ones included, may be off, on disk especially.'
 $StoppedTreeLead = 'Not read yet: folders the stop came before.'
 # UnreadableRows.KindText's words: a folder the scan never listed is never given one of them.
 $UnreadableWords = 'could not be opened', 'opened, but nothing could be listed', 'only partly read', 'could not be read'
@@ -6881,7 +6936,7 @@ function Test-R004 {
 
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'R-004', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005') + $NetworkCases + $CloudCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'L-004', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'R-004', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005') + $NetworkCases + $CloudCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })

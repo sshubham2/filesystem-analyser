@@ -1,0 +1,619 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-112",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-10-13T19:18:27.999Z",
+ "head": "4df2b1c53cfed44b85e0f05606b2fc3210abc33f",
+ "run_id": 3852,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "One proposal (practice), selected as the core and checked against the tree and the spikes rather than against taste. It matches how the code is already shaped. Scanner.SizeFiles walks entries 1..Count-1 in ascending order. SizeBatch applies nothing from a batch that comes back Cancelled (Scanner.cs:507-514). A Stop in the listing returns before SizeFiles ever runs (Scanner.cs:205-228). So when Stop takes effect, the size checks not yet applied are exactly the checked-kind files at or after one index. Spike stop-pending-checks-are-one-cutoff measured 0 violations over 2,588 real Stops. One int on the store therefore names every pending check. In today's code a pending hardlink charge is only the first name's own pending check: duplicates are fixed at Append (ScanStore.cs:325-327) and CorrectSizes posts nothing for a later name (U-189, survey). Spike stopped-final-folders-equal-full-run found 0 mismatches in 81k engineered and 737k real comparisons of folders read as final. The survey measured that marking alone cannot meet criterion 4: 3-shrink stopped at 64 MiB against 1 MiB final. The at-least figure is therefore a read that subtracts pending files' listing figures. It uses the R form spike at-least-figures-5m-within-budget proved exact (0 mismatches; root ≤7.2 ms and 100k rows ≤25 ms at 4.88M entries, +1.9 KiB retained). The P form was not chosen: it rewrites totals irreversibly, takes up to 1.7 s at 80 levels deep, and would break NotListedTests' recount against criterion 6's 'no edits'. Each piece can be reversed cheaply except the watermark contract, which is labelled expensive. It is the simplest thing that works: one int, three allocation-free reads, one store write in Finish, one snapshot flag and one header sentence. The designer's own over_engineering_flag pointed to the over-built alternatives (a per-entry bit, a pending set, a Stop-time pass, full App wiring), and none of them is selected. I changed the proposal in five places, all found by reading the tree: (1) Scanner.Run.Finish is expression-bodied (Scanner.cs:568), so it becomes a block body that writes the watermark first. (2) The proposal had two fields, _uncheckedFrom and _sizingCut. One is enough, because a Cancelled status with _uncheckedFrom > 0 is exactly a Stop in the size checks. (3) StoppedInSizeChecks becomes an init property, the idiom TopLevelRow.Revised already uses, instead of a new constructor parameter. (4) The sizing-Stop header now names the unmarked rows, which is how a Done row reads (TopLevelRowText.TitleOf), so derived criterion 8 ('names Done rows and on-disk size') is met literally. (5) The real-tree sweep is split into named Facts per stop phase, each with a time bound under the engine's 120 s case limit (Q-222), so each case has its own check.",
+  "components": [
+   {
+    "name": "Size-check watermark and the three reads",
+    "lives_at": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "responsibility": "Adds one private int: the first entry whose size check was not applied. It defaults to 0, so a store no scan has declared over-marks and never calls a folder final falsely. internal EndSizeChecks(int firstUnchecked) refuses a value below 0 or above Count. Three public reads derive from the int and the existing columns: SizeCheckPending(i), Unfinished(i) and AtLeast(i), which returns a readonly record struct AtLeastFigures(long Size, long OnDisk, int Files). A private walk finds a folder's descendant range [FirstChild, End). It takes the block's last folder child whose ChildCount > 0, repeats down that chain, and reads each entry's own page because a block can straddle two pages. End is the end of the last block on that chain, or FirstChild+ChildCount when no folder child has children. It then scans [max(watermark, FirstChild), End) for checked-kind files. For Unfinished it stops at the first one; for AtLeast it sums their raw Size/OnDisk. Unfinished(folder) = NotListedAtOrBelow(folder) || a pending file in range. Unfinished(file) = SizeCheckPending. A link is never unfinished. AtLeast(folder) = (RolledSize − pending listing sizes, RolledOnDisk − pending listing on-disk sizes, FilesBelow). AtLeast(file) = pending ? (0,0,1) : (ChargedSize, ChargedOnDisk, 1). AtLeast(link) = (0,0,0). Raw Kind compares are spelled `page.Kind[i] == (byte)EntryKind.X` / `!=`, inside KindByteWriteCorpusTests' grammar. No doc text names Scanner, DirectoryReader, SizeProbe or TopLevelTracker (fitness rule). The class remarks gain one paragraph: exact once the scan has returned; on the writing thread before then it over-marks (watermark 0); same DFS, one-SetChildren-per-block precondition as NotListedAtOrBelow.",
+    "key_interactions": "Reads only the Kind, Flags, Size, OnDisk, FirstChild, ChildCount, RolledSize, RolledOnDisk and FilesBelow columns. Adds no per-entry storage and allocates nothing."
+   },
+   {
+    "name": "One copy of the 'sized from the file' rule",
+    "lives_at": "src/FsAnalyser.Core/Scanning/SizeProbe.cs",
+    "responsibility": "ScanStore gains internal static ChecksOwnSize(EntryKind kind, EntryFlags flags): a File that is neither HardlinkDuplicate nor CloudOnly. SizeProbe.IsEligible's body becomes a call to it and keeps its doc. The pending read and the scanner's due rule cannot drift apart, and the store still never names SizeProbe.",
+    "key_interactions": "SizeFiles' default rule (Scanner.cs:448) is unchanged in behaviour. The ProbeRule test seam is not honoured by the pending read; its only user (HeldOpenTreeTests) runs to completion, where the watermark is Count."
+   },
+   {
+    "name": "Scanner records where the checks stopped",
+    "lives_at": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "responsibility": "Run gains `int _uncheckedFrom` (0). SizeBatch sets _uncheckedFrom = entries[0] when pass.Run returns Cancelled, before returning false. Finish becomes a block body. Its first statement is _store.EndSizeChecks(status == ScanStatus.Completed ? _store.Count : _uncheckedFrom), the last write to the store, made on the scan thread. It then calls _topLevel.Finish(status == Completed, Totals, stoppedInSizeChecks: status == ScanStatus.Cancelled && _uncheckedFrom > 0). A Stop in the listing, Refused and RootUnreadable leave 0: every checked-kind file is pending, which is true because SizeFiles never ran. A one-line comment at FolderDone's last-first push loop names NotListedAtOrBelow, Unfinished and AtLeast as depending on this order (lesson #510).",
+    "key_interactions": "No change to SizeFiles' order, ProbePass or Correct. The Stop path gains an O(1) write."
+   },
+   {
+    "name": "Final snapshot says the Stop landed in the size checks",
+    "lives_at": "src/FsAnalyser.Core/TopLevelTracker.cs",
+    "responsibility": "TopLevelTracker.Finish gains an optional `bool stoppedInSizeChecks = false`, carried through Publish into a new `public bool StoppedInSizeChecks { get; init; }` on TopLevelSnapshot (src/FsAnalyser.Core/TopLevelSnapshot.cs). It is true only on a Final, non-Completed snapshot whose listing finished and whose sizing pass had a batch cancelled: Q-111's case.",
+    "key_interactions": "TopLevelTests' rig keeps calling Finish(completed, _totals) unedited. ScanResult.TopLevel carries the flag to the App ('Core passes that in result', Q-111). The snapshot's only constructor call (TopLevelTracker.cs:177) is untouched."
+   },
+   {
+    "name": "Stopped list header for a Stop in the size checks",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "responsibility": "ListHeader gets a third arm. When snapshot.Final && snapshot.StoppedInSizeChecks it reads exactly: 'What was read before the stop. Every folder was listed, but not every file's own size was read, so any row, unmarked ones included, may be off, on disk especially.' 'Unmarked' is how a Done row reads (a bare name, TopLevelRowText.TitleOf). The other two arms are byte for byte as today, so the listing-Stop string pinned by L-001 and $StoppedListHeader is unchanged.",
+    "key_interactions": "Stays a pure function of the snapshot. ShowStoppedList (line 522) re-shows it with no extra state. The stopped tree header (StoppedTreeHeader) is not changed here; it is filed for later."
+   },
+   {
+    "name": "Real-tree stop sweeps against an uninterrupted scan",
+    "lives_at": "tests/FsAnalyser.Core.Tests/UnfinishedTests.cs",
+    "responsibility": "Serves criteria 1-4. One TempTree, built ragged per lesson #511: about 40 folders, a depth-8 chain, a 600-file folder that spans two listing pages, an empty last subfolder after a non-empty sibling, a junction, and a deny-ListDirectory folder. It holds 8 hardlink groups in two kinds. Grow groups list 4 KiB through the first name and are 1 MiB true. Shrink groups list 1 MiB and are 4 KiB true, truncated through the later name. Their first names sit in an ancestor, beside the later name, and in an earlier sibling branch. A Probe-seam wrapper returns error 5 for two named files (ProbeFailed). Restale() re-creates every group before every scan, references included. Two references must agree per folder, and each needs ProbeCorrections ≥ 8, or the Fact fails as void. Facts: StopsInTheListingMarkWhatAPendingCheckCouldChange stops at every AfterFolder N and at sampled guarded calls through NotListedTests.StopAt, including calls 1-2. StopsInTheSizeChecksMarkWhatAPendingCheckCouldChange(workers 1, 4) uses ProbeBatch=8 and stops (i) at the first probe of a batch (queued) and when FilesSized reaches a batch boundary, (ii) inside a probe call before and after the real probe returns, and (iii) with one probe blocked uncancellably and ProbeAbandonAfter 200 ms. Per Stop and per folder: (1) Unfinished equals an independent Parent-walk oracle: NotListed at or below, or an at-or-below file that is eligible by SizeProbe.IsEligible with neither SizeProbed nor ProbeFailed. (2) An unchecked first name means its folder and every ancestor are Unfinished, and each group's charged name equals the reference's. (3) A folder that is not Unfinished has AtLeast and Rolled* equal to the reference triple by path, summed through charged figures (lesson #68). (4) An Unfinished folder has AtLeast ≤ the reference componentwise. Teeth: at least one Stop has a shrink folder with RolledSize above the reference while AtLeast is not. Non-vacuity floors: each stop kind occurs at least once; at least one Stop has a later name's folder final while its first name is pending; at least one has a corrected first name's folder final. Each Fact prints its elapsed time and must stay under 60 s.",
+    "key_interactions": "Reuses NotListedTests.StopAt/SweepTree patterns, Scans.RunCancellingAt, TempTree.Hardlink and TempTree.Append (the CancellationTests stale-hardlink recipe), and ProbePassTests' stuck-worker setup."
+   },
+   {
+    "name": "Synthetic read shapes",
+    "lives_at": "tests/FsAnalyser.Core.Tests/UnfinishedTests.cs",
+    "responsibility": "TheReadAnswersAsAParentWalkOnEveryScannerShapedStore feeds random ragged trees into a ScanStore in scanner order: explicit stack, last-first push, one SetChildren per whole block. The trees include CloudOnly files, duplicate names, files with no ID, links, empty folders, last subfolders that are empty or not listed after a non-empty sibling, and one folder with more than 65,536 children so a block straddles a page. Each tree gets watermarks 0, Count and random points. Unfinished, SizeCheckPending and AtLeast must equal a brute-force Parent walk. The Fact also checks that EndSizeChecks refuses -1 and Count+1 and accepts 0 on an empty store, and that the reads throw ArgumentOutOfRangeException on an empty store.",
+    "key_interactions": "Calls internal Append, SetChildren and EndSizeChecks through InternalsVisibleTo."
+   },
+   {
+    "name": "Wind-down and completed-scan checks",
+    "lives_at": "tests/FsAnalyser.Core.Tests/UnfinishedTests.cs",
+    "responsibility": "NothingChangesOnceTheScanHasReturned(stuck workers | listing) serves criterion 5. When Scanner.Scan returns it snapshots every entry's kind, flags, NotListed, NotListedAtOrBelow, Size, OnDisk, Rolled*, FilesBelow, FirstChild and ChildCount, plus SizeCheckPending, Unfinished and AtLeast. In the stuck-workers row it then releases the workers and waits until all have left. In the listing row it waits 200 ms, with a Stop timed so that a listing which returned cleanly after Cancel is committed. It snapshots again and expects 0 differences. AScanThatRunsToTheEndMarksNothing serves criterion 6 on three trees: the sweep tree run to the end; the same tree with 5 listed files deleted from an AfterFolder hook (VanishedBeforeProbe = 5, the flag rule's trap: the spike measured it marking 2 folders per run); and a folders-only tree where SizeFiles returns true at once. Each must report 0 entries Unfinished and AtLeast == (RolledSize, RolledOnDisk, FilesBelow) for every folder.",
+    "key_interactions": "ScanStore.VolumeUsed is excluded from the snapshot (see contracts)."
+   },
+   {
+    "name": "5M budget with work pending",
+    "lives_at": "tests/FsAnalyser.Core.Tests/UnfinishedBudgetTests.cs",
+    "responsibility": "Serves criterion 7. AStoreStoppedWithChecksPendingFitsTheBudget is a [Theory] in [Collection(nameof(MemoryBudget))] with its own scanner-order generator on U-201's constants: 8 top folders, 30 per listing, W with 60,000 subfolders listed last, 300,000 names sharing 100,000 IDs. One row stops at the unlisted peak with watermark 0. The other lists to the end with the watermark at 97% of Count (stopped late). Each row calls Unfinished and AtLeast on every folder and asserts: retained memory after a full collection rises by less than 1 MiB across the reads; GC.GetAllocatedBytesForCurrentThread rises by 0 across the reads; sampled peak, taken every 65,536 appends as the budget tests do, stays under 800 MiB. It prints the whole-store read time and the 100k-child folder's rows time.",
+    "key_interactions": "NotListedBudgetTests is left untouched, so criterion 6's 'no edits' stays a git diff."
+   },
+   {
+    "name": "Window check of the sizing-Stop header",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "responsibility": "Serves derived criterion 8. New case L-004 is added to the ValidateSet and to $HookedCases. It runs FSA_HOOK_MODE=stop and FSA_HOOK_AT_SIZED=0 on a tree of at least 60,000 empty files, in folders of at most 2,000, under %LOCALAPPDATA%\\Temp (lesson #360), so the Stop lands in a sizing pass about 0.75 s or more long. It asserts core.status Cancelled, a hook 'acted' line with a numeric sized=, and topLevel final with reading 0, notRead 0 and stoppedPartway 0, so every folder was listed. It also asserts window.TopLevelHeader equals the new string. A Completed status fails the case as void (the Stop arrived after sizing), never passes it. L-001 still asserts the listing-Stop string unchanged.",
+    "key_interactions": "Touching src/FsAnalyser.App makes WindowMutants -Mutant All required at validate (Q-114). T-003 is not required: no tree code is touched (Q-128)."
+   },
+   {
+    "name": "Fence on the watermark's writer",
+    "lives_at": ".taad/fitness.yaml",
+    "responsibility": "One settled rule (see architecture_rules): the identifier EndSizeChecks appears only in ScanStore.cs (its declaration) and Scanner.cs (the one call in Finish) anywhere under src."
+   },
+   {
+    "name": "Design record",
+    "lives_at": "docs/design/SL-112-unfinished-at-stop.md",
+    "responsibility": "Records: the watermark contract; 'Stop has taken effect' defined as Scan returning; the preorder-range dependency, cross-referenced to docs/design/SL-111-not-listed-below.md:55-62 with the same two options for any slice that changes registration or apply order; that a pending hardlink charge is the first name's own pending check; why AtLeast is a read and not a rewrite of the rolled totals; that Totals, TopLevel rows, RolledSize and ChargedSize stay listing-based until an App slice (SC-393 lineage) chooses which figure to show; and the Q-111 versus Q-160 wording decision with the measurement that settles it."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Pending size checks are traced by one int watermark on the store: the first entry whose check was not applied. Scanner.Finish writes it once, as the last store write. There is no per-entry flag, column or pending set.",
+    "reversibility": "expensive",
+    "rationale": "It meets criterion 7 at no per-entry cost: the flags byte has no free bit, and the spike measured +1.9 KiB retained and 0 allocated at 4.88M entries. It is proven exact: 0 violations in 2,588 real Stops. It is expensive because it makes 'checks are applied in ascending index order and a cancelled batch applies nothing' a contract. A future parallel, out-of-order or partial-batch apply needs a per-entry structure the 800 MiB bound has little room for."
+   },
+   {
+    "decision": "The at-least figure is a pure read, AtLeast, that subtracts pending files' listing figures over the folder's preorder range. The stored rolled totals are not rewritten at Stop.",
+    "reversibility": "cheap",
+    "rationale": "Marking alone fails criterion 4: 3-shrink was listed 64 MiB against 1 MiB final. The P form costs pending files × depth on the Stop path (1.7 s at 80 levels deep), cannot be undone, and would make RolledSize disagree with the per-file recount that NotListedTests.AStoppedStoreRecountsWithNoDifference asserts, breaking criterion 6's 'no edits'. The R form is exact on today's order and costs ≤12 ms at 5M."
+   },
+   {
+    "decision": "A pending hardlink charge is defined as the first name's own pending size check. There is no separate hardlink trace. The sweep pins the precondition by checking that every stopped store charges the same name as the reference.",
+    "reversibility": "expensive",
+    "rationale": "Charges never move between names after Append in today's code (U-189, survey reading of Append and CorrectSizes). Criterion 2's 'move bytes away' case is the stale-large first name, whose pending check would lower its folder, and the same read marks that folder. A slice that re-decides charges after Append must replace this contract."
+   },
+   {
+    "decision": "'Stop has taken effect' is the moment Scanner.Scan returns. Writes between the Cancel request and the return belong to the stopped store, and the marks are computed from it: FolderDone committing a listing that returned cleanly, and the watermark itself. ScanStore.VolumeUsed is outside criterion 5.",
+    "reversibility": "cheap",
+    "rationale": "Run D measured the store identical across wind-down for today's writes. After the return, only abandoned probe workers run, and they write only their batch's readings array, which is never applied (ProbePass.cs:153). VolumeUsed is a whole-drive figure on its own thread, not any entry's figure or mark."
+   },
+   {
+    "decision": "The store owns the 'sized from the file' predicate (ChecksOwnSize), and SizeProbe.IsEligible delegates to it.",
+    "reversibility": "cheap",
+    "rationale": "One copy of the rule, and the fitness rule 'the store does not know about the Scanner' stays unbroken. The ProbeRule seam (ScanOptions is internal, so the App never sets it) is not honoured by the pending read. That is accepted because its one user runs to completion."
+   },
+   {
+    "decision": "Derived criterion 8 is settled by option (b). The final TopLevelSnapshot carries StoppedInSizeChecks (an init property). Only for a Stop in the size checks, the list header reads 'What was read before the stop. Every folder was listed, but not every file's own size was read, so any row, unmarked ones included, may be off, on disk especially.'",
+    "reversibility": "cheap",
+    "rationale": "This follows Q-111 (human): change the header only when the Stop lands in the size checks, Core passes that in the result, and the wording is 'may be off'. 'Unmarked' names the Done rows as the person sees them, so the criterion is met literally. Option (a), wiring Unfinished into rows and the tree, is SC-393's App slice. Listing-Stop headers stay byte-identical, so L-001 and $StoppedListHeader keep passing."
+   },
+   {
+    "decision": "Totals, TopLevelSnapshot rows, RolledSize and ChargedSize stay listing-based. The truthful lower bound is a separate read, and the design record says which surface shows which.",
+    "reversibility": "cheap",
+    "rationale": "This keeps the counting rule and every existing reader untouched (criterion 6). Which figure the App shows for an unfinished folder is the App slice's choice, filed rather than decided silently."
+   },
+   {
+    "decision": "The default watermark is 0, so a store no scan has declared reports every checked-kind file as pending.",
+    "reversibility": "cheap",
+    "rationale": "A wrong default must over-mark and never call a folder final falsely. Synthetic stores in existing tests never call the new reads."
+   },
+   {
+    "decision": "One new settled fitness rule fences the identifier EndSizeChecks to ScanStore.cs and Scanner.cs. Otherwise there is no new fitness rule, no Kind or Flags bit, and no edit to an existing Core test file. New Facts live only in UnfinishedTests.cs and UnfinishedBudgetTests.cs: 6 Facts and Theories, plus one window case.",
+    "reversibility": "cheap",
+    "rationale": "The one rule has a single spelling that never occurs in correct code outside the two files. Each fitness edit costs harness and RuleCases runs (lessons #486, #504), so no broader rule is added. SL-111's 57 tests that served no criterion are the warning against test bloat (lesson #512)."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal. Taken whole, with five tree-driven changes: Finish becomes a block body; one field instead of two; StoppedInSizeChecks is an init property, not a constructor parameter; the header wording names unmarked (Done) rows; the sweep is split per stop phase with time bounds. One settled fitness rule fences the EndSizeChecks writer, which the proposal had not declared. Its over_engineering_flag (true) was treated as a real signal: none of the over-built alternatives it named was taken."
+   }
+  ],
+  "coherence_check": "There is one proposal and no composition to check. Nobody has disagreed with anything here, so this design has not yet survived a disagreement and is the first thing a reviewer should argue with.\n\nI checked the proposal's own seams for contradictory invariants against the tree:\n(1) Watermark write vs 'Stop has taken effect'. Both are anchored to Scanner.Scan returning, and the write is placed in Finish, which every ScanResult passes through (Scanner.cs:567-592). They are consistent. Finish is expression-bodied, so it must become a block body; the proposal had not noticed this.\n(2) Watermark default vs empty stores. Refused and pre-root Cancelled results reach Finish with Count 0. EndSizeChecks(0) at Count 0 must be accepted, so its bound is 0..Count inclusive. NotListedTests already drives Count-0 Stops, so a wrong bound fails existing tests.\n(3) Two figures. AtLeast is a lower bound, while RolledSize, Totals and TopLevel rows stay listing-based and can sit above final. The only new App surface, the sizing-Stop header, says 'may be off', which is true of the listing figures it sits over. It is not 'short', which the shrink case falsifies. No surface claims the listing figure is a lower bound.\n(4) Pending predicate vs the ProbeRule seam. The pending read ignores the seam. Its one user runs to completion, where the watermark is Count, so they cannot disagree today.\n(5) The proposal had _uncheckedFrom and _sizingCut. Status Cancelled with _uncheckedFrom > 0 is exactly the sizing-Stop case, so I kept one field. Two fields could have disagreed.\n(6) The proposal added a constructor parameter to TopLevelSnapshot. StoppedInSizeChecks is instead an init property, the TopLevelRow.Revised idiom, so the snapshot's only construction site is untouched.\n(7) New raw Kind reads must stay inside KindByteWriteCorpusTests' grammar (== / != (byte)EntryKind.X, or an (EntryKind) cast). Store doc text must not name Scanner, DirectoryReader, SizeProbe or TopLevelTracker (fitness rule 'the store does not know about the Scanner').\n(8) Scope seam. The slice's agreed criteria are 1-7. Criterion 8 is derived from the merged SC-082 and is carried as open by the build check. The header component and case L-004 serve only that derived criterion. They are kept because the loop will validate it, and I say so here rather than hide a case that serves none of 1-7.\n\nQ-160 (model) wording vs measurement: Q-160 says Done rows' on-disk sizes 'can be short' and assumes Done-row sizes are otherwise complete. The survey measured 3-shrink at 64 MiB stopped against 1 MiB final, above it. I build Q-111's (human) 'may be off', which the measurement supports. Q-160's assumption is false and is reported here, not built.\n\ndecidable_disagreements is empty on purpose. No question remains where reality's losing answer would change a component boundary, contract or data model: the cutoff, the finality claim and the at-least forms were each settled by a go or conditional spike whose conditions this design meets (DFS order, ascending all-or-nothing apply, the R form). architecture_rules holds one rule. The existing rule 'the store does not know about the Scanner' and the KindByteWriteCorpusTests grammar already enforce the other seams this design leans on.",
+  "reason": "Composed from the single practice proposal and checked against the tree, the four slice spikes and the survey. Five changes were found by reading the code. One cheap fitness rule was added to fence the watermark's writer.",
+  "channeled_experts": [
+   "Joe Celko (nested-set model: a subtree is a contiguous preorder range)",
+   "Jim Gray (a single applied-up-to watermark instead of per-record state)"
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Databases: a write-ahead-log / commit-offset watermark, plus the nested-set model for trees stored in preorder",
+   "pattern": "Applied work is recorded as one monotonic 'applied up to here' position instead of a per-record flag. A subtree stored in preorder is a contiguous index range. 'Is anything under this node still pending?' becomes one range-against-watermark question, with no per-entry state and no write at Stop.",
+   "transfer_found": true,
+   "rationale": "It meets criterion 7 with no column, and the flags byte is full. It needs no pass at Stop (the P form costs up to 1.7 s at depth 80 and rewrites totals irreversibly). It also tells 'never checked' from 'vanished' correctly, which the flags cannot: the spike measured the flag rule over-marking 2 folders per Completed run.",
+   "invariants": [
+    {
+     "precondition": "Size checks are applied in ascending store index order, and a cancelled batch applies none of its readings, so the unapplied checks are exactly the eligible entries at or after one index.",
+     "status": "holds",
+     "evidence": "Spike stop-pending-checks-are-one-cutoff: 0 violations in 2,588 real Stops (listing, batch-end, queued, mid-batch, held, all-stuck). Scanner.SizeFiles (Scanner.cs:446-502) and SizeBatch (:507-514) as read."
+    },
+    {
+     "precondition": "A folder's descendants occupy one contiguous index range starting at its FirstChild (preorder, one SetChildren per whole block, one writer).",
+     "status": "holds",
+     "evidence": "SL-111 spike: 0 of 501,265 folder checks differ in 2,550 real stores. At-least spike R form: 0 brute-force mismatches over 2,574 real Stops. BFS order gives 32,068 wrong figures, so any traversal change must replace the read (lesson #510)."
+    },
+    {
+     "precondition": "No hardlink charge moves between names after append: a pending charge is only the first name's own pending check, and a stopped listing is a prefix of the full one, so the first name is the same entry in both.",
+     "status": "holds",
+     "evidence": "U-189: 'the engine has no late hardlink correction'. Survey reading of Append and CorrectSizes. U-190: 40 NTFS listings identical and every interrupted listing a prefix. Spike stopped-final-folders-equal-full-run: 0 mismatches in 81k engineered and 737k real comparisons."
+    },
+    {
+     "precondition": "Nothing writes the store after Scanner.Scan returns, including the new watermark write.",
+     "status": "must-verify",
+     "evidence": "Survey run D measured the store identical across wind-down for today's writes. The watermark write is new and placed in Finish; NothingChangesOnceTheScanHasReturned must show it."
+    },
+    {
+     "precondition": "A pending file's listing figures never exceed its true figures, so marking alone would leave 'at least' true.",
+     "status": "fails",
+     "evidence": "Survey runs A/B: 3-shrink stopped at 64 MiB against 1 MiB final. Spike listed-figures-never-above-probed-single-link: 5 single-name LZNT1 files listed high on a first scan, and files changing under a scan list high. This is why AtLeast subtracts pending listing figures."
+    }
+   ]
+  },
+  "code_claims": [
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "NotListedAtOrBelow",
+    "claim": "It derives 'something at or below is unlisted' from the not-listed marks alone, following the last folder of each block, is exact only for depth-first registration with one SetChildren per whole block, and allocates nothing."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "NotListedBit",
+    "claim": "The not-listed mark is bit 0x80 of the per-entry flags byte: Append sets it on a folder, only SetChildren clears it, and Flags() hides it."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "CorrectSizes",
+    "claim": "It is the only write to Size/OnDisk after an append, and it posts the delta up the Parent chain only when the entry charges, so a later hardlink name posts nothing."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "Charges",
+    "claim": "Only an entry of Kind File without HardlinkDuplicate charges bytes; the check is spelled `page.Kind[i] == (byte)EntryKind.File`."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "Append",
+    "claim": "Append flags a file whose ID an earlier entry already holds as HardlinkDuplicate and posts (size, onDisk, 1) or (0, 0, 1) up the Parent chain, so which name is charged is fixed when the name is appended."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "SetChildren",
+    "claim": "It stores FirstChild -1 when childCount is 0, so an empty or skipped folder keeps no block position."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "At",
+    "claim": "Every indexed read goes through At, which throws ArgumentOutOfRangeException for an index at or above Count, so reads throw on an empty store."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "RolledSize",
+    "claim": "The class remarks say the rolled totals are exact between appends on the writing thread and once the scan has ended or was cancelled, and that a read from another thread during appends is outside the contract."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "SizeFiles",
+    "claim": "It walks entries 1..Count-1 in index order, fills batches of due entries, returns false at the first batch SizeBatch reports cancelled, and returns true at once when no file is due."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "SizeBatch",
+    "claim": "When pass.Run returns BatchOutcome.Cancelled it applies none of the batch's readings; otherwise it calls Correct for each entry in batch order."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "Correct",
+    "claim": "A reading whose error IsGone increments _vanished and sets no flag; any other error sets ProbeFailed; a success sets SizeProbed and corrects sizes when they differ."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "Finish",
+    "claim": "Every ScanResult is built in Run.Finish, an expression-bodied member that calls _topLevel.Finish(status == ScanStatus.Completed, Totals) and hands out _store."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "Execute",
+    "claim": "It returns Finish(ScanStatus.Cancelled) from the listing loop when FolderDone or StoreSkipped reports a stop, so SizeFiles never runs after a Stop in the listing; it returns Completed only when SizeFiles returns true."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "FolderDone",
+    "claim": "A listing that returned with error 0 is appended and registered with SetChildren even after Cancel was requested, because ClassifyReadError treats 0 as Read; only then does it return ct.IsCancellationRequested."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "AddEntry",
+    "claim": "A file is appended charged with its listing EndOfFile and AllocationSize, which SizeFiles later replaces with the probed figures."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "_pending",
+    "claim": "The walk is one explicit stack with subfolders pushed last-first in FolderDone, so folders are listed depth-first in listing order and each folder's descendants are appended after its own block."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/SizeProbe.cs",
+    "symbol": "IsEligible",
+    "claim": "A file is sized from the file itself when it is Kind File and neither HardlinkDuplicate nor CloudOnly."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/ProbePass.cs",
+    "symbol": "Run",
+    "claim": "Run returns BatchOutcome.Cancelled without probing when the token is already cancelled, and returns Cancelled after the abandon wait when workers are stuck."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/ScanOptions.cs",
+    "symbol": "ProbeRule",
+    "claim": "ScanOptions is an internal class and ProbeRule is a test seam that replaces SizeProbe.IsEligible as the probe rule, so the App can never set it."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/HeldOpenTreeTests.cs",
+    "symbol": "ProbeRule",
+    "claim": "The one test that sets ProbeRule (OldRule) runs its scan with CancellationToken.None, so to the end, never stopped in its size checks."
+   },
+   {
+    "path": "src/FsAnalyser.Core/TopLevelTracker.cs",
+    "symbol": "Finish",
+    "claim": "Finish(bool completed, in ScanTotals totals) publishes the last snapshot through Publish and returns null when the root's listing never committed."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/TopLevelTests.cs",
+    "symbol": "_tracker.Finish",
+    "claim": "The test rig calls _tracker.Finish(completed, _totals) with two arguments, so an added optional parameter leaves it compiling unedited."
+   },
+   {
+    "path": "src/FsAnalyser.Core/TopLevelSnapshot.cs",
+    "symbol": "Revised",
+    "claim": "TopLevelSnapshot is immutable with an internal constructor, Completed is only ever true when Final, and TopLevelRow already carries an init-only property (Revised { get; init; }) as the idiom for an added flag."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "ListHeader",
+    "claim": "The results list's header is a static function of the snapshot; for a final snapshot it reads 'What was read before the stop. Rows marked not read yet or stopped partway are short.'"
+   },
+   {
+    "path": "src/FsAnalyser.App/TopLevelRowText.cs",
+    "symbol": "TitleOf",
+    "claim": "A Done row that was not revised is shown as its bare name with no mark."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "StoppedListHeader",
+    "claim": "Window cases pin the current stopped header string exactly, through $StoppedListHeader and in Test-L001, which stops mid-listing; case id L-004 is unused."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/StartupHook.cs",
+    "symbol": "FSA_HOOK_AT_SIZED",
+    "claim": "The hook has a Stop trigger that fires once the scanning panel's line 'Reading each file's own size: ' reports at least n files sized."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "the store does not know about the Scanner",
+    "claim": "A fitness rule forbids the words Scanner, DirectoryReader, SizeProbe and TopLevelTracker in src/FsAnalyser.Core/Store/**/*.cs."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/KindByteWriteCorpusTests.cs",
+    "symbol": "Grammar",
+    "claim": "A closed grammar over src/FsAnalyser.Core/Store/**/*.cs accepts a Kind element only when compared with (byte)EntryKind.X by == or !=, switched on, cast to EntryKind, or written whole as `Kind[i] = (byte)kind;`, and refuses every other use."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/NotListedBudgetTests.cs",
+    "symbol": "AStoreStoppedAtItsUnlistedPeakFitsTheBudget",
+    "claim": "It drives a U-201-shape store in scanner order (explicit stack, one block per listing, SetChildren after the block, W with 60,000 subfolders listed last) in the MemoryBudget collection and measures retained and peak memory against 800 MiB."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "ScanStore.Unfinished(int index) : bool",
+    "kind": "function",
+    "auth_model": "Public read; no writers outside Core.",
+    "error_cases": "ArgumentOutOfRangeException for index ≥ Count, including an empty store. The App must guard Count 0 (lesson #517).",
+    "notes": "Folder: NotListedAtOrBelow(index), or some file at or below whose size check had not been applied when the scan returned. File: SizeCheckPending. Link: false. Exact once Scanner.Scan has returned. On the writing thread before then it over-marks (watermark 0) and never under-marks. Exact only for a store registered depth-first with one SetChildren per whole block. A Completed scan reads false everywhere, vanished files included."
+   },
+   {
+    "name": "ScanStore.AtLeast(int index) : AtLeastFigures(long Size, long OnDisk, int Files)",
+    "kind": "function",
+    "auth_model": "Public read.",
+    "error_cases": "Same ArgumentOutOfRangeException as every indexed read.",
+    "notes": "Equals (RolledSize, RolledOnDisk, FilesBelow) whenever Unfinished is false. Otherwise it is a lower bound on what an uninterrupted scan of the unchanged tree gives: pending files contribute 0 bytes and still count as files. Allocates nothing. Costs one walk of the folder's descendant range above the watermark."
+   },
+   {
+    "name": "ScanStore.SizeCheckPending(int index) : bool",
+    "kind": "function",
+    "auth_model": "Public read.",
+    "error_cases": "ArgumentOutOfRangeException for index ≥ Count.",
+    "notes": "True for a File covered by ChecksOwnSize at or after the watermark. O(1)."
+   },
+   {
+    "name": "ScanStore.EndSizeChecks(int firstUnchecked)",
+    "kind": "function",
+    "auth_model": "Internal to Core. Called once, by Scanner.Run.Finish on the scan thread, as the last write to the store. Fenced by an architecture rule.",
+    "error_cases": "ArgumentOutOfRangeException for a value below 0 or above Count. 0 at Count 0 is accepted.",
+    "notes": "Count after Completed; the first entry of the cancelled batch after a Stop in the size checks; 0 for a Stop in the listing, Refused and RootUnreadable. Relies on SizeFiles applying checks in ascending order and SizeBatch applying none of a cancelled batch."
+   },
+   {
+    "name": "'Stop has taken effect' = Scanner.Scan has returned",
+    "kind": "function",
+    "notes": "Writes after Cancel and before the return belong to the stopped store, and the marks are computed from it: FolderDone committing a listing that returned cleanly, and the watermark. After the return nothing writes a per-entry column or the watermark. Abandoned probe workers write only their batch's readings array, which is never applied. ScanStore.VolumeUsed is excluded: its own thread may complete it after the return, and it is no entry's figure or mark."
+   },
+   {
+    "name": "TopLevelSnapshot.StoppedInSizeChecks : bool (init)",
+    "kind": "event",
+    "notes": "Published on the final snapshot through ScanProgress.TopLevel and ScanResult.TopLevel. True only when Final, not Completed, every listing had committed, and a size-check batch was cancelled (Q-111). False on every other snapshot."
+   },
+   {
+    "name": "Stopped results list header",
+    "kind": "ui",
+    "notes": "For a Stop in the size checks: 'What was read before the stop. Every folder was listed, but not every file's own size was read, so any row, unmarked ones included, may be off, on disk especially.' Every other Stop is byte-identical to today. Visible in the schema-1 report as window.TopLevelHeader; the schema is unchanged."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "mark folders unfinished at Stop",
+    "shape": "Stop lands in the listing, so SizeFiles never ran: at every AfterFolder point and at sampled guarded calls, including calls 1-2 (empty store), a folder cut mid-listing, and a listing that returned cleanly after Cancel",
+    "why": "The watermark must stay 0 on this path. Every listed checked-kind file is pending and every folder above one is unfinished, or a folder holding a stale listed file reads final (survey run A: 2 such folders unmarked today). Count-0 stores must not make EndSizeChecks throw.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.UnfinishedTests.StopsInTheListingMarkWhatAPendingCheckCouldChange\"",
+    "material": true
+   },
+   {
+    "behaviour": "mark folders unfinished at Stop",
+    "shape": "Stop in the size checks while the next batch is still queued, or exactly at a batch boundary, so pass.Run returns Cancelled before probing (workers 1 and 4, ProbeBatch=8)",
+    "why": "The cutoff must be that batch's first entry. If it is one batch too late, the queued batch's files read as checked and their folders read final at listing figures.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.UnfinishedTests.StopsInTheSizeChecksMarkWhatAPendingCheckCouldChange\"",
+    "material": true
+   },
+   {
+    "behaviour": "mark folders unfinished at Stop",
+    "shape": "Stop with a probe in progress inside a batch, before and after the real probe returned, so some readings exist but the batch is discarded",
+    "why": "ProbePass.Run returns Cancelled even when every probe finished, and SizeBatch applies none of them. A design that trusted finished readings would call those files checked when their figures were never applied.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.UnfinishedTests.StopsInTheSizeChecksMarkWhatAPendingCheckCouldChange\"",
+    "material": true
+   },
+   {
+    "behaviour": "mark folders unfinished at Stop and keep the store still",
+    "shape": "Every probe worker stuck in an uncancellable call, so Scan returns via the abandon wait (ProbeAbandonAfter 200 ms) while workers are still alive",
+    "why": "The abandon path is the one where threads outlive the return. The cutoff must still be the stuck batch's first entry, and a worker that finishes later must not change any figure or mark.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.UnfinishedTests.StopsInTheSizeChecksMarkWhatAPendingCheckCouldChange|FullyQualifiedName~FsAnalyser.Core.Tests.UnfinishedTests.NothingChangesOnceTheScanHasReturned\"",
+    "material": true
+   },
+   {
+    "behaviour": "mark folders a pending hardlink charge could raise",
+    "shape": "A hardlink first name listed stale-small (4 KiB listed, 1 MiB true) whose check is pending, with its later name in an ancestor, beside it, or in a later sibling branch, stopped both in the listing and in the size checks",
+    "why": "The pending charge is the first name's own check. Its folder and every ancestor must be unfinished, and the charged name must match the reference's, or the 'first name is the same entry' precondition has silently broken.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.UnfinishedTests.StopsInThe\"",
+    "material": true
+   },
+   {
+    "behaviour": "mark folders a pending hardlink charge would move bytes away from, and keep 'at least' true",
+    "shape": "A hardlink first name listed stale-large (1 MiB listed, 4 KiB true, truncated through the later name) whose check is pending",
+    "why": "The pending check would lower its folder. RolledSize is above the reference (survey: 64 MiB against 1 MiB), so the folder must be marked and AtLeast must subtract the listed figure. This is the teeth row: if no Stop has RolledSize above the reference, the Fact fails.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.UnfinishedTests.StopsInThe\"",
+    "material": true
+   },
+   {
+    "behaviour": "report a folder final only when its figures are the uninterrupted scan's",
+    "shape": "A later name's folder fully listed and checked while the first name's check elsewhere is still pending; and a first name corrected before Stop, its folder final",
+    "why": "Over-marking these would be safe, but criterion 3 needs the final ones compared, and the non-vacuity floors keep the comparison from passing on zero rows. Spike: 173-179 Stops per run had a later-name folder final with its first name pending.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.UnfinishedTests.StopsInThe\"",
+    "material": true
+   },
+   {
+    "behaviour": "report a folder final only when its figures are the uninterrupted scan's",
+    "shape": "A file whose check was refused (ProbeFailed via the Probe seam, error 5) before the cutoff",
+    "why": "A refused check keeps the listing figures in both runs, so it counts as checked. A rule keyed on SizeProbed alone would mark its folder unfinished for ever, Completed scans included.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.UnfinishedTests.StopsInTheSizeChecksMarkWhatAPendingCheckCouldChange\"",
+    "material": true
+   },
+   {
+    "behaviour": "find a folder's descendant range",
+    "shape": "Synthetic scanner-order stores: last subfolder empty or not listed after a non-empty sibling; a block of more than 65,536 children straddling a page; CloudOnly, duplicate and no-file-ID files; links; watermark 0, Count and random points; an empty store",
+    "why": "The range end comes from the last subfolder with children, not the last subfolder. Reading a straddling block from one page reads the wrong entries. CloudOnly and duplicates are never pending. These shapes are rare on the small real tree.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.UnfinishedTests.TheReadAnswersAsAParentWalkOnEveryScannerShapedStore\"",
+    "material": true
+   },
+   {
+    "behaviour": "nothing changes once Stop has taken effect",
+    "shape": "A listing that returned cleanly after Cancel is committed before Scan returns; the store at return is compared with the store 200 ms later",
+    "why": "FolderDone writes after the Cancel request (Scanner.cs:380-417), so 'taken effect' must be the return. Snapshotting at the Cancel request would see a store that is still changing.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.UnfinishedTests.NothingChangesOnceTheScanHasReturned\"",
+    "material": true
+   },
+   {
+    "behaviour": "a scan that runs to the end marks nothing",
+    "shape": "Completed scans: the sweep tree; the same tree with 5 listed files deleted before their check (VanishedBeforeProbe 5); and a folders-only tree where SizeFiles returns true at once",
+    "why": "Vanished files carry neither SizeProbed nor ProbeFailed, so a flag rule marks their folders (spike: 2 per run). The due==0 path returns Completed without running a batch, so the watermark must still be Count.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.UnfinishedTests.AScanThatRunsToTheEndMarksNothing\"",
+    "material": true
+   },
+   {
+    "behaviour": "existing counting-rule and last-access tests pass unedited",
+    "shape": "No existing file under tests/FsAnalyser.Core.Tests is modified or deleted, and the counting-rule and last-access classes are green under TEMP=%LOCALAPPDATA%\\Temp",
+    "why": "Criterion 6 is 'no edits'. Running under C:\\WINDOWS\\TEMP reproduces the known Q-190 back-dating failures, which are not this slice's (lesson #371).",
+    "check": "git diff --diff-filter=MD --exit-code 4df2b1c -- tests/FsAnalyser.Core.Tests; if ($LASTEXITCODE -eq 0) { $env:TEMP = $env:TMP = \"$env:LOCALAPPDATA\\Temp\"; pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~HardlinkTests|FullyQualifiedName~LinkTests|FullyQualifiedName~OnDiskSizeTests|FullyQualifiedName~LongPathTests|FullyQualifiedName~UnreadableFolderTests|FullyQualifiedName~ListingFallbackTests|FullyQualifiedName~TraversalTests|FullyQualifiedName~LastAccess|FullyQualifiedName~HeldOpenTreeTests\" } else { exit 1 }",
+    "material": true
+   },
+   {
+    "behaviour": "the trace adds no per-entry column and fits the budget",
+    "shape": "5M-entry U-201-shape store at the unlisted peak (watermark 0) and listed to the end with checks 97% done, every folder's Unfinished and AtLeast read",
+    "why": "Criterion 7: retained memory must not grow (bar +1 MiB), the reads must allocate 0 bytes, and the sampled peak must stay under 800 MiB with work pending, which no existing budget test models.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.UnfinishedBudgetTests\"",
+    "material": true
+   },
+   {
+    "behaviour": "the stopped header says what a Stop in the size checks did (derived criterion 8)",
+    "shape": "The app is stopped during its sizing pass (FSA_HOOK_AT_SIZED=0, at least 60,000 files); a listing Stop is compared against it",
+    "why": "Every row is Done at listing figures there, so today's header implies they are exact (run B: 3-shrink Done at 64 MiB against 1 MiB true). The listing-Stop header must stay byte-identical. A Completed status fails the case as void.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case L-004; if ($LASTEXITCODE -eq 0) { pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case L-001 }",
+    "material": true
+   }
+  ],
+  "architecture_rules": [
+   {
+    "name": "only the scan's ending writes the size-check watermark",
+    "files": "src/**/*.cs",
+    "must_not_match": [
+     "\\bEndSizeChecks\\b"
+    ],
+    "except_files": [
+     "src/FsAnalyser.Core/Store/ScanStore.cs",
+     "src/FsAnalyser.Core/Scanning/Scanner.cs"
+    ],
+    "because": "The watermark is the only record of which size checks were applied. A second writer in Core analysis code, a resume path or the App through a future InternalsVisibleTo makes Unfinished call a folder final whose checks never ran, or moves the marks after Stop took effect. That breaks criteria 1, 3 and 5 with no error. Tests are outside src and may set it on synthetic stores."
+   }
+  ],
+  "outside_claims": [
+   {
+    "claim": "On NTFS, after a hardlinked file is changed through one name, the directory entry of another name keeps the old size, so a listing reports that name stale. This holds both for growing the file and for truncating it.",
+    "evidence": "measured",
+    "source": "Spike stop-pending-checks-are-one-cutoff: FILE_ID_BOTH_DIR_INFO listing showed 12/12 first names stale (6 grow, 6 shrink) before every scan; survey runs A/B (1-grow 1 MiB vs 64 MiB, 3-shrink 64 MiB vs 1 MiB)",
+    "if_wrong": "The real-tree sweep goes void: no stale listing, no correction, no teeth. It then fails on its ProbeCorrections floor rather than passing vacuously. U-130 once saw no staleness, so this is environment-sensitive."
+   },
+   {
+    "claim": "A size-probe open of a stale name refreshes its directory entry, so a fixture must be re-staled before every scan, references included.",
+    "evidence": "measured",
+    "source": "Spike stop-pending-checks-are-one-cutoff (Restale before every scan, 0 void runs); U-197 settled-tree effect (1,507 stale entries refreshed by the first scan's probes)",
+    "if_wrong": "Re-staling would be unnecessary but harmless; nothing in the design changes."
+   },
+   {
+    "claim": "Listing an unchanged NTFS folder returns the same entries in the same order on every scan, and an interrupted listing's kept entries are the first k of the full one, so a stopped scan's store is a prefix of the full scan's.",
+    "evidence": "measured",
+    "source": "U-190: 40 listings of a 100,000-entry folder hashed identical; 20 interrupted listings were exact prefixes",
+    "if_wrong": "The first name of a hardlink group could differ between a stopped and a full run, so a pending charge would no longer be only the first name's own check. The 'charged name matches the reference' assertion in the sweep would fail."
+   },
+   {
+    "claim": "A file-level deny ACE cannot refuse FILE_READ_ATTRIBUTES, so ProbeFailed has to be produced through the Probe seam rather than a real ACL.",
+    "evidence": "recalled",
+    "source": "Stated in spike stop-pending-checks-are-one-cutoff's deviations, not shown there",
+    "if_wrong": "Nothing in the design changes. A real ACL could replace the seam for the ProbeFailed row."
+   },
+   {
+    "claim": "GC.GetTotalMemory(forceFullCollection: true) and a per-thread allocated-bytes counter measure retained memory and a read's allocations precisely enough to bound a +1 MiB retained delta and a 0-byte read.",
+    "evidence": "measured",
+    "source": "Spike stop-pending-checks-are-one-cutoff (5M: 637.05 MiB before and after, +1.9 KiB, 0 bytes allocated); survey NotListedBudgetTests (subtree read 0 bytes allocated)",
+    "if_wrong": "The criterion 7 Fact would need a different instrument, not a different design."
+   },
+   {
+    "claim": "On this PC the sizing pass costs about 12.5 µs per probed file warm, so 60,000 files give the window case a sizing pass of about 0.75 s or more for a hook-triggered Stop to land in.",
+    "evidence": "measured",
+    "source": "U-198: about 12-16 µs per probe on System32 and Program Files\\dotnet; 32,768-file batches at 267-450 ms",
+    "if_wrong": "The Stop in L-004 lands after sizing ends and the case fails as void. The fixture then needs more files, which is still within the engine's 120 s case limit."
+   },
+   {
+    "claim": "A hook-pressed Stop reaches the app 27-97 ms after it is pressed at a cold start, and the scanning panel's sizing line updates on the window's progress refresh.",
+    "evidence": "measured",
+    "source": "U-207 (click latency 27-97 ms cold); StartupHook.cs reads CurrentFolderText's 'Reading each file's own size: ' line",
+    "if_wrong": "The same as above: L-004 goes void and its fixture grows."
+   }
+  ],
+  "prior_art": [
+   {
+    "pattern": "A backup with deferred hardlink work ('late links') still to set is not complete; completion is a separate, explicit state, and an interrupted backup is reported as such, not as finished.",
+    "where": "https://www.nongnu.org/storebackup/en/node74.html",
+    "authority": "oss",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Folder usage on NTFS with many hardlinks is right only when each file is counted once (Sysinternals du -u); naive totals over-count.",
+    "where": "https://superuser.com/questions/217773/how-can-i-check-the-actual-size-used-in-an-ntfs-directory-with-many-hardlinks",
+    "authority": "community",
+    "basis": "cited"
+   },
+   {
+    "pattern": "A single monotonic 'applied up to' position (WAL LSN, consumer committed offset) records progress over an ordered stream; everything after it is pending, with no per-record state.",
+    "where": "PostgreSQL WAL LSN / Kafka committed offsets",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Nested-set model: in a tree stored in preorder, each subtree is a contiguous index range, so subtree aggregates and existence queries are range scans.",
+    "where": "Joe Celko, 'Trees and Hierarchies in SQL for Smarties'",
+    "authority": "community",
+    "basis": "recalled"
+   }
+  ],
+  "stack_chosen": [],
+  "decidable_disagreements": [],
+  "taste_disagreements": [
+   "Where the 'sized from the file' predicate lives: in ScanStore (ChecksOwnSize, chosen) or in a neutral Core rules class both the store and SizeProbe read. Nobody contested it; a reviewer may prefer the neutral home.",
+   "AtLeast as a separate read (chosen) versus making the at-least figure what RolledSize or ChargedSize return after a Stop. The latter changes every existing reader and the recount tests.",
+   "Derived criterion 8 by option (b), the header sentence (chosen), versus option (a), wiring Unfinished into the top-level rows and tree now. Option (a) is the SC-393 App slice's work.",
+   "The stopped tree header (StoppedTreeHeader) is left unchanged for a Stop in the size checks. Only the list header gets the new sentence, which is the surface Q-111 and Q-277 (list-first) name.",
+   "Header wording: 'unmarked ones included' names Done rows as the person sees them (bare names). The proposal's 'rows' sizes' named every row without singling them out."
+  ],
+  "open_questions": [
+   "Q-111 (human) limits the header change to Stops that land in the size checks. The survey's run A then measured a Done row (3-shrink, a stale-large hardlink first name) above its final figure after a Stop in the listing, where no file has been checked either. The listing-Stop header, 'Rows marked not read yet or stopped partway are short.', therefore implies unmarked rows are exact when they may be above final. Should the listing-Stop header also say unmarked rows may be off? This design keeps it unchanged per Q-111."
+  ],
+  "filed_for_later": [
+   {
+    "what": "Wire Unfinished and AtLeast into the App: a note on unfinished tree rows and top-level rows, the at-least figure where the App shows sizes after a Stop, and a guard for an empty store (Count 0) before any read (lesson #517). This is the SC-393 lineage.",
+    "why": "This slice settles the store's answer and the header only. Choosing which figure each App surface shows is App design, and option (a) of criterion 8 belongs there.",
+    "who": "slice"
+   },
+   {
+    "what": "After a Stop in the size checks, the stopped tree's header (StoppedTreeHeader) says nothing about sizes possibly being off.",
+    "why": "Q-111 and the derived criterion name the list header. The tree header leads with 'not read yet', which a sizing Stop never has, and its rewording is the tree slice's.",
+    "who": "slice"
+   },
+   {
+    "what": "If a later slice applies size checks out of order or in parallel, or commits part of a cancelled batch (pause/resume, U-197), it must replace the watermark with a per-entry or per-range structure and give it a 5M memory test, as SL-111's doc requires for NotListedAtOrBelow.",
+    "why": "No such slice exists yet. The design record names the obligation so it is found when one does.",
+    "who": "slice"
+   },
+   {
+    "what": "Network pass: Cancel on a stalled share is unmeasured, and this slice touches Scanning/** and MainWindow (lesson #136). No cancel-safety is claimed; the Stop path gains only an O(1) write.",
+    "why": "It changes SMB mappings, which no engine stage may do (lesson #120). It is a standing person-run debt.",
+    "who": "person"
+   }
+  ],
+  "whats_new": [
+   "ScanStore: private size-check watermark and internal EndSizeChecks(int)",
+   "ScanStore: public SizeCheckPending(int), Unfinished(int), AtLeast(int) and the AtLeastFigures record struct",
+   "ScanStore: internal static ChecksOwnSize(EntryKind, EntryFlags), which SizeProbe.IsEligible delegates to",
+   "Scanner.Run: _uncheckedFrom set in SizeBatch on a cancelled batch; Finish becomes a block body whose first statement writes the watermark",
+   "Scanner.cs: one comment at FolderDone's last-first push loop naming the three reads and NotListedAtOrBelow as order-dependent",
+   "TopLevelTracker.Finish optional stoppedInSizeChecks parameter and TopLevelSnapshot.StoppedInSizeChecks init property",
+   "MainWindow.ListHeader third arm for a Stop in the size checks",
+   "tests/FsAnalyser.Core.Tests/UnfinishedTests.cs: listing and sizing stop sweeps on a restaled real tree, synthetic shapes, wind-down and completed-scan Facts",
+   "tests/FsAnalyser.Core.Tests/UnfinishedBudgetTests.cs: 5M U-201-shape store with work pending",
+   "tests/window/WindowCases.ps1: case L-004 (Stop in the sizing pass, new header)",
+   ".taad/fitness.yaml: one settled rule fencing EndSizeChecks",
+   "docs/design/SL-112-unfinished-at-stop.md"
+  ],
+  "whats_reused": [
+   "ScanStore.NotListedAtOrBelow (SL-111) as the unlisted half of Unfinished",
+   "ScanStore's existing Kind, Flags, Size, OnDisk, FirstChild, ChildCount, RolledSize, RolledOnDisk and FilesBelow columns; no new column",
+   "Scanner.SizeFiles and SizeBatch's existing ascending, all-or-nothing batch order, unchanged",
+   "ScanOptions seams: Probe, ProbeBatch, ProbeWorkers, ProbeAbandonAfter, AfterFolder",
+   "NotListedTests.StopAt and SweepTree patterns, Scans.RunCancellingAt, TempTree.Hardlink and TempTree.Append (the CancellationTests stale-hardlink recipe)",
+   "ProbePassTests' stuck-worker setup for criterion 5",
+   "NotListedBudgetTests' U-201 constants and the MemoryBudget collection (ScanStoreTests.cs)",
+   "FsaWindowHook's stop mode, FSA_HOOK_AT_SIZED trigger and the schema-1 window.TopLevelHeader field",
+   "KindByteWriteCorpusTests' grammar and the 'store does not know about the Scanner' fitness rule as existing guards on the new store code"
+  ]
+ }
+}

@@ -29,6 +29,15 @@ namespace FsAnalyser.Core.Store;
 /// the same terms as the rolled totals: between appends on the writing thread and once the scan has returned.
 /// <see cref="NotListedAtOrBelow"/> derives the answer for a whole subtree from the marks and from the depth-first,
 /// one-block-per-folder order a scan registers folders in; it stores nothing and is exact on the same terms.</para>
+/// <para>What a stopped scan had not yet sized from the file itself (SL-112) is told by one number, not a mark per
+/// entry: the first entry whose size check was not applied (<see cref="EndSizeChecks"/>). Checks are applied in ascending
+/// index order and a batch is applied whole or not at all, so the checks still pending are exactly the entries of a
+/// sized-from-the-file kind (<c>EntryRules.ChecksOwnSize</c>) at or after that index. <see cref="SizeCheckPending"/>,
+/// <see cref="Unfinished"/> and <see cref="AtLeast"/> derive their answers from it and from the columns that exist.
+/// They are exact once the scan has returned. Before that, on the writing thread, the number is still 0 and they
+/// over-mark: a folder is never called finished that was not. A folder's descendants are one contiguous run of indices
+/// from its first child, found by the same depth-first, one-block-per-folder order <see cref="NotListedAtOrBelow"/> needs;
+/// a store registered in any other order gets a wrong answer and no error.</para>
 /// </remarks>
 public sealed partial class ScanStore
 {
@@ -52,6 +61,9 @@ public sealed partial class ScanStore
     private readonly Page?[] _pages = new Page?[MaxPages];
     private readonly char[]?[] _namePages = new char[]?[MaxNamePages];
     private int _count;
+    // The first entry whose size check was not applied (EndSizeChecks); 0 until a scan has said, so that a store nobody
+    // has declared over-marks and never calls a folder finished that was not.
+    private int _firstUnchecked;
     private int _namePage = -1;
     private int _nameUsed = NamePageChars;
     private readonly FileIdIndex _fileIds;
@@ -159,6 +171,142 @@ public sealed partial class ScanStore
                 return false;
             page = _pages[last >> PageShift]!;
             i = last & PageMask;
+        }
+    }
+
+    /// <summary>
+    /// Whether this file's own size check had not been applied when the scan ended: a file of a sized-from-the-file kind
+    /// (<c>EntryRules.ChecksOwnSize</c>) at or after the first entry whose check was not applied. False for a folder, a link,
+    /// a cloud-only file, a later name of a hardlinked file, and for every entry once a scan has Completed.
+    /// </summary>
+    /// <remarks>Exact once the scan has returned; see the class remarks for the store before that.</remarks>
+    public bool SizeCheckPending(int index)
+    {
+        Page page = At(index, out int i);
+        return IsSizeCheckPending(page, i, index);
+    }
+
+    /// <summary>
+    /// Whether this entry's figures could still change: for a folder, anything at or below it is not listed
+    /// (<see cref="NotListedAtOrBelow"/>) or a file below it has a size check that was not applied; for a file,
+    /// <see cref="SizeCheckPending"/>. A pending check can raise or lower its file's figures, and a hardlink's charge is
+    /// its first name's own check, so this is also the folders a pending charge could move. False for a link, and for every
+    /// entry once a scan has Completed, a file that vanished before its check included.
+    /// </summary>
+    /// <remarks>
+    /// Exact once the scan has returned; on the writing thread before it, it over-marks (see the class remarks). It
+    /// stores nothing and allocates nothing. It reads the run of entries from the folder's first child to the end of its
+    /// descendants, from the first entry whose check was not applied, and stops at the first pending file.
+    /// </remarks>
+    public bool Unfinished(int index)
+    {
+        Page page = At(index, out int i);
+        if (page.Kind[i] == (byte)EntryKind.File)
+            return IsSizeCheckPending(page, i, index);
+        if (page.Kind[i] != (byte)EntryKind.Folder)
+            return false;
+        if (NotListedAtOrBelow(index))
+            return true;
+        if (!PendingRun(page, i, out int start, out int end))
+            return false;
+        for (int e = start; e < end;)
+        {
+            Page run = _pages[e >> PageShift]!;
+            int stop = Math.Min(end, (e | PageMask) + 1);
+            for (int k = e & PageMask, last = k + (stop - e); k < last; k++)
+            {
+                if (EntryRules.ChecksOwnSize((EntryKind)run.Kind[k], (EntryFlags)run.Flags[k]))
+                    return true;
+            }
+            e = stop;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// What the entry holds for certain: a lower bound on the size, on-disk size and file count an uninterrupted scan of
+    /// the unchanged tree gives it. For a folder it is the rolled figures less the listing's size and on-disk size of every
+    /// file below it whose size check was not applied, which may be above or below the file's own; the file count is
+    /// <see cref="FilesBelow"/>. For a file, (0, 0, 1) when its check is pending, else its charged figures; for a link,
+    /// nothing. It equals (<see cref="RolledSize"/>, <see cref="RolledOnDisk"/>, <see cref="FilesBelow"/>) whenever
+    /// <see cref="Unfinished"/> is false, and for every entry once a scan has Completed.
+    /// </summary>
+    /// <remarks>
+    /// Exact on the same terms as <see cref="Unfinished"/>. The rolled totals are not rewritten: they stay the listing's
+    /// figures plus every correction applied, which a pending check can still lower. A file the stopped scan did list but
+    /// whose check is pending counts as a file and as 0 bytes. It allocates nothing.
+    /// </remarks>
+    public AtLeastFigures AtLeast(int index)
+    {
+        Page page = At(index, out int i);
+        if (page.Kind[i] == (byte)EntryKind.File)
+        {
+            if (IsSizeCheckPending(page, i, index))
+                return new AtLeastFigures(0, 0, 1);
+            return new AtLeastFigures(Charges(page, i) ? Volatile.Read(ref page.Size[i]) : 0, Charges(page, i) ? Volatile.Read(ref page.OnDisk[i]) : 0, 1);
+        }
+        if (page.Kind[i] != (byte)EntryKind.Folder)
+            return default;
+
+        long size = page.RolledSize[i], onDisk = page.RolledOnDisk[i];
+        if (PendingRun(page, i, out int start, out int end))
+        {
+            for (int e = start; e < end;)
+            {
+                Page run = _pages[e >> PageShift]!;
+                int stop = Math.Min(end, (e | PageMask) + 1);
+                for (int k = e & PageMask, last = k + (stop - e); k < last; k++)
+                {
+                    if (!EntryRules.ChecksOwnSize((EntryKind)run.Kind[k], (EntryFlags)run.Flags[k]))
+                        continue;
+                    size -= run.Size[k];
+                    onDisk -= run.OnDisk[k];
+                }
+                e = stop;
+            }
+        }
+        return new AtLeastFigures(size, onDisk, page.FilesBelow[i]);
+    }
+
+    /// <summary>What an entry holds for certain after a stop, see <see cref="AtLeast"/>: a lower bound on its size, on-disk size and file count.</summary>
+    public readonly record struct AtLeastFigures(long Size, long OnDisk, int Files);
+
+    private bool IsSizeCheckPending(Page page, int i, int index) =>
+        index >= Volatile.Read(ref _firstUnchecked) && EntryRules.ChecksOwnSize((EntryKind)page.Kind[i], (EntryFlags)page.Flags[i]);
+
+    // The run of entries below this folder whose size check may be pending: from the later of its first child and the first
+    // entry whose check was not applied, to the end of its descendants. False when the run is empty. A folder's descendants
+    // are its block, then the descendants of each of its folders in order (depth-first, one block each), so they end where
+    // the last block of the chain of last folders-with-children ends.
+    private bool PendingRun(Page page, int i, out int start, out int end)
+    {
+        start = end = 0;
+        int count = page.ChildCount[i];
+        int watermark = Volatile.Read(ref _firstUnchecked);
+        if (count == 0 || watermark >= Count)
+            return false;
+
+        end = page.FirstChild[i] + count;
+        start = Math.Max(watermark, page.FirstChild[i]);
+        while (true)
+        {
+            int first = page.FirstChild[i];
+            int last = first + page.ChildCount[i] - 1;
+            while (last >= first)
+            {
+                Page child = _pages[last >> PageShift]!;
+                int c = last & PageMask;
+                if (child.Kind[c] == (byte)EntryKind.Folder && child.ChildCount[c] > 0)
+                {
+                    page = child;
+                    i = c;
+                    end = child.FirstChild[c] + child.ChildCount[c];
+                    break;
+                }
+                last--;
+            }
+            if (last < first)
+                return start < end;
         }
     }
 
@@ -370,6 +518,27 @@ public sealed partial class ScanStore
         Post(page.Parent[i], posted);
         return posted;
     }
+
+    /// <summary>
+    /// Says where the scan's size checks stopped: <paramref name="firstUnchecked"/> is the first entry whose check was not
+    /// applied, so every entry of a sized-from-the-file kind (<c>EntryRules.ChecksOwnSize</c>) from there on is pending
+    /// (<see cref="SizeCheckPending"/>). The scan's last write to the store, once, as it returns: the store's entry count
+    /// after a scan that ran to the end, the first entry of the batch that was cancelled after a stop in the size checks,
+    /// and 0 after a stop in the listing, which never reached them.
+    /// </summary>
+    /// <remarks>
+    /// Relies on the checks being applied in ascending index order and on a cancelled batch applying none of its readings;
+    /// whoever changes either must replace this number with something per entry or per run. 0 is accepted on an empty store.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">The value is below 0 or above the entry count.</exception>
+    internal void EndSizeChecks(int firstUnchecked)
+    {
+        if ((uint)firstUnchecked > (uint)Count)
+            throw new ArgumentOutOfRangeException(nameof(firstUnchecked), firstUnchecked, $"The store holds {Count} entries.");
+        Volatile.Write(ref _firstUnchecked, firstUnchecked);
+    }
+
+
 
     internal int FileIdTableSlots => _fileIds.Slots;
 
