@@ -31,11 +31,19 @@
 #   NoExplorerViewMember  Core's OverrideExplorerView renamed, so the hook cannot inject Explorer's view (SL-091). The
 #                     hook refuses and the app ends before its Main, so no reveal is clicked under the real view: R-003
 #                     fails on its armed check in each injected step, (a) and (c), and on nothing else.
-
+#   NoTreeAtLeast     The tree row's bound never read: Bound is null for every row, so a stopped tree's unfinished rows draw their
+#                     rolled figures plain (SL-113). T-013 fails on the cells, the ancestors up to the root and the list's parity.
+#   NoListAtLeast     The ending shows ScanResult.TopLevel instead of StoppedTopLevel(), so the stopped list carries no mark
+#                     (SL-113). T-013 fails on the list's parity with the tree and nothing else.
+#   TreeAtLeastRolled The tree's Size and On disk cells put the word in front of the ROLLED figure instead of the store's bound
+#                     (SL-113): the defect class the slice was built around, a rolled figure sits above the final one. T-013 fails on
+#                     b-listed, whose rolled size is 212 KB against a bound of 0.
+#   NarrowAtLeastCells The Size cell back to 80 DIP wide, where 'at least 1,023 bytes' needs 101.26 (spike 125's no-go): the figure is
+#                     clipped to 'at least 1,023 b'. T-013 fails on the cell-fit line.
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'CancelThrows', 'HookFailsAfterActing', 'HookCompileError', 'HookLocked', 'EndingObeysSkip',
-        'ListingFailsAnyFolder', 'NoFailListingMember', 'NoExplorerViewMember')]
+        'ListingFailsAnyFolder', 'NoFailListingMember', 'NoExplorerViewMember', 'NoTreeAtLeast', 'NoListAtLeast', 'TreeAtLeastRolled', 'NarrowAtLeastCells')]
     [string] $Mutant
 )
 
@@ -47,6 +55,8 @@ $App = 'src\FsAnalyser.App\App.xaml.cs'
 $HookSource = 'tests\window\FsaWindowHook\StartupHook.cs'
 $IoCancel = 'src\FsAnalyser.Core\Scanning\SynchronousIoCancel.cs'
 $ShellReveal = 'src\FsAnalyser.Core\Native\ShellReveal.cs'
+$FolderTreeNode = 'src\FsAnalyser.App\FolderTreeNode.cs'
+$MainWindowXaml = 'src\FsAnalyser.App\MainWindow.xaml'
 $HookProject = 'tests\window\FsaWindowHook\FsaWindowHook.csproj'
 $HookOut = 'artifacts\window-hook'
 $script:Failures = [System.Collections.Generic.List[string]]::new()
@@ -112,6 +122,40 @@ $CaseMutants = @{
         Case = 'R-003'
         Fail = '^  FAIL  the hook armed the injected view 0\|0 before the app''s Main, its first line ', '^  FAIL  the hook armed the injected view 0\|0 before the app''s Main, its first line '
         Expect = '^        hook: explorer-view refused reason=member MissingMethodException: ', '^        exit -532462766 \(0xE0434352\)$'
+    }
+    # SL-113. Each of the four runs T-013 against a copy of the app with one change that takes one mark, or one guard of the marks, out.
+    # NoTreeAtLeast: every row's Bound reads null, which is what a tree that never asks the store reads.
+    NoTreeAtLeast = @{
+        File = $FolderTreeNode; Find = [regex]::Escape('_session.Store is { } store && store.Unfinished(_entry)')
+        Replace = '_session.Store is { } store && store.NotListed(_entry) && store.Unfinished(_entry)'
+        Case = 'T-013'
+        Fail = '^  FAIL  all \d+ folders and files the store reports unfinished draw their size and space on disk as the store.s bound, in full ',
+            '^  FAIL  b-listed\\b1\.bin, a file whose own size check is pending, draws ''at least 0 bytes'' in both cells ',
+            '^  FAIL  every folder above a not-read or at-least row, to the root, draws ''at least'' ',
+            '^  FAIL  the root row, which the store reports unfinished, draws ''at least'' ',
+            '^  FAIL  m-mid, listed, with folders below it the Stop never listed, draws ''at least'' in its figures and no note ',
+            '^  FAIL  the stopped list.s rows carry the tree.s marks and figures '
+    }
+    # NoListAtLeast: the ending shows the snapshot the scanner published, as before.
+    NoListAtLeast = @{
+        File = $MainWindow; Find = [regex]::Escape('result?.StoppedTopLevel()'); Replace = 'result?.TopLevel'
+        Case = 'T-013'; Fail = '^  FAIL  the stopped list.s rows carry the tree.s marks and figures '
+    }
+    # TreeAtLeastRolled: the word in front of the rolled figure the row ranks by, which a pending check can leave above the final one.
+    TreeAtLeastRolled = @{
+        File = $FolderTreeNode
+        Find = '(?s)(public string OnDiskText => !HasFigures \? "" : Bound is \{ \} bound \? )TopLevelRowText\.AtLeastOnDiskText\(bound\)( : FigureText\.FormatSize\(OnDisk\);.*?public string SizeText => !HasFigures \? "" : Bound is \{ \} bound \? )TopLevelRowText\.AtLeastSizeText\(bound\)'
+        Replace = '$1$"{TopLevelRowText.AtLeastWord} {FigureText.FormatSize(OnDisk)}"$2$"{TopLevelRowText.AtLeastWord} {FigureText.FormatSize(Size)}"'
+        Case = 'T-013'
+        Fail = '^  FAIL  all \d+ folders and files the store reports unfinished draw their size and space on disk as the store.s bound, in full ',
+            '^  FAIL  none of the \d+ rows whose bound differs from their rolled figure draws the rolled figure as a bound ',
+            '^  FAIL  b-listed\\b1\.bin, a file whose own size check is pending, draws ''at least 0 bytes'' in both cells ',
+            '^  FAIL  the stopped list.s rows carry the tree.s marks and figures '
+    }
+    # NarrowAtLeastCells: the Size cell as it was before the marks, 80 DIP wide.
+    NarrowAtLeastCells = @{
+        File = $MainWindowXaml; Find = '(x:Name="SizeText" DockPanel\.Dock="Right" )Width="102"'; Replace = '$1Width="80"'
+        Case = 'T-013'; Fail = '^  FAIL  the Size cell is wide enough for ''at least 1,023 bytes'' \(101\.26 DIP in a cell of 80\)$'
     }
 }
 
@@ -282,7 +326,7 @@ function Test-HookLocked {
 
 # ---- Run ----
 
-$names = if ($Mutant -eq 'All') { 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'CancelThrows', 'HookFailsAfterActing', 'HookCompileError', 'HookLocked', 'EndingObeysSkip', 'ListingFailsAnyFolder', 'NoFailListingMember', 'NoExplorerViewMember' } else { @($Mutant) }
+$names = if ($Mutant -eq 'All') { 'StopDisabled', 'StopCollapsed', 'NoCrashHandler', 'NoExitRule', 'CancelThrows', 'HookFailsAfterActing', 'HookCompileError', 'HookLocked', 'EndingObeysSkip', 'ListingFailsAnyFolder', 'NoFailListingMember', 'NoExplorerViewMember', 'NoTreeAtLeast', 'NoListAtLeast', 'TreeAtLeastRolled', 'NarrowAtLeastCells' } else { @($Mutant) }
 Use-RepoSdk
 $failed = @()
 foreach ($name in $names) {

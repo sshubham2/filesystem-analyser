@@ -78,6 +78,52 @@ public class TopLevelRowTextTests
         Assert.Equal(UnreadableRows.KindText(kind), expected["a-row  (".Length..^1]); // the list's and the tree's words
     }
 
+    /// <summary>
+    /// SL-113: the stopped list's second line for a row carrying the store's lower bound. Every figure on it is worded as a bound, from
+    /// the bound alone (the row's own Bytes and OnDisk, the listing's, are not on it), the counts that only grow included; and the same
+    /// row without a bound reads as it always did, byte for byte, so a final row and an unread row are not changed.
+    /// </summary>
+    [Fact]
+    public void AMarkedRowWordsEveryFigureAsABoundAndAnUnmarkedRowReadsAsItAlwaysDid()
+    {
+        var bound = new AtLeastFigures(2048, 4096, 7);
+        var folder = new TopLevelRow("big", @"C:\big", EntryKind.Folder, TopLevelState.Done, 900_000, 1_048_576, 12, 5, 0) { AtLeast = bound };
+        Assert.Equal("at least 2.0 KB (at least 4.0 KB on disk) in at least 7 files and at least 4 folders", TopLevelRowText.FiguresOf(folder));
+
+        // The numbers on the row are the listing's and never reach the line: they would be a false bound.
+        var zero = new TopLevelRow("big", @"C:\big", EntryKind.Folder, TopLevelState.StoppedPartway, 900_000, 1_048_576, 12, 5, 2) { AtLeast = new AtLeastFigures(0, 0, 1) };
+        Assert.Equal("at least 0 bytes (at least 0 bytes on disk) in at least 1 file and at least 4 folders; at least 2 folders inside could not be read (in full)",
+            TopLevelRowText.FiguresOf(zero));
+        Assert.DoesNotContain("900,000", TopLevelRowText.FiguresOf(zero));
+
+        var one = new TopLevelRow("one", @"C:\one", EntryKind.Folder, TopLevelState.Done, 1, 1, 1, 2, 1) { AtLeast = new AtLeastFigures(1, 1, 1) };
+        Assert.Equal("at least 1 bytes (at least 1 bytes on disk) in at least 1 file and at least 1 folder; at least 1 folder inside could not be read (in full)",
+            TopLevelRowText.FiguresOf(one));
+
+        var file = new TopLevelRow("f.bin", @"C:\f.bin", EntryKind.File, TopLevelState.Done, 4096, 4096, 1, 0, 0) { AtLeast = new AtLeastFigures(0, 0, 1) };
+        Assert.Equal("at least 0 bytes (at least 0 bytes on disk)", TopLevelRowText.FiguresOf(file));
+
+        // The same rows with no bound: today's text.
+        Assert.Equal("878.9 KB (1.0 MB on disk) in 12 files and 4 folders", TopLevelRowText.FiguresOf(new TopLevelRow("big", @"C:\big", EntryKind.Folder, TopLevelState.Done, 900_000, 1_048_576, 12, 5, 0)));
+        Assert.Equal("4.0 KB (4.0 KB on disk)", TopLevelRowText.FiguresOf(new TopLevelRow("f.bin", @"C:\f.bin", EntryKind.File, TopLevelState.Done, 4096, 4096, 1, 0, 0)));
+        Assert.Equal("0 bytes (0 bytes on disk) in 0 files and 0 folders", TopLevelRowText.FiguresOf(new TopLevelRow("p", @"C:\p", EntryKind.Folder, TopLevelState.NotRead, 0, 0, 0, 1, 0)));
+        Assert.Equal("p  (not read yet)", TopLevelRowText.TitleOf(new TopLevelRow("p", @"C:\p", EntryKind.Folder, TopLevelState.NotRead, 0, 0, 0, 1, 0)));
+
+        // The title is the state's and is not changed by the bound.
+        Assert.Equal("big  (stopped partway)", TopLevelRowText.TitleOf(zero));
+        Assert.Equal("big", TopLevelRowText.TitleOf(folder));
+    }
+
+    /// <summary>The word is one constant and the composers take the bound whole, so no other value can be worded as one (SL-113).</summary>
+    [Fact]
+    public void TheWordIsOneConstantAndTheComposersTakeOnlyTheStoresBound()
+    {
+        Assert.Equal("at least", TopLevelRowText.AtLeastWord);
+        var bound = new AtLeastFigures(1024, 2048, 3);
+        Assert.Equal($"{TopLevelRowText.AtLeastWord} 1.0 KB", TopLevelRowText.AtLeastSizeText(bound));
+        Assert.Equal($"{TopLevelRowText.AtLeastWord} 2.0 KB", TopLevelRowText.AtLeastOnDiskText(bound));
+        Assert.Equal("at least 0 bytes", TopLevelRowText.AtLeastSizeText(default)); // default reads (0, 0, 0): still a true lower bound
+    }
     // Scans the tree with a 995 at the third listing buffer of each of the named folders. Which folder a call lists is
     // read off the order an untouched scan exits them in; the scan thread's calls are counted from the last folder that
     // exited, so a folder cut short does not move where the next one's buffers fall. UnreadableFolderTests feeds the

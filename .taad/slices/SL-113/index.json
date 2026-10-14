@@ -1,0 +1,221 @@
+{
+ "schema": "slice-record@1",
+ "slice": "SL-113",
+ "title": "After Stop, show figures that are not final as 'at least', up to the root",
+ "status": "active",
+ "branch": "slice/SL-113",
+ "opened_at": "2026-10-14T06:53:55.608Z",
+ "merge_commit": null,
+ "how_to_read": "Each attempt is one line and a `details` filename in this same directory. Open a detail file ONLY when this index points you at one -- the summaries are here so you do not have to. `caused_by` is what sent the stage back; `changed` is what the attempt then touched, counted by kind. Several attempts in a row that were caused by the same stage and changed no `src` is a loop, not progress.",
+ "open": [
+  {
+   "stage": "build-check",
+   "issue": "1. In the stopped tree, every folder the store reports unfinished shows each figure on its row (size, on-disk size, file count) as 'at least': missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "2. Every folder above a 'not read yet' or 'at least' folder, up to and including the root, shows 'at least': missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "3. A folder the store reports final shows its figures with no qualifier: partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "4. The stopped ending's top-level rows carry the same 'at least' marks as the tree: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "5. In a stopped scan with marks in place, opening a 100k-child folder takes under 0.5 s: partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "6. A scan that runs to the end shows 'at least' nowhere; the existing window cases pass unchanged: partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "Derived (from SC-403, lesson #517): an empty store (Count 0) is guarded before any at-least/unfinished read: partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "Derived (from SC-404): the stopped tree's header says sizes may be off after a Stop in the size checks, worded together with the list header and the rows: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "Derived (from SC-393 / Q-114): the WindowMutants run covers the App diff, with a mutant that removes the at-least marks: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "Derived (from 'at least' in the title, and docs/design/SL-112-unfinished-at-stop.md:57-64 and 98-100): the figure marked 'at least' is the store's AtLeast lower bound, not the rolled figure: missing"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Cell width: 102 DIP is the measured minimum plus 0.74 DIP. A wider cell (104-106) would buy margin across DPI settings at the Name column's expense. I kept the measured value, with a check that fails on this machine."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "T-014 duplicates T-012's protocol with a VOID requirement that marks are realized, instead of extending T-012. Criterion 6 and Q-290 forbid editing T-012, so this is the cost of that rule, not a preference, but a reviewer may prefer one parameterized case."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Four mutants each re-run T-013, about 5-6 min of validate. Two of them, TreeAtLeastRolled and NarrowAtLeastCells, go beyond the derived criterion's single 'remove the marks' mutant."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The marked list row takes its folder and unreadable counts from the tracker row ('at least M folders'), not from a store read. Folder counts only grow, so this is true, but it means the line mixes two sources."
+  }
+ ],
+ "stages": [
+  {
+   "stage": "repro",
+   "title": "Repro",
+   "order": 1,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "build-check",
+   "title": "Build check",
+   "order": 2,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "risk-spike",
+   "title": "Risk spike",
+   "order": 3,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "design-slice",
+   "title": "Design",
+   "order": 4,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-14T07:25:31.468Z",
+     "head": "223a5f6dec14f31572c1fa5bbd20f20b3e2c5ac6",
+     "summary": "the provider turned this away rather than running it -- You've hit your session limit · resets 3:10pm (Asia/Kolkata)",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-10-14T09:40:08.186Z",
+     "head": "223a5f6dec14f31572c1fa5bbd20f20b3e2c5ac6",
+     "summary": "",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "Trip 1 of 2 back to the risk spike: the design left 1 fork that only a measurement can settle. O-002: unsettled design fork: Does the ending's StoppedTopLevel read (Unfinished + AtLeast for every root child, about one pass over the pending range) stay well within one UI frame budget on a 5M-entry store stopped in the listing? Its context: This design puts it on the UI thread at the ending. U-205 measured the read of every folder at 5M at 54.7-71.3 ms, and SL-112 measured the read form at <= 12 ms for one folder at 5M, so the root's children should cost well under 100 ms. Nothing has measured it inside the App. If it takes hundreds of ms, the read moves into Scanner.Finish on the writing thread after the watermark is written: a component boundary and risk-tier change. The synthesis marked this as forcing a re-synthesis: the losing answer moves a component boundary, a contract or the data model. How the fork decider would measure it: MEASURE on the risk spike before the design is rewritten. No code needs building first: time the exact store work that ScanResult.StoppedTopLevel() will do. SETUP: use the 5M-entry generated store that UnfinishedBudgetTests / NotListedBudgetTests already build. That is 4,880,000 entries in scanner (depth-first, one SetChildren per block) order, with the 100,000-child folder. Set the size-check watermark the way Scanner.Finish sets it after a Stop in the listing, which is 0. Then repeat at 50% and 97% of Count. THE TIMED WORK: in a FRESH process, with no warm-up call (the App's ending makes the first call cold, at tier-0 JIT), time this loop: if Count > 0, for i = FirstChild(0) .. FirstChild(0)+ChildCount(0)-1: NotListed(i) Unfinished(i) AtLeast(i) when Unfinished && !NotListed RUNS: - Release build: this is the shipped App's config and the number that decides. - Debug build: record it alongside. - 3 cold processes per cutoff, run one after another (about 650 MiB each). - If the generator's root children are roughly even in size, add one run where a single root child holds at least 70% of the entries (real C:'s Users shape). RECORD per run: - ms for the loop - number of root children and number marked - bytes allocated - as calibration, in the same process, LargestFiles.Top(100) over the same store. That is the whole-store pass the ending already runs on the UI thread. HOW THE RESULT DECIDES THE FORK. The deciding number is the Release cold max at every cutoff. (a) At or under 250 ms (the bar UnfinishedBudgetTests.cs:185 already sets for App-facing reads): keep the design as written. StoppedTopLevel() runs on the UI thread at the ending (MainWindow.xaml.cs:301, `result?.StoppedTopLevel()`). Scanner.cs is not touched and the slice's risk tier does not change. (b) Over 250 ms at any cutoff: move the read into Scanner.Finish, after the size-check watermark is written. Finish calls TopLevelTracker.WithAtLeast, and ScanResult carries the marked snapshot. StoppedTopLevel() returns that snapshot without reading the store, so the public contract is unchanged. The slice is re-tiered as scanner-touching, and Stop-to-return latency is measured again. The 16 ms frame in the question's title is NOT the bar. The ending is a one-time transition that already runs whole-store passes on the UI thread (LargestFiles.Top took 37-53 ms at 4.9M in U-137). The design's own switch point is 'hundreds of ms'. Nobody has measured this read, and both sides of the fork are outcomes of that missing measurement. What exists are proxies: - Build-check: Unfinished+AtLeast for every row of one 100k-child folder took 29.5 ms (Debug), and the same reads for every entry of the 5M store took 651 ms (Debug). - U-205: a boolean pending read over every folder took 54.7-71.3 ms (Release). - SL-112: R took ≤12 ms for one folder whose identity is not recorded here. Under depth-first registration the root children's pending runs are disjoint, so the read should cost about one pass over the store: tens of ms. But the only figure that strictly contains this read (651 ms, Debug) sits across the 'hundreds of ms' line, and none of the proxies was a cold first call, which is what the ending makes. The measurement is cheap and can be done on this machine without a person: minutes of time and about 650 MiB per process, using a generator that is already in the suite. The losing answer moves a component into the scanner tier, which is the case a lap exists for. Guessing 'UI thread' and being wrong would ship a stall that no planned case catches, because T-014's fixture is about 100k entries, not 5M. Either outcome keeps ScanResult.StoppedTopLevel() as the public seam, so the redesign after the measurement stays contained. The risk spike measures these first. Write the design again with what it measured: its experiments are under what reality already said about this slice.",
+      "cause": "fork-measure",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "design-slice-2.json"
+    },
+    {
+     "n": 3,
+     "state": "unrecorded",
+     "at": "2026-10-14T10:37:07.362Z",
+     "head": "",
+     "summary": "I took the practice proposal as the core.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "Trip 1 of 2 back to the risk spike: the design left 1 fork that only a measurement can settle. O-002: unsettled design fork: Does the ending's StoppedTopLevel read (Unfinished + AtLeast for every root child, about one pass over the pending range) stay well within one UI frame budget on a 5M-entry store stopped in the listing? Its context: This design puts it on the UI thread at the ending. U-205 measured the read of every folder at 5M at 54.7-71.3 ms, and SL-112 measured the read form at <= 12 ms for one folder at 5M, so the root's children should cost well under 100 ms. Nothing has measured it inside the App. If it takes hundreds of ms, the read moves into Scanner.Finish on the writing thread after the watermark is written: a component boundary and risk-tier change. The synthesis marked this as forcing a re-synthesis: the losing answer moves a component boundary, a contract or the data model. How the fork decider would measure it: MEASURE on the risk spike before the design is rewritten. No code needs building first: time the exact store work that ScanResult.StoppedTopLevel() will do. SETUP: use the 5M-entry generated store that UnfinishedBudgetTests / NotListedBudgetTests already build. That is 4,880,000 entries in scanner (depth-first, one SetChildren per block) order, with the 100,000-child folder. Set the size-check watermark the way Scanner.Finish sets it after a Stop in the listing, which is 0. Then repeat at 50% and 97% of Count. THE TIMED WORK: in a FRESH process, with no warm-up call (the App's ending makes the first call cold, at tier-0 JIT), time this loop: if Count > 0, for i = FirstChild(0) .. FirstChild(0)+ChildCount(0)-1: NotListed(i) Unfinished(i) AtLeast(i) when Unfinished && !NotListed RUNS: - Release build: this is the shipped App's config and the number that decides. - Debug build: record it alongside. - 3 cold processes per cutoff, run one after another (about 650 MiB each). - If the generator's root children are roughly even in size, add one run where a single root child holds at least 70% of the entries (real C:'s Users shape). RECORD per run: - ms for the loop - number of root children and number marked - bytes allocated - as calibration, in the same process, LargestFiles.Top(100) over the same store. That is the whole-store pass the ending already runs on the UI thread. HOW THE RESULT DECIDES THE FORK. The deciding number is the Release cold max at every cutoff. (a) At or under 250 ms (the bar UnfinishedBudgetTests.cs:185 already sets for App-facing reads): keep the design as written. StoppedTopLevel() runs on the UI thread at the ending (MainWindow.xaml.cs:301, `result?.StoppedTopLevel()`). Scanner.cs is not touched and the slice's risk tier does not change. (b) Over 250 ms at any cutoff: move the read into Scanner.Finish, after the size-check watermark is written. Finish calls TopLevelTracker.WithAtLeast, and ScanResult carries the marked snapshot. StoppedTopLevel() returns that snapshot without reading the store, so the public contract is unchanged. The slice is re-tiered as scanner-touching, and Stop-to-return latency is measured again. The 16 ms frame in the question's title is NOT the bar. The ending is a one-time transition that already runs whole-store passes on the UI thread (LargestFiles.Top took 37-53 ms at 4.9M in U-137). The design's own switch point is 'hundreds of ms'. Nobody has measured this read, and both sides of the fork are outcomes of that missing measurement. What exists are proxies: - Build-check: Unfinished+AtLeast for every row of one 100k-child folder took 29.5 ms (Debug), and the same reads for every entry of the 5M store took 651 ms (Debug). - U-205: a boolean pending read over every folder took 54.7-71.3 ms (Release). - SL-112: R took ≤12 ms for one folder whose identity is not recorded here. Under depth-first registration the root children's pending runs are disjoint, so the read should cost about one pass over the store: tens of ms. But the only figure that strictly contains this read (651 ms, Debug) sits across the 'hundreds of ms' line, and none of the proxies was a cold first call, which is what the ending makes. The measurement is cheap and can be done on this machine without a person: minutes of time and about 650 MiB per process, using a generator that is already in the suite. The losing answer moves a component into the scanner tier, which is the case a lap exists for. Guessing 'UI thread' and being wrong would ship a stall that no planned case catches, because T-014's fixture is about 100k entries, not 5M. Either outcome keeps ScanResult.StoppedTopLevel() as the public seam, so the redesign after the measurement stays contained. The risk spike measures these first. Write the design again with what it measured: its experiments are under what reality already said about this slice.",
+      "cause": "fork-measure",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "design-slice-3.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique",
+   "title": "Critique",
+   "order": 5,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-14T10:14:25.926Z",
+     "head": "223a5f6dec14f31572c1fa5bbd20f20b3e2c5ac6",
+     "summary": "The core holds up against the tree.",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-10-14T10:51:25.065Z",
+     "head": "223a5f6dec14f31572c1fa5bbd20f20b3e2c5ac6",
+     "summary": "The rework answers every finding that was disposed accepted-pending, and I checked each answer against the tree.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "critique passed on 2026-10-14T10:26:17.427Z, and design-slice has judged since (2026-10-14T10:51:24.923Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "cause": "knock-on",
+      "stage": "design-slice",
+      "from": [
+       "design-slice"
+      ]
+     },
+     "changed": {},
+     "details": "critique-2.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique-review",
+   "title": "Critique review",
+   "order": 6,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-10-14T10:26:17.458Z",
+     "head": "223a5f6dec14f31572c1fa5bbd20f20b3e2c5ac6",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-review-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-10-14T10:54:39.521Z",
+     "head": "223a5f6dec14f31572c1fa5bbd20f20b3e2c5ac6",
+     "summary": "",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "critique-review passed on 2026-10-14T10:26:17.494Z, and design-slice has judged since (2026-10-14T10:51:24.923Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "cause": "knock-on",
+      "stage": "design-slice",
+      "from": [
+       "design-slice"
+      ]
+     },
+     "changed": {},
+     "details": "critique-review-2.json"
+    }
+   ]
+  }
+ ]
+}

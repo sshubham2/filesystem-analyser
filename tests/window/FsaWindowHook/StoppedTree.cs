@@ -370,14 +370,35 @@ internal static class StoppedTree
     {
         var rows = new List<Dictionary<string, object?>>();
         MethodInfo? title = TitleMethod(window);
+        MethodInfo? figures = window.GetType().Assembly.GetType("FsAnalyser.App.TopLevelRowText")
+            ?.GetMethod("FiguresOf", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
         foreach (object row in ((ListBox)window.FindName("TopLevelList")).Items)
         {
+            string? path = Prop(row, "Path") as string;
+            Dictionary<string, object?>? store = RootChildOf(window, path);
             rows.Add(new Dictionary<string, object?>
             {
                 ["name"] = Prop(row, "Name"),
-                ["path"] = Prop(row, "Path"),
+                ["path"] = path,
                 ["state"] = Prop(row, "State")?.ToString(),
                 ["title"] = title?.Invoke(null, [row]),
+                // SL-113: the second line the list draws (the row's figures), and what the store says of the same child of the
+                // root, found by its path: the row carries no entry, and the list is sorted.
+                ["figures"] = figures?.Invoke(null, [row]),
+                ["isFolder"] = Prop(row, "IsFolder"),
+                ["bytes"] = Prop(row, "Bytes"),
+                ["onDisk"] = Prop(row, "OnDisk"),
+                ["folders"] = Prop(row, "Folders"),
+                ["unreadableBelow"] = Prop(row, "UnreadableBelow"),
+                ["revised"] = Prop(row, "Revised"),
+                ["rowAtLeast"] = Prop(row, "AtLeast") is { } bound
+                    ? new Dictionary<string, object?> { ["size"] = Prop(bound, "Size"), ["onDisk"] = Prop(bound, "OnDisk"), ["files"] = Prop(bound, "Files") }
+                    : null,
+                ["entry"] = store?["entry"],
+                ["storeUnfinished"] = store?["storeUnfinished"],
+                ["storeNotListed"] = store?["storeNotListed"],
+                ["storeAtLeast"] = store?["storeAtLeast"],
+                ["storeRolled"] = store?["storeRolled"],
             });
         }
         return rows;
@@ -433,6 +454,94 @@ internal static class StoppedTree
         if (window is null || EntryOf(node) is not int entry || StoreOf(window) is not { } store)
             return null;
         return (bool)store.GetType().GetMethod("NotListed", [typeof(int)])!.Invoke(store, [entry])!;
+    }
+
+    /// <summary>Whether the store reports the row's entry unfinished (SL-113); null for a row with no entry or a window with no store.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static bool? UnfinishedOf(Window? window, object? node)
+    {
+        if (window is null || EntryOf(node) is not int entry || StoreOf(window) is not { } store)
+            return null;
+        return (bool)store.GetType().GetMethod("Unfinished", [typeof(int)])!.Invoke(store, [entry])!;
+    }
+
+    /// <summary>
+    /// What the store says the row's entry holds for certain (SL-113): its AtLeast read by property name, with the plain
+    /// size texts the window's own formatter writes for those numbers. Null for a row with no entry or a window with no store.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static Dictionary<string, object?>? AtLeastOf(Window? window, object? node)
+    {
+        if (window is null || EntryOf(node) is not int entry || StoreOf(window) is not { } store)
+            return null;
+        return AtLeastValues(window, store, entry);
+    }
+
+    /// <summary>What the store says the row's entry rolls up to: RolledSize and RolledOnDisk, the figures a final row draws (SL-113).</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static Dictionary<string, object?>? RolledOf(Window? window, object? node)
+    {
+        if (window is null || EntryOf(node) is not int entry || StoreOf(window) is not { } store)
+            return null;
+        return RolledValues(store, entry);
+    }
+
+    /// <summary>
+    /// The store's answers for one child of the scan root, found by its path and never by its place in the list, since the
+    /// list is sorted and a row carries no entry (SL-113): unfinished, not listed, AtLeast and the rolled figures. Null when
+    /// the window has no store or no child of the root has that path.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static Dictionary<string, object?>? RootChildOf(Window window, string? path)
+    {
+        if (path is null || StoreOf(window) is not { } store)
+            return null;
+        Type type = store.GetType();
+        int count = (int)type.GetMethod("ChildCount", [typeof(int)])!.Invoke(store, [0])!;
+        int first = (int)type.GetMethod("FirstChild", [typeof(int)])!.Invoke(store, [0])!;
+        MethodInfo getPath = type.GetMethod("GetPath", [typeof(int)])!;
+        for (int i = 0; i < count; i++)
+        {
+            int entry = first + i;
+            if (!string.Equals((string)getPath.Invoke(store, [entry])!, path, StringComparison.Ordinal))
+                continue;
+            return new()
+            {
+                ["entry"] = entry,
+                ["storeUnfinished"] = (bool)type.GetMethod("Unfinished", [typeof(int)])!.Invoke(store, [entry])!,
+                ["storeNotListed"] = (bool)type.GetMethod("NotListed", [typeof(int)])!.Invoke(store, [entry])!,
+                ["storeAtLeast"] = AtLeastValues(window, store, entry),
+                ["storeRolled"] = RolledValues(store, entry),
+            };
+        }
+        return null;
+    }
+
+    private static Dictionary<string, object?> AtLeastValues(Window window, object store, int entry)
+    {
+        object bound = store.GetType().GetMethod("AtLeast", [typeof(int)])!.Invoke(store, [entry])!;
+        long size = (long)Prop(bound, "Size")!, onDisk = (long)Prop(bound, "OnDisk")!;
+        int files = (int)Prop(bound, "Files")!;
+        MethodInfo? format = window.GetType().Assembly.GetType("FsAnalyser.App.FigureText")
+            ?.GetMethod("FormatSize", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+        return new()
+        {
+            ["size"] = size,
+            ["onDisk"] = onDisk,
+            ["files"] = files,
+            ["sizeText"] = format?.Invoke(null, [size]),
+            ["onDiskText"] = format?.Invoke(null, [onDisk]),
+        };
+    }
+
+    private static Dictionary<string, object?> RolledValues(object store, int entry)
+    {
+        Type type = store.GetType();
+        return new()
+        {
+            ["size"] = (long)type.GetMethod("RolledSize", [typeof(int)])!.Invoke(store, [entry])!,
+            ["onDisk"] = (long)type.GetMethod("RolledOnDisk", [typeof(int)])!.Invoke(store, [entry])!,
+        };
     }
 
     /// <summary>How many of the node's children (once built) the store marks not listed; null before they are built.</summary>

@@ -386,6 +386,7 @@ internal static class TreeMode
                 queue.Enqueue(([.. indexes, i], path.Length == 0 ? children[i] : $"{path}\\{children[i]}", depth + 1, i));
         }
         Emit("walked", new() { ["rows"] = rows, ["unrendered"] = unrendered, ["depth"] = depthLimit });
+        CellFit(window);
     }
 
     // ---- RECYCLE ----
@@ -524,6 +525,12 @@ internal static class TreeMode
                 ["children"] = Ui(() => Children(NodeAt(window, indexes))?.Count),
                 // SL-110: how many of the folder's rows the store marks not listed (first open only: a count over 100,000 rows).
                 ["notListedChildren"] = open == 1 ? Ui(() => StoppedTree.NotListedChildren(_app.MainWindow, NodeAt(window, indexes))) : null,
+                // SL-113: how many of the opened folder's own rows on screen draw their Size as 'at least ...' (the realized rows only: a
+                // row is read when drawn). The folder's row and its ancestors are not counted, so a folder that is itself marked cannot
+                // stand in for the rows under it.
+                ["atLeastRealized"] = Ui(() => Resolve(window, indexes) is { } opened
+                    ? TreeRows(opened).Count(r => Part<TextBlock>(r, "SizeText")?.Text?.StartsWith("at least ", StringComparison.Ordinal) == true)
+                    : 0),
                 ["realized"] = realized,
                 ["viewportHeight"] = Ui(() => Find<ScrollViewer>(Tree(window))?.ViewportHeight),
             });
@@ -973,6 +980,11 @@ internal static class TreeMode
         // SL-110: the store's own mark for the row's entry, read through the window's LastResult and the row's entry number,
         // never through a property of the row, so a row that mis-reads its mark cannot vouch for itself.
         ["storeNotListed"] = StoppedTree.NotListedOf(_app.MainWindow, node),
+        // SL-113: what the store says the row's entry holds, read the same way: whether it is unfinished, its AtLeast, and its
+        // rolled figures (the ones a final row draws and an unfinished row must not draw as its own).
+        ["storeUnfinished"] = StoppedTree.UnfinishedOf(_app.MainWindow, node),
+        ["storeAtLeast"] = StoppedTree.AtLeastOf(_app.MainWindow, node),
+        ["storeRolled"] = StoppedTree.RolledOf(_app.MainWindow, node),
     };
 
     // What the row's container draws: the text of each named part of the row template, the bar's laid-out width,
@@ -990,7 +1002,62 @@ internal static class TreeMode
         ["expander"] = item.Template?.FindName("Expander", item) is UIElement { Visibility: Visibility.Visible },
         ["expanded"] = item.IsExpanded,
         ["rowHeight"] = (item.Template?.FindName("PART_Header", item) as FrameworkElement)?.ActualHeight,
+        // SL-113: whether each figure cell cut its text (the layout clip WPF puts on an element given less than it asked for),
+        // and the text's one-line width at the cell's own typeface and DPI against the width the cell was given, so a figure that
+        // reads in full as a property but is drawn short is seen (ActualWidth alone hides it: spike 125, 101.3 against 80).
+        ["sizeClipped"] = Part<TextBlock>(item, "SizeText") is { } sizeCell ? System.Windows.Controls.Primitives.LayoutInformation.GetLayoutClip(sizeCell) is not null : null,
+        ["onDiskClipped"] = Part<TextBlock>(item, "OnDiskText") is { } onDiskCell ? System.Windows.Controls.Primitives.LayoutInformation.GetLayoutClip(onDiskCell) is not null : null,
+        ["sizeTextWidth"] = Part<TextBlock>(item, "SizeText") is { Text.Length: > 0 } sizeDrawn ? TextWidth(sizeDrawn, sizeDrawn.Text) : null,
+        ["onDiskTextWidth"] = Part<TextBlock>(item, "OnDiskText") is { Text.Length: > 0 } onDiskDrawn ? TextWidth(onDiskDrawn, onDiskDrawn.Text) : null,
+        ["sizeCellWidth"] = Part<TextBlock>(item, "SizeText")?.ActualWidth,
+        ["onDiskCellWidth"] = Part<TextBlock>(item, "OnDiskText")?.ActualWidth,
     };
+
+    // The one-line width of a text in a cell's own typeface, size and DPI.
+    private static double TextWidth(TextBlock cell, string text) =>
+        new FormattedText(text, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
+            new Typeface(cell.FontFamily, cell.FontStyle, cell.FontWeight, cell.FontStretch), cell.FontSize, Brushes.Black,
+            VisualTreeHelper.GetDpi(cell).PixelsPerDip).WidthIncludingTrailingWhitespace;
+
+    // SL-113: the widest figure a stopped scan's row can draw, 'at least ' in front of the widest text FormatSize writes, measured
+    // in the typeface, size and DPI of a realized Size cell against the width that cell was given. One line: the root row is
+    // always realized. Spike 125 measured 101.26 DIP for 'at least 1,000 bytes' on this PC at 125% DPI.
+    private static void CellFit(Window window)
+    {
+        Dictionary<string, object?>? fit = Ui(() =>
+        {
+            TreeViewItem? row = TreeRows(Tree(window)).FirstOrDefault(r => Part<TextBlock>(r, "SizeText") is not null);
+            if (row is null || Part<TextBlock>(row, "SizeText") is not { } size || Part<TextBlock>(row, "OnDiskText") is not { } onDisk)
+                return null;
+            MethodInfo? format = window.GetType().Assembly.GetType("FsAnalyser.App.FigureText")
+                ?.GetMethod("FormatSize", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+            if (format is null)
+                return null;
+            string widest = "";
+            double widestWidth = 0;
+            for (int unit = 0; unit <= 5; unit++)
+            {
+                long bytes = unit == 0 ? 1023 : (long)(1023.9 * Math.Pow(1024, unit));
+                string text = "at least " + (string)format.Invoke(null, [bytes])!;
+                double width = TextWidth(size, text);
+                if (width > widestWidth)
+                    (widest, widestWidth) = (text, width);
+            }
+            return new Dictionary<string, object?>
+            {
+                ["widestText"] = widest,
+                ["widestWidth"] = widestWidth,
+                ["widestOnDiskWidth"] = TextWidth(onDisk, widest),
+                ["cellWidth"] = size.Width,
+                ["onDiskCellWidth"] = onDisk.Width,
+                ["pixelsPerDip"] = VisualTreeHelper.GetDpi(size).PixelsPerDip,
+                ["fontSize"] = size.FontSize,
+                ["fontFamily"] = size.FontFamily.Source,
+            };
+        });
+        if (fit is not null)
+            Emit("cell-fit", fit);
+    }
 
     private static T? Part<T>(TreeViewItem item, string name) where T : class =>
         item.Template?.FindName("PART_Header", item) is ContentPresenter header

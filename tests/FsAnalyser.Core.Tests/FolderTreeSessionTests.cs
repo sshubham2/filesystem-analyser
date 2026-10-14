@@ -82,4 +82,19 @@ public class FolderTreeSessionTests
         Assert.Null(session.FailedKind(Scans.Find(result, plain)));
         Assert.Null(session.FailedKind(Scans.Find(result, tree.PathOf(@"c-plain\one.txt"))));
     }
+
+    /// <summary>
+    /// Whether the rows may ask the store for a lower bound is the session's, set from the one guard of the stopped list's marks
+    /// (ScanResult.MarksAtLeast, SL-113): a session made without it, the stand-in and every completed scan's reads none.
+    /// </summary>
+    [Fact]
+    public void ASessionReadsBoundsOnlyWhenItWasGivenTheGuard()
+    {
+        Assert.False(new FolderTreeSession(store: null, []).ReadsBounds);
+        Assert.False(FolderTreeSession.None.ReadsBounds);
+        Assert.True(new FolderTreeSession(store: null, [], readsBounds: true).ReadsBounds);
+        var closed = new FolderTreeSession(store: null, [], true);
+        closed.Close();
+        Assert.Null(closed.Store); // a closed session has no store to ask whatever it was given
+    }
 }

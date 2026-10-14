@@ -1390,3 +1390,37 @@ rules:
     except_files:
     - src/FsAnalyser.Core/Store/ScanStore.cs
     - src/FsAnalyser.Core/Scanning/Scanner.cs
+
+  # settled by SL-113
+  - name: the at-least word is composed only in TopLevelRowText
+    files: src/FsAnalyser.App/**/*.cs
+    must_not_match:
+    - '"[^"\n]*\bat least\b'
+    - \bAtLeastWord\b[^;\n]*\bFormatSize\s*\(
+    because: 'The tree and the stopped list must word a lower bound identically (criterion 4). The only
+      way to put the word on a number is TopLevelRowText.AtLeastSizeText / AtLeastOnDiskText, which take
+      an AtLeastFigures that only Core''s store makes (AtLeastSeamTests holds that in the types). A second
+      literal copy of the phrase, or a figure built by hand from AtLeastWord and FormatSize, is how a
+      rolled or listing figure gets the word put in front of it: false on screen, because rolled figures
+      can sit above the final ones (SL-112 doc 57-64: 64 MiB shown against 1 MiB final). The stopped
+      headers interpolate AtLeastWord and call no formatter, so they stay quiet. The App held no ''at
+      least'' string before this slice (survey grep: comments only).'
+    except_files:
+    - src/FsAnalyser.App/TopLevelRowText.cs
+
+  # settled by SL-113
+  - name: only the store constructs a lower bound
+    files: src/FsAnalyser.Core/**/*.cs
+    must_not_match:
+    - \bnew\s+AtLeastFigures\s*\(
+    - \bAtLeastFigures\??\s+\w+\s*=\s*new\s*\(
+    because: 'AtLeastFigures'' internal constructor keeps the App out, but every Core file can still reach
+      it. If TopLevelTracker or ScanResult built one from a row''s listing Bytes or a RolledSize, the
+      type would carry a false ''at least'' to every surface, and no App-side check could tell.
+      ScanStore.AtLeast is the one producer measured exact (SL-112). These two patterns are an early
+      tripwire for the spellings named, not the closure: a target-typed `return new(...)` escapes them.
+      The closure is AtLeastSeamTests, which reads the IL of every method of Core for the constructor''s
+      callers (corpus tests/FsAnalyser.Core.Tests/AtLeastSeamCorpus.json).'
+    except_files:
+    - src/FsAnalyser.Core/Store/ScanStore.cs
+    - src/FsAnalyser.Core/AtLeastFigures.cs

@@ -1,0 +1,649 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-113",
+ "stage": "design-slice",
+ "attempt": 3,
+ "at": "2026-10-14T10:37:07.362Z",
+ "head": "",
+ "run_id": 3938,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "reason": "One proposal, checked against the tree and the spike. Spike 126 settled the attempt-1 fork for the UI thread, so the design is rewritten from it and makes no scanner change.",
+  "selection_rationale": "I took the practice proposal as the core. Each of its load-bearing pieces matches the code as it stands. (1) The tree already draws every figure through one gate, HasFigures (FolderTreeNode.cs:124). A bound read lazily behind that gate adds nothing to EnsureChildren's per-child build, which is the path lesson #170 measured at about 98-142 ms against 500 ms. (2) Row i of the snapshot is entry _first + i (TopLevelTracker.cs:38, 50), so the list can be marked by a post-scan copy without touching the tracker's live path. (3) ShowFinalTopLevel redraws only when the snapshot is a new object (MainWindow.xaml.cs:370). Returning a new snapshot whenever a row is marked therefore gets past the tick's skip without editing it. (4) Spike 126 (go) measured the exact ending read cold in Release at 3.06-10.21 ms on a 4.88M store at cutoffs 0, 50% and 97%, with 0 bytes allocated, against the 250 ms bar. Fork (a) holds, Scanner.cs is untouched and the tier stays medium. (5) Spike 125 measured the no-go the widened cells answer: 'at least 1,000 bytes' needs 101.26 DIP against 80. (6) The type-closed seam replaces a regex that the earlier lap's own reviewers showed was easy to evade. It is cheaper to keep true: AtLeastFigures is a nested public record struct today (ScanStore.cs:272), and moving it out with an internal constructor is a small, checkable change. Measured facts the design leans on rather than argues: cutoff 0 after a Stop in the listing (Scanner.cs:583); rolled figures that are not a lower bound (SL-112); unmarked-is-final (U-206: 0 mismatches in 736,644 real comparisons; U-205: 0 violations in 2,588 Stops). The practice designer raised over_engineering_flag. I read it as reported against their own interest: the four mutants and T-014 cost about 7 minutes at validate, and each is tied to a derived criterion (SC-393/Q-114) or a measured no-go. I kept them and dropped nothing else.",
+  "components": [
+   {
+    "name": "AtLeastFigures: a lower bound only Core can make",
+    "responsibility": "Moves the nested `ScanStore.AtLeastFigures` (today a public readonly positional record struct, ScanStore.cs:272) into its own file. It becomes `public readonly struct AtLeastFigures : IEquatable<AtLeastFigures>` with an internal (long size, long onDisk, int files) constructor; get-only Size, OnDisk and Files; Equals, GetHashCode, == and !=; and a ToString shaped '(Size, OnDisk, Files)'. ScanStore.AtLeast returns it with unchanged meaning. In Core.Tests only the type-name lines change: UnfinishedTests.cs:6 (the Figures alias), UnfinishedBudgetTests.cs:137 and :228, and a `using FsAnalyser.Core;` where a file has none.",
+    "lives_at": "src/FsAnalyser.Core/AtLeastFigures.cs",
+    "key_interactions": "It is in namespace FsAnalyser.Core, not FsAnalyser.Core.Store, so TopLevelRowText.cs (which imports FsAnalyser.Core) can name it without writing `using FsAnalyser.Core.Store;`, which 'the window never touches the scan store' would flag. ScanStore resolves it through its enclosing namespace. In the App, `default(AtLeastFigures)` is still constructible and reads (0, 0, 0). That is a true lower bound, so it is not the defect the type closes."
+   },
+   {
+    "name": "ScanResult.MarksAtLeast and ScanResult.StoppedTopLevel()",
+    "responsibility": "`public bool MarksAtLeast => Status == ScanStatus.Cancelled && TopLevel is { Final: true, Completed: false } && Store.Count > 0`. `public TopLevelSnapshot? StoppedTopLevel() => MarksAtLeast ? TopLevelTracker.WithAtLeast(TopLevel!, Store) : TopLevel`. This one guard gates both surfaces: the list's marking read and the tree's bound reads.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/ScanResult.cs",
+    "key_interactions": "It is called only on a returned result (lesson #522). Count 0, RootUnreadable, Refused and Completed results read nothing past Count (SC-403, lesson #517). Writing the guard once in Core keeps the tree and the list from drifting apart."
+   },
+   {
+    "name": "TopLevelTracker.WithAtLeast: the post-scan marking read",
+    "responsibility": "`internal static TopLevelSnapshot WithAtLeast(TopLevelSnapshot final, ScanStore store)`. It maps row i to entry store.FirstChild(0)+i and throws InvalidOperationException when Rows.Count != store.ChildCount(0). A row whose entry is `Unfinished && !NotListed` is rebuilt with its nine constructor fields plus `Revised = r.Revised, FailedKind = r.FailedKind, AtLeast = store.AtLeast(entry)`. It returns final.WithRows(rows) when any row was rebuilt, and `final` itself otherwise. It is the only code that sets TopLevelRow.AtLeast.",
+    "lives_at": "src/FsAnalyser.Core/TopLevelTracker.cs",
+    "key_interactions": "It touches no tracker instance state. The `Revised =` assignment is allowed because TopLevelTracker.cs is the exempt file of 'only the tracker sets a top-level row's Revised flag'. Spike 126 measured it at 10.21 ms max, cold, in Release at 4.88M entries."
+   },
+   {
+    "name": "TopLevelRow.AtLeast and TopLevelSnapshot.WithRows",
+    "responsibility": "TopLevelRow gains `public AtLeastFigures? AtLeast { get; init; }`. It is null on every snapshot the scanner publishes. TopLevelSnapshot gains `internal TopLevelSnapshot WithRows(TopLevelRow[] rows)`, a private copy constructor that keeps Root, Sequence, Final, Completed, the four totals and StoppedInSizeChecks, and clones and wraps the rows as the existing constructor does. Bytes, OnDisk, Files and Folders stay the tracker's figures, so LargestFirst ordering and Revised keep their meaning.",
+    "lives_at": "src/FsAnalyser.Core/TopLevelSnapshot.cs",
+    "key_interactions": "The property is init-only, so 'published snapshot types cannot be changed' still holds. The file names no ScanStore."
+   },
+   {
+    "name": "TopLevelRowText: the one place the at-least word is composed",
+    "responsibility": "Adds `internal const string AtLeastWord = \"at least\"`, plus `AtLeastSizeText(AtLeastFigures)` and `AtLeastOnDiskText(AtLeastFigures)`, both through one private `Prefixed(long)`. FiguresOf gains one arm, `row.AtLeast is { } a`, which writes 'at least X (at least Y on disk)'. A folder adds ' in at least N files and at least M folders', with N from a.Files and M from row.Folders - 1, and when present '; at least K folders inside could not be read (in full)'. Rows without AtLeast keep today's text byte for byte, NotRead rows included (Q-276's wording question stays open and is not answered here). TitleOf is unchanged.",
+    "lives_at": "src/FsAnalyser.App/TopLevelRowText.cs",
+    "key_interactions": "Core.Tests compiles this file as linked source. FolderTreeNode and MainWindow call the composers and AtLeastWord. The hook calls FiguresOf by reflection. It is the exempt file of architecture rule 'the at-least word is composed only in TopLevelRowText'."
+   },
+   {
+    "name": "Tree row bound, gated by the session",
+    "responsibility": "FolderTreeSession gains `bool readsBounds = false` on its primary constructor and exposes `ReadsBounds`, so FolderTreeSession.None and existing test callers read no bounds. FolderTreeNode gains a private lazily cached Bound: null unless `_session.ReadsBounds && _session.Store is { } store && store.Unfinished(_entry)`, otherwise `store.AtLeast(_entry)`, read once on first use. Under HasFigures, SizeText and OnDiskText draw `AtLeastSizeText(b)` and `AtLeastOnDiskText(b)` when Bound is non-null, and today's FormatSize(Size) and FormatSize(OnDisk) otherwise. Unchanged: OnDisk (the ranking value), Share, BarWidth, ShareShown, Note, Root and EnsureChildren. The bound is therefore read only for realized rows, through OneTime bindings, and never in the 100k build loop.",
+    "lives_at": "src/FsAnalyser.App/FolderTreeNode.cs",
+    "key_interactions": "MainWindow.BuildFolderTree passes `result.MarksAtLeast` as readsBounds, so a completed tree never calls Unfinished. Once the session closes, the texts read '' through HasFigures, as today. The existing fitness rule on figure guards stays quiet, because both texts still read HasFigures."
+   },
+   {
+    "name": "Ending wiring and the stopped headers",
+    "responsibility": "Line 301 passes `result?.StoppedTopLevel()` where it passes `result?.TopLevel` today. BuildFolderTree constructs `new FolderTreeSession(result.Store, result.Unreadable, result.MarksAtLeast)`. StoppedTreeHeader keeps its lead 'Not read yet: folders the stop came before.' and then writes $\"Sizes marked {TopLevelRowText.AtLeastWord} may grow; unmarked sizes are final.\", ending at character index 101. After that, past the drawn width, comes 'Order, shares and bars are by space on disk as listed, of what was read in {root}'. In ListHeader only the size clause of the two stopped arms changes (Q-290). Listing arm: '... leave out what the scan did not reach. Figures marked {AtLeastWord} may grow; a row with no mark is final.' Size-check arm: '... not every file's own size was read: figures marked {AtLeastWord} may grow, and a row with no mark is final.' The running and completed headers are unchanged.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "key_interactions": "The store is reached only through `result`. The words come from NotReadYet and AtLeastWord, never as literals. The SL-100 restore by Path carries selection and focus across the redraw that the new snapshot object causes."
+   },
+   {
+    "name": "Wider figure cells",
+    "responsibility": "The tree's Size and On disk headings (MainWindow.xaml:421-422) and their SizeText and OnDiskText cells (:472, :474) go from Width 80 to 102, the width spike 125 measured as needed (101.26 DIP). The Name column gives up 44 DIP. The list's figure line is unchanged.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml"
+   },
+   {
+    "name": "Hook: the store's answers beside every row",
+    "responsibility": "Adds NoInlining readers to StoppedTree.cs, built like NotListedOf: UnfinishedOf; AtLeastOf, returning {size, onDisk, files, sizeText, onDiskText}, with the texts from FigureText.FormatSize by reflection and the properties read by name; RolledOf, returning {size, onDisk}; and a root-child lookup by Path. TreeMode adds storeUnfinished, storeAtLeast and storeRolled to the tree-row fields, sizeClipped and onDiskClipped (LayoutInformation.GetLayoutClip) to Rendered, one 'cell-fit' line ('at least 1,000 bytes' measured at a realized SizeText's typeface, size and PixelsPerDip against its Width), and atLeastRealized on the expand line. TopRows adds figures, storeUnfinished, storeNotListed, storeAtLeast and storeRolled.",
+    "lives_at": "tests/window/FsaWindowHook/StoppedTree.cs",
+    "key_interactions": "No expected value comes from a row's own properties: every store answer is read from LastResult.Store and the row's entry. FSA_HOOK_VIEWS must end on tree for a stopped ending (TreeMode.cs:145). The existing view and view-min lines already log headerCharsShown."
+   },
+   {
+    "name": "Window cases T-013 and T-014",
+    "responsibility": "T-013, run 1: New-StoppedTreeFixture stopped at 'm-mid\\' with FSA_HOOK_WALK=2 and FSA_HOOK_VIEWS='folders,tree'. It is VOID unless $T010Needs holds, a listed depth-2 row reads storeUnfinished, and c-prefix reads storeUnfinished false. Its checks: C1, marked tree cells; C2, ancestors to the root; C3, unmarked rows equal the store's rolled figures; C4, list/tree parity, with unmarked list rows equal to storeRolled and NotRead rows unworded; the drawn tree-header clause; and cell-fit. Run 2 scans the same tree to the end (C6): no 'at least' in any property, drawn text or header. T-014 builds New-BigStopFixture $root 3000, stops at 'm-big\\' and opens m-big five times. It is VOID unless open 1 reports notListedChildren >= 5,000 and atLeastRealized >= 1. Each open must reach its first rows in under 500 ms with at most 200 rows built. $StoppedListHeader and $StoppedSizingHeader take the reworded strings (Q-290). No other line of L-001, L-004, T-010, T-011 or T-012 changes.",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "key_interactions": "Reuses Invoke-StoppedTreeRun, Invoke-TreeRun, Lines-Of, $T010Needs, New-StoppedTreeFixture, New-BigStopFixture and the WALK tree-row lines (lesson #310). Stop targets are prefixes with a slow successor (lesson #502). Each case runs as its own command under the 120 s engine limit (Q-222)."
+   },
+   {
+    "name": "Mutants: four, each pinned to its FAIL lines",
+    "responsibility": "NoTreeAtLeast: Bound always null, so T-013's C1, C2 and C4 parity fail. NoListAtLeast: `result?.StoppedTopLevel()` becomes `result?.TopLevel`, so the C4 marking line fails. TreeAtLeastRolled: FolderTreeNode's typed composer call becomes `$\"{TopLevelRowText.AtLeastWord} {FigureText.FormatSize(Size)}\"` (and the same for OnDisk), so the C1 drawn-equals-bound line on b-listed fails. NarrowAtLeastCells: the SizeText cell's `Width=\"102\"` goes back to 80, so cell-fit fails, with C1's unclipped clause as MayFail. All four join the ValidateSet, $CaseMutants (the Q-115 roster) and -Mutant All (Q-114).",
+    "lives_at": "tests/window/WindowMutants.ps1",
+    "key_interactions": "Each runs T-013 (60-90 s), adding about 5-6 min to -Mutant All. The build pins each mutant's exact FAIL lines by running it."
+   },
+   {
+    "name": "Core Facts: StoppedTopLevelTests and TopLevelRowTextTests arms",
+    "responsibility": "These run on real %TEMP% trees, stopped through NotListedTests.StopAt (the listing) and UnfinishedTests' ScanOptions seams (the size checks). (a) StoppedTopLevel keeps every public row property except AtLeast, compared by reflection, Revised and FailedKind included. (b) row.AtLeast == (Unfinished && !NotListed ? AtLeast(entry) : null). (c) A new object is returned when any row is marked, and the same object when none is. (d) MarksAtLeast is false, and StoppedTopLevel returns TopLevel unread, for Completed, RootUnreadable, Refused and Count-0 results. (e) On a ragged tree (lesson #511), every Unfinished or NotListed entry other than 0 has an Unfinished parent. TopLevelRowTextTests: FiguresOf prefixes every figure on marked rows from both kinds of Stop, and unmarked rows keep today's text byte for byte.",
+    "lives_at": "tests/FsAnalyser.Core.Tests",
+    "key_interactions": "UnfinishedTests and UnfinishedBudgetTests change only their AtLeastFigures type-name lines and keep every assertion."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Fork (a), as measured: the ending's marking read runs on the UI thread at MainWindow.xaml.cs:301 through ScanResult.StoppedTopLevel(). Scanner.cs is not touched and the risk tier does not change.",
+    "reversibility": "expensive",
+    "rationale": "Spike 126 (go) measured the cold Release loop at 3.06-10.21 ms across cutoffs 0, 50% and 97% of a 4.88M scanner-order store with one root child at 98.77%. It allocated 0 bytes and ran no GC, against the 250 ms bar. The cold LargestFiles.Top(100) that the ending already runs took 196-293 ms in the same process. Moving the read into Scanner.Finish later would be a scanner-tier change behind the same public seam."
+   },
+   {
+    "decision": "The class 'the word on a rolled figure' is closed with a type, not a regex. AtLeastFigures becomes a standalone readonly struct with an internal constructor. TopLevelRow.AtLeast is `AtLeastFigures?`. The App's composers take only AtLeastFigures. Attempt 1's fitness rule 'an at least figure is never the rolled or listing figure', still in this worktree's uncommitted .taad/fitness.yaml, is removed: its patterns name AtLeastSize(, which no longer exists, so it could never fail. A Core-side rule (architecture rule 2) fences construction outside the store.",
+    "reversibility": "expensive",
+    "rationale": "A long cannot be passed where an AtLeastFigures is expected. The internal constructor is unreachable from the App (Core grants InternalsVisibleTo only to Core.Tests). The parameterless `default` reads (0, 0, 0), which is still a true lower bound. The type is a public Core contract read by ScanStore.AtLeast, TopLevelRow, the App, the hook (by property name) and Core.Tests, so changing it later is costly."
+   },
+   {
+    "decision": "AtLeastFigures lives at src/FsAnalyser.Core/AtLeastFigures.cs in namespace FsAnalyser.Core.",
+    "reversibility": "cheap",
+    "rationale": "TopLevelRowText.cs must name the type, and 'the window never touches the scan store' forbids `(?<!\\bresult)\\.Store\\b` in every App file except FolderTree*.cs, which would flag `using FsAnalyser.Core.Store;`. TopLevelRowText already imports FsAnalyser.Core."
+   },
+   {
+    "decision": "One guard for both surfaces: ScanResult.MarksAtLeast (Cancelled, TopLevel Final and not Completed, Store.Count > 0). StoppedTopLevel reads the store only under it, and FolderTreeSession.ReadsBounds is set from it.",
+    "reversibility": "cheap",
+    "rationale": "Unfinished checks NotListedAtOrBelow before PendingRun (ScanStore.cs:208-211). Without the guard, criterion 6 on a completed store would rest on every NotListed bit being cleared, which is what the blocked whole-C: spike was meant to show. The guard also covers the Count-0 throw (lesson #517) and lesson #522's after-return rule in one place."
+   },
+   {
+    "decision": "A figure is marked exactly when `Unfinished(entry) && !NotListed(entry)`, and the number drawn is ScanStore.AtLeast, never RolledSize, RolledOnDisk or the tracker's listing figures. Each row asks about its own entry, and the App does no ancestor walk.",
+    "reversibility": "cheap",
+    "rationale": "Rolled figures can sit above the final ones (SL-112 doc 57-64). Under depth-first, one-block registration, Unfinished folds in NotListedAtOrBelow and the pending run, so every ancestor up to the root is marked (criterion 2). A NotListed folder keeps SL-110's 'not read yet' and draws no tree figure. The list's NotRead row keeps today's text, because Q-276's wording question is open and is not answered here."
+   },
+   {
+    "decision": "The tree header's drawn clause promises only sizes, and it ends at index 101, inside the characters drawn at the 880 px default. Shares, bars and order are described after it as by space on disk as listed. T-013 checks headerCharsShown against the end of the clause.",
+    "reversibility": "cheap",
+    "rationale": "The share column is rolled over rolled, so no sentence may call unmarked shares final. TopLevelHeader is one CharacterEllipsis line (MainWindow.xaml:411), so a clause has to be drawn to count, and a check on the string alone passes on text nobody sees."
+   },
+   {
+    "decision": "Only the size clause of the two stopped list headers is reworded, and only $StoppedListHeader and $StoppedSizingHeader in WindowCases.ps1 change (Q-290, decided). At 880 px those clauses are reachable through the tooltip (listing arm) or are cut part-way (size-check arm), and they are not claimed to be drawn.",
+    "reversibility": "cheap",
+    "rationale": "The shipped 'unmarked ones included, may be off' is false once rows carry marks (U-206). Q-290 limits the edit to those two strings and keeps the lead and the explanation of what Stop left unread."
+   },
+   {
+    "decision": "Order, share text and bars stay on the rolled on-disk figures, in Core's ChildrenLargestFirst order. There is no file-count column in the tree: the count is marked where it is drawn, on the stopped list's figures line (Q-293, decided).",
+    "reversibility": "cheap",
+    "rationale": "After a Stop in the listing the watermark is 0, so ranking by AtLeast would put almost every row at 'at least 0 bytes' (fact 1: 217,336 of about 488,000 folders). Q-292 (decided) keeps the ranking on listed sizes and defers the listed figure beside the bound to a follow-up."
+   },
+   {
+    "decision": "The figure cells widen from 80 to 102 DIP, the width spike 125 measured as needed. A hook cell-fit line and the NarrowAtLeastCells mutant hold it on this machine.",
+    "reversibility": "cheap",
+    "rationale": "Spike 125 (no-go at 80): 'at least 1,000 bytes' needs 101.26 DIP. FormatSize's widest realistic output is the bytes form ('1,000 bytes' to '1,023 bytes'), so that string is the case to fit. The 0.74 DIP margin is measured at 125% DPI only; other DPIs are filed for a person."
+   },
+   {
+    "decision": "Four mutants, each pinned to the exact T-013 FAIL lines it must cause: NoTreeAtLeast, NoListAtLeast, TreeAtLeastRolled and NarrowAtLeastCells.",
+    "reversibility": "cheap",
+    "rationale": "Derived criterion SC-393/Q-114 asks for a WindowMutants run over the App diff with a mutant that removes the marks. The two extra mutants target the slice's measured defect class (the rolled figure) and spike 125's no-go, so each check is shown able to go red."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal. I took it whole, with four additions found by reading the tree: (1) a case that unmarked list rows draw the store's rolled figures, so criterion 3 covers the list as well as the tree; (2) architecture rule 2, fencing AtLeastFigures construction inside Core, because the internal constructor is reachable from every Core file; (3) a note that `default(AtLeastFigures)` is constructible in the App and harmless, since it reads (0, 0, 0); (4) the explicit removal of attempt 1's inert rule, whose AtLeastSize( pattern can no longer match anything, and a rewrite of the 'because' text of the kept rule. I dropped one code claim about the uncommitted fitness.yaml state."
+   }
+  ],
+  "coherence_check": "There was one proposal, so there is no composition to check. Nothing in this design has survived a disagreement, and the reviewer is the first to argue with it. What I checked at its own seams, against the tree:\n\n(a) Guard consistency. The list's marking read and the tree's bound reads use the same predicate, `Unfinished && !NotListed`, on the same entry, under the same guard (ScanResult.MarksAtLeast). Criterion 4's parity is structural, not coincidental.\n\n(b) Rules versus placement.\n- WithAtLeast assigns Revised. It lives in TopLevelTracker.cs, the exempt file of 'only the tracker sets a top-level row's Revised flag'.\n- AtLeastFigures in namespace FsAnalyser.Core keeps TopLevelRowText.cs clear of 'the window never touches the scan store'.\n- TopLevelSnapshot.cs imports FsAnalyser.Core.Store for EntryKind but names no ScanStore, so 'Core does not publish a live ScanStore' stays quiet.\n- The header's interpolated `{TopLevelRowText.AtLeastWord}` carries no literal 'at least' and no FormatSize, so rule 1 stays quiet.\n- The TreeAtLeastRolled mutant would trip rule 1, but mutant runs execute WindowCases only, not fitness.\n\n(c) Existing window cases against marks (criterion 6, Q-290).\n- T-010:6567 asserts a-empty and b-listed\\empty read '0 bytes'. Both are listed with no children, so Unfinished is false and the line still holds.\n- T-010:6573 asserts m-mid's onDisk is non-empty with note ''. 'at least X' is non-empty and the note is unchanged.\n- T-011:6797 asserts j-before reads '0 bytes'. It is listed and empty, so it is final.\n- T-010:6636-6637 checks only that the tree header starts with the lead, which is kept.\n- Every assertion that compares drawn text with FormatSize (817-821, 2695-2696, 2754) is on a completed scan, where MarksAtLeast is false.\n- The only expected values that change are $StoppedListHeader and $StoppedSizingHeader.\n\n(d) Attempt 1 left two rules in this worktree's uncommitted fitness.yaml. Rule 'an at least figure is never the rolled or listing figure' matches `AtLeastSize(`, which no longer exists, so it can never fail. It is removed, not kept as dead coverage. The other rule is kept, with a new 'because'.\n\n(e) The internal constructor is not a fence inside Core: TopLevelTracker could build a bound from row.Bytes. Architecture rule 2 fences that; today only ScanStore.cs constructs one, as the grep showed.\n\n(f) The tracker's final-snapshot figures and the store's rolled figures for an unmarked row are assumed equal, on the evidence of U-182 ('real Stop path 0 of 61 wrong') and U-207. A T-013 C4 line now checks it rather than assuming it.",
+  "architecture_rules": [
+   {
+    "name": "the at-least word is composed only in TopLevelRowText",
+    "files": "src/FsAnalyser.App/**/*.cs",
+    "must_not_match": [
+     "\"[^\"\\n]*\\bat least\\b",
+     "\\bAtLeastWord\\b[^;\\n]*\\bFormatSize\\s*\\("
+    ],
+    "except_files": [
+     "src/FsAnalyser.App/TopLevelRowText.cs"
+    ],
+    "because": "The tree and the stopped list must word a lower bound identically (criterion 4). The only way to put the word on a number is TopLevelRowText.AtLeastSizeText / AtLeastOnDiskText, which take an AtLeastFigures that only Core's store makes. A second literal copy, or a figure built by hand from AtLeastWord and FormatSize, is how a rolled or listing figure gets 'at least' put in front of it. That is false on screen, because rolled figures can sit above the final ones (SL-112 doc 57-64: 64 MiB shown against 1 MiB final). Headers interpolate AtLeastWord and do not call FormatSize, so they stay quiet. The App holds no 'at least' string literal today."
+   },
+   {
+    "name": "only the store constructs a lower bound",
+    "files": "src/FsAnalyser.Core/**/*.cs",
+    "must_not_match": [
+     "\\bnew\\s+AtLeastFigures\\s*\\(",
+     "\\bAtLeastFigures\\??\\s+\\w+\\s*=\\s*new\\s*\\("
+    ],
+    "except_files": [
+     "src/FsAnalyser.Core/Store/ScanStore.cs",
+     "src/FsAnalyser.Core/AtLeastFigures.cs"
+    ],
+    "because": "AtLeastFigures' internal constructor keeps the App out, but every Core file can still reach it. If TopLevelTracker or ScanResult built one from a row's listing Bytes or a RolledSize, the type would carry a false 'at least' to every surface, and no App-side check could tell. ScanStore.AtLeast is the one producer measured exact (SL-112). This is a tripwire for the two spellings named, not a closed class: a target-typed `return new(...)` escapes it, and review covers that spelling."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "draw a stopped tree row's figures",
+    "shape": "a listed folder with a file below it whose size check is pending (a Stop in the listing, cutoff 0)",
+    "why": "Unfinished takes the PendingRun branch. Both cells must read 'at least ' + FormatSize of AtLeast, unclipped at 102 DIP, or criterion 1 fails while the row looks final.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case T-013 (C1, cell-fit line)",
+    "material": true
+   },
+   {
+    "behaviour": "draw a stopped tree row's figures",
+    "shape": "the folder's rolled figure differs from its AtLeast (b-listed: rolled 212 KB against a bound of 0)",
+    "why": "The derived criterion requires the drawn number to be the bound, never the rolled figure. Only a row where the two differ can tell them apart.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case T-013 (C1 drawn-equals-bound line), then pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowMutants.ps1 -Mutant TreeAtLeastRolled",
+    "material": true
+   },
+   {
+    "behaviour": "draw a stopped tree row's figures",
+    "shape": "the row is a file whose own size check is pending",
+    "why": "For a file, Unfinished is IsSizeCheckPending and AtLeast returns (0, 0, 1), which is a different branch from a folder's. The row must read 'at least 0 bytes' in both cells.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case T-013 (C1, file-row line)",
+    "material": true
+   },
+   {
+    "behaviour": "mark the ancestors of an unfinished folder",
+    "shape": "every ancestor, up to and including the root row, of a row drawing 'not read yet' or 'at least'",
+    "why": "Criterion 2. The App walks nothing: each row asks Unfinished about its own entry, and that marks ancestors only under depth-first, one-block registration (lesson #510). A missed ancestor reads as final.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case T-013 (C2), and pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~StoppedTopLevelTests (fact (e), ragged tree)",
+    "material": true
+   },
+   {
+    "behaviour": "mark an ancestor whose only unfinished descendant is unread",
+    "shape": "a listed folder with no pending file below it, whose subtree holds a folder the Stop left NotListed",
+    "why": "Unfinished returns true here only through NotListedAtOrBelow, before PendingRun is consulted. A predicate that read pending checks alone would leave this ancestor unmarked.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~StoppedTopLevelTests",
+    "material": true
+   },
+   {
+    "behaviour": "show a final folder",
+    "shape": "the store reports it final: an empty listed folder (a-empty, b-listed\\empty), a listed folder with nothing pending below (c-prefix), or a denied folder (b-listed\\denied)",
+    "why": "Criterion 3. The tree must draw FormatSize(rolled) with no word, and the list row must draw the store's rolled figures with no word. That holds only if the tracker's final figures equal RolledSize and RolledOnDisk for that entry.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case T-013 (C3, and the C4 unmarked-equals-storeRolled line)",
+    "material": true
+   },
+   {
+    "behaviour": "show a folder the Stop never listed",
+    "shape": "NotListed(entry) is true, so Unfinished is also true",
+    "why": "The predicate excludes NotListed. The tree must keep SL-110's 'not read yet' with no figure, and the list's NotRead row keeps today's text with no 'at least' (Q-276 open). A predicate that dropped `!NotListed` would put 'at least 0 bytes' on unread folders.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case T-013 (C1, C4 NotRead lines) and -Case T-010",
+    "material": true
+   },
+   {
+    "behaviour": "mark the stopped list's rows",
+    "shape": "a root child that is Unfinished and listed, compared with the same folder's depth-1 tree row",
+    "why": "Criterion 4. The list's size and on-disk must equal the tree cells' bound, and its 'at least N files' must equal AtLeast.Files. The folder and unreadable counts come from the row.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case T-013 (C4), then pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowMutants.ps1 -Mutant NoListAtLeast",
+    "material": true
+   },
+   {
+    "behaviour": "redraw the list at the ending",
+    "shape": "a timer tick already showed the final, unmarked snapshot, so ShowFinalTopLevel would skip a reference-equal one",
+    "why": "ShowFinalTopLevel redraws only for a different object (MainWindow.xaml.cs:370). StoppedTopLevel must return a new snapshot whenever any row is marked, and the same one when none is.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~StoppedTopLevelTests (facts (a)-(c))",
+    "material": true
+   },
+   {
+    "behaviour": "stop in the size checks",
+    "shape": "every folder was listed and Stop cancelled a size-check batch, so the watermark is mid-store",
+    "why": "Only folders whose pending run reaches the watermark are marked, and the rest are final. FiguresOf and the size-check header arm cover this branch. The hook has no trigger in the sizing pass, so the Core facts settle it.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~StoppedTopLevelTests|FullyQualifiedName~TopLevelRowTextTests\", and -Case L-004 for the reworded header",
+    "material": true
+   },
+   {
+    "behaviour": "finish a scan",
+    "shape": "Status Completed, on the same tree as T-013's stopped run",
+    "why": "Criterion 6. MarksAtLeast is false, so no property, drawn text or header may contain 'at least'. The completed tree's existing assertions on FormatSize text must not move.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case T-013 (run 2), plus -Case T-010, -Case T-011, -Case T-012, -Case L-001 and -Case L-004",
+    "material": true
+   },
+   {
+    "behaviour": "end a scan with no store to mark",
+    "shape": "Count 0, RootUnreadable, Refused, or TopLevel null",
+    "why": "The derived SC-403 criterion (lesson #517). ScanStore.At throws for index >= Count, so the guard must answer before any Unfinished or AtLeast read, and StoppedTopLevel must return TopLevel unread.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~StoppedTopLevelTests (fact (d))",
+    "material": true
+   },
+   {
+    "behaviour": "open a 100k-child folder in a stopped tree",
+    "shape": "m-big, stopped at 'm-big\\', has at least 5,000 NotListed children and realized rows drawing 'at least'",
+    "why": "Criterion 5. Bound reads happen once per realized row through OneTime bindings, never in EnsureChildren's loop. A read moved into the build loop would multiply the 100k open's cost.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case T-014",
+    "material": true
+   },
+   {
+    "behaviour": "read the stopped headers",
+    "shape": "the default 880 px window: the tree header's at-least clause (ending at index 101) and the two reworded list headers",
+    "why": "The derived SC-404 criterion and Q-290. TopLevelHeader is one CharacterEllipsis line, so the tree clause counts only if headerCharsShown reaches its end. The list strings must match the two updated constants, with every other assertion unchanged.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case T-013 (header lines), then -Case L-001, -Case L-004 and -Case T-010; at the end, pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowMutants.ps1 -Mutant All",
+    "material": true
+   }
+  ],
+  "contracts": [
+   {
+    "name": "ScanResult.MarksAtLeast : bool; ScanResult.StoppedTopLevel() -> TopLevelSnapshot?",
+    "kind": "function",
+    "error_cases": "When MarksAtLeast is false, it returns TopLevel and reads nothing past Count. It throws InvalidOperationException when TopLevel.Rows.Count != Store.ChildCount(0), which the tracker's seeding makes unreachable. That throw is not contained at line 301; this is the same exposure ShowFolderTree has, and it is left to the existing backlog item for Q-071 per-pass containment. A contained failure must clear the list and never fall back to unmarked rows.",
+    "notes": "Valid only on a returned result. Measured cold at 10.21 ms max in Release at 4.88M entries (spike 126). MarksAtLeast is also the tree's readsBounds."
+   },
+   {
+    "name": "TopLevelTracker.WithAtLeast(TopLevelSnapshot final, ScanStore store) (internal static)",
+    "kind": "function",
+    "notes": "Row i is entry FirstChild(0)+i. Only rows whose entry is Unfinished && !NotListed are rebuilt, keeping the nine constructor fields plus Revised and FailedKind, with AtLeast = store.AtLeast(entry). It returns a new snapshot when any row was rebuilt, otherwise `final`. It is the only code that sets TopLevelRow.AtLeast."
+   },
+   {
+    "name": "AtLeastFigures (public readonly struct, namespace FsAnalyser.Core)",
+    "kind": "function",
+    "notes": "Get-only Size (long), OnDisk (long) and Files (int), with an internal constructor. It implements IEquatable with == and !=, and ToString gives '(Size, OnDisk, Files)'. There is no `with` target and no deconstruction. `default` reads (0, 0, 0), which is still a true lower bound. ScanStore.AtLeast(int) returns it: a lower bound on what an uninterrupted scan of the unchanged tree gives."
+   },
+   {
+    "name": "TopLevelRow.AtLeast : AtLeastFigures? (init)",
+    "kind": "function",
+    "notes": "Non-null exactly when the store reports the row's entry Unfinished and not NotListed. It is null on every scanner-published snapshot and on links, NotRead rows and final rows. Bytes, OnDisk, Files and Folders are unchanged."
+   },
+   {
+    "name": "TopLevelRowText.AtLeastWord, AtLeastSizeText / AtLeastOnDiskText(AtLeastFigures), FiguresOf",
+    "kind": "ui",
+    "notes": "A marked folder row reads 'at least X (at least Y on disk) in at least N files and at least M folders[; at least K folders inside could not be read (in full)]'. A marked file row reads 'at least X (at least Y on disk)'. Unmarked and NotRead rows keep today's text byte for byte."
+   },
+   {
+    "name": "Tree row cells SizeText / OnDiskText",
+    "kind": "ui",
+    "notes": "'' when HasFigures is false. The at-least text when the session reads bounds and the entry is Unfinished. Otherwise FormatSize(RolledSize or OnDisk), exactly as today. Cells are 102 DIP wide. Share, bar, order and Note are unchanged."
+   },
+   {
+    "name": "Stopped headers (StoppedTreeHeader, ListHeader stopped arms)",
+    "kind": "ui",
+    "notes": "Tree: 'Not read yet: folders the stop came before. Sizes marked at least may grow; unmarked sizes are final. Order, shares and bars are by space on disk as listed, of what was read in <root>'. Everything up to 'final.' must be drawn at 880 px. List, listing arm: '... leave out what the scan did not reach. Figures marked at least may grow; a row with no mark is final.' List, size-check arm: '... not every file's own size was read: figures marked at least may grow, and a row with no mark is final.' The running and completed headers are unchanged."
+   },
+   {
+    "name": "Hook lines: tree-row, cell-fit, expand, top-row, view",
+    "kind": "event",
+    "notes": "tree-row: storeUnfinished, storeAtLeast {size, onDisk, files, sizeText, onDiskText}, storeRolled {size, onDisk}, rendered.sizeClipped and rendered.onDiskClipped. cell-fit: {widestText, widestWidth, cellWidth}. expand: atLeastRealized. top-row: figures, storeUnfinished, storeNotListed, storeAtLeast and storeRolled, keyed by Path. Every store value comes from LastResult.Store and the row's entry."
+   },
+   {
+    "name": "WindowMutants.ps1 -Mutant NoTreeAtLeast | NoListAtLeast | TreeAtLeastRolled | NarrowAtLeastCells | All",
+    "kind": "cli",
+    "error_cases": "A Find that does not match exactly once fails the run instead of running the real app. A missing pinned FAIL line, or an unlisted FAIL line outside MayFail, means the mutant survived and the run fails.",
+    "notes": "Each mutant runs T-013. Together they add about 5-6 min to -Mutant All."
+   },
+   {
+    "name": "Validate commands",
+    "kind": "cli",
+    "error_cases": "T-013 and T-014 are VOID, never PASS, after 3 launches without the shape they need. T-003 reads its known Q-279 VOID on this 816 DIP work area, and that is not a pass.",
+    "notes": "1. eng/dotnet.ps1 test FsAnalyser.slnx.\n2. eng/rules-harness/harness.py --engine-root <engine checkout>, printing the engine commit (Q-027), because fitness.yaml changes.\n3. tests/rules/RuleCases.ps1 -Case C-001 and -Case C-003 (lesson #486).\n4. WindowCases T-013, T-014, L-001, L-004, T-010, T-011, T-012, T-003 and the other cases that draw tree rows or headings, each as its own command under 120 s.\n5. WindowMutants.ps1 -Mutant All (Q-114)."
+   }
+  ],
+  "code_claims": [
+   {
+    "path": "src/FsAnalyser.App/FolderTreeNode.cs",
+    "symbol": "HasFigures",
+    "claim": "HasFigures is `_session.Store is not null && !_notListed`, and OnDiskText, SizeText, ShareText and ShareShown all read it."
+   },
+   {
+    "path": "src/FsAnalyser.App/FolderTreeNode.cs",
+    "symbol": "Size",
+    "claim": "Size reads the store's RolledSize for the row's entry each time, and OnDisk is the rolled on-disk figure passed in at construction."
+   },
+   {
+    "path": "src/FsAnalyser.App/FolderTreeNode.cs",
+    "symbol": "EnsureChildren",
+    "claim": "EnsureChildren builds a folder's rows once from ChildrenLargestFirst, reading ChildCount and NotListed per child, and records LastSortMs and LastBuildMs on the session."
+   },
+   {
+    "path": "src/FsAnalyser.App/FolderTreeSession.cs",
+    "symbol": "FolderTreeSession",
+    "claim": "FolderTreeSession is a primary-constructor class over (ScanStore? store, IReadOnlyList<UnreadableFolder> unreadable), with a static None that holds no store."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "Unfinished",
+    "claim": "For a folder, Unfinished returns true when NotListedAtOrBelow is true before it consults PendingRun, then returns true at the first own-size-checked entry in the pending run; for a file it is the pending size check."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "AtLeast",
+    "claim": "For a folder, AtLeast returns the rolled size and on-disk less the listed Size and OnDisk of every own-size-checked entry in its pending run, with FilesBelow as the count; for a pending file it returns (0, 0, 1)."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "AtLeastFigures",
+    "claim": "AtLeastFigures is today a public readonly positional record struct (long Size, long OnDisk, int Files) nested in ScanStore, constructed only in ScanStore.cs."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "PendingRun",
+    "claim": "PendingRun returns false when the folder has no children or the size-check watermark is at or past Count."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "EndSizeChecks",
+    "claim": "Finish writes the size-check watermark as Count for a Completed scan and as _uncheckedFrom otherwise."
+   },
+   {
+    "path": "src/FsAnalyser.Core/TopLevelTracker.cs",
+    "symbol": "_first",
+    "claim": "The tracker seeds row i of its snapshots as store entry _first + i, the root's first child."
+   },
+   {
+    "path": "src/FsAnalyser.Core/TopLevelSnapshot.cs",
+    "symbol": "TopLevelRow",
+    "claim": "TopLevelRow has an internal nine-argument constructor and init-only Revised and FailedKind, and its Bytes and OnDisk are set at construction."
+   },
+   {
+    "path": "src/FsAnalyser.Core/TopLevelSnapshot.cs",
+    "symbol": "StoppedInSizeChecks",
+    "claim": "StoppedInSizeChecks is an init property of the snapshot, and the constructor clones the rows into a read-only list."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/ScanResult.cs",
+    "symbol": "TopLevel",
+    "claim": "ScanResult is a sealed class of init properties with a required ScanStore Store and a required, nullable TopLevel that is null only when the root's listing never committed."
+   },
+   {
+    "path": "src/FsAnalyser.Core/FsAnalyser.Core.csproj",
+    "symbol": "InternalsVisibleTo",
+    "claim": "Core grants InternalsVisibleTo only to FsAnalyser.Core.Tests, so an internal constructor is reachable from Core and its tests but not from the App."
+   },
+   {
+    "path": "src/FsAnalyser.App/TopLevelRowText.cs",
+    "symbol": "NotReadYet",
+    "claim": "TopLevelRowText imports FsAnalyser.Core (not FsAnalyser.Core.Store) and holds NotReadYet, the single constant for the unread word."
+   },
+   {
+    "path": "src/FsAnalyser.App/TopLevelRowText.cs",
+    "symbol": "FiguresOf",
+    "claim": "FiguresOf writes '<size> (<on disk> on disk)' and, for a folder, the file and folder counts and the unreadable clause, all from the row's own fields with no qualifier."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "ShowFinalTopLevel",
+    "claim": "ShowFinalTopLevel clears the list for null and otherwise redraws only when the final snapshot is not reference-equal to the one already shown."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "BuildFolderTree",
+    "claim": "BuildFolderTree constructs `new FolderTreeSession(result.Store, result.Unreadable)` for completed and stopped trees alike."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "StoppedTreeHeader",
+    "claim": "StoppedTreeHeader takes only the root and returns the NotReadYet lead followed by 'Largest first, by space on disk, of what was read in {root}'."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "ListHeader",
+    "claim": "ListHeader has three arms (running, StoppedInSizeChecks, Stop in the listing), and both stopped arms say any row may be off."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml",
+    "symbol": "TopLevelHeader",
+    "claim": "TopLevelHeader is a single TextBlock with TextTrimming CharacterEllipsis and its full text as its tooltip."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml",
+    "symbol": "FolderTreeHeadings",
+    "claim": "The tree's Size and On disk headings and their SizeText and OnDiskText cells are fixed at Width 80."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/StoppedTree.cs",
+    "symbol": "headerCharsShown",
+    "claim": "The hook's view lines log headerCharsShown, the header characters drawn before the ellipsis, and a view-min line at the window's narrowest."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/StoppedTree.cs",
+    "symbol": "NotListedOf",
+    "claim": "NotListedOf reads the store's NotListed for a row through the window's LastResult on each call, independently of the row's properties."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/TreeMode.cs",
+    "symbol": "FSA_HOOK_VIEWS",
+    "claim": "Tree mode refuses a stopped ending whose FSA_HOOK_VIEWS does not end on tree."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "StoppedListHeader",
+    "claim": "$StoppedListHeader and $StoppedSizingHeader pin the exact stopped list headers word for word."
+   },
+   {
+    "path": "tests/window/WindowMutants.ps1",
+    "symbol": "CaseMutants",
+    "claim": "Each case mutant gives a File, a Find regex that must match exactly once, a Replace, a Case, and the FAIL lines the case must print, with optional MayFail and Expect."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "the window never touches the scan store",
+    "claim": "This rule forbids `\\bScanStore\\b` and `(?<!\\bresult)\\.Store\\b` in App .cs files, so `using FsAnalyser.Core.Store;` would fail it in TopLevelRowText.cs."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "only the tracker sets a top-level row's Revised flag",
+    "claim": "Assigning Revised is forbidden in src outside src/FsAnalyser.Core/TopLevelTracker.cs, the file that is exempt."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/UnfinishedBudgetTests.cs",
+    "symbol": "AtLeastFigures",
+    "claim": "UnfinishedBudgetTests names ScanStore.AtLeastFigures in a local declaration and in an equality assertion against a constructed value; UnfinishedTests aliases Figures to the same nested type."
+   }
+  ],
+  "outside_claims": [
+   {
+    "claim": "The cold Release read of NotListed, Unfinished and AtLeast over the root's children of a 4.88M scanner-order store takes at most 10.21 ms, with 0 bytes allocated, at cutoffs 0, 50% and 97%.",
+    "evidence": "measured",
+    "source": "spike 126, stopped-top-level-read-cold-5m (go)",
+    "if_wrong": "The read would move into Scanner.Finish (fork b): a scanner-tier change behind the same StoppedTopLevel seam."
+   },
+   {
+    "claim": "'at least 1,000 bytes' needs 101.26 DIP in the tree cell's typeface at this PC's 125% DPI, so 80 DIP clips it and 102 DIP fits it with 0.74 DIP to spare.",
+    "evidence": "measured",
+    "source": "spike 125, at-least-prefix-drawn-unclipped (no-go at 80 DIP)",
+    "if_wrong": "The marks would be clipped. T-013's cell-fit line and the NarrowAtLeastCells mutant catch this on this machine; other DPIs are filed for a person."
+   },
+   {
+    "claim": "About 109 characters of a stopped tree header are drawn before the ellipsis at the 880 px default window, so a clause ending at index 101 is drawn.",
+    "evidence": "recalled",
+    "source": "the practice proposal, citing SL-110's T-010 headerCharsShown runs; not re-run for this design",
+    "if_wrong": "The drawn clause would be cut. T-013's headerCharsShown check fails, and the build shortens the clause, not the check."
+   },
+   {
+    "claim": "In C#, a struct's parameterless `default` / `new S()` stays available even when its only declared constructor is internal; `with` on a non-record struct can target only settable or init members, so get-only properties cannot be set through it.",
+    "evidence": "recalled",
+    "source": "memory (C# 10+ language rules)",
+    "if_wrong": "The App could forge a bound with arbitrary figures. Architecture rule 1, TreeAtLeastRolled and T-013's C1/C4 parity lines would remain the guards."
+   },
+   {
+    "claim": "Code in namespace FsAnalyser.Core.Store resolves a type declared in FsAnalyser.Core without a using directive.",
+    "evidence": "recalled",
+    "source": "memory (C# namespace lookup through enclosing namespaces)",
+    "if_wrong": "ScanStore.cs needs one `using FsAnalyser.Core;` line. This is cosmetic."
+   },
+   {
+    "claim": "LayoutInformation.GetLayoutClip returns a non-null geometry for a TextBlock whose arranged size is smaller than its desired size.",
+    "evidence": "recalled",
+    "source": "memory (WPF LayoutInformation API)",
+    "if_wrong": "The sizeClipped and onDiskClipped flags would read false regardless. The cell-fit width line still measures the fit directly."
+   },
+   {
+    "claim": "An unmarked row's figures equal the final ones: U-206 found 0 mismatches in 736,644 real and 81k engineered comparisons, and U-205 found 0 violations in 2,588 real Stops.",
+    "evidence": "measured",
+    "source": "U-206 and U-205 (SL-112 GO verdicts)",
+    "if_wrong": "Criterion 3 and the header sentence 'unmarked sizes are final' would be false. That is a store defect, not an App one."
+   },
+   {
+    "claim": "After a real Stop, the final snapshot's row figures agree with an independent recount of the store.",
+    "evidence": "measured",
+    "source": "U-182 ('the real Stop path, which runs Finish's forced publish, gave 0 of 61 wrong'), U-207",
+    "if_wrong": "Unmarked list rows would differ from the tree's final figures. T-013's C4 unmarked-equals-storeRolled line catches it, and WithAtLeast would then also have to replace the figures of unmarked rows."
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Search engines and Elasticsearch result counts",
+   "pattern": "Put the relation on the value itself, as Elasticsearch's hits.total carries 'eq' or 'gte' beside the number. Here each cell carries 'at least' when it shows a lower bound, and an unmarked size is final. The relation is also carried in the type: a lower bound is an AtLeastFigures that only the store constructs.",
+   "transfer_found": true,
+   "rationale": "It avoids the failure of a blanket page-level caveat, and of a qualifier placed on the wrong number. The ranking and shares stay on a third quantity, the listed figure, which search counts have no counterpart for, so the drawn header promises only sizes.",
+   "invariants": [
+    {
+     "precondition": "The shown 'at least' value is a true lower bound.",
+     "status": "holds",
+     "evidence": "SL-112's read form was measured exact (GO). ScanStore.AtLeast is the only producer, fenced by the internal constructor and architecture rule 2."
+    },
+    {
+     "precondition": "An unqualified size is final.",
+     "status": "holds",
+     "evidence": "U-206: 0 mismatches in 736,644 comparisons. U-205: 0 violations in 2,588 Stops. Shares are deliberately outside the promise."
+    },
+    {
+     "precondition": "The qualifier propagates to every ancestor up to the root.",
+     "status": "must-verify",
+     "evidence": "Holds only under depth-first registration with one SetChildren per block (SL-111 conditional, lesson #510). Pinned by Core fact (e) on a ragged tree and by T-013's C2 walk."
+    },
+    {
+     "precondition": "Bounds are read only on a stopped result's returned store.",
+     "status": "holds",
+     "evidence": "Both surfaces read under ScanResult.MarksAtLeast after Scan has returned (lesson #522). A completed tree never reads one."
+    }
+   ]
+  },
+  "prior_art": [
+   {
+    "pattern": "A count that is only a lower bound is returned with relation 'gte' and an exact one with 'eq'; consumers read the relation on each value rather than a global caveat.",
+    "where": "Elasticsearch search API, hits.total {value, relation}",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "A value object that only a trusted source can construct (a readonly struct with an internal constructor), so the wrong number cannot be passed where the right one is expected.",
+    "where": "'Make illegal states unrepresentable' / value-object practice (F# units of measure, C# readonly structs)",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Folder sizes that keep growing during a calculation, shown with no qualifier, so a partial figure reads as final: the failure this design avoids.",
+    "where": "Windows Explorer folder Properties while 'Calculating...'",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "channeled_experts": [
+   "Elasticsearch hits.total relation (eq/gte) design",
+   "WPF layout clipping and single-line header trimming (LayoutInformation.GetLayoutClip, CharacterEllipsis)",
+   "Value objects with restricted construction (readonly struct, internal constructor)",
+   "Lower-bound aggregation over a depth-first tree (prefix-of-preorder argument)"
+  ],
+  "decidable_disagreements": [],
+  "taste_disagreements": [
+   "Cell width: 102 DIP is the measured minimum plus 0.74 DIP. A wider cell (104-106) would buy margin across DPI settings at the Name column's expense. I kept the measured value, with a check that fails on this machine.",
+   "T-014 duplicates T-012's protocol with a VOID requirement that marks are realized, instead of extending T-012. Criterion 6 and Q-290 forbid editing T-012, so this is the cost of that rule, not a preference, but a reviewer may prefer one parameterized case.",
+   "Four mutants each re-run T-013, about 5-6 min of validate. Two of them, TreeAtLeastRolled and NarrowAtLeastCells, go beyond the derived criterion's single 'remove the marks' mutant.",
+   "The marked list row takes its folder and unreadable counts from the tracker row ('at least M folders'), not from a store read. Folder counts only grow, so this is true, but it means the line mixes two sources."
+  ],
+  "open_questions": [],
+  "filed_for_later": [
+   {
+    "what": "Check the 102 DIP figure cells and the tree header's drawn at-least clause at 100% and 150% DPI and with Windows' larger-text setting.",
+    "why": "Spike 125 and SL-110's header measurements cover only this PC's 125% DPI. Changing the display scale is a person's setting and cannot be done unattended.",
+    "who": "person"
+   },
+   {
+    "what": "Network-pass debt (lesson #136): this slice touches MainWindow*, so Cancel on a stalled share is still unmeasured, and no cancel-safety is claimed.",
+    "why": "The run changes SMB mappings and needs a person.",
+    "who": "person"
+   },
+   {
+    "what": "A whole-C: completed scan confirming that no NotListed bit survives completion, so 'not read yet' never appears on a finished drive.",
+    "why": "The spike completed-whole-c-nothing-unfinished is blocked on a person's OK for a whole-drive scan. MarksAtLeast already keeps 'at least' off completed trees, so only SL-110's existing exposure remains.",
+    "who": "person"
+   },
+   {
+    "what": "A window case for a Stop that lands in the size-check pass: tree and list marks drawn for the few folders whose pending run reaches the watermark.",
+    "why": "The hook's Stop trigger keys on CurrentFolder during the listing, and there is no trigger inside the sizing pass. This slice covers that branch with Core facts and L-004's header only.",
+    "who": "slice"
+   },
+   {
+    "what": "Q-292's follow-up: show each unfinished row's listed figure beside its 'at least' bound after Stop, labelled as listed and not yet checked. It must be formatted plainly, never through AtLeastSizeText.",
+    "why": "Decided by Q-292 as a separate slice; out of SL-113's scope.",
+    "who": "slice"
+   }
+  ],
+  "whats_new": [
+   "src/FsAnalyser.Core/AtLeastFigures.cs: a public readonly struct with an internal constructor; the nested ScanStore.AtLeastFigures is removed",
+   "ScanResult.MarksAtLeast and ScanResult.StoppedTopLevel()",
+   "TopLevelTracker.WithAtLeast (internal static), TopLevelRow.AtLeast (init), TopLevelSnapshot.WithRows (internal)",
+   "TopLevelRowText.AtLeastWord, AtLeastSizeText, AtLeastOnDiskText, and an AtLeast arm in FiguresOf",
+   "FolderTreeSession's readsBounds flag and FolderTreeNode's lazily cached Bound",
+   "The tree header's drawn size clause, the reworded list-header size clauses, and the two updated header constants in WindowCases.ps1",
+   "Size and On disk cells at 102 DIP",
+   "Hook readers and fields: storeUnfinished, storeAtLeast, storeRolled, clip flags, cell-fit, atLeastRealized, and top-row figures and store answers",
+   "Window cases T-013 (criteria 1-4 and 6, the drawn header clause, unmarked-equals-store) and T-014 (criterion 5)",
+   "Mutants NoTreeAtLeast, NoListAtLeast, TreeAtLeastRolled, NarrowAtLeastCells",
+   "Core facts StoppedTopLevelTests, and new TopLevelRowTextTests arms",
+   "fitness.yaml: attempt 1's inert rule 'an at least figure is never the rolled or listing figure' removed; 'the at-least word is composed only in TopLevelRowText' kept with a rewritten 'because'; 'only the store constructs a lower bound' added"
+  ],
+  "whats_reused": [
+   "ScanStore.Unfinished, AtLeast, NotListed, FirstChild and ChildCount (SL-111, SL-112), unchanged in meaning",
+   "The single HasFigures gate and its fitness rule (SL-110)",
+   "TopLevelRowText as the one home of the stopped words (the NotReadYet precedent)",
+   "ShowFinalTopLevel's reference-equal skip, which a new snapshot object gets past, and the SL-100 restore by Path",
+   "The FolderTreeSession lifetime: rows read empty once the session closes",
+   "The hook's view and view-min lines and headerCharsShown (T-010:6637's precedent)",
+   "New-StoppedTreeFixture, $T010Needs, Invoke-StoppedTreeRun, Invoke-TreeRun and the WALK tree-row lines (lesson #310)",
+   "New-BigStopFixture and T-012's five-open protocol, for T-014",
+   "The NotListedOf reflection pattern in the hook",
+   "WindowMutants' $CaseMutants format and roster check (Q-114, Q-115)",
+   "The existing Stop seams in Core.Tests (NotListedTests.StopAt, UnfinishedTests' ScanOptions seams)",
+   "Spike 126's measurement, which settled the fork for the UI thread"
+  ]
+ }
+}
