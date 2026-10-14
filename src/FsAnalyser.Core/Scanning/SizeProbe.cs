@@ -25,8 +25,7 @@ internal static unsafe class SizeProbe
     /// a later name (the store's HasFileId), so it is always probed. Read from the store's own record after the
     /// append, which has already applied the dedup.
     /// </summary>
-    public static bool IsEligible(EntryKind kind, EntryFlags flags) =>
-        kind == EntryKind.File && (flags & (EntryFlags.HardlinkDuplicate | EntryFlags.CloudOnly)) == 0;
+    public static bool IsEligible(EntryKind kind, EntryFlags flags) => EntryRules.ChecksOwnSize(kind, flags);
 
     /// <summary>
     /// Whether a probe's error means the file was gone by the time it was opened: deleted, or its folder was,

@@ -141,8 +141,12 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
             Publish(totals, final: false, completed: false);
     }
 
-    /// <summary>The last snapshot, always published; null when the root listing never committed.</summary>
-    public TopLevelSnapshot? Finish(bool completed, in ScanTotals totals)
+    /// <summary>
+    /// The last snapshot, always published; null when the root listing never committed. <paramref name="stoppedInSizeChecks"/>
+    /// is that every listing had committed and Stop cancelled a batch of the size checks: the snapshot says so
+    /// (<see cref="TopLevelSnapshot.StoppedInSizeChecks"/>).
+    /// </summary>
+    public TopLevelSnapshot? Finish(bool completed, in ScanTotals totals, bool stoppedInSizeChecks = false)
     {
         if (_store is null)
             return null;
@@ -153,7 +157,7 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
             if (_rows[i].Started && _rows[i].Pending > 0)
                 MarkDirty(i); // Reading becomes StoppedPartway
         }
-        return Publish(totals, final: true, completed);
+        return Publish(totals, final: true, completed, stoppedInSizeChecks);
     }
 
     private void MarkDirty(int row)
@@ -166,7 +170,7 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
 
     // Unchanged rows keep their objects; the snapshot copies the array, so a row replaced here never
     // changes a snapshot already handed out.
-    private TopLevelSnapshot Publish(in ScanTotals totals, bool final, bool completed)
+    private TopLevelSnapshot Publish(in ScanTotals totals, bool final, bool completed, bool stoppedInSizeChecks = false)
     {
         foreach (int i in _dirty)
         {
@@ -174,7 +178,7 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
             _rows[i].Dirty = false;
         }
         _dirty.Clear();
-        var snapshot = new TopLevelSnapshot(root, ++_sequence, final, completed, _published, totals);
+        var snapshot = new TopLevelSnapshot(root, ++_sequence, final, completed, _published, totals) { StoppedInSizeChecks = stoppedInSizeChecks };
         progress.PublishTopLevel(snapshot);
         _lastPublish = Stopwatch.GetTimestamp();
         return snapshot;

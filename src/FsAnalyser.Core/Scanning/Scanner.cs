@@ -181,6 +181,9 @@ public static class Scanner
         private TimeSpan _listingTime, _sizingTime, _longestProbe;
         private long _files, _folders, _links, _bytes, _bytesOnDisk, _filesWithoutId;
         private int _probes, _probeFailures, _probeCorrections, _vanished, _foldersListed, _lastAccessAsked, _lastAccessKept;
+        // The first entry of the batch a Stop cancelled in the size checks, whose readings were therefore not applied; 0 while
+        // no batch has been, and so after a Stop in the listing, which never reached them. Said to the store in Finish.
+        private int _uncheckedFrom;
 
         public ScanResult Execute()
         {
@@ -394,7 +397,9 @@ public static class Scanner
                 _unreadable.Add(new UnreadableFolder(folder, error, kind));
             }
 
-            // Pushed last-first so folders are visited in listing order. A root child is its own row.
+            // Pushed last-first so folders are visited in listing order. A root child is its own row. This order, with each
+            // folder's children appended as one block and registered by one SetChildren, is what ScanStore.NotListedAtOrBelow,
+            // Unfinished and AtLeast read a folder's descendants from: change it and they must be replaced (SL-111, SL-112).
             int pushed = 0;
             for (int k = count - 1; k >= 0; k--)
             {
@@ -507,7 +512,12 @@ public static class Scanner
         private bool SizeBatch(ProbePass pass, int[] entries, string[] paths, ProbeReading[] readings, int count)
         {
             if (pass.Run(paths, readings, count) == BatchOutcome.Cancelled)
+            {
+                // None of the batch is applied, even readings that finished: every check from its first entry on is pending
+                // (ScanStore.EndSizeChecks). Batches are built and applied in ascending entry order.
+                _uncheckedFrom = entries[0];
                 return false;
+            }
             for (int k = 0; k < count; k++)
                 Correct(entries[k], readings[k]);
             return true;
@@ -564,32 +574,40 @@ public static class Scanner
 
         private ScanTotals Totals => new(_files, _folders, _links, _bytes, _bytesOnDisk);
 
-        // Every return of a ScanResult comes through here, so the last top-level snapshot is always published.
-        private ScanResult Finish(ScanStatus status, int rootError = 0) => new()
+        // Every return of a ScanResult comes through here, so the last top-level snapshot is always published. Its first
+        // statement is the last write to the store: where the size checks stopped, so that once a Stop has taken effect (this
+        // return) the store says which folders a pending check could still change (ScanStore.Unfinished). A Stop that landed
+        // in the size checks is told by a cancelled batch, which leaves _uncheckedFrom above 0.
+        private ScanResult Finish(ScanStatus status, int rootError = 0)
         {
-            TopLevel = _topLevel.Finish(status == ScanStatus.Completed, Totals),
-            Status = status,
-            Root = display,
-            RootError = rootError,
-            Store = _store,
-            Totals = Totals,
-            Unreadable = _unreadable,
-            Refusal = status == ScanStatus.Refused ? ScanRefusal.ContainerLayerStore : ScanRefusal.None,
-            RefusalWorkaroundId = status == ScanStatus.Refused ? ContainerLayerStore.WorkaroundId : null,
-            SkippedStores = _skipped,
-            OpensUnderExcludedStore = _reader.OpensUnderExcludedStore,
-            ProbeFailures = _probeFailures,
-            VanishedBeforeProbe = _vanished,
-            FileIdsAvailable = status is not (ScanStatus.RootUnreadable or ScanStatus.Refused) && _filesWithoutId == 0,
-            Elapsed = _clock.Elapsed,
-            Probes = _probes,
-            ProbeCorrections = _probeCorrections,
-            ListingTime = _listingTime == TimeSpan.Zero ? _clock.Elapsed : _listingTime,
-            SizingTime = _sizingTime,
-            LongestProbe = _longestProbe,
-            LastAccessAsked = _lastAccessAsked,
-            LastAccessKept = _lastAccessKept,
-        };
+            _store.EndSizeChecks(status == ScanStatus.Completed ? _store.Count : _uncheckedFrom);
+            bool stoppedInSizeChecks = status == ScanStatus.Cancelled && _uncheckedFrom > 0;
+            return new()
+            {
+                TopLevel = _topLevel.Finish(status == ScanStatus.Completed, Totals, stoppedInSizeChecks),
+                Status = status,
+                Root = display,
+                RootError = rootError,
+                Store = _store,
+                Totals = Totals,
+                Unreadable = _unreadable,
+                Refusal = status == ScanStatus.Refused ? ScanRefusal.ContainerLayerStore : ScanRefusal.None,
+                RefusalWorkaroundId = status == ScanStatus.Refused ? ContainerLayerStore.WorkaroundId : null,
+                SkippedStores = _skipped,
+                OpensUnderExcludedStore = _reader.OpensUnderExcludedStore,
+                ProbeFailures = _probeFailures,
+                VanishedBeforeProbe = _vanished,
+                FileIdsAvailable = status is not (ScanStatus.RootUnreadable or ScanStatus.Refused) && _filesWithoutId == 0,
+                Elapsed = _clock.Elapsed,
+                Probes = _probes,
+                ProbeCorrections = _probeCorrections,
+                ListingTime = _listingTime == TimeSpan.Zero ? _clock.Elapsed : _listingTime,
+                SizingTime = _sizingTime,
+                LongestProbe = _longestProbe,
+                LastAccessAsked = _lastAccessAsked,
+                LastAccessKept = _lastAccessKept,
+            };
+        }
 
         private unsafe int QueryAttributes(SafeFileHandle handle, out uint attributes)
         {

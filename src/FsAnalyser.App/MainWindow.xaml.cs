@@ -403,10 +403,15 @@ public partial class MainWindow : Window
     }
 
     // The results list's header: so far while the scan runs, and at a stopped ending what the rows are. The words for the
-    // unread rows come from the one place that words them (TopLevelRowText.NotReadYet).
+    // unread rows come from the one place that words them (TopLevelRowText.NotReadYet). A stop in the listing has read no
+    // file's own size, and a stop in the size checks (Q-111) has read some: either way an unmarked row, a Done one, is shown
+    // as its bare name and may be off, so the header says so (Q-283). Marked rows are not called short: a listed size can be
+    // above the file's own as well as below it, and a hardlink's first name lists stale in either direction.
     private static string ListHeader(TopLevelSnapshot snapshot) => !snapshot.Final
         ? $"Largest at the top of {snapshot.Root}, so far. Rows marked reading are still growing."
-        : $"What was read before the stop. Rows marked {TopLevelRowText.NotReadYet} or stopped partway are short.";
+        : snapshot.StoppedInSizeChecks
+            ? "What was read before the stop. Every folder was listed, but not every file's own size was read, so any row, unmarked ones included, may be off, on disk especially."
+            : $"What was read before the stop. Rows marked {TopLevelRowText.NotReadYet} or stopped partway leave out what the scan did not reach. No sizes have been checked yet, so any row's size may be off, on disk especially.";
 
     // The Path of the row the keyboard focus is on, or of the selected row when the focus has come adrift (below);
     // null when it is anywhere else (an open row menu, a button, the folder tree, another window, nothing in an
