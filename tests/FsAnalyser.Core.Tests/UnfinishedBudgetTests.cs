@@ -134,7 +134,7 @@ public class UnfinishedBudgetTests(ITestOutputHelper output)
         for (int e = 0; e < store.Count; e++)
         {
             bool unfinished = store.Unfinished(e);
-            ScanStore.AtLeastFigures figures = store.AtLeast(e);
+            AtLeastFigures figures = store.AtLeast(e);
             if (store.Kind(e) == EntryKind.Folder)
             {
                 folders++;
@@ -225,7 +225,7 @@ public class UnfinishedBudgetTests(ITestOutputHelper output)
             if (store.Kind(e) == EntryKind.Folder)
             {
                 Assert.True(store.Unfinished(e) == unfinishedBelow[e], $"folder {e} reads Unfinished {store.Unfinished(e)}, the walk says {unfinishedBelow[e]}");
-                Assert.True(store.AtLeast(e) == new ScanStore.AtLeastFigures(size[e], onDisk[e], count[e]), $"folder {e} holds at least {store.AtLeast(e)}, the walk says ({size[e]}, {onDisk[e]}, {count[e]})");
+                Assert.True(store.AtLeast(e) == new AtLeastFigures(size[e], onDisk[e], count[e]), $"folder {e} holds at least {store.AtLeast(e)}, the walk says ({size[e]}, {onDisk[e]}, {count[e]})");
             }
             else
             {

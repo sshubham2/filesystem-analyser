@@ -161,6 +161,23 @@ public sealed class ScanResult
     /// </summary>
     public required TopLevelSnapshot? TopLevel { get; init; }
 
+    /// <summary>
+    /// Whether this result is a stopped scan whose figures can be worded "at least" (SL-113): the scan was cancelled, its root
+    /// listing committed and its final snapshot says it did not complete, and the store holds entries. The one guard of every
+    /// read of <see cref="ScanStore.Unfinished"/> and <see cref="ScanStore.AtLeast"/> for the window, the stopped list's and the tree's
+    /// alike: it is false for a completed scan (which shows "at least" nowhere), for a root that could not be read, for a refused
+    /// scan, and for a store with nothing in it, which those reads throw on. Valid on a result Scan has returned.
+    /// </summary>
+    public bool MarksAtLeast => Status == ScanStatus.Cancelled && TopLevel is { Final: true, Completed: false } && Store.Count > 0;
+
+    /// <summary>
+    /// The final top-level snapshot as the stopped ending shows it: with the store's lower bound on every row it reports
+    /// unfinished (<see cref="TopLevelRow.AtLeast"/>), a new snapshot whenever any row is marked and <see cref="TopLevel"/> itself otherwise.
+    /// <see cref="TopLevel"/> unread when <see cref="MarksAtLeast"/> is false. Reads the store, so only on a returned result; about one
+    /// pass over the root's children, 10 ms at most cold on a 4.88M-entry store (spike 126).
+    /// </summary>
+    public TopLevelSnapshot? StoppedTopLevel() => MarksAtLeast ? TopLevelTracker.WithAtLeast(TopLevel!, Store) : TopLevel;
+
     /// <summary>Files that refused to have their true size read (ProbeFailed); their listing sizes were kept.</summary>
     public int ProbeFailures { get; init; }
 

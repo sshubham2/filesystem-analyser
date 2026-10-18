@@ -1,0 +1,276 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-113",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-10-18T15:59:41.673Z",
+ "head": "912b6ac7f94d415969bc6cefa0e2e15540457ed5",
+ "run_id": 3959,
+ "summary": "SL-113 wired the store's Unfinished/AtLeast answers into the stopped tree and the stopped top-level list. A new Core type (AtLeastFigures, internal constructor) and one guard (ScanResult.MarksAtLeast) now gate both surfaces. It added window cases T-013 and T-014, four WindowMutants entries, two fitness rules, a seam corpus, and 102 DIP figure cells, and it touched no scanner code. All six criteria are met and validated (suite 1111/1111, mutants 16/16, rules harness 175 rows as recorded). The cost was heavy: 4 design attempts, 3 spikes, 3 critiques and 5 code-review attempts, 3 of them provider refusals. The review's best find was that the IL census claimed to close the construct-a-bound class but could not see struct-local construction.",
+ "payload": {
+  "status": "complete",
+  "summary": "SL-113 wired the store's Unfinished/AtLeast answers into the stopped tree and the stopped top-level list. A new Core type (AtLeastFigures, internal constructor) and one guard (ScanResult.MarksAtLeast) now gate both surfaces. It added window cases T-013 and T-014, four WindowMutants entries, two fitness rules, a seam corpus, and 102 DIP figure cells, and it touched no scanner code. All six criteria are met and validated (suite 1111/1111, mutants 16/16, rules harness 175 rows as recorded). The cost was heavy: 4 design attempts, 3 spikes, 3 critiques and 5 code-review attempts, 3 of them provider refusals. The review's best find was that the IL census claimed to close the construct-a-bound class but could not see struct-local construction.",
+  "estimate_error": "Size was under, risk tier was right. It opened at medium size and medium risk with one designer. Reality: 32 files changed, a new Core public type, a new hook surface, 2 window cases, 4 mutants (about 5-6 min added to -Mutant All), 2 fitness rules with plant rows, a seam corpus, and 4 design / 3 spike / 3 critique / 5 code-review runs. Lesson #504 had already said window-adjacent slices should be sized by cases and hook surface, and the slice was opened medium anyway. The medium risk tier held: spike 126 measured the ending read at 3.06-10.21 ms cold in Release, so Scanner.cs stayed untouched and fork (b) never fired.",
+  "learned": [
+   {
+    "kind": "estimate",
+    "lesson": "A slice that puts a new drawn qualifier on stopped-view surfaces is large, not medium. Count the hook readers, the window cases, the mutants, and the fitness rules plus their harness/RuleCases runs. Keep risk medium only if the read stays out of Scanner.cs and a cold Release spike confirms it.",
+    "evidence": "Opened medium/medium. Landed as 32 files (git diff 223a5f6de..912b6ac7f), 2 new window cases, 4 mutants, 2 rules, and 14 rework laps (design x4, risk-spike x3, critique x3, code-review x5). Spike 126 kept the tier medium."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "TopLevelSnapshot's constructor is found by reflection with .Single() over non-public constructors in tests/bugs/SL-100-ResultsListRefresh. Any second constructor on it, or on TopLevelRow, breaks that project. Add tests/bugs/* (SL-063, SL-084, SL-100, SL-105, SL-106) to the design's consumer grep for any change to those two types. This is lesson #466 repeated, because the design's WithRows named a private copy constructor.",
+    "evidence": "Build: 28 of 29 SL-100 facts failed on the first run after adding a private copy constructor. WithRows was rebuilt through the existing constructor and the project passed 29/29."
+   },
+   {
+    "kind": "risk",
+    "lesson": "Do not write a claim about how C# compiles into a corpus note or design doc without probing it in Debug and Release. Struct-local construction (`var b = new S(..)`, `S b = new(..)`, `S b; b = new(..)`) compiles to `call .ctor` (0x28), not `newobj` (0x73). AtLeastSeamTests scans only 0x73, so a bound forged in a non-store Core method passes both the census and fitness rule 2. SC-423 owns the fix; any other IL or reflection census in this repo needs the same probe first.",
+    "evidence": "Code review round 1: it planted `AtLeastFigures forged; forged = new(r.Bytes, r.OnDisk, (int)r.Files);` in TopLevelTracker.WithAtLeast. AtLeastSeamTests stayed 6/6 green and neither rule-2 pattern matched. The corpus _note said all spellings compile to newobj."
+   },
+   {
+    "kind": "design",
+    "lesson": "Unfinished() consults NotListedAtOrBelow before PendingRun, so on a Completed store it is only false if every NotListed bit was cleared, and that has never been checked on a real whole-C: scan. Every future reader of Unfinished/AtLeast (SC-421 listed-figure follow-up, SC-422 totals/kinds marks) must go through ScanResult.MarksAtLeast and must not call the store directly. It is the single guard that makes criterion 6 independent of the unrun spike.",
+    "evidence": "ScanStore.cs:208-211 order; critique m3 accepted and built as MarksAtLeast (Cancelled, TopLevel Final and not Completed, Count > 0). The completed-whole-c-nothing-unfinished spike stayed blocked on a person's OK."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "After a Stop in the listing, every window-visible bound is 'at least 0 bytes'. The hook has no Stop trigger inside the size-check pass, so a nonzero bound is checked only in Core tests, and drawn on screen only through the TreeAtLeastRolled mutant. Any slice that formats a bound differently (Q-292 follow-up, the totals line) needs either the sizing-pass trigger (SC-420) or an explicit statement that its nonzero path is Core-only.",
+    "evidence": "T-013 and the real C:\\Program Files run: every bound read 0 bytes. Validate 'not reached': nonzero 'at least' figures drawn in the window. The hook trigger keys on CurrentFolder during the listing."
+   },
+   {
+    "kind": "process",
+    "lesson": "Raise decisions that conflict with an existing pinned expectation at build-check or opening, not at design. Build-check facts 3 (no file-count column), 5 and 7 (header constants pinned by L-001/L-004/T-010 vs 'existing cases pass unchanged') became Q-290..Q-293 only when design attempt 2 halted. Each such conflict costs a whole design lap and a human wait.",
+    "evidence": "design-slice #2 halted with 4 unanswered questions; build-check #2 had already listed the header pin conflict (fact 7) and the missing column (fact 3)."
+   },
+   {
+    "kind": "process",
+    "lesson": "If a design puts a new read pass on the UI thread at the Stop ending, ask spike 1 for its cold Release time at 5M in the same trip. Here the fork surfaced only at design attempt 3, forced a re-synthesis, and needed a third spike. Scale to hold in mind: StoppedTopLevel measured 3.06-10.21 ms cold in Release, while LargestFiles.Top(100), the ending's existing whole-store pass, took 196-293 ms.",
+    "evidence": "Spike 126 (go). Build-check had only Debug proxies (29.5 ms per 100k folder, 651 ms for the whole store). O-002 was filed only after design 3."
+   },
+   {
+    "kind": "process",
+    "lesson": "A code-review attempt that ends 'refused' is not a review, and the gate counts it as a run. Count only the first completed code review when judging what the gate caught. Here attempts 1-3 refused (provider) and attempt 4 was the first to read the diff, so the build sat unreviewed across three laps.",
+    "evidence": "code-review #1-#3 'did not finish: refused'; #4 reviewed 912b6ac and found the IL census defect; #5 disposed 3 findings."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "Layout-measuring window cases depend on this PC's DPI and work area, and the display changed mid-slice (125% / 816 DIP at build, 100% / 1032 DIP at validate). T-003 read its known Q-279 VOID at build and passed at validate. SC-391's premise (816 DIP work area) is not stable on this machine, so do not treat a red or green T-003 as a code signal until the case prints DPI and work area. The 102 DIP cell fit measured 101.26 DIP at both scales.",
+    "evidence": "Build: T-003 'VOID unless the taller window gave the tree more room (241.9 px against 241.9 px)'. Validate: T-003 passes on the 1032 DIP work area."
+   },
+   {
+    "kind": "risk",
+    "lesson": "The 'unmarked sizes are final' sentence is now printed in the stopped tree header and both stopped list headers, and its only evidence is U-205/U-206 (0 violations in 2,588 Stops and 736,644 comparisons). One SL-112 test failed under load with exactly that symptom (a folder called final whose on-disk figure was the listing's 1 MiB against 4096 final), and it was written off as a timing flake without being investigated. Treat that failure as a possible counterexample until it is reproduced or explained.",
+    "evidence": "Build stage: UnfinishedTests.StopsInTheSizeChecksMarkWhatAPendingCheckCouldChange(workers: 4) failed once in a full-suite run ('gb' final, figures (4096, 1 MiB) vs (4096, 4096)). It passed 3/3 alone and in two later full runs."
+   }
+  ],
+  "candidates": [
+   {
+    "title": "Reproduce or explain the 4-worker 'final folder with non-final figures' failure in UnfinishedTests before the 'unmarked is final' headers stand on it",
+    "urgency": "now",
+    "why": "SL-113 now prints 'unmarked sizes are final' and 'a row with no mark is final' (MainWindow.xaml.cs StoppedTreeHeader and the two ListHeader stopped arms). In the build stage's first full-suite run (eng/dotnet.ps1 test FsAnalyser.slnx) tests/FsAnalyser.Core.Tests/UnfinishedTests.cs StopsInTheSizeChecksMarkWhatAPendingCheckCouldChange(workers: 4) failed: 'gb' was reported final with figures (4096, 1 MiB) against (4096, 4096), which is the store calling a folder final while carrying a listing figure. It passed 3/3 alone and in two later full runs, and was labelled a timing flake without investigation. U-205 found 0 violations in 2,588 Stops, so the evidence conflicts. Loop that fact at workers: 4 under CPU load (ScanStore.Unfinished/PendingRun, the cutoff written by Scanner.cs Finish near line 583). Result is either a test race, which gets fixed in the test, or a store defect, which gets promoted. Downgrade to soon if 200 loaded iterations never reproduce it and the race is explained in the test."
+   },
+   {
+    "title": "Add the Q-301 automated layout Fact: SetRootDpi at 100%/150% and the 560 px minimum, failing on a clipped 102 DIP cell or header clause",
+    "urgency": "soon",
+    "why": "Q-301 (decided yes) says the loop checks this itself, in a tests/bugs xUnit project that opens the real MainWindow (the SL-063/SL-100 pattern) and does not change Windows settings. SC-417 covers only the by-hand half. The margin is thin: 'at least 1,023 bytes' measures 101.26 DIP in a 102 DIP cell (0.74 DIP spare, measured at 125% at build and 100% at validate), and 150% and larger text were never run. At the 560 px minimum the tree header draws 48 characters, so its at-least sentence is cut, and T-013 claims only 880 px. The Size and On disk cells are at MainWindow.xaml:421-422 and :472-474. Have it record the DIP left over per scale beside the 0.74 figure."
+   },
+   {
+    "title": "Keep validate's ragged-tree Stop sweep (O-036) as a standing Core test",
+    "urgency": "soon",
+    "why": "The imported, unproven precondition 'the qualifier propagates to every ancestor up to the root' holds only for the scanner's depth-first, one-SetChildren-per-block order (SL-111 conditional, lesson #510, and Scanner.cs carries no comment about it). Design fact (e) asked for NotListedBelowTests.RaggedTree. The build ran it on NotListedTests.SweepTree, the q\\a chain and UnfinishedTests.StopTree instead (code-review drift). Validate then ran the real check, 94 listing Stops and 7 size-check Stops with 2,447 ancestor checks and chains up to 6 deep, in a temporary ZzValidateO036Scratch.cs and deleted it. Today only StoppedTopLevelTests fact (e) and T-013 C2 on one fixture stand guard. A later edit to Scanner._pending or FolderDone's push order would pass them. Commit the sweep under tests/FsAnalyser.Core.Tests."
+   }
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "what": "The design specified TopLevelSnapshot.WithRows through a private copy constructor and listed its consumers as src, tests/window and Core.Tests. tests/bugs/SL-100-ResultsListRefresh finds the snapshot's only non-public constructor by reflection with .Single(), so a second constructor failed 28 of its 29 facts. Neither critique attempt checked tests/bugs consumers. It could have been written as a check: 'grep tests/bugs for GetConstructors/NonPublic on any type whose constructors the design adds or changes' (lesson #466 names this exact gap).",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "caught_by": "build: first run of tests/bugs/SL-100-ResultsListRefresh after the change"
+   },
+   {
+    "gate": "critique",
+    "what": "Critique attempt 3 accepted M3's 'a type closes the defect class' without asking which spellings of in-place construction inside Core escape fitness rule 2's two patterns. Its own 'because' text already admits a target-typed `return new(...)` escapes. Deferred assignment (`AtLeastFigures forged; forged = new(r.Bytes, r.OnDisk, (int)r.Files);`) in TopLevelTracker.WithAtLeast passed both patterns. The build then added the IL census as 'the closure' and scanned only newobj (0x73). Struct-local construction compiles to call .ctor (0x28). The critique should have asked how a non-store Core method can construct the bound and what proves it fails.",
+    "severity": "major",
+    "dimension": "under-engineering",
+    "caught_by": "code-review attempt 4 (round 1 M1), by planting the forgery and probing Debug and Release IL"
+   },
+   {
+    "gate": "critique",
+    "what": "The kept rule 'the at-least word is composed only in TopLevelRowText' and its 'because' text ('the only way to put the word on a number') were never tested against split-line, local-variable or pre-formatted-string spellings, or against XAML StringFormat. The rule reads only App *.cs, one line at a time. The design's rule 2 was worded as a tripwire, but rule 1 was not. Critique 3 re-checked the M3 type closure and did not re-attack the surviving text rule.",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "caught_by": "code-review attempt 4 (round 2), by running the rule's two regexes on three C# spellings and a XAML binding"
+   }
+  ],
+  "unknowns": [
+   "Whether the engine re-appends the declared architecture_rules at merge on top of the rule-2 entries already hand-placed in .taad/fitness.yaml. The build flagged possible duplicate names, and nothing before the commit stage has checked it.",
+   "Whether a real completed whole-C: scan leaves any NotListed bit set. Criterion 6 on a real drive rests only on ScanResult.MarksAtLeast; the spike is still blocked on a person's OK.",
+   "StoppedTopLevel's cost inside the running App on a 5M-entry stopped store. Spike 126 measured 10.2 ms cold in a Release harness, not in the App's ending, which already spends 196-293 ms on LargestFiles.Top(100).",
+   "Whether a timer tick can draw the final unmarked snapshot before ShowOutcome and then be replaced by the marked copy without a visible flicker or lost selection. Only the new-object contract is tested; the tick-then-ending order was never observed in a window.",
+   "Whether the 4-worker size-check cutoff has a real timing race (the single UnfinishedTests failure). The candidate asks for a looped reproduction."
+  ],
+  "what_went_wrong": [
+   "Design ran four times. Attempt 1 hit a provider session limit. Attempt 2 halted on four questions (Q-290..Q-293) that the build check had already surfaced as facts 3, 5 and 7. Attempt 3 chose a UI-thread read nobody had measured cold, which forced a re-synthesis and a third spike before attempt 4. Two of those laps were avoidable with earlier questions and an earlier timing ask.",
+   "Code review ran five times, and attempts 1-3 refused (provider errors). The 32-file diff was first read at attempt 4, so three laps passed with no review.",
+   "The IL census added beyond the design to discharge O-018 shipped with a false measured-sounding claim ('var, target-typed new() ... all compile to the same newobj') and scanned only 0x73. The design doc repeated 'the IL census is the closure'. This is the spelling-class overclaim lesson #486 warned about. Two of the code review's findings (O-037 census, O-038 rule 1) were again spelling-class in a rule or census written in this slice, and both were waived to the backlog (SC-423, SC-424).",
+   "The design named a private copy constructor for TopLevelSnapshot.WithRows. It broke 28 of 29 facts in tests/bugs/SL-100 and was reworked in build. Lesson #466 had already named the tests/bugs consumer-grep gap and the design's consumer check missed it again.",
+   "A full-suite failure of an SL-112 test under load (UnfinishedTests ... workers: 4, 'gb' final with listing figures) was recorded as 'a timing flake ... not investigated further' with no evidence it was one. That same symptom is the one the new 'unmarked is final' header promises cannot happen.",
+   "Validate wrote the ragged-tree propagation sweep and a real-data size-check Stop test as temporary files and deleted them. The strongest evidence for the imported precondition (2,447 ancestor checks) is not in the repo, while the design's named RaggedTree run was silently swapped for other trees during the build.",
+   "Nonzero 'at least' figures were never drawn on screen except through a mutant, because the hook has no Stop trigger inside the size-check pass. The slice shipped with the nonzero draw path covered only by Core tests.",
+   "The stopped list's NotRead rows still draw '0 bytes (0 bytes on disk) in 0 files and 0 folders' unmarked beside a header that now says 'a row with no mark is final'. This was left deliberately under open Q-276, but it is the one place the slice goal ('any figure without a mark is final') is read loosely, and T-013 pins it as 'unworded'."
+  ],
+  "lessons_judged": [
+   {
+    "id": 508,
+    "verdict": "used",
+    "why": "The design put the bound read behind the existing HasFigures gate in FolderTreeNode, so SizeText/OnDiskText blank for unread folders by default. It also reused the single NotReadYet-style constant pattern for AtLeastWord."
+   },
+   {
+    "id": 522,
+    "verdict": "used",
+    "why": "ScanResult.MarksAtLeast guards Count > 0 and Cancelled, and StoppedTopLevel is called only on the returned result. This is the first App consumer of Unfinished/AtLeast, as the lesson said."
+   },
+   {
+    "id": 517,
+    "verdict": "used",
+    "why": "The Count 0 guard sits inside MarksAtLeast, and the fact ANoStoreToMarkIsReturnedAsItIsAndNeverRead shows Unfinished(0) throws on an empty store. The marked predicate is Unfinished && !NotListed."
+   },
+   {
+    "id": 132,
+    "verdict": "not relevant",
+    "why": "It concerns post-Done corrections during a live scan. After a Stop the store has returned, and U-205/U-206 cover pending hardlink probes through Unfinished, so no design choice here depended on it."
+   },
+   {
+    "id": 310,
+    "verdict": "used",
+    "why": "T-013 reads rows from the WALK tree-row lines (storeUnfinished, storeAtLeast, storeRolled added to TreeMode.NodeFields), not from the schema-1 report, and keeps fixtures under the walk limit."
+   },
+   {
+    "id": 502,
+    "verdict": "used",
+    "why": "T-013 stops at the prefix 'm-mid\\' and T-014 at 'm-big\\', each with a slow successor and a VOID rule that the asserted rows read storeNotListed or storeUnfinished."
+   },
+   {
+    "id": 170,
+    "verdict": "used",
+    "why": "The bound is read lazily per realized row through OneTime bindings and never in EnsureChildren's 100k build loop. T-014's cold open was 77.0 ms, warm 1.7-2.1 ms, against the 500 ms bar."
+   },
+   {
+    "id": 85,
+    "verdict": "not relevant",
+    "why": "T-013 and T-014 ran in 14-60 s with fixtures sized by the existing helpers; the folder-count-versus-timer-tick sizing never constrained a decision."
+   },
+   {
+    "id": 329,
+    "verdict": "not relevant",
+    "why": "The slice did not change how UnreadableFolder.Kind is stamped. It only reused the tracker row's FailedKind and UnreadableBelow for the 'at least K folders inside could not be read' clause."
+   },
+   {
+    "id": 167,
+    "verdict": "used",
+    "why": "Layout was budgeted by measurement before design (spike 125: 'at least 1,000 bytes' needs 101.26 DIP). The Size and On disk cells went 80 to 102 DIP and the Name column gave up 44 DIP."
+   },
+   {
+    "id": 136,
+    "verdict": "used",
+    "why": "The design's filed_for_later states that MainWindow is touched and Cancel on a stalled share is still unmeasured, and the slice claims no cancel-safety."
+   },
+   {
+    "id": 84,
+    "verdict": "used",
+    "why": "The Core suite alone would have stayed green, so T-013 and T-014 were added to WindowCases.ps1 and run each time. The published exe was also run on C:\\Program Files and C:\\Program Files\\dotnet."
+   },
+   {
+    "id": 510,
+    "verdict": "used",
+    "why": "Propagation to the root was named as an imported unproven precondition. It was pinned by Core fact (e), T-013 C2 (419 ancestors) and validate's O-036 sweep. The lesson's warning that the tests cannot see in-block SetChildren still stands."
+   },
+   {
+    "id": 504,
+    "verdict": "not relevant",
+    "why": "Size was set by a person before the lesson was handed in, so it changed nothing here. Reality confirmed it: 5+ App files drove a hook, 2 cases, 4 mutants, 2 rules and a harness run, and the slice was again opened medium and under-counted."
+   },
+   {
+    "id": 520,
+    "verdict": "used",
+    "why": "The reworded headers keep 'may grow' wording instead of 'are short', following the lesson's pointer to $StoppedListHeader and $StoppedSizingHeader as the source of truth. Only those two constants moved, per Q-290."
+   },
+   {
+    "id": 133,
+    "verdict": "used",
+    "why": "StoppedTopLevel builds a new immutable snapshot through WithRows, and ShowFinalTopLevel's reference-equality skip is passed by returning a new object whenever a row is marked."
+   },
+   {
+    "id": 466,
+    "verdict": "used",
+    "why": "It was handed before build and explained the first-run failure, and the build ran the tests/bugs projects (SL-063, SL-084, SL-100, SL-105, SL-106) immediately after the change. But the design still repeated the gap, and the SL-100 break appeared first in build."
+   },
+   {
+    "id": 411,
+    "verdict": "used",
+    "why": "Validate ran the SL-100 acceptance project as the guard for the ShowTopLevel/ShowFinalTopLevel path. It failed 6/29 once (F06/F12 focus checks) and passed 29/29 on four reruns, so it was filed as SC-425."
+   },
+   {
+    "id": 486,
+    "verdict": "used",
+    "why": "It changed the validate count. The rules harness (175 rows, engine 0ccf00f) and RuleCases C-001/C-003 ran at build and again at validate, and rule 2 is worded as a tripwire. But rule 1's 'because' and the IL census still overclaimed closure, drawing spelling-class findings O-037 and O-038."
+   },
+   {
+    "id": 330,
+    "verdict": "used",
+    "why": "The new architecture rules were moved into .taad/fitness.yaml with an xUnit twin and plant rows S88-S90 and P38-P40. The build notes that the engine may re-append the declared rules at merge, so the duplicate-name risk is open."
+   }
+  ],
+  "filed": [
+   {
+    "key": "SC-416",
+    "title": "The two new mutants remove the marks entirely: NoTreeAtLeast returns a null bound, and NoListAtLeast skips the marking read.",
+    "urgency": "someday",
+    "source": "obligation"
+   },
+   {
+    "key": "SC-417",
+    "title": "Check by hand: Check the 102 DIP figure cells and the tree header's drawn at-least clause at 100% and 150% DPI and with Windows' larger-text setting.",
+    "urgency": "soon",
+    "source": "design"
+   },
+   {
+    "key": "SC-420",
+    "title": "A window case for a Stop that lands in the size-check pass: tree and list marks drawn for the few folders whose pending run reaches the watermark.",
+    "urgency": "someday",
+    "source": "design"
+   },
+   {
+    "key": "SC-421",
+    "title": "Q-292's follow-up: show each unfinished row's listed figure beside its 'at least' bound after Stop, labelled as listed and not yet checked. It must be formatted plainly, never through AtLeastSizeText.",
+    "urgency": "soon",
+    "source": "design"
+   },
+   {
+    "key": "SC-422",
+    "title": "After a Stop, several surfaces still draw non-final figures with no mark: the outcome panel's totals line (the root's rolled RolledSize and RolledOnDisk), the volume line built from them, the largest-files list (charged sizes of files whose check is pending) and the kinds.",
+    "urgency": "soon",
+    "source": "finding"
+   },
+   {
+    "key": "SC-423",
+    "title": "The IL census that O-018's closure rests on misses every in-place construction of the bound.",
+    "urgency": "now",
+    "source": "obligation"
+   },
+   {
+    "key": "SC-424",
+    "title": "R2-m2 (minor): Rule 1 misses several ordinary ways to put the at-least word in front of a rolled or listing figure in the App.",
+    "urgency": "soon",
+    "source": "obligation"
+   },
+   {
+    "key": "SC-425",
+    "title": "SL-100 bug project (TopLevelSnapshot reflection and results-list focus), first run",
+    "urgency": "soon",
+    "source": "validation"
+   }
+  ]
+ }
+}

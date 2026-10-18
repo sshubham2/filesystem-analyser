@@ -160,6 +160,42 @@ internal sealed class TopLevelTracker(ScanProgress progress, string root, TimeSp
         return Publish(totals, final: true, completed, stoppedInSizeChecks);
     }
 
+    /// <summary>
+    /// A stopped scan's final snapshot with the store's lower bound on each row it reports unfinished (SL-113): row i is
+    /// entry <c>FirstChild(0) + i</c>, the root's i-th child, as <see cref="Seed"/> placed it. A row whose entry is
+    /// <see cref="ScanStore.Unfinished"/> and not <see cref="ScanStore.NotListed"/> is rebuilt field by field with
+    /// <see cref="TopLevelRow.AtLeast"/> set to <see cref="ScanStore.AtLeast"/>, and every other row is kept as it is, so a
+    /// row the store reports final reads exactly as the tracker built it. Returns <paramref name="final"/> itself when no row
+    /// is marked, and a new snapshot otherwise (the window redraws only a snapshot it has not shown). Touches no tracker state.
+    /// </summary>
+    /// <remarks>
+    /// Only for a store whose scan has returned: while a scan runs the size-check watermark is 0 and every file reads pending.
+    /// ScanResult.MarksAtLeast is the guard, and also keeps an empty store (Count 0) from being read.
+    /// </remarks>
+    internal static TopLevelSnapshot WithAtLeast(TopLevelSnapshot final, ScanStore store)
+    {
+        int count = final.Rows.Count;
+        if (count != store.ChildCount(0))
+            throw new InvalidOperationException($"The final snapshot holds {count} rows, but the root holds {store.ChildCount(0)} children.");
+        int first = store.FirstChild(0);
+        TopLevelRow[]? rows = null;
+        for (int i = 0; i < count; i++)
+        {
+            int entry = first + i;
+            if (store.NotListed(entry) || !store.Unfinished(entry))
+                continue;
+            TopLevelRow r = final.Rows[i];
+            rows ??= [.. final.Rows];
+            rows[i] = new TopLevelRow(r.Name, r.Path, r.Kind, r.State, r.Bytes, r.OnDisk, r.Files, r.Folders, r.UnreadableBelow)
+            {
+                Revised = r.Revised,
+                FailedKind = r.FailedKind,
+                AtLeast = store.AtLeast(entry),
+            };
+        }
+        return rows is null ? final : final.WithRows(rows);
+    }
+
     private void MarkDirty(int row)
     {
         if (_rows[row].Dirty)

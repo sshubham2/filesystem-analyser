@@ -268,9 +268,6 @@ public sealed partial class ScanStore
         return new AtLeastFigures(size, onDisk, page.FilesBelow[i]);
     }
 
-    /// <summary>What an entry holds for certain after a stop, see <see cref="AtLeast"/>: a lower bound on its size, on-disk size and file count.</summary>
-    public readonly record struct AtLeastFigures(long Size, long OnDisk, int Files);
-
     private bool IsSizeCheckPending(Page page, int i, int index) =>
         index >= Volatile.Read(ref _firstUnchecked) && EntryRules.ChecksOwnSize((EntryKind)page.Kind[i], (EntryFlags)page.Flags[i]);
 

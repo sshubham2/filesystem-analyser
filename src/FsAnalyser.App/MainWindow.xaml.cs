@@ -297,8 +297,10 @@ public partial class MainWindow : Window
         // Always the final snapshot, never subject to the tick's skip; with none (the root never listed, or
         // the scan failed) the list is cleared, so no row is left claiming a state that is no longer true. A
         // completed scan clears it too: the folder tree takes its place (ShowOutcome), so its final rows would
-        // be sorted and bound only to be thrown away (HF-007, HF-020).
-        ShowFinalTopLevel(failure is null && result?.Status != ScanStatus.Completed ? result?.TopLevel : null);
+        // be sorted and bound only to be thrown away (HF-007, HF-020). A stopped scan's snapshot comes with the store's lower
+        // bound on every row it reports unfinished (SL-113), as a new object, so a tick that already showed the unmarked final
+        // snapshot does not make this redraw skip: the scan has returned, so the store is read here and nothing writes it.
+        ShowFinalTopLevel(failure is null && result?.Status != ScanStatus.Completed ? result?.StoppedTopLevel() : null);
         if (failure is not null)
             ShowProblem($"Scan failed: {path}",
                 $"The scan stopped on an error it did not expect, so nothing it read is shown.\n{failure.GetType().Name}: {failure.Message}");
@@ -403,15 +405,18 @@ public partial class MainWindow : Window
     }
 
     // The results list's header: so far while the scan runs, and at a stopped ending what the rows are. The words for the
-    // unread rows come from the one place that words them (TopLevelRowText.NotReadYet). A stop in the listing has read no
-    // file's own size, and a stop in the size checks (Q-111) has read some: either way an unmarked row, a Done one, is shown
-    // as its bare name and may be off, so the header says so (Q-283). Marked rows are not called short: a listed size can be
-    // above the file's own as well as below it, and a hardlink's first name lists stale in either direction.
+    // unread rows and for the figures that are only a bound come from the one place that words them (TopLevelRowText). A stop in
+    // the listing has read no file's own size, and a stop in the size checks (Q-111) has read some: either way a figure the store
+    // reports could still change is marked "at least" and every unmarked row is final (SL-113, Q-290, which rewords only this size
+    // clause; U-206). The old sentence, that any row, unmarked ones included, may be off, would now be false on the default view.
+    // At the default width the lead and the explanation after it fill the drawn line, so the size clause is reachable through the
+    // header's tooltip, not on screen (SL-113, M2): no case claims that it is drawn. Marked rows are not called short: a listed
+    // size can be above the file's own as well as below it, and a hardlink's first name lists stale in either direction.
     private static string ListHeader(TopLevelSnapshot snapshot) => !snapshot.Final
         ? $"Largest at the top of {snapshot.Root}, so far. Rows marked reading are still growing."
         : snapshot.StoppedInSizeChecks
-            ? "What was read before the stop. Every folder was listed, but not every file's own size was read, so any row, unmarked ones included, may be off, on disk especially."
-            : $"What was read before the stop. Rows marked {TopLevelRowText.NotReadYet} or stopped partway leave out what the scan did not reach. No sizes have been checked yet, so any row's size may be off, on disk especially.";
+            ? $"What was read before the stop. Every folder was listed, but not every file's own size was read: figures marked {TopLevelRowText.AtLeastWord} may grow, and a row with no mark is final."
+            : $"What was read before the stop. Rows marked {TopLevelRowText.NotReadYet} or stopped partway leave out what the scan did not reach. Figures marked {TopLevelRowText.AtLeastWord} may grow; a row with no mark is final.";
 
     // The Path of the row the keyboard focus is on, or of the selected row when the focus has come adrift (below);
     // null when it is anywhere else (an open row menu, a button, the folder tree, another window, nothing in an
@@ -496,7 +501,7 @@ public partial class MainWindow : Window
     // is named result, which is how this file may name the store).
     private FolderTreeNode BuildFolderTree(ScanResult result)
     {
-        var session = new FolderTreeSession(result.Store, result.Unreadable);
+        var session = new FolderTreeSession(result.Store, result.Unreadable, result.MarksAtLeast);
         FolderTreeNode root = FolderTreeNode.Root(session);
         root.EnsureChildren();
         root.IsExpanded = true;
@@ -527,10 +532,16 @@ public partial class MainWindow : Window
             TopLevelHeader.Text = ListHeader(snapshot);
     }
 
+    // The lead, then the one sentence about the figures, then the rest. The header is one line cut at its end, so the sentence
+    // comes second and ends at character 101, inside the characters drawn at the default width (T-013 checks that it is drawn);
+    // the clause that follows may be cut. The sentence promises only the sizes: the share column divides listed figures by listed
+    // figures and so is not final whatever its row says, which the rest of the header says in so many words (SL-113, M1).
     private static string StoppedTreeHeader(string root)
     {
         string word = TopLevelRowText.NotReadYet;
-        return $"{char.ToUpperInvariant(word[0])}{word[1..]}: folders the stop came before. Largest first, by space on disk, of what was read in {root}";
+        return $"{char.ToUpperInvariant(word[0])}{word[1..]}: folders the stop came before. "
+            + $"Sizes marked {TopLevelRowText.AtLeastWord} may grow; unmarked sizes are final. "
+            + $"Order, shares and bars are by space on disk as listed, of what was read in {root}";
     }
 
     // As a scan starts: the stopped ending's choice of the tree goes first, hidden and, if it was the one picked, replaced by

@@ -15,10 +15,19 @@ namespace FsAnalyser.App;
 /// how a folder failed (<see cref="FailedKind"/>): the tree reads the kind the scanner stamped and does not work it out
 /// again from what the store holds (SL-106). No WPF here, so Core.Tests compiles it as source.
 /// </remarks>
-internal sealed class FolderTreeSession(ScanStore? store, IReadOnlyList<UnreadableFolder> unreadable)
+internal sealed class FolderTreeSession(ScanStore? store, IReadOnlyList<UnreadableFolder> unreadable, bool readsBounds = false)
 {
     /// <summary>Holds no store: what the shared not-opened-yet row reads.</summary>
     internal static readonly FolderTreeSession None = new(null, []);
+
+    /// <summary>
+    /// Whether the rows may ask the store which of their figures are only a lower bound (SL-113): set for a stopped scan's
+    /// tree, from <see cref="ScanResult.MarksAtLeast"/>, the one guard the stopped list's marks read too, and false for a
+    /// completed scan's tree, <see cref="None"/> and every session built without it, whose rows then never ask. A row asks
+    /// at most once, when its figures are first drawn, so opening a folder of 100,000 children reads the store for the
+    /// rows on screen, not for each of them.
+    /// </summary>
+    internal bool ReadsBounds => readsBounds;
 
     private ScanStore? _store = store;
 

@@ -100,6 +100,15 @@ public sealed class TopLevelRow
     /// unreadable-folders list and the folder tree read. Null on every other state; on an Unreadable row it is never null.
     /// </summary>
     public UnreadableKind? FailedKind { get; init; }
+
+    /// <summary>
+    /// What the stopped store holds for certain under this row (SL-113): set on a stopped scan's final snapshot, on exactly
+    /// the rows whose entry the store reports unfinished and listed, and null on every snapshot the scanner publishes, on a
+    /// link, on a row that was never read and on a row the store reports final. A non-null value is a lower bound the store
+    /// made (<see cref="AtLeastFigures"/>); <see cref="Bytes"/>, <see cref="OnDisk"/>, <see cref="Files"/> and
+    /// <see cref="Folders"/> stay the tracker's figures, which can sit above the final ones and so are never the bound.
+    /// </summary>
+    public AtLeastFigures? AtLeast { get; init; }
 }
 
 /// <summary>
@@ -128,6 +137,13 @@ public sealed class TopLevelSnapshot
         Folders = totals.Folders;
     }
 
+    /// <summary>
+    /// This snapshot with other rows, as a new object (SL-113): every field of this one is kept, and the rows are cloned and wrapped as
+    /// the constructor does, so the copy is as immutable as this one and this one is not changed. The window tells snapshots apart by
+    /// reference. Built through the one constructor there is: the window tests of SL-100 find it by reflection as the only non-public one.
+    /// </summary>
+    internal TopLevelSnapshot WithRows(TopLevelRow[] rows) =>
+        new(Root, Sequence, Final, Completed, rows, new ScanTotals(Files, Folders, 0, Bytes, OnDisk)) { StoppedInSizeChecks = StoppedInSizeChecks };
     /// <summary>The root as normalised for the scan, as <see cref="ScanResult.Root"/>.</summary>
     public string Root { get; }
 

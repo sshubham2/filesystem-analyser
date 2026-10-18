@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Windows;
+using FsAnalyser.Core;
 using FsAnalyser.Core.Store;
 
 namespace FsAnalyser.App;
@@ -23,6 +24,10 @@ namespace FsAnalyser.App;
 /// <c>_notListed</c>: the store has returned and nothing writes it. A row with it reads "not read yet" and draws no
 /// figure at all, through the one gate <see cref="HasFigures"/>, because a "0 bytes" beside a folder nobody read
 /// is a figure the scan never measured.
+/// A stopped scan's tree (SL-113) also marks the folders whose figures could still grow: a row the store reports unfinished
+/// draws its Size and On disk as the store's lower bound (<see cref="ScanStore.AtLeast"/>), worded "at least" by
+/// <see cref="TopLevelRowText"/>, and every folder above one is unfinished too, so the marks reach the root without a walk
+/// here. A row the store reports final draws what it always drew. Order, shares and bars stay on the listed figures.
 /// </remarks>
 internal sealed class FolderTreeNode : INotifyPropertyChanged
 {
@@ -123,9 +128,33 @@ internal sealed class FolderTreeNode : INotifyPropertyChanged
     // this too, so the next column blanks for an unread folder by default.
     private bool HasFigures => _session.Store is not null && !_notListed;
 
-    public string OnDiskText => HasFigures ? FigureText.FormatSize(OnDisk) : "";
+    // What a stopped scan's store holds for certain under this row (SL-113): the store's lower bound when it reports the folder
+    // unfinished, null when it reports it final, and null for every row of a tree whose session does not read bounds (a
+    // completed scan's). Read once, the first time a figure is drawn, so the rows of a 100,000-child folder that are not on
+    // screen read nothing; the figure it gives is AtLeast, never the rolled size the row ranks by, which a pending check can
+    // leave above the final one. It is read only behind HasFigures, so a folder the scan never listed asks nothing.
+    private AtLeastFigures? _bound;
+    private bool _boundRead;
 
-    public string SizeText => HasFigures ? FigureText.FormatSize(Size) : "";
+    private AtLeastFigures? Bound
+    {
+        get
+        {
+            if (!_boundRead)
+            {
+                _boundRead = true;
+                if (_session.ReadsBounds && _session.Store is { } store && store.Unfinished(_entry))
+                    _bound = store.AtLeast(_entry);
+            }
+            return _bound;
+        }
+    }
+
+    // A figure that is only a lower bound is worded as one, by the one place that words it (TopLevelRowText); a final one is
+    // written as it always was. The ranking value (OnDisk), the share and the bar are not touched: they stay on the listed figures.
+    public string OnDiskText => !HasFigures ? "" : Bound is { } bound ? TopLevelRowText.AtLeastOnDiskText(bound) : FigureText.FormatSize(OnDisk);
+
+    public string SizeText => !HasFigures ? "" : Bound is { } bound ? TopLevelRowText.AtLeastSizeText(bound) : FigureText.FormatSize(Size);
 
     public string ShareText => _isRoot || !HasFigures ? "" : FolderTreeRowText.Share(Share);
 

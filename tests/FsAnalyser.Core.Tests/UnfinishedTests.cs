@@ -3,7 +3,7 @@ using FsAnalyser.Core.Scanning;
 using FsAnalyser.Core.Store;
 using Xunit.Abstractions;
 using Xunit.Sdk;
-using Figures = FsAnalyser.Core.Store.ScanStore.AtLeastFigures;
+using Figures = FsAnalyser.Core.AtLeastFigures;
 
 namespace FsAnalyser.Core.Tests;
 

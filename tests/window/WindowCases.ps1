@@ -113,7 +113,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
         'L-001', 'L-002', 'L-003', 'L-004', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'N-001', 'N-002', 'N-003', 'N-004',
-        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'R-004',
+        'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012', 'T-013', 'T-014', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'R-004',
         'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-001', 'X-002', 'X-003', 'X-004', 'X-005', 'X-006', 'N-005', 'N-006', 'W-001')]
     [string] $Case,
     [switch] $IncludeNetwork,
@@ -148,7 +148,7 @@ $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_H
     'FSA_HOOK_AT_FOLDERS', 'FSA_HOOK_PAST', 'FSA_HOOK_PAST_FOLDERS', 'FSA_HOOK_AT_SIZED', 'FSA_HOOK_TRIGGER_DEADLINE_S', 'FSA_HOOK_ANSWER', 'FSA_HOOK_ROWS',
     'FSA_HOOK_EXPLORER_VIEW', 'FSA_HOOK_TREE_STOP', 'FSA_HOOK_CAN_REVEAL', 'FSA_HOOK_VIEWS'
 $HookedCases = 'C-002', 'C-006', 'C-012', 'C-013', 'O-016', 'L-001', 'L-002', 'L-004', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
-    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'R-004',
+    'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012', 'T-013', 'T-014', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'R-004',
     'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005', 'N-005', 'N-006', 'W-001'
 $NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004', 'N-005'
 $CloudCases = 'N-006'
@@ -6368,11 +6368,14 @@ function Test-W001 {
 # have happened for its run to say anything (a VOID run is run again, at most three launches, and never passes).
 
 $NotReadYet = 'not read yet'
-# The list's header after a Stop in the listing (SL-112, Q-283 with review m1): no file's own size has been read, and a listed size is
-# above a file's own as often as below it, so marked rows are not called short and every row may be off.
-$StoppedListHeader = 'What was read before the stop. Rows marked not read yet or stopped partway leave out what the scan did not reach. No sizes have been checked yet, so any row''s size may be off, on disk especially.'
-# After a Stop in the size checks (Q-111): every folder was listed, so no row is marked, and the rows an unmarked name stands for may be off.
-$StoppedSizingHeader = 'What was read before the stop. Every folder was listed, but not every file''s own size was read, so any row, unmarked ones included, may be off, on disk especially.'
+# The list's header after a Stop in the listing (SL-112, Q-283 with review m1; its size clause reworded by SL-113, Q-290): no file's own size
+# has been read, and a listed size is above a file's own as often as below it, so marked rows are not called short. A figure the store reports
+# could still change is marked 'at least' and a row with no mark is final (U-206); the sentence that every row, unmarked ones included, may be
+# off would now be false. Only this size clause moved: the lead and the explanation of what the Stop left unread are as they were.
+$StoppedListHeader = 'What was read before the stop. Rows marked not read yet or stopped partway leave out what the scan did not reach. Figures marked at least may grow; a row with no mark is final.'
+# After a Stop in the size checks (Q-111; size clause reworded by SL-113, Q-290): every folder was listed, so no row is marked 'not read yet',
+# and the figures the store reports could still change are marked 'at least'.
+$StoppedSizingHeader = 'What was read before the stop. Every folder was listed, but not every file''s own size was read: figures marked at least may grow, and a row with no mark is final.'
 $StoppedTreeLead = 'Not read yet: folders the stop came before.'
 # UnreadableRows.KindText's words: a folder the scan never listed is never given one of them.
 $UnreadableWords = 'could not be opened', 'opened, but nothing could be listed', 'only partly read', 'could not be read'
@@ -6866,6 +6869,256 @@ function Test-T012 {
     finally { Remove-CaseFolder $case }
 }
 
+# ---- SL-113: 'at least' on a stopped scan's figures ----
+
+# A figure as a stopped scan's unfinished row draws it, built from the store's own number with the test's own formatter: the word
+# in front of the size, never from a row and never from the window's composer. The word is the one a person reads.
+function AtLeast-Text([long] $bytes) { "at least $(Format-Size $bytes)" }
+
+# The second line the stopped list draws for a marked row (TopLevelRowText.FiguresOf), built from the store's numbers: the bound's
+# size and on-disk size, its file count, and the row's own folder and unreadable counts, each a bound.
+function AtLeast-Figures($top, $bound) {
+    $text = "$(AtLeast-Text $bound.size) ($(AtLeast-Text $bound.onDisk) on disk)"
+    if (-not $top.isFolder) { return $text }
+    $unreadable = if ([long]$top.unreadableBelow -gt 0) { "; at least $(Format-Count ([long]$top.unreadableBelow) 'folder') inside could not be read (in full)" } else { '' }
+    "$text in at least $(Format-Count ([long]$bound.files) 'file') and at least $(Format-Count ([long]$top.folders - 1) 'folder')$unreadable"
+}
+
+# The tree T-010 builds, stopped at m-mid\, can be judged when T-010's shape is there and the stop left what the marks are about:
+# a listed folder below m-mid the store reports unfinished, c-prefix final (5,000 listed folders and no file below it), b-listed
+# unfinished with a bound other than its rolled figure, and a file whose own size check is pending.
+$T013Needs = {
+    param($run)
+    $void = & $T010Needs $run
+    if ($null -ne $void) { return $void }
+    $rows = @(Lines-Of $run 'tree-row')
+    $mid = @($rows | Where-Object { $_.depth -eq 2 -and (Parent-Of $_.path) -ceq 'm-mid' -and $_.storeNotListed -eq $false -and $_.storeUnfinished -eq $true })
+    if ($mid.Count -eq 0) { return 'no listed folder below m-mid reads unfinished' }
+    $c = @($rows | Where-Object { $_.path -ceq 'c-prefix' })
+    if ($c.Count -ne 1 -or $c[0].storeUnfinished -ne $false) { return 'c-prefix does not read final' }
+    $b = @($rows | Where-Object { $_.path -ceq 'b-listed' })
+    if ($b.Count -ne 1 -or $b[0].storeUnfinished -ne $true -or $b[0].storeAtLeast.size -eq $b[0].storeRolled.size) { return 'b-listed does not read unfinished with a bound other than its rolled size' }
+    $f = @($rows | Where-Object { $_.path -ceq 'b-listed\b1.bin' })
+    if ($f.Count -ne 1 -or $f[0].entryKind -cne 'File' -or $f[0].storeUnfinished -ne $true) { return 'b-listed\b1.bin does not read as a file with its size check pending' }
+    $null
+}
+
+# Criteria 1, 2 and 3 over the stopped tree's rows: what each drew against what the store says of its entry.
+function CheckAtLeastTree($run, [string] $root) {
+    $rows = @(Lines-Of $run 'tree-row')
+    $byPath = @{}
+    foreach ($row in $rows) { $byPath[$row.path] = $row }
+    $marked = @($rows | Where-Object { $_.storeNotListed -eq $false -and $_.storeUnfinished -eq $true })
+    $final = @($rows | Where-Object { $_.storeNotListed -eq $false -and $_.storeUnfinished -eq $false })
+    $unread = @($rows | Where-Object { $_.storeNotListed -eq $true })
+    Write-Output ("        the walk read {0} rows: the store reports {1} unfinished, {2} final and {3} not listed" -f $rows.Count, $marked.Count, $final.Count, $unread.Count)
+
+    # Criterion 1: every folder the store reports unfinished draws its size and its space on disk as the store's bound, in full.
+    $bad = [System.Collections.Generic.List[string]]::new()
+    foreach ($row in $marked) {
+        $r = $row.rendered
+        if ($null -eq $r) { $bad.Add("$($row.path): no container"); continue }
+        $b = $row.storeAtLeast
+        $why = @()
+        if ($r.size -cne (AtLeast-Text $b.size)) { $why += "size $(Show $r.size) not $(Show (AtLeast-Text $b.size))" }
+        if ($r.onDisk -cne (AtLeast-Text $b.onDisk)) { $why += "on disk $(Show $r.onDisk) not $(Show (AtLeast-Text $b.onDisk))" }
+        if ($row.sizeText -cne $r.size -or $row.onDiskText -cne $r.onDisk) { $why += 'the row''s text is not what its cell draws' }
+        if ($r.sizeClipped -ne $false -or $r.onDiskClipped -ne $false) { $why += 'a cell clipped its figure' }
+        if ([double]$r.sizeTextWidth -gt [double]$r.sizeCellWidth + 0.01 -or [double]$r.onDiskTextWidth -gt [double]$r.onDiskCellWidth + 0.01) { $why += "a figure is wider than its cell ($($r.sizeTextWidth)/$($r.sizeCellWidth), $($r.onDiskTextWidth)/$($r.onDiskCellWidth))" }
+        if ($why.Count -gt 0) { $bad.Add("$($row.path): $($why -join ', ')") }
+    }
+    Check ($marked.Count -gt 0 -and $bad.Count -eq 0) "all $($marked.Count) folders and files the store reports unfinished draw their size and space on disk as the store's bound, in full ($(Show (($bad | Select-Object -First 3) -join ' | ')))"
+    $differ = @($marked | Where-Object { $_.storeAtLeast.size -ne $_.storeRolled.size -or $_.storeAtLeast.onDisk -ne $_.storeRolled.onDisk })
+    $rolledDrawn = @($differ | Where-Object { $_.rendered.size -ceq (AtLeast-Text $_.storeRolled.size) -or $_.rendered.onDisk -ceq (AtLeast-Text $_.storeRolled.onDisk) })
+    Check ($differ.Count -gt 0 -and $rolledDrawn.Count -eq 0) "none of the $($differ.Count) rows whose bound differs from their rolled figure draws the rolled figure as a bound ($(Show (($rolledDrawn | ForEach-Object path) -join ', ')))"
+    $file = $byPath['b-listed\b1.bin']
+    Check ($null -ne $file -and $file.rendered.size -ceq 'at least 0 bytes' -and $file.rendered.onDisk -ceq 'at least 0 bytes') "b-listed\b1.bin, a file whose own size check is pending, draws 'at least 0 bytes' in both cells ($(Show ($file.rendered | ConvertTo-Json -Compress)))"
+
+    # Criterion 2: every folder above a row that draws 'not read yet' or 'at least', up to and including the root, draws 'at least'.
+    $short = [System.Collections.Generic.List[string]]::new()
+    $examined = 0
+    foreach ($row in @($unread) + @($marked)) {
+        $p = $row.path
+        while ($p -cne '') {
+            $p = Parent-Of $p
+            $above = $byPath[$p]
+            $examined++
+            if ($null -eq $above -or $null -eq $above.rendered) { $short.Add("$($row.path): no row for $(Show $p)"); continue }
+            if ($above.rendered.size -cnotlike 'at least *' -or $above.rendered.onDisk -cnotlike 'at least *') { $short.Add("$($row.path): $(Show $(if ($p -ceq '') { '<root>' } else { $p })) draws $(Show $above.rendered.size) / $(Show $above.rendered.onDisk)") }
+        }
+    }
+    Check ($examined -gt 0 -and $short.Count -eq 0) "every folder above a not-read or at-least row, to the root, draws 'at least' ($examined ancestors checked; $(Show (($short | Select-Object -First 3) -join ' | ')))"
+    $root0 = $byPath['']
+    Check ($null -ne $root0 -and $root0.storeUnfinished -eq $true -and $root0.rendered.size -cmatch '^at least ') "the root row, which the store reports unfinished, draws 'at least' ($(Show ($root0.rendered | ConvertTo-Json -Compress)))"
+    $mid = $byPath['m-mid']
+    Check ($null -ne $mid -and $mid.storeUnfinished -eq $true -and $mid.rendered.size -cmatch '^at least ' -and $mid.rendered.note -ceq '') "m-mid, listed, with folders below it the Stop never listed, draws 'at least' in its figures and no note ($(Show ($mid.rendered | ConvertTo-Json -Compress)))"
+
+    # Criterion 3: every folder the store reports final draws the figures it always drew, with no word.
+    $loud = [System.Collections.Generic.List[string]]::new()
+    foreach ($row in $final) {
+        $r = $row.rendered
+        if ($null -eq $r) { $loud.Add("$($row.path): no container"); continue }
+        $why = @()
+        if ($r.size -cne (Format-Size $row.storeRolled.size)) { $why += "size $(Show $r.size) not $(Show (Format-Size $row.storeRolled.size))" }
+        if ($r.onDisk -cne (Format-Size $row.storeRolled.onDisk)) { $why += "on disk $(Show $r.onDisk) not $(Show (Format-Size $row.storeRolled.onDisk))" }
+        if ($row.sizeText -cne $r.size -or $row.onDiskText -cne $r.onDisk) { $why += 'the row''s text is not what its cell draws' }
+        if ($why.Count -gt 0) { $loud.Add("$($row.path): $($why -join ', ')") }
+    }
+    Check ($final.Count -gt 0 -and $loud.Count -eq 0) "all $($final.Count) folders the store reports final draw the store's rolled figures with no word ($(Show (($loud | Select-Object -First 3) -join ' | ')))"
+    $finalNames = @('a-empty', 'b-listed\empty', 'b-listed\denied', 'c-prefix')
+    $missing = @($finalNames | Where-Object { $byPath[$_].storeUnfinished -ne $false -or $byPath[$_].storeNotListed -ne $false })
+    Check ($missing.Count -eq 0) "a-empty, b-listed\empty, b-listed\denied and c-prefix, listed with nothing pending below, are among the final rows ($(Show ($missing -join ', ')))"
+
+    # What fits: the widest figure a row can draw, in a Size cell's own typeface and DPI, against the width the cell was given.
+    $fit = @(Lines-Of $run 'cell-fit')
+    Check ($fit.Count -eq 1) 'the hook measured the widest figure against a Size cell (cell-fit)'
+    if ($fit.Count -eq 1) {
+        Write-Output ("        widest figure {0}: {1:N2} DIP in the Size cell's typeface at {2:P0} DPI; the Size cell is {3} wide, On disk {4}" -f (Show $fit[0].widestText), $fit[0].widestWidth, $fit[0].pixelsPerDip, $fit[0].cellWidth, $fit[0].onDiskCellWidth)
+        Check ([double]$fit[0].widestWidth -le [double]$fit[0].cellWidth) "the Size cell is wide enough for $(Show $fit[0].widestText) ($([double]$fit[0].widestWidth) DIP in a cell of $($fit[0].cellWidth))"
+        Check ([double]$fit[0].widestOnDiskWidth -le [double]$fit[0].onDiskCellWidth) "the On disk cell is wide enough for $(Show $fit[0].widestText) ($([double]$fit[0].widestOnDiskWidth) DIP in a cell of $($fit[0].onDiskCellWidth))"
+    }
+}
+
+# Criterion 4 over the stopped list: its rows carry the marks the tree's depth-1 rows carry, by name, with the store's answers read
+# for each child of the root by its path (the list is sorted, and a row has no entry).
+function CheckAtLeastList($run) {
+    $tops = @(Lines-Of $run 'top-row')
+    $rows = @(Lines-Of $run 'tree-row')
+    $differ = [System.Collections.Generic.List[string]]::new()
+    $markedInList = 0
+    foreach ($tree in @($rows | Where-Object { $_.depth -eq 1 })) {
+        $top = @($tops | Where-Object { $_.name -ceq $tree.name })
+        if ($top.Count -ne 1) { $differ.Add("$($tree.name): no list row"); continue }
+        $t = $top[0]
+        $why = @()
+        if ($t.storeUnfinished -ne $tree.storeUnfinished -or $t.storeNotListed -ne $tree.storeNotListed) { $why += 'the store answers differ between the list''s child and the tree''s' }
+        if ($tree.storeNotListed -eq $true) {
+            if ("$($t.figures)" -clike '*at least*' -or $null -ne $t.rowAtLeast) { $why += "a not-read row is worded as a bound ($(Show $t.figures))" }
+        }
+        elseif ($tree.storeUnfinished -eq $true) {
+            $markedInList++
+            $b = $tree.storeAtLeast
+            if ($null -eq $t.rowAtLeast -or $t.rowAtLeast.size -ne $b.size -or $t.rowAtLeast.onDisk -ne $b.onDisk -or $t.rowAtLeast.files -ne $b.files) { $why += "the list row's bound $(Show ($t.rowAtLeast | ConvertTo-Json -Compress)) is not the store's $(Show ($b | ConvertTo-Json -Compress))" }
+            if ($t.figures -cne (AtLeast-Figures $t $b)) { $why += "figures $(Show $t.figures) not $(Show (AtLeast-Figures $t $b))" }
+            if ("$($t.figures)" -cnotlike "$($tree.rendered.size) ($($tree.rendered.onDisk) on disk)*") { $why += "figures $(Show $t.figures) do not start with the tree's cells $(Show $tree.rendered.size) / $(Show $tree.rendered.onDisk)" }
+        }
+        else {
+            $plain = "$(Format-Size $tree.storeRolled.size) ($(Format-Size $tree.storeRolled.onDisk) on disk)"
+            if ("$($t.figures)" -clike '*at least*' -or $null -ne $t.rowAtLeast) { $why += "a final row is worded as a bound ($(Show $t.figures))" }
+            if ("$($t.figures)" -cnotlike "$plain*") { $why += "figures $(Show $t.figures) do not start with the store's rolled figures $(Show $plain)" }
+        }
+        if ($why.Count -gt 0) { $differ.Add("$($tree.name): $($why -join '; ')") }
+    }
+    Check ($markedInList -gt 0 -and $differ.Count -eq 0) "the stopped list's rows carry the tree's marks and figures ($markedInList marked, by name; $(Show ($differ -join ' | ')))"
+    $revised = @($tops | Where-Object { $_.revised -eq $true })
+    $titles = @($tops | Where-Object { $_.state -ceq 'StoppedPartway' -and $_.title -cne "$($_.name)  (stopped partway)" })
+    Check ($titles.Count -eq 0) "a marked row keeps the title it had ($(Show (($titles | ForEach-Object title) -join ' | ')))"
+}
+
+# The stopped tree's header: the lead, the one sentence about the figures, and that sentence drawn in full at the default width.
+function CheckAtLeastHeader($run, [string] $root) {
+    $views = @(Lines-Of $run 'view')
+    CheckEqual 'folders|tree' (($views | ForEach-Object choice) -join '|') 'the hook chose Folders and then the Folder tree'
+    if ($views.Count -ne 2) { return }
+    $folders, $tree = $views
+    CheckEqual $StoppedListHeader $folders.header 'the stopped list''s header, with its size clause reworded (Q-290)'
+    $clause = 'Sizes marked at least may grow; unmarked sizes are final.'
+    CheckEqual "$StoppedTreeLead $clause Order, shares and bars are by space on disk as listed, of what was read in $root" $tree.header 'the stopped tree''s header'
+    $end = "$($tree.header)".IndexOf($clause) + $clause.Length
+    Check ($end -gt $clause.Length -and [int]$tree.headerCharsShown -ge $end) "at the default width the whole sentence about the figures is drawn ($($tree.headerCharsShown) of $($tree.headerChars) characters; the sentence ends at $end)"
+    Check ("$($tree.header)" -cnotmatch 'shares?[^.]*\bfinal') 'and no sentence of the header calls the shares final'
+}
+
+# T-013 (SL-113, criteria 1 to 4, 6, the stopped headers): the stopped tree and the stopped list mark every figure the store says could
+# still change as 'at least', up to the root, and leave every other figure as it was. Run 1 stops T-010's tree at m-mid\ and reads every
+# row to depth 2 against the store's answers for its entry (Unfinished, AtLeast, RolledSize, RolledOnDisk, read by the hook through
+# LastResult and the entry number, never through the row), and the list's rows against the store's answers for the same children of the
+# root. Run 2 scans the same tree to the end: nothing says 'at least' anywhere.
+function Test-T013 {
+    $case = New-CaseFolder
+    $denied = $null
+    try {
+        $root = Join-Path $case 'tree'
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        $denied = New-StoppedTreeFixture $root
+        Write-Output ("        built the tree in {0:N1} s" -f $clock.Elapsed.TotalSeconds)
+
+        Write-Output '  run 1: stopped at m-mid, the tree chosen'
+        $stopped = Invoke-StoppedTreeRun $root @{ FSA_HOOK_TREE_STOP = 'm-mid\'; FSA_HOOK_WALK = '2'; FSA_HOOK_VIEWS = 'folders,tree' } $T013Needs
+        Check ($null -eq $stopped.Void) "the stop left a tree with marks to judge within $StoppedAttempts launches (VOID otherwise: $($stopped.Void))"
+        if ($null -eq $stopped.Void) {
+            $before = $script:Failures.Count
+            CheckStoppedRun $stopped.Run $root
+            if ($script:Failures.Count -eq $before) {
+                CheckAtLeastTree $stopped.Run $root
+                CheckAtLeastList $stopped.Run
+                CheckAtLeastHeader $stopped.Run $root
+            }
+        }
+
+        Write-Output '  run 2: the same tree scanned to the end'
+        $run = Invoke-TreeRun $root @{ FSA_HOOK_WALK = '2' } 120
+        $before = $script:Failures.Count
+        CheckTreeRun $run $root
+        if ($script:Failures.Count -eq $before) {
+            $rows = @(Lines-Of $run 'tree-row')
+            Check ($rows.Count -gt 100) "the hook read the finished tree ($($rows.Count) rows)"
+            $asked = @($rows | Where-Object { $_.storeUnfinished -ne $false })
+            Check ($asked.Count -eq 0) "the store reports no row of the finished tree unfinished ($(Show (($asked | Select-Object -First 3 | ForEach-Object path) -join ', ')))"
+            $says = @($rows | Where-Object { "$($_.sizeText)|$($_.onDiskText)|$($_.rendered.size)|$($_.rendered.onDisk)|$($_.rendered.note)" -clike '*at least*' })
+            Check ($says.Count -eq 0) "no row of the finished tree says 'at least' ($(Show (($says | Select-Object -First 3 | ForEach-Object path) -join ', ')))"
+            $plain = @($rows | Where-Object { $_.depth -gt 0 -and ($_.rendered.size -cne (Format-Size $_.storeRolled.size) -or $_.rendered.onDisk -cne (Format-Size $_.storeRolled.onDisk)) })
+            Check ($plain.Count -eq 0) "and every row draws the store's rolled figures ($(Show (($plain | Select-Object -First 3 | ForEach-Object path) -join ', ')))"
+            $quiet = @($run.Lines | Where-Object { $_.kind -cne 'cell-fit' -and (($_ | ConvertTo-Json -Depth 6 -Compress) -clike '*at least*') })
+            Check ($quiet.Count -eq 0) "no line the hook read from the finished scan, the ending's header included, says 'at least' ($(Show (($quiet | Select-Object -First 3 | ForEach-Object kind) -join ', ')))"
+        }
+    }
+    finally {
+        if ($null -ne $denied) { Undo-DenyListing $denied }
+        Remove-CaseFolder $case
+    }
+}
+
+# T-014 (SL-113, criterion 5): opening the 100,000-child folder in a stopped tree that draws marks. T-012's protocol (the Stop at m-big\,
+# five opens, each under 0.5 s with only a screenful of rows built), with one more void rule: at least one of m-big's own rows on screen
+# draws 'at least', so the marks were realized inside the timed frame. T-012 itself is not edited (Q-290: the existing cases stand).
+function Test-T014 {
+    $case = New-CaseFolder
+    try {
+        $root = Join-Path $case 'tree'
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        New-BigStopFixture $root 3000
+        Write-Output ("        built the tree in {0:N1} s" -f $clock.Elapsed.TotalSeconds)
+        $needs = {
+            param($run)
+            $first = @(Lines-Of $run 'expand' | Where-Object { $_.open -eq 1 })
+            if ($first.Count -ne 1) { return 'm-big was not opened' }
+            if ($null -eq $first[0].notListedChildren -or [int]$first[0].notListedChildren -lt 5000) { return "only $($first[0].notListedChildren) of m-big's rows were left unread, not 5,000" }
+            if ($null -eq $first[0].atLeastRealized -or [int]$first[0].atLeastRealized -lt 1) { return "none of m-big's rows on screen drew 'at least' ($($first[0].atLeastRealized))" }
+            $null
+        }
+        $result = Invoke-StoppedTreeRun $root @{ FSA_HOOK_TREE_STOP = 'm-big\'; FSA_HOOK_WALK = '0'; FSA_HOOK_EXPAND = 'm-big' } $needs 300
+        Check ($null -eq $result.Void) "the Stop left m-big listed with at least 5,000 rows unread and marks on screen within $StoppedAttempts launches (VOID otherwise: $($result.Void))"
+        if ($null -ne $result.Void) { return }
+        $run = $result.Run
+        $before = $script:Failures.Count
+        CheckStoppedRun $run $root
+        if ($script:Failures.Count -gt $before) { return }
+        $opens = @(Lines-Of $run 'expand')
+        CheckEqual 5 $opens.Count 'the hook opened m-big five times'
+        Write-Output ("        m-big: {0:N0} of its rows were not listed" -f $opens[0].notListedChildren)
+        foreach ($open in $opens) {
+            $split = if ($open.cold) { (' (sort {0:N1} ms, row build {1:N1} ms, the rest {2:N1} ms)' -f $open.sortMs, $open.buildMs, $open.layoutMs) } else { '' }
+            Write-Output ("        open {0}: {1:N1} ms{2}, {3} rows built, {4} drawing 'at least', a viewport of {5:N0} px" -f $open.open, $open.ms, $split, $open.realized, $open.atLeastRealized, $open.viewportHeight)
+            Check ($open.firstChild -and [double]$open.ms -lt 500) ("open {0} drew its first rows in {1:N1} ms (under 500)" -f $open.open, $open.ms)
+            Check ($open.realized -gt 0 -and $open.realized -le 200) "open $($open.open) built only a screenful of rows ($($open.realized))"
+            Check ([int]$open.atLeastRealized -ge 1) "open $($open.open) drew marks on screen ($($open.atLeastRealized) rows)"
+            CheckEqual 100000 $open.children "open $($open.open): m-big holds 100,000 rows"
+        }
+        CheckEqual $true $opens[0].cold 'open 1 is cold, building its rows'
+    }
+    finally { Remove-CaseFolder $case }
+}
 # R-004 (SL-110, criterion 6, Q-275): 'Open in Explorer' on a row marked 'not read yet', from the stopped tree. The fixture is a
 # slow folder between the stop and the folder revealed: the hook stops at n-slow\ (3,000 subfolders of one file), so z-unread,
 # listed after them, is still queued. The reveal is the real one, through the row's menu, into a real Explorer window opened on
@@ -6936,7 +7189,7 @@ function Test-R004 {
 
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'L-004', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'R-004', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005') + $NetworkCases + $CloudCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'L-004', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012', 'T-013', 'T-014', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'R-004', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005') + $NetworkCases + $CloudCases } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })
