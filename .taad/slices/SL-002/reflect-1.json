@@ -1,0 +1,173 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-002",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-11-17T16:31:34.621Z",
+ "head": "6939a9b603e15701834b8c3fcaa16e8283390921",
+ "run_id": 11202,
+ "summary": "SL-002 was opened as \"no startup stall, picker shows\" with SC-050 and SC-052 merged in. It was narrowed to those two fixes plus a StallStacks 'no stall at startup' reading, because the stall measured absent at build-check. SC-052 (one background thread per drive, letter-ordered buttons, DriveStatus settles at all-back or 2 s) and SC-050 (TextBlock labels) were built and proven, including in a Windows Sandbox with a silenced mapped Y:. Its headline criterion 14 stayed red: SL-002-StartupStallStacks.Tests.ps1 exits 1 on this PC because HEAD's own unchanged code stalled again (scan 325-336 ms at 644 px, rescan 369-405 ms, RENDER-PATH 95-96%). The criterion was waived (O-013 / N-018) and the PS-031 promise is not met by this merge.",
+ "payload": {
+  "status": "complete",
+  "summary": "SL-002 was opened as \"no startup stall, picker shows\" with SC-050 and SC-052 merged in. It was narrowed to those two fixes plus a StallStacks 'no stall at startup' reading, because the stall measured absent at build-check. SC-052 (one background thread per drive, letter-ordered buttons, DriveStatus settles at all-back or 2 s) and SC-050 (TextBlock labels) were built and proven, including in a Windows Sandbox with a silenced mapped Y:. Its headline criterion 14 stayed red: SL-002-StartupStallStacks.Tests.ps1 exits 1 on this PC because HEAD's own unchanged code stalled again (scan 325-336 ms at 644 px, rescan 369-405 ms, RENDER-PATH 95-96%). The criterion was waived (O-013 / N-018) and the PS-031 promise is not met by this merge.",
+  "estimate_error": "Medium / medium risk was right for the work that shipped: 12 files changed, 10 new DriveReadsTests (suite 1204 to 1214), one design pass, 8 critique findings of which 1 was major, and no re-design. It was wrong about what the slice was for. It was sized as though the SL-080 stall were a settled fact (absent), so render work was cut and a check was written to guard the absence. The stall is intermittent on this PC, and the criterion the slice is named for is the one that stayed red. Treat any slice whose headline is an SL-080-style stall as needing its own measurement stage, not a one-session survey.",
+  "learned": [
+   {
+    "kind": "risk",
+    "lesson": "SL-080's render stall is not stable on this PC, so a 'stall absent' reading from one session is not a premise to design against. Build-check read scan 82-87 ms and moves 22-26 ms at the default height. Hours later HEAD's own code, git-archived beside the slice, read scan 325-336 ms at 644 px and rescan 369-405 ms at default and 644 px. Before any slice prices a fix, run T005Batch -Plan Render (interleaved runs, one pinned height) and log what else the machine was doing (display or GPU power state, OneDrive CPU) with each reading.",
+    "evidence": "build-check T-005 x4 PASSED vs build-slice A/B: HEAD scan 329/325 ms and rescan 388/385 ms at 644 px, rescan 391/369 ms at default; validate A/B at 644 px HEAD 341.0 ms vs slice 340.3 ms; StallStacks RENDER-PATH 95-96% in SyncFlush."
+   },
+   {
+    "kind": "estimate",
+    "lesson": "T-005 at the default height and at FSA_T005_HEIGHT=644 are different measurements, and this slice compared them. The absence evidence was at default height; the new startup check runs at 644 px 'as E002-1 does'. Pin one height in both the evidence and the check, and say which, or the first red run reads as a regression when it is a different condition.",
+    "evidence": "design component 'Startup stall check' sets FSA_T005_HEIGHT=644; build-check's four passes set none; critique m3 judged 644 'valid' from SL-080-move-stall.md:95-99 and did not compare it with the evidence height."
+   },
+   {
+    "kind": "process",
+    "lesson": "When a slice is narrowed because the headline defect 'does not reproduce', the guard that replaces it gets run repeatedly (and at its final height) at design time, not once. Here the guard was built, run end to end, and failed the first time it was run on the final sources, which sent build-slice, code-review and validate-slice each to halt on the same known result before the engine waived it as O-013/N-018. Decide the waiver once, at the first halt.",
+    "evidence": "build-slice #1, code-review #1 and validate-slice #1 all halted on criterion 14; validation says 'No loop: each stage ran once', so the five 'ran 2 times' counts are halt-then-waive, not redone work."
+   },
+   {
+    "kind": "design",
+    "lesson": "Do not accept a WPF visual-state finding from community Q&A without running the rig in the app's construction order. M1 (disabled TextBlock labels stay black) was refuted by a rig that built the Button into a live ScrollViewer/StackPanel: the unbound label already draws #FF838383 in both start states (created disabled, enabled then disabled). The finding's prescribed FindAncestor(ContentPresenter) binding resolved to DriveScroller's ScrollContentPresenter in the real app (ink=0/3). The hook's GreysWithItsButton census is the guard: do not add a Foreground to drive-button labels without it passing.",
+    "evidence": "build-slice deviation O-015: binding built, B-007 read ink=0/3, binding removed, B-007 ink=3/3 in 9 hooked runs, black-Foreground mutation read 0/3."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "The drive-read pattern is now: pure WPF-free App file (DriveReads.cs) linked into FsAnalyser.Core.Tests, one IsBackground Thread per read, every outcome and the settle Post-ed to the captured SynchronizationContext, no Task.WhenAny (fitness rule). The hook's HoldForDrives still releases on the first DriveStatus change, so any future change to LoadDrives must keep 'outcome posted before settle'. xUnit 2.9.3 installs AsyncTestSyncContext on every [Fact], so a test of context-capturing code needs a raw thread (no-context case) or a pump that asserts Current is itself.",
+    "evidence": "DriveReadsTests (10 passed); critique m4 / O-018; DriveReads.Start refuses with InvalidOperationException when SynchronizationContext.Current is null."
+   },
+   {
+    "kind": "risk",
+    "lesson": "Closing the window while a drive read is stuck on a dead mapped share leaves FsAnalyser.App.exe alive for minutes, in HEAD as well as this slice. It does not shut down the way report mode does. Any WindowCases run on a day Z:\\ is down can end 'timeout' for this reason, and the published exe stays locked. Do not read that as a regression from DriveReads, and the by-hand SC-059 check no longer needs to test it.",
+    "evidence": "validate Sandbox run 2: WM_CLOSE with Y: alive exited in 36 ms; with Y: dead the process was alive after 120 s with 1 thread in Wait/Unknown and Stop-Process unfinished 30 s later (slice twice, HEAD once); report-mode shutdown with the read stuck exited 12-34 ms after the report in 5 runs."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "Nothing in the repository can launch the app without a path and read its state. TreeMode needs a scan to finish (TreeMode.cs:130), the E002-* finish lines the design cited are engine-planted and absent from tests/window, and UI Automation is refused on the host and found no window in the Sandbox. So criterion 2 (no-path picker) and any 'startup' phase were judged only through hooked launches with a path.",
+    "evidence": "build-slice open item 'DriveStatus on a no-path launch was not read'; validate 'not reached: DriveStatus text on a no-path launch'; critique m3 (overridden) said the same; spike 3 showed a no-path trace holds samples from 9 ms but only 506-529 in the first 1 s after visible (floor 500, median gap 2.0 ms although the header says 1 ms)."
+   },
+   {
+    "kind": "process",
+    "lesson": "The engine's own Sandbox scratch under .taad-scratch inside the repo trips AppArgumentTests (it walks the tree for scripts that match Start-App / FsAnalyser.App.exe and finds engine-written task.ps1 files). A validator that runs a Sandbox and then the full suite gets a red suite from its own files. Run the suite before creating scratch, or move scratch out of the tree.",
+    "evidence": "validate full-suite run 2 failed 1213/1214 on AppArgumentTests only on .taad-scratch/sandbox and the HEAD copy; run 1 (before the scratch existed) passed that test. UnfinishedTests also failed once in run 1 and passed 3 times in isolation."
+   },
+   {
+    "kind": "process",
+    "lesson": "Waived minors in this harness's new scripts are real defects, not style: StallStacks Invoke-Read assigns a missing run into an [int] parameter and reports run 0, which is T005Batch's first run id. The startup check inherits FSA_T005_RENDER, FSA_T005_SAMPLE_MS and FSA_T005_TAG from the caller. $StallLine is a copy of T005Batch's $Stall = 250.0 linked only by a comment. Fix these before the stall work leans on this reader.",
+    "evidence": "code-review m1 / IN-m1 measured '\"run\": 0' for a plain line with a missing trace; IN-m2; critique m5; waived as N-022, N-023, N-021, N-017."
+   }
+  ],
+  "lessons_judged": [
+   {
+    "id": 878,
+    "verdict": "used",
+    "why": "The design kept DriveInfo out of the scheduler and added a fitness rule (DriveInfo banned in DriveReads.cs). The default-suite tests use blocked delegates, not Z:\\, and the spike confirmed Z:\\'s DriveType stays Network when its server is down."
+   },
+   {
+    "id": 359,
+    "verdict": "used",
+    "why": "The design read StartupHook.HoldForDrives, CheckDrives, Field and T005Batch before extending them, and the retier cited this lesson. The critique came back with 1 major of 8 findings, against 9 of 16 major in the lesson's slice."
+   },
+   {
+    "id": 389,
+    "verdict": "used",
+    "why": "The design re-read the cited lines in the tree (the TextBlock rule sits at MainWindow.xaml:464-466, not 454-456; the count is at WindowReport.cs:164, not :142) and grepped fitness.yaml for engine-appended SL-002 entries before building."
+   },
+   {
+    "id": 876,
+    "verdict": "used",
+    "why": "The new SL-002-StartupStallStacks.Tests.ps1 was listed as not-a-launcher in AppArgumentCorpus.json, so AppArgumentTests passed on it. The finish-line half was not followed: the design still cited E002-1/2 as guards without confirming them, and critique m3 had to raise it."
+   }
+  ],
+  "what_went_wrong": [
+   "The slice's own headline criterion 14 (no startup stall in StallStacks) is unmet. The design cut render work on one session's measurement (T-005 4/4 and no-path rig 4/4 clean). The same code then stalled on this PC (scan 325-336 ms at 644 px, rescan 369-405 ms, RENDER-PATH 95-96%). SL-002-StartupStallStacks.Tests.ps1 is committed and exits 1 here. PS-031's done condition is not met by this merge.",
+   "The critique let two things through together: a 'stall absent' premise built on a single morning, and a check height (644 px) that differs from the height of the evidence (default). It judged 644 'valid' without comparing the two. The one real chance to challenge the premise was critique m3, which was overridden.",
+   "M1 (major) was refuted by measurement after the build. The critic's premise (TextBlock labels stay black when disabled) came from StackPanel-content Q&A, not a rig. Its prescribed ancestor binding resolved to DriveScroller's ScrollContentPresenter (ink=0/3) and had to be built, shown failing and removed. critique-review was sized out for this medium slice, so nothing challenged the finding before build.",
+   "Three stages (build-slice, code-review, validate-slice) each halted on the same known red criterion before the engine waived it, so three stage runs went on a result nothing in the slice could change.",
+   "Four review findings were waived as notes and ship: run reported as 0 for a plain summary, FSA_T005_RENDER/SAMPLE_MS/TAG inherited by the startup check, the $StallLine/$Stall twin held by a comment, and the DriveReads priority comment saying Normal where a probe measured Send. The comment was fixed by the comment fixer in 6939a9b60; the other three remain.",
+   "Code review did not read 8 of 12 changed files whole. MainWindow.xaml.cs lines 301-1097, StartupHook.cs lines 1-789 and 960-1605, and nearly all of the 7,269-line WindowCases.ps1 were seen only through diff hunks and Grep, and it leaned on a B-007 run. Nothing later found a defect in the unread parts, so this is a coverage gap, not a recorded miss.",
+   "Validation could not reach several things: DriveStatus on a no-path launch, a late-answering drive's button in the real app (the silenced Y: never answered in any run), an underscore label drawn on a visible desktop, and any slow-fail outage (the spike measured a 21 s TCP connect failure, but no mapped letter could be made from it)."
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "dimension": "unfounded-assumptions",
+    "severity": "major",
+    "what": "The design's decision 1 (change no render code) and its startup check rest on 'the SL-080 stall is absent at HEAD', measured once by build-check (T-005 x4 at the default height, no-path rig x4). The critique did not ask whether that holds across time, or at the height the new check runs (FSA_T005_HEIGHT=644). A check would be 'run the guard 3 times at its own height before accepting the design'. HEAD's own code then read scan 325-336 ms at 644 px and rescan 369-405 ms at default height, so criterion 14 failed.",
+    "caught_by": "build-slice (A/B of a git-archived HEAD copy beside the slice), confirmed by validate-slice",
+    "prescribed_fix": ""
+   },
+   {
+    "gate": "critique",
+    "dimension": "unfounded-assumptions",
+    "severity": "major",
+    "what": "M1's premise (an unbound TextBlock Content stays black when the button is disabled) was taken from community answers about StackPanel content and never rig-run, although the survey's accesskey.ps1 rig was available. It measured false: the unbound label draws #FF838383 in both start states. Its prescribed FindAncestor(ContentPresenter) binding resolved to DriveScroller's ScrollContentPresenter in the live app (ink=0/3), which is the defect it claimed to prevent. The critic's own 'hole' note predicted that resolution and the fix was still accepted as written.",
+    "caught_by": "build-slice (binding built, B-007 read ink=0/3, binding removed)",
+    "prescribed_fix": "M1"
+   },
+   {
+    "gate": "critique",
+    "dimension": "unfounded-assumptions",
+    "severity": "minor",
+    "what": "The m1 fix told the builder to state in the DriveReads comment that arrivals run at Normal priority, ahead of the hook's Render check. WPF's flowed context carries the Loaded handler's priority, which a probe measured as Send. The builder followed the wording, so DriveReads.cs:27-28 shipped a wrong comment. The conclusion (posts outrank Render) still holds.",
+    "caught_by": "code-review (finding t1)",
+    "prescribed_fix": "m1"
+   },
+   {
+    "gate": "critique",
+    "dimension": "missing-edge-cases",
+    "severity": "minor",
+    "what": "The startup stall check was designed as 'sets FSA_T005_SUMMARY, FSA_T005_TRACE and FSA_T005_HEIGHT'. The critique did not ask what else T-005 reads from the inherited environment: FSA_T005_RENDER (WindowCases.ps1:3029), FSA_T005_SAMPLE_MS (:2938) and FSA_T005_TAG (:3030). A shell left over from a T005Batch -Plan Render run changes what 'no stall at startup' measures, and a stray TAG fails the script's own 'no run field' check with no stall.",
+    "caught_by": "code-review (second reader, IN-m2)",
+    "prescribed_fix": ""
+   },
+   {
+    "gate": "critique",
+    "dimension": "contract-gaps",
+    "severity": "minor",
+    "what": "The StallStacks CLI contract made -Run optional ('-Run omitted means the last non-empty line') but did not say what `run` the result reports for a line with no run field. Invoke-Read declares `[int] $run` and writes `$line.run` into it, so null becomes 0 (StallStacks.ps1:409-414). 0 is T005Batch's first run id, so the early CANNOT-READ results mislabel a plain run while Read-Run reports null.",
+    "caught_by": "code-review (m1 and IN-m1)",
+    "prescribed_fix": ""
+   }
+  ],
+  "unknowns": [
+   "What changed on this PC between build-check's clean T-005 readings (scan 82-87 ms) and the stalled ones hours later (scan 325-336 ms at 644 px, rescan 369-405 ms at any height)? Candidates are display or GPU power state and OneDrive's CPU use; none was logged. A render fix cannot be priced before this is known.",
+   "Why does WM_CLOSE leave the process alive for minutes while report-mode Shutdown exits in 12-34 ms with the same read stuck? The kernel wait state of the one remaining thread was not inspected. Would CancelSynchronousIo on the drive-read threads at close release it, as the project already does for Core scanning?",
+   "Does a share that wakes up after 'Drives' is shown get its button in the real app, in letter order? The silenced Y: never answered in any validation run, so this is proven only by DriveReadsTests with blocked delegates.",
+   "Is a mapped letter whose server fails the TCP connect slowly (about 21 s measured) read the same as an accepted-but-silent endpoint? Only the silent loopback SMB endpoint was reproduced, on Windows build 26100.9974 in the Sandbox and 26300 on this PC.",
+   "Can DriveStatus on a no-path launch be read from outside the process without UI Automation, which the engine's guard refuses and which found no window in the Sandbox, or does it need a hook mode?"
+  ],
+  "candidates": [
+   {
+    "title": "Decide SL-080's render stall: measure it with T005Batch -Plan Render at one pinned height, then fix it or drop PS-031's startup-stall criterion",
+    "urgency": "soon",
+    "why": "tests/window/SL-002-StartupStallStacks.Tests.ps1 exits 1 on this PC: scan 325-336 ms at 644 px in 3 runs, rescan 369-405 ms at default and 644 px, RENDER-PATH 95-96% in SyncFlush. The validator's T-005 A/B at 644 px read HEAD 341.0 ms against the slice's 340.3 ms, so no SL-002 code causes it. Build-check read 82-87 ms hours earlier on the same code, so it is intermittent; the unknown is what the machine was doing. SL-080's Render batch ruled nothing out (detectable 5.41x). Starting point is T005Batch.ps1 ($Stall = 250.0 at :89) and the TreeMode.cs GAP probe. A person must choose between fixing it and dropping the criterion; the loop should not guess a fix without the three measurements SL-080 names."
+   },
+   {
+    "title": "Bound the process exit when a drive read is stuck on a dead mapped share, after diagnosing why WM_CLOSE hangs but report-mode shutdown does not",
+    "urgency": "soon",
+    "why": "Measured in the validation Sandbox (build 26100.9974, Y: mapped to a loopback SMB share, LanmanServer/srv2/srvnet stopped, listener on 445 that never answers): WM_CLOSE with Y: alive exits in 36 ms; with Y: dead the process was still alive after 120 s with 1 thread in Wait/Unknown, and Stop-Process had not finished 30 s later (slice twice, HEAD once). Report-mode shutdown with the same stuck read exited 12-34 ms after the report in 5 runs. The threads are the IsBackground 'FsAnalyser drive read <i>' threads started in DriveReads.cs from MainWindow.LoadDrives. It pre-dates SL-002 (waived as O-014 / N-028). It leaves a locked exe and makes WindowCases end 'timeout' whenever Z:\\ is down. Try CancelSynchronousIo on those threads at Closing, proven in the same Sandbox set-up. The by-hand 'exits promptly' part of SC-059 is already answered false."
+   },
+   {
+    "title": "Add an in-repo check for a no-path launch: a hook or report variant that reads DriveStatus and DrivePanel, records window-visible on the trace's clock, and lets StallStacks read a startup phase",
+    "urgency": "soon",
+    "why": "Criterion 2 (the picker shows from launch with no path) and PS-031's startup claim have no check in the tree. TreeMode.cs:130 needs a scan to finish; the E002-1/E002-2 finish lines the design cited are not in tests/window (critique m3, overridden); UI Automation is refused on the host and found no window in the Sandbox. StallStacks reads only 'scan' and 'rescan' (StallStacks.ps1:334). Spike 3 showed a no-path trace holds samples from 9 ms, but only 506-529 in the first 1 s after visible against a floor of 500, so the margin is thin. First make Invoke-Read stop reporting run 0 for a plain summary line (StallStacks.ps1:409-414), clear FSA_T005_RENDER/SAMPLE_MS/TAG in SL-002-StartupStallStacks.Tests.ps1 (it clears only SUMMARY and TRACE at :40), and tie $StallLine to T005Batch.ps1's $Stall. Without this the stall decision above stays blind to a launch without a path."
+   }
+  ],
+  "filed": [
+   {
+    "key": "SC-059",
+    "title": "Check by hand: With Z:\\'s server asleep or offline (E-003's sleeping-share runs, or the person's network pass), launch the published exe with no path and check three things:\n- C:\\ and D:\\ buttons appear at once.\n- 'Looking for drives...' turns to 'Drives' within about 2 s.\n- Z:\\ joins in letter order if it answers later.\n\nThen close the window while Z:\\'s read is still blocked, and note whether the process exits promptly. This slice also makes the network pass stale: it changes MainWindow.xaml.cs, StartupHook.cs and WindowCases.ps1, which are on the SL-020 staleness list.",
+    "urgency": "soon",
+    "source": "design"
+   },
+   {
+    "key": "SC-060",
+    "title": "Check by hand: Drag the window by its title bar with the mouse in the first second after it appears, launched both with a path and without, and say whether it follows the pointer without a freeze.",
+    "urgency": "soon",
+    "source": "design"
+   }
+  ]
+ }
+}

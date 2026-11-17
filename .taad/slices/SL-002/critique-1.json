@@ -177,5 +177,100 @@
     "result": "none: no new input surface. Drive labels go into a TextBlock, and the report schema is unchanged."
    }
   ]
+ },
+ "prescribed": {
+  "host": 639,
+  "at": "2026-11-17T14:36:07.437Z",
+  "runs": [
+   {
+    "run_id": 11180,
+    "resumed_from": "9ef551eb-c589-4bc9-b135-52b7768ead62",
+    "ending": "completed",
+    "cost_usd": 1.3945830000000004,
+    "lost_resume": false
+   }
+  ],
+  "keys_sent": [
+   {
+    "finding_id": 1832,
+    "key": "M1",
+    "digest": "becc7b60d08a6029"
+   },
+   {
+    "finding_id": 1833,
+    "key": "m1",
+    "digest": "d5e97074c3860e34"
+   },
+   {
+    "finding_id": 1834,
+    "key": "m2",
+    "digest": "d02caf23c9d41872"
+   },
+   {
+    "finding_id": 1836,
+    "key": "m4",
+    "digest": "60645769f174b577"
+   }
+  ],
+  "verdicts": [
+   {
+    "finding_id": 1832,
+    "key": "M1",
+    "digest": "becc7b60d08a6029",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "Read MainWindow.xaml.cs:160-178 (LoadDrives builds the Button, then adds it to the already-live DrivePanel) and :224-230 (SetPickersEnabled toggles IsEnabled later). Read OnLoaded :149-154: with a launch path, StartScan runs before LoadDrives, so the buttons are created disabled. Read MainWindow.xaml:111-116 (DrivePanel sits inside the DriveScroller ScrollViewer, whose template holds a ScrollContentPresenter, a ContentPresenter subclass). Grepped src for ThemeMode, implicit Button styles and RelativeSource: none, so the Aero2 trigger applies.",
+    "why": "The binding is the right mechanism, but the prescribed verification does not test the app's case.\n\nConstruction order: the rig as written runs ApplyTemplate and UpdateLayout on a standalone IsEnabled=false button. In the app, the TextBlock and its FindAncestor binding exist before the button's template is applied, because the button is inserted into a live panel. From memory of WPF's RelativeObjectRef (PreferVisualParent), a FindAncestor walk with no visual parent goes up the logical parent, the Button, then DrivePanel, and reaches DriveScroller's ScrollContentPresenter as the first ContentPresenter. If the binding resolves there and does not re-resolve once the template is applied, the labels never grey, the rig passes, and the regression ships exactly as M1 described.\n\nStart states: there are two, created disabled (launched with a path) and created enabled then disabled (SetPickersEnabled at scan start). The rig tests only the first.\n\nAfter the build: the check runs once, before the build. Nothing in the loop then reads the brush, and the binding must be remembered at two call sites (DriveButton and the hook's AddDrives). A later edit that drops it ships unseen again.",
+    "instead": "Run the pre-build rig in the app's order:\n- Show a window off-screen holding a ScrollViewer around a StackPanel.\n- Create the Button with TextBlock content and the binding, then add it to the live panel.\n- Read the TextBlock's Foreground after layout in both start states: created with IsEnabled=false, and created enabled then set to false. In each state it must equal the template's disabled brush (#FF838383 under Aero2).\n\nAdd a regression guard to the hook's census: for each real button, check that BindingOperations.GetBindingExpression(label, TextBlock.ForegroundProperty)?.ResolvedSource is the ContentPresenter that is VisualTreeHelper.GetParent(label). Log it as `ink=<n>/<real>` and have CheckDrives assert that the two numbers are equal. That catches a dropped binding and one resolved through DriveScroller, in the enabled state the hold sees."
+   },
+   {
+    "finding_id": 1833,
+    "key": "m1",
+    "digest": "d5e97074c3860e34",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "Read WindowReport.cs:146-148: WriteAsync's first act is `await Dispatcher.Yield(DispatcherPriority.Loaded)`. Read StartupHook.cs:855-886: HoldForDrives re-posts itself at Render, and its comment says the Render item 'holds the report, at Loaded, while the drives' continuation, at Normal ... still run'. Read WindowCases.ps1:2195-2233: B-007's hooked runs have both $run.Log and $read.Report. :2163-2169: CheckPickers compares only heights, and that button counts differ.",
+    "why": "The prescribed comparison is buildable, but it can only catch an arrival posted inside the single dispatcher turn between the hook's release and the report's Loaded continuation. The hook keeps a Render item queued, so the report runs on the very next turn after the release.\n\nThe failure it is meant to catch is mostly absorbed already. DispatcherSynchronizationContext posts at Normal priority, which outranks Render. So any arrival queued before HoldForDrives runs is delivered before the hook takes its count, even if FIFO order among Normal items broke.\n\nAn arrival posted later, such as a drive read that finished just after the settle, lands after the report too. Both counts then miss it equally and the check passes. In practice the new clause almost never fires. It would give the design's if_wrong a guard on paper, not one that works.",
+    "instead": "Use the prescription's alternative instead: across every hooked run of B-007, (buttons - added) and the labels denominator must take one value. This reads only data already logged, and an intermittent early release shows up as runs that disagree. State in the DriveReads comment that the hold is also protected by priority (arrivals at Normal run before the hook's Render check), and that a release that is short by the same count in every run cannot be caught by a loop check."
+   },
+   {
+    "finding_id": 1834,
+    "key": "m2",
+    "digest": "d02caf23c9d41872",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "Read StallStacks.ps1:244-307: Read-Run's early CANNOT-READ returns (UI thread has no samples, idle share under 25%) still return $more, which the design fills with `stalled` right after it is created. Read :382-400 (Invoke-Read's catch paths). Read :220-226 (the RENDER-PATH rule). The design computes `stalled` from the summary's longestWaitMs alone.",
+    "why": "Scoping RENDER-PATH to stretches with stalled=true, while also requiring stalled=false, makes that clause dead. It was the only clause whose outcome depended on what StallStacks read from the trace.\n\nWhat is left (exitReason 'closed', scan reached, stalled false) comes entirely from the T-005 summary line. A run whose trace StallStacks could not analyse still passes: the UI thread profile missing, or an idle share under 25%, gives a top-level CANNOT-READ that still carries stalled=false. So 'the existing stall analysis shows no stall at startup' would be met without the analysis reading anything.",
+    "instead": "Scope RENDER-PATH as prescribed. Also require that Read-Run got past its whole-run gates: stacks.stretches exists and holds a 'scan' entry with windowStartMs set, meaning the trace was read and the wait placed on its clock. A scan-stretch verdict of CANNOT-READ for 'no busy stretch covers 80%' can stay allowed, since an idle UI thread during the wait is itself evidence that nothing stalled."
+   },
+   {
+    "finding_id": 1836,
+    "key": "m4",
+    "digest": "60645769f174b577",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "Read FsAnalyser.Core.Tests.csproj:24 (xunit 2.9.3). Checked the xUnit 2.9 behaviour cited in the review (xunit/xunit#3014, #2573). Read the existing dedicated-thread test pattern in FailCriticalErrorsTests.cs:215.",
+    "why": "The premise holds and the fix works, but it leaves one way to fail badly.\n\nThe fix has the builder call Start on a raw new Thread. If an Assert.Throws, or an unexpected exception, runs on that thread, it is an unhandled exception outside xUnit. It ends the test host and aborts the whole default suite instead of failing one test. That happens exactly when DriveReads does not refuse, for example a builder who keeps the proposal's inline fallback.\n\nSetSynchronizationContext(null) is redundant but harmless: .NET does not carry SynchronizationContext.Current to a new Thread.\n\nThe pump-body assertion is fine as long as the pump surfaces a failure from the body itself, not only from posted callbacks, and bounds its wait, so that a failed assertion fails the test instead of hanging it.",
+    "instead": "On the raw thread, catch everything into a local variable (`Exception? caught`). Join the thread with a timeout, then run Assert.IsType<InvalidOperationException>(caught) on the test thread. Also assert that no read thread was started, using a counter the test's read delegates increment. In the pump harness, run the body as a posted callback whose exception is recorded and rethrown on the test thread, and wait for completion with a timeout."
+   }
+  ],
+  "unmatched": [],
+  "unchecked": [],
+  "moved": [],
+  "annotated": [
+   "finding:1832",
+   "finding:1833",
+   "finding:1834",
+   "finding:1836"
+  ],
+  "counts": {
+   "holds": 0,
+   "hole": 4,
+   "unworkable": 0,
+   "no_verdict": 0
+  },
+  "summary": "All four prescriptions can be built as written, and each fixes a real problem. None of them holds as written, though: each leaves a gap.\n\n- **M1:** the planned pre-build check builds the button in a different order from the app, so it can pass while the app's labels still do not grey. And once the build is done, nothing guards the binding.\n- **m1:** the new count comparison can almost never fail. The report is written one dispatcher turn after the hook releases, and drive arrivals (Normal priority) already run before the hook's check (Render priority).\n- **m2:** once RENDER-PATH only counts on stretches that are already stalled, no part of the startup check depends on the trace being read. A run whose trace was never analysed would still pass.\n- **m4:** an assertion made on the raw thread would crash the test host instead of failing the test.",
+  "why": "",
+  "round": "landed"
  }
 }

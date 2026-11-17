@@ -1,0 +1,415 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-002",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-11-17T15:26:47.720Z",
+ "head": "10b354ea76c345ece99ed228ea774626cbeb7e59",
+ "run_id": 11190,
+ "summary": "SL-002 builds SC-052 and SC-050 as designed. LoadDrives reads each drive through the new pure DriveReads.Start. Each read runs on its own IsBackground thread. Every result is posted back before the read counts itself as answered, and the completion comes at min(every read back, 2 s). Late buttons go in letter order through DriveReads.Place, ahead of the hook's extras. DriveStatus keeps today's two strings and changes once. Drive labels are TextBlock content with AutomationProperties.Name.\n\nVerified by running:\n- Full suite: 1214 passed, 0 failed, including the 10 DriveReadsTests.\n- StallStacks.ps1 -SelfTest: 14 fixtures and 7 summary-line checks passed.\n- B-007 re-run on the published exe: exit 0, 419 ok, 0 FAIL. Every hooked run logged labels=3/3 ink=3/3, and CheckDriveCensus read '3 of 3' over 9 runs.\n\nThe DriveReads tests feed every shape in the matrix on a FIFO pump. The pump asserts it is the current context, and the no-context case runs on a raw thread that catches its exception.\n\nFindings:\n- One minor defect, with a repro. In StallStacks.ps1, Invoke-Read copies $line.run back into the [int]-typed $run parameter. A plain T-005 line has no run field, so the early CANNOT-READ results report run 0, while the full read reports run null. Measured: '\"run\": 0' for a plain line with a missing trace.\n- One wrong comment. The DriveReads remarks say the posts arrive at Normal priority. A probe set up the way the app shows its window measured Send. The conclusion, that they run ahead of the hook's Render-priority check, still holds.\n\nOpen by decision, not code defects:\n- The startup stall check is built but fails today: the SL-080 stall is back at HEAD (O-013, waived as N-018). The slice's 'no stall at startup' criterion is therefore still not met.\n- The process-exit precondition (O-014) is owed to validate-slice.\n\nSecond reader, for inputs: I reviewed the inputs the new code can be handed. I read DriveReads.cs, LoadDrives, ReadDrive and DriveButton in MainWindow.xaml.cs, DriveReadsTests.cs, the hook's LabelCensus, GreysWithItsButton and AddDrives, the WindowCases CheckDrives and CheckDriveCensus changes, the StallStacks.ps1 diff (Select-SummaryLine, Get-Stalled, Get-PhaseStalled, Invoke-Read, the self-test) and SL-002-StartupStallStacks.Tests.ps1.\n\nDriveReads handles the boundaries cleanly:\n- empty list\n- a single read\n- a null result\n- an exception before and after the settle\n- a duplicate settle, from the timer and from the last count\n- posts after the pump closes, which the test Pump drops\n- Place against out-of-order arrivals\n\nInsert positions cannot exceed the child count, because only LoadDrives clears DrivePanel. Field's `(?:^| )key=` match is not confused by the new `labels=` and `ink=` keys, and the no-line and malformed-line cases fail CheckDrives in the right direction.\n\nWhat I ran:\n- DriveReadsTests: 10 passed.\n- StallStacks -SelfTest: 14 fixtures passed.\n\nTwo input problems are filed:\n1. **Plain summary reported as run 0.** StallStacks' Invoke-Read assigns `$line.run` back into its `[int] $run` parameter, so a plain T-005 line with no run field comes out as `\"run\": 0` on every early CANNOT-READ path. When the trace is read, Read-Run reports null for the same line. I confirmed this by running it, and a repro test fails on this tree.\n2. **Inherited variables can change what the startup check measures.** The startup stall script clears only SUMMARY, TRACE and HEIGHT. A caller's leftover FSA_T005_RENDER=software or FSA_T005_SAMPLE_MS therefore changes what 'no stall at startup' measures, and FSA_T005_TAG fails its run-field check.\n\nThe label fitness rule's pattern evades renamed members and spellings such as `?.`, an indexer or a string local. The design already left that open as a taste disagreement, so it is not re-filed.\n\nReading pass: Read tests/window/fixtures/StallStacks/no-stall.json lines 1-97; it adds no new finding.\n\nWhat the fixture sets up:\n- Scan: reached, longestWaitMs 85, maxAt 950 to maxEndAt 1035 on the hook's clock. clockOriginUtc is 50 ms after traceStartUtc, so the wait falls at 1000-1085 ms on the trace's clock.\n- Trace: a single 'layout' stretch (pump, ProcessQueue, UpdateLayout, Measure, MainWindow.RefreshTree, CPU_TIME) from 1000 to 1085 ms, with idle pump samples on both sides.\n- Rescan: not reached.\n\nWhat it expects, and why that holds:\n- Scan stretch NAMED, blocked under RefreshTree: the stretch covers 100% of the wait.\n- Scan stalled=false: 85 ms is under $StallLine (250).\n- Rescan CANNOT-READ with stalled=null: it was never reached.\n- Top-level verdict NAMED, stalled=false.\n\nThis matches the self-test result already recorded (PASSED, 14 fixtures). The fixture feeds the 'wait under the line' and 'unreached phase' shapes of case 13.\n\nIts summary is tagged run 1, so it does not exercise a plain line with no run field. That shape is covered by the inline Select-SummaryLine checks, and the defect in that path is already filed as m1.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "SL-002 builds SC-052 and SC-050 as designed. LoadDrives reads each drive through the new pure DriveReads.Start. Each read runs on its own IsBackground thread. Every result is posted back before the read counts itself as answered, and the completion comes at min(every read back, 2 s). Late buttons go in letter order through DriveReads.Place, ahead of the hook's extras. DriveStatus keeps today's two strings and changes once. Drive labels are TextBlock content with AutomationProperties.Name.\n\nVerified by running:\n- Full suite: 1214 passed, 0 failed, including the 10 DriveReadsTests.\n- StallStacks.ps1 -SelfTest: 14 fixtures and 7 summary-line checks passed.\n- B-007 re-run on the published exe: exit 0, 419 ok, 0 FAIL. Every hooked run logged labels=3/3 ink=3/3, and CheckDriveCensus read '3 of 3' over 9 runs.\n\nThe DriveReads tests feed every shape in the matrix on a FIFO pump. The pump asserts it is the current context, and the no-context case runs on a raw thread that catches its exception.\n\nFindings:\n- One minor defect, with a repro. In StallStacks.ps1, Invoke-Read copies $line.run back into the [int]-typed $run parameter. A plain T-005 line has no run field, so the early CANNOT-READ results report run 0, while the full read reports run null. Measured: '\"run\": 0' for a plain line with a missing trace.\n- One wrong comment. The DriveReads remarks say the posts arrive at Normal priority. A probe set up the way the app shows its window measured Send. The conclusion, that they run ahead of the hook's Render-priority check, still holds.\n\nOpen by decision, not code defects:\n- The startup stall check is built but fails today: the SL-080 stall is back at HEAD (O-013, waived as N-018). The slice's 'no stall at startup' criterion is therefore still not met.\n- The process-exit precondition (O-014) is owed to validate-slice.\n\nSecond reader, for inputs: I reviewed the inputs the new code can be handed. I read DriveReads.cs, LoadDrives, ReadDrive and DriveButton in MainWindow.xaml.cs, DriveReadsTests.cs, the hook's LabelCensus, GreysWithItsButton and AddDrives, the WindowCases CheckDrives and CheckDriveCensus changes, the StallStacks.ps1 diff (Select-SummaryLine, Get-Stalled, Get-PhaseStalled, Invoke-Read, the self-test) and SL-002-StartupStallStacks.Tests.ps1.\n\nDriveReads handles the boundaries cleanly:\n- empty list\n- a single read\n- a null result\n- an exception before and after the settle\n- a duplicate settle, from the timer and from the last count\n- posts after the pump closes, which the test Pump drops\n- Place against out-of-order arrivals\n\nInsert positions cannot exceed the child count, because only LoadDrives clears DrivePanel. Field's `(?:^| )key=` match is not confused by the new `labels=` and `ink=` keys, and the no-line and malformed-line cases fail CheckDrives in the right direction.\n\nWhat I ran:\n- DriveReadsTests: 10 passed.\n- StallStacks -SelfTest: 14 fixtures passed.\n\nTwo input problems are filed:\n1. **Plain summary reported as run 0.** StallStacks' Invoke-Read assigns `$line.run` back into its `[int] $run` parameter, so a plain T-005 line with no run field comes out as `\"run\": 0` on every early CANNOT-READ path. When the trace is read, Read-Run reports null for the same line. I confirmed this by running it, and a repro test fails on this tree.\n2. **Inherited variables can change what the startup check measures.** The startup stall script clears only SUMMARY, TRACE and HEIGHT. A caller's leftover FSA_T005_RENDER=software or FSA_T005_SAMPLE_MS therefore changes what 'no stall at startup' measures, and FSA_T005_TAG fails its run-field check.\n\nThe label fitness rule's pattern evades renamed members and spellings such as `?.`, an indexer or a string local. The design already left that open as a taste disagreement, so it is not re-filed.\n\nReading pass: Read tests/window/fixtures/StallStacks/no-stall.json lines 1-97; it adds no new finding.\n\nWhat the fixture sets up:\n- Scan: reached, longestWaitMs 85, maxAt 950 to maxEndAt 1035 on the hook's clock. clockOriginUtc is 50 ms after traceStartUtc, so the wait falls at 1000-1085 ms on the trace's clock.\n- Trace: a single 'layout' stretch (pump, ProcessQueue, UpdateLayout, Measure, MainWindow.RefreshTree, CPU_TIME) from 1000 to 1085 ms, with idle pump samples on both sides.\n- Rescan: not reached.\n\nWhat it expects, and why that holds:\n- Scan stretch NAMED, blocked under RefreshTree: the stretch covers 100% of the wait.\n- Scan stalled=false: 85 ms is under $StallLine (250).\n- Rescan CANNOT-READ with stalled=null: it was never reached.\n- Top-level verdict NAMED, stalled=false.\n\nThis matches the self-test result already recorded (PASSED, 14 fixtures). The fixture feeds the 'wait under the line' and 'unreached phase' shapes of case 13.\n\nIts summary is tagged run 1, so it does not exercise a plain line with no run field. That shape is covered by the inline Select-SummaryLine checks, and the defect in that path is already filed as m1.",
+  "matches_design": true,
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "claim": "Invoke-Read reassigns the summary line's run to the [int]-typed parameter $run. When -Run is left out on a plain T-005 summary (no run field), $line.run is $null and PowerShell coerces it to 0. The three early CANNOT-READ results ('no trace written', trace conversion failed, converted file unreadable) are built from that $run, so they report run 0, which is T005Batch's id for its first run. The full Read-Run path reports run null for the same line ($more.run = $line.run). So the result's run key is wrong in exactly the new no--Run path this slice adds. Measured: a plain line with a missing trace printed {\"verdict\":\"CANNOT-READ\",\"reason\":\"no trace written\",\"stalled\":true,\"run\":0}.",
+    "file": "tests/window/StallStacks.ps1",
+    "line": 412,
+    "quote": {
+     "path": "tests/window/StallStacks.ps1",
+     "line": 412,
+     "text": "    $run = $line.run"
+    },
+    "evidence": "StallStacks.ps1:52 declares `[int] $Run = -1`, and Invoke-Read(:409) takes `[int] $run`. :412 `$run = $line.run`, then :414, :421 and :427 call `New-Result ... @{ run = $run; ... }`. Read-Run :289 uses `$line.run` directly (null).",
+    "fix": "Keep the line's run in an untyped local, e.g. `$lineRun = $line.run`, and pass `run = $lineRun` in the three early New-Result calls instead of reassigning the typed parameter.",
+    "repro": {
+     "path": "tests/window/SL-002-StallStacksRunField.Tests.ps1",
+     "body": "# A plain T-005 summary line has no run field. Read with -Run left out, StallStacks must not report it as run 0 (T005Batch's first run).\n$ErrorActionPreference = 'Stop'\n$work = Join-Path ([System.IO.Path]::GetTempPath()) (\"fsa-runfield-{0}\" -f [guid]::NewGuid().ToString('N'))\n[void][System.IO.Directory]::CreateDirectory($work)\n$code = 1\ntry {\n    $summary = Join-Path $work 'runs.jsonl'\n    '{\"uiThread\":1,\"primaryPhase\":\"scan\",\"exitReason\":\"closed\",\"phases\":[{\"name\":\"scan\",\"reached\":true,\"longestWaitMs\":85},{\"name\":\"rescan\",\"reached\":false,\"longestWaitMs\":0}]}' |\n        Set-Content -LiteralPath $summary -Encoding utf8NoBOM\n    $json = & pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'StallStacks.ps1') -Trace (Join-Path $work 'absent.nettrace') -Summary $summary\n    $result = ($json -join \"`n\") | ConvertFrom-Json\n    if ($result.verdict -ne 'CANNOT-READ') { Write-Output \"FAIL: verdict $($result.verdict), expected CANNOT-READ (no trace)\" }\n    elseif ($null -ne $result.run) { Write-Output \"FAIL: a summary line with no run field was reported as run $($result.run)\" }\n    else { Write-Output 'PASSED: the line with no run field is reported with no run'; $code = 0 }\n}\nfinally {\n    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue\n}\nexit $code\n",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/SL-002-StallStacksRunField.Tests.ps1"
+    }
+   },
+   {
+    "id": "t1",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "nature": "text",
+    "claim": "The DriveReads remarks say 'the dispatcher delivers these posts at Normal, ahead of the hook's Render-priority check'. The context Start captures is the one LoadDrives runs on after OnLoaded. With WPF's FlowDispatcherSynchronizationContextPriority=True, that context carries the Loaded handler's priority, which an off-screen probe measured as Send. The probe showed the window from Application.Startup, as App.OnStartup does, and read DispatcherSynchronizationContext._priority = Send. The protection the remark claims still holds, because Send is above Render; only the stated priority is wrong. That matters to anyone reasoning about where these posts sit against the hook's hold.",
+    "file": "src/FsAnalyser.App/DriveReads.cs",
+    "line": 27,
+    "end_line": 28,
+    "quote": {
+     "path": "src/FsAnalyser.App/DriveReads.cs",
+     "line": 28,
+     "text": "    /// these posts at Normal, ahead of the hook's Render-priority check. A release that is short by the same number of"
+    },
+    "evidence": "Probe (pwsh -STA, Application with a Startup handler that shows a Window, Loaded handler reading SynchronizationContext.Current's _priority): 'Loaded (window shown from Startup): priority=Send'; BaseCompatibilityPreferences.FlowDispatcherSynchronizationContextPriority=True. App.xaml:4 Startup=\"OnStartup\", MainWindow.xaml:6 Loaded=\"OnLoaded\".",
+    "fix": "Say the posts arrive at the priority of the context LoadDrives was called on (the Loaded handler's, Send in a probe), which is above the hook's Render-priority check, rather than 'at Normal'."
+   },
+   {
+    "id": "IN-m1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "file": "tests/window/StallStacks.ps1",
+    "line": 412,
+    "claim": "Invoke-Read declares `[int] $run` and then does `$run = $line.run`. A plain T-005 summary line has no run field, which is the shape this slice added -Run-less reading for, and PowerShell coerces the $null to 0. Every early CANNOT-READ result therefore reports `\"run\": 0` for a line that has no run: 'no trace written', a trace conversion failure, and an unreadable converted file. When the trace is read, Read-Run reports `run = $line.run`, which is null, so one input gives two different run identities depending on whether the trace exists. Run 0 is also a real run number in T005Batch summaries, so a reader that joins readings to runs attributes a plain run's reading to batch run 0. Measured here: a summary of one plain line plus a missing trace printed {verdict: CANNOT-READ, reason: 'no trace written', stalled: true, run: 0}.",
+    "evidence": "StallStacks.ps1:409 `function Invoke-Read([string] $trace, [string] $summaryPath, [int] $run)`, :412 `$run = $line.run`, :414 `@{ run = $run; stalled = (Get-Stalled $line) }`; Read-Run :289 `$more = [ordered]@{ run = $line.run; ...`",
+    "quote": {
+     "path": "tests/window/StallStacks.ps1",
+     "line": 412,
+     "text": "    $run = $line.run"
+    },
+    "fix": "Do not write the line's run back into the [int]-typed parameter. Use the line's own value in the three early results, for example `$lineRun = $line.run` and `@{ run = $lineRun; ... }`, so a line with no run reports null, as Read-Run does.",
+    "repro": {
+     "path": "tests/window/SL-002-StallStacksPlainRun.Tests.ps1",
+     "body": "# A plain T-005 summary line has no run field. StallStacks.ps1, asked for no -Run, must not report a run number the line does not\n# carry: when the trace is read it reports run null ($line.run); when there is no trace it must say the same, not run 0.\n$ErrorActionPreference = 'Stop'\n$stacks = Join-Path $PSScriptRoot 'StallStacks.ps1'\n$work = Join-Path ([System.IO.Path]::GetTempPath()) (\"fsa-stallstacks-plain-{0}\" -f [guid]::NewGuid().ToString('N'))\n[void][System.IO.Directory]::CreateDirectory($work)\ntry {\n    $summary = Join-Path $work 'runs.jsonl'\n    $out = Join-Path $work 'out.json'\n    Set-Content -LiteralPath $summary -Value '{\"exitReason\":\"closed\",\"primaryPhase\":\"scan\",\"phases\":[{\"name\":\"scan\",\"reached\":true,\"longestWaitMs\":85}]}' -Encoding utf8NoBOM\n    & pwsh -NoProfile -ExecutionPolicy Bypass -File $stacks -Trace (Join-Path $work 'none.nettrace') -Summary $summary -Out $out | Out-Null\n    $result = Get-Content -LiteralPath $out -Raw | ConvertFrom-Json\n    if ($result.verdict -cne 'CANNOT-READ') { Write-Output \"FAIL: verdict $($result.verdict), expected CANNOT-READ\"; exit 1 }\n    if ($null -ne $result.run) { Write-Output \"FAIL: run $($result.run) reported for a summary line with no run field\"; exit 1 }\n    Write-Output 'PASSED'\n    exit 0\n}\nfinally {\n    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue\n}\n",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/SL-002-StallStacksPlainRun.Tests.ps1"
+    }
+   },
+   {
+    "id": "IN-m2",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "extra",
+    "file": "tests/window/SL-002-StartupStallStacks.Tests.ps1",
+    "line": 83,
+    "end_line": 88,
+    "claim": "The startup stall check saves, clears and restores only FSA_T005_SUMMARY, FSA_T005_TRACE and FSA_T005_HEIGHT. T-005 also reads three more variables from the inherited environment (WindowCases.ps1:2914-2918, :3029-3030):\n- FSA_T005_RENDER=software makes the hook draw the app in software, so 'no stall at startup' is judged on a render mode the shipped app does not use. SL-080's stall was in the hardware render's SyncFlush, so this can pass without exercising the shipped render path.\n- FSA_T005_SAMPLE_MS changes the sampling the trace reading rests on.\n- FSA_T005_TAG gives the summary line a run field, which fails the script's own 'no run field' check for a reason unrelated to a stall.\nA shell left with these set from a T005Batch -Plan Render experiment changes the outcome of the slice's criterion check.",
+    "evidence": "SL-002-StartupStallStacks.Tests.ps1:39-40 sets HEIGHT and removes only SUMMARY and TRACE; :83 `foreach ($name in 'FSA_T005_SUMMARY', 'FSA_T005_TRACE', 'FSA_T005_HEIGHT')`; WindowCases.ps1:3029 `if ($env:FSA_T005_RENDER) { $variables.FSA_HOOK_RENDER = $env:FSA_T005_RENDER }`, :3030 FSA_T005_TAG, :2938 FSA_T005_SAMPLE_MS.",
+    "quote": {
+     "path": "tests/window/SL-002-StartupStallStacks.Tests.ps1",
+     "line": 83,
+     "text": "foreach ($name in 'FSA_T005_SUMMARY', 'FSA_T005_TRACE', 'FSA_T005_HEIGHT') { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }"
+    },
+    "fix": "Add FSA_T005_RENDER, FSA_T005_SAMPLE_MS and FSA_T005_TAG to the saved and restored list, and remove them before the warm-up run, beside the existing Remove-Item at line 40."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "tests/FsAnalyser.Core.Tests/DriveReadsTests.cs:18-52 has three reads meeting at Barrier(3), the middle blocked on `never`, and a 300 ms bound. It asserts arrivals [0,2] and elapsed between 250 ms and 10 s. The suite passed."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "DriveReadsTests.cs:54-73: four immediate reads, 60 s bound, on the FIFO Pump. It asserts all four arrived on the pump thread before the await resumed, in under 5 s. DriveReads.cs:57-70 posts each outcome before Interlocked.Decrement and Settle."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "DriveReadsTests.cs:75-107: the read is released after the settle and arrives on the pump thread within 5 s. MainWindow.xaml.cs:181-182 flips DriveStatus to 'Drives' on an arrival after the settle."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "DriveReadsTests.cs:109-133: two blocked reads, 300 ms bound, zero arrivals. The Task.Delay settle is at DriveReads.cs:75-76. MainWindow.xaml.cs:186 shows the no-drives sentence when nothing is shown, checked by reading."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "DriveReadsTests.cs:135-151: a null read among answering ones never reaches arrived, and the wait ends in under 5 s. ReadDrive (MainWindow.xaml.cs:190-208) returns null for not-ready, IOException and UnauthorizedAccessException, checked by reading."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "DriveReads.cs:36-37 returns Task.CompletedTask for an empty list. DriveReadsTests.cs:153-168 checks it completes in under 1 s with a 60 s bound."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "DriveReadsTests.cs:170-179: arrivals 2,0,3,1 give positions 0,0,2,1 and shown [0,1,2,3]. DriveReads.Place is at :85-92, and LoadDrives inserts at Place(shown, index) (MainWindow.xaml.cs:180)."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "DriveReads.cs:61-67 calls TrySetException before the settle. DriveReadsTests.cs:181-194 checks that awaiting Start throws the InvalidOperationException and that pump.Faults is empty."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "DriveReads.cs:65-66 calls ExceptionDispatchInfo.Throw on the context when the task is already settled. DriveReadsTests.cs:196-223 checks the fault is recorded by the pump and the task stays IsCompletedSuccessfully."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "Re-run here: WindowCases.ps1 -Case B-007 exit 0, 419 ok, 0 FAIL. Every hooked run logged 'buttons=29 labels=3/3 ink=3/3'. MainWindow.xaml.cs:219-222 sets Content = TextBlock. The census is at StartupHook.cs:897-911 and the check at WindowCases.ps1:2001-2002."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "StallStacks.ps1:266-269 Select-SummaryLine. The self-test at :494-508 covers seven selection shapes, and I re-ran it: PASSED. The guard at :544 requires only -Summary. Invoke-Read's early results mislabel run (finding m1)."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "StallStacks.ps1:255-263 Get-PhaseStalled/Get-Stalled. $more.stalled is set at :289 and per stretch at :362, before any continue. named.json expects true/false and no-stall.json expects false/null, and the self-test passes."
+   },
+   {
+    "key": "O-013",
+    "discharged": "no",
+    "evidence": "tests/window/SL-002-StartupStallStacks.Tests.ps1 exists and feeds the shape: FSA_T005_HEIGHT=644, an untraced warm-up, a traced run, and StallStacks with no -Run. By the builder's two runs it exits 1 on stalled=true at HEAD. Waived by decision as N-018. Not re-run here."
+   },
+   {
+    "key": "O-014",
+    "discharged": "cannot-tell",
+    "evidence": "Owed to validate-slice. Read threads are IsBackground (DriveReads.cs:72), but process exit while one is stuck in a dead share's redirector call needs the Sandbox set-up and was not measured here."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "MainWindow.xaml.cs:219 sets no local Foreground on the label. StartupHook.cs:913-931 GreysWithItsButton disables each real button and requires the label's Foreground to equal its ContentPresenter's TextElement.Foreground and to differ from the enabled colour. WindowCases.ps1:2003-2004 asserts ink equals labels. My B-007 run read ink=3/3 in all hooked runs."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "WindowCases.ps1:2006 records 'buttons-added of labels-denominator' per hooked run. CheckDriveCensus (:2015-2019) requires one value over 2 or more runs and is called at the end of Test-B007 (:2283). It read '3 of 3' over 9 runs. The DriveReads.cs:27-29 remarks state the priority protection, with the wrong priority name (t1)."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "SL-002-StartupStallStacks.Tests.ps1:69 requires a scan stretch with windowStartMs, meaning the trace was read. :74-77 hold RENDER-PATH only against stretches with stalled=true."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "DriveReadsTests.cs:225-251 runs the no-context case on a raw thread with SetSynchronizationContext(null), catches into a local, joins with a 10 s timeout, and asserts IsType and started==0. Pump.RunAsync (:294-311) runs each body on the pump, asserts Assert.Same(this, Current), rethrows a failed body and bounds the wait at 30 s."
+   },
+   {
+    "key": "O-019",
+    "discharged": "no",
+    "evidence": "Waived by decision (N-017). StallStacks.ps1:89-90 holds `$StallLine = 250.0` with a comment naming T005Batch.ps1's $Stall as its hand-kept twin. No mechanical twin check was built."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "DriveReadsTests.A_read_that_does_not_answer_holds_no_other_drive: three reads that meet at Barrier(3), the middle one blocked on a ManualResetEventSlim that is set only in finally, with a 300 ms bound."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "DriveReadsTests.The_wait_ends_only_after_every_answer_has_been_delivered: four immediate reads, a 60 s bound, run inside Pump.RunAsync (FIFO single thread). It asserts every arrival ran on the pump before the await resumed."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "DriveReadsTests.A_drive_that_answers_after_the_wait_arrives_on_the_pump: read 1 is blocked past a 300 ms bound, then released. It asserts the late arrival came on the pump thread within 5 s."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "DriveReadsTests.When_no_drive_answers_in_time_the_wait_still_ends_with_nothing: two reads both blocked on `never`, a 300 ms bound, zero arrivals."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "DriveReadsTests.A_drive_that_is_not_ready_arrives_nowhere_and_still_counts_as_back: reads 'a', null, 'c' with a 60 s bound. The test feeds the null directly. ReadDrive's IsReady/IOException/UnauthorizedAccessException-to-null conversion is device code and was checked by reading only (MainWindow.xaml.cs:190-208)."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "DriveReadsTests.A_PC_with_no_drive_to_read_is_done_at_once: Array.Empty reads with a 60 s bound, asserted under 1 s."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "DriveReadsTests.Buttons_keep_the_order_of_the_drive_list_whatever_order_the_answers_come_in: Place over 2,0,3,1 gives 0,0,2,1 and shown [0,1,2,3]."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "DriveReadsTests.An_unexpected_failure_while_reading_faults_the_wait: read 1 throws InvalidOperationException immediately with a 60 s bound. Assert.ThrowsAsync on Start, and pump.Faults is empty."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "DriveReadsTests.An_unexpected_failure_from_a_drive_that_answered_late_is_raised_on_the_pump: read 1 is blocked past a 300 ms bound, then released to throw. pump.NextFault receives it and the task stays completed."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "WindowCases.ps1 -Case B-007, re-run here on this PC's real C:, D: and Z:. Every hooked run logged labels=3/3 ink=3/3, and the CheckDrives checks at WindowCases.ps1:2001-2004 passed. Exit 0, 419 ok."
+   },
+   {
+    "key": "C-011",
+    "exercised": "no",
+    "evidence": "No test feeds a label containing '_' or '__'. The case is material:false by design, because no volume here has one. The reason still holds against the code: DriveButton sets Content to a TextBlock (MainWindow.xaml.cs:219-222), which B-007's labels census confirms on the real buttons. A ContentPresenter's RecognizesAccessKey applies only to string content."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "StallStacks.ps1 -SelfTest (:494-508) calls Select-SummaryLine on a plain list with -1, tagged lines with 1, 0 and -1, -Run 2, a plain list with 0, and an empty list. The self-test does not run Invoke-Read's no--Run path, where the run-field coercion lives (finding m1)."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "named.json: scan 300 ms expects stalled true, rescan 5 ms expects false, top level true. no-stall.json: scan 85 ms expects false, unreached rescan expects null. Per-stretch `-ne` tells null from false. Self-test PASSED: 14 fixtures."
+   },
+   {
+    "key": "C-014",
+    "exercised": "yes",
+    "evidence": "tests/window/SL-002-StartupStallStacks.Tests.ps1 sets FSA_T005_HEIGHT=644 and runs an untraced warm-up T-005, then a traced T-005 with FSA_T005_SUMMARY/TRACE, then StallStacks with no -Run. It judges exitReason, scan reached, trace read, stalled false and scoped RENDER-PATH. It feeds the shape, but by the builder's runs it fails at HEAD (O-013 waived). Not re-run here."
+   }
+  ],
+  "drift": [
+   "tests/window/SL-002-StartupStallStacks.Tests.ps1:55 adds a check the design did not list and the build did not declare: the summary line must have no run field. The script does not clear FSA_T005_TAG, so an FSA_T005_TAG left in the caller's environment fails the startup check without any stall."
+  ],
+  "unreviewed": [
+   "tests/window/WindowCases.ps1 -- read only through the diff hunks (1995-2019, 2202-2206, 2280-2284) and Grep of the CheckDrives call sites. The rest of the ~5000-line harness was not opened, and I relied on the B-007 run for its behaviour.",
+   "tests/window/fixtures/StallStacks/no-stall.json -- read only its expect and summary keys by Grep (lines 2-38), not its timeline. The self-test run covers it.",
+   "tests/window/StallStacks.ps1:1-254 -- seen through the diff (header comment, $StallLine) only, not read whole."
+  ],
+  "second_round": {
+   "run_id": 11191,
+   "filed": 2,
+   "reader": "inputs"
+  },
+  "reading_pass": {
+   "state": "landed",
+   "why": [
+    "unseen changed hunks"
+   ],
+   "lens": "contracts",
+   "cut_off": false,
+   "cut_runs": {
+    "line": false,
+    "inputs": false,
+    "any": false
+   },
+   "run_id": 11193,
+   "session": "293b2be3-d1c0-4379-9be8-c936f2a83d0d",
+   "resumed": true,
+   "asked": [
+    {
+     "path": "tests/window/fixtures/StallStacks/no-stall.json",
+     "kind": "tests",
+     "state": "partly-opened",
+     "why": "unseen changed hunks",
+     "hunks": [
+      [
+       1,
+       97
+      ]
+     ],
+     "scopes": [
+      {
+       "line": null,
+       "header": null
+      }
+     ],
+     "read": [
+      1,
+      97
+     ],
+     "header": null,
+     "line": null,
+     "whole_file": false
+    }
+   ],
+   "asked_hunks": 1,
+   "named": [],
+   "before": {
+    "read_whole": 3,
+    "changed": 12,
+    "listed": 9
+   },
+   "filed": 0,
+   "read_after": 1,
+   "still_unread": []
+  },
+  "unread_measured": {
+   "measured": true,
+   "why": "",
+   "changed": 12,
+   "read_whole": 4,
+   "deleted": [],
+   "runs": [
+    11190,
+    11191,
+    11193
+   ],
+   "range": {
+    "base": "3ab847cb921227980cc33ed8adb0220de15c5e62",
+    "head": "10b354ea76c345ece99ed228ea774626cbeb7e59",
+    "source": "commits",
+    "hunk_base": "3ab847cb921227980cc33ed8adb0220de15c5e62",
+    "hunk_base_from": "the merge base with the integration branch"
+   },
+   "items": [
+    {
+     "path": ".taad/fitness.yaml",
+     "state": "partly-opened",
+     "section": "lines 1-1493 of 1493",
+     "reason": "seen only through a shell command: git diff",
+     "size_lines": 1493,
+     "hunks": []
+    },
+    {
+     "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+     "state": "partly-opened",
+     "section": "lines 301-1097 of 1097",
+     "reason": "a Read returned only part of it; seen only as 26 Grep lines; seen only through a shell command: get-item, git diff",
+     "size_lines": 1097,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+     "state": "partly-opened",
+     "section": "lines 1-81 of 81",
+     "reason": "seen only through a shell command: $env:taad3_home, git diff",
+     "size_lines": 81,
+     "hunks": []
+    },
+    {
+     "path": "tests/window/AppArgumentCorpus.json",
+     "state": "partly-opened",
+     "section": "lines 1-35 of 35",
+     "reason": "seen only through a shell command: git diff",
+     "size_lines": 35,
+     "hunks": []
+    },
+    {
+     "path": "tests/window/fixtures/StallStacks/named.json",
+     "state": "partly-opened",
+     "section": "lines 1-124 of 124",
+     "reason": "seen only through a shell command: git diff",
+     "size_lines": 124,
+     "hunks": []
+    },
+    {
+     "path": "tests/window/FsaWindowHook/StartupHook.cs",
+     "state": "partly-opened",
+     "section": "lines 1-789, 960-1605 of 1605",
+     "reason": "a Read returned only part of it; seen only as 1 Grep line; seen only through a shell command: get-item, git diff",
+     "size_lines": 1605,
+     "hunks": []
+    },
+    {
+     "path": "tests/window/StallStacks.ps1",
+     "state": "partly-opened",
+     "section": "lines 1-254 of 548",
+     "reason": "a Read returned only part of it; seen only as 22 Grep lines; seen only through a shell command: $d, $dir, $env:taad3_home, git diff; 1 returned line differ from the reviewed file (read before it changed)",
+     "size_lines": 548,
+     "hunks": []
+    },
+    {
+     "path": "tests/window/WindowCases.ps1",
+     "state": "partly-opened",
+     "section": "lines 1-2903, 2944-3019, 3045-7269 of 7269",
+     "reason": "a Read returned only part of it; seen only as 61 Grep lines; seen only through a shell command: $env:taad3_home, git diff",
+     "size_lines": 7269,
+     "hunks": []
+    }
+   ],
+   "notes": []
+  }
+ }
+}
