@@ -149,5 +149,99 @@
     "result": "none: Q-016 holds by construction for folders, because CoverageFolder carries no text and NotScannedInRemainder takes only the reason. ScreenLines is fenced from WindowReport by the appended rule. The report already carries the store's system path in OutcomeNotes.lines from before this slice; that is outside this slice's scope."
    }
   ]
+ },
+ "prescribed": {
+  "host": 636,
+  "at": "2026-11-17T09:27:42.991Z",
+  "runs": [
+   {
+    "run_id": 11125,
+    "resumed_from": "7872a791-7208-4c04-ad20-fa61cc8dc322",
+    "ending": "completed",
+    "cost_usd": 1.6980018000000001,
+    "lost_resume": false
+   }
+  ],
+  "keys_sent": [
+   {
+    "finding_id": 1821,
+    "key": "M1",
+    "digest": "1806dea1a18297e5"
+   },
+   {
+    "finding_id": 1822,
+    "key": "M2",
+    "digest": "f6d827611ec0efde"
+   },
+   {
+    "finding_id": 1823,
+    "key": "m1",
+    "digest": "5a8fb04df8f5613a"
+   },
+   {
+    "finding_id": 1825,
+    "key": "m3",
+    "digest": "aa115265217a82fa"
+   }
+  ],
+  "verdicts": [
+   {
+    "finding_id": 1821,
+    "key": "M1",
+    "digest": "1806dea1a18297e5",
+    "verdict": "hole",
+    "severity": "major",
+    "checked": "UnreadableRows.Build sorts rows by ComparePaths (UnreadableRows.cs:89). Rank upper-cases letters, so '$' < 'C' < 'P' < 'S' < 'U' < 'W' (UnreadableRows.cs:196). docs/design/SL-089-seams.md:26: W-001 under C:\\ProgramData\\Microsoft\\Windows\\WER gave 446 rows, all code 5. docs/design/SL-095-runs/spike-87-2026-10-04/L.json:26: a C:\\ scan with 559 unreadable folders. The design's remainder wording ('It names the folders named above only when there are any'). FigureText.Count (FigureText.cs:12) for the 'and N more' line. The tab header arms at MainWindow.xaml.cs:661-663.",
+    "why": "The cap takes the first 20 unreadable rows in the tab's path order. On this PC's C:\\, at least 446 of the 559 rows are folders under C:\\ProgramData\\Microsoft\\Windows\\WER, and 'P' sorts before 'S' and 'U'. So the 20 named rows would be $Recycle.Bin, Config.Msi and then WER report folders. C:\\System Volume Information (shadow storage, probably the largest unseen part) and C:\\Users\\<other profile> would land in 'and N more'. Those are exactly the folders C2 and the brief name as examples, and the panel would never name them on the slice's main target. Separately, the reorder puts the figures above the folders, so the remainder text the design specifies ('the folders named above') becomes false on screen whenever any folder is listed. With the cap it is also wrong about which folders the remainder includes: it covers all 559, not the 20 named. That text is also copied into the report as remainder.text. The 'and N more' line itself can be built: Count(n, \"more folder\") writes '1 more folder' / '539 more folders' and does not trip the fixed-plural rule.",
+    "instead": "Choose the panel's shown rows shallowest first: fewest path separators below the root, with ties in ComparePaths order. Then System Volume Information, Config.Msi, $Recycle.Bin\\S-..., Users\\<profile> and Windows\\<x> (depth 1-2) come before WER\\ReportArchive\\... (depth 4+). Keep the report's folders[] complete and in path order. Word the remainder without 'above'. Include every unreadable folder, for example 'including the N folders this scan could not read' through FigureText.Count. Add a CoveragePanelTextTests case with 30 deep WER-like rows plus C:\\System Volume Information and C:\\Users\\other. It asserts that both shallow rows are among the shown rows, that an 'and N more' line counts the rest, and that the remainder text has no 'above'."
+   },
+   {
+    "finding_id": 1822,
+    "key": "M2",
+    "digest": "f6d827611ec0efde",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "MainWindow.xaml:296-311: CoveragePanel would be a direct child of the OutcomeTextsContent StackPanel inside the OutcomeTexts ScrollViewer, capped at 76 px while tabs show. MainWindow.xaml.cs:734 (LargestFilesTab Visible at every finished ending). WindowReport.cs:144-149: the OutcomeTexts key carries actualHeight, extentHeight and inView, with no scroll offset. WindowReport's rules (fitness.yaml:294-303 and the SL-001 rule at :1460-1464): neither matches a TranslatePoint read of CoveragePanel. TranslatePoint relative to OutcomeTextsContent cannot throw a no-common-ancestor error, because CoveragePanel is its direct visual child.",
+    "why": "Keeping the sibling as a scroll away is a legitimate decision, and the panel does sit under the line as C1 asks. The new offset key is left unspecified for the states where it misleads. The panel is Collapsed for every folder-root, stopped, refused, over-count and unreadable ending (E001-1's no-panel cases). A collapsed child is not re-arranged, so TranslatePoint returns its stale VisualOffset: 0 if the panel never showed, or the previous ending's position. A check that compares top with OutcomeTexts.actualHeight would read 0 < 76 as 'in view' for a panel that is not there. The comparison is also correct only while OutcomeTexts.VerticalOffset is 0, which the report does not carry. It holds in report mode (one scan, Focusable=False), but not in general.",
+    "instead": "Write CoveragePanel.top as null unless CoveragePanel.IsVisible. Compute it as CoveragePanel.TranslatePoint(new Point(0,0), OutcomeTextsContent).Y, and add OutcomeTexts' verticalOffset to the OutcomeTexts key, so 'in view' is top - verticalOffset < actualHeight. Have E001-1 record both values, so validate reports the panel as 'a scroll away' rather than 'shown'."
+   },
+   {
+    "finding_id": 1823,
+    "key": "m1",
+    "digest": "5a8fb04df8f5613a",
+    "verdict": "holds",
+    "severity": "none",
+    "checked": "Grep of \\bCoverage\\w* over src: only the static Coverage(bool,long,long) at MainWindow.xaml.cs:857 and its call at :704. No existing member, x:Name or type is called CoverageModel. The new names CoveragePanel, CoverageLines, ShowCoverage, HideCoverage and CoveragePanelText are all distinct. Rules over the two files: 'the main window does not know it is being observed' (WindowReport, if(...report, Report(Mode|Path)); TheWindowReportReadsOnlyTheFailedFolderCount (case-sensitive \\bUnreadable\\b); 'reads the window, never rebuilds it' (Format*(, $\"...{x.Bytes|Files...}\"). None matches `window.CoverageModel`. The SL-001 rule's pattern \\bScreenLines\\b still fires on the renamed must-fire row `lines = window.CoverageModel.ScreenLines`. This follows the existing internal-property convention of window.Kinds (WindowReport.cs:267).",
+    "why": "CoverageModel ends the CS0102 clash with the static method and collides with nothing else in MainWindow. No report or fitness rule changes meaning with the new name, and the corpus must-fire row still fires.",
+    "instead": ""
+   },
+   {
+    "finding_id": 1825,
+    "key": "m3",
+    "digest": "aa115265217a82fa",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "SynchronousIoCancel.cs:248-249: the scanner's root handle, on which DecideLastAccess's FileRemoteProtocolInfo query and GetVolumeInformationByHandle run (Scanner.cs:304-314), is OpenDirectory with FILE_LIST_DIRECTORY. FILE_READ_ATTRIBUTES + BACKUP_SEMANTICS is proven only for GetFinalPathNameByHandle (OpenForFinalPath, :266-267) and for U-001's FSCTL. SynchronousIoCancel.cs:508 and :535 pass FILE_SHARE_ALL. FailCriticalErrorsTests.cs:509 counts each `CreateFile(` call in Kernel32.cs, so one helper adds exactly one entry, and any later inline open changes the count and fails. Fitness rules 746 (timestamp writers), 788 (listing), 943 (OPEN_REPARSE_POINT) and 1033 (OpenDirectory): none fires on the helper. WebSearch for the access needed by FileRemoteProtocolInformation was inconclusive; it neither confirmed nor ruled out FILE_READ_ATTRIBUTES.",
+    "why": "The helper does settle share mode by construction, and the existing count test keeps a later inline CreateFile from passing unseen. But it also fixes FILE_READ_ATTRIBUTES as the mask for the remote query, and the project's remote check has never run on that mask. The design reads a failed FileRemoteProtocolInfo query as 'local'. If the redirector does not answer that class on a FILE_READ_ATTRIBUTES handle, every mapped drive keeps today's server-volume line: SC-015 stays unfixed, and it fails in the silent direction. The default suite cannot see it, because ARemoteRootGetsNoFigure injects remote=true. The triage also dropped the single-handle option, so the root is opened twice. That is harmless, but it does not reuse the final path TryGetMftValidData reads anyway.",
+    "instead": "Keep the helper. Use its one handle for both decisions: remote is true when the FileRemoteProtocolInfo query succeeds, or when GetFinalPathNameByHandle on that same handle starts with \\\\?\\UNC\\ (a share gives that form, per SynchronousIoCancel.cs:271). That second signal does not depend on the info class's access rule, and the $MFT route needs that final path anyway. At build, run IsRemoteRoot(\"Z:\\\\\") == true and IsRemoteRoot(\"C:\\\\\") == false on this PC. It opens only the share's root for attributes and changes no mapping. Record it as C10's contact with the real redirector."
+   }
+  ],
+  "unmatched": [],
+  "unchecked": [],
+  "moved": [],
+  "annotated": [
+   "finding:1821",
+   "finding:1822",
+   "finding:1825"
+  ],
+  "counts": {
+   "holds": 1,
+   "hole": 3,
+   "unworkable": 0,
+   "no_verdict": 0
+  },
+  "summary": "Of the four prescriptions, m1 holds. M1 has a major hole: capped in the tab's path order, the panel on this PC's C:\\ would name about 20 WER report folders, and System Volume Information and the other users' profiles (the brief's own examples) would fall past the cap. Putting the figures first also makes the remainder's planned wording 'the folders named above' false. M2 has a minor hole: it gives no value for a collapsed panel, so a stale offset or 0 would read as 'in view'. m3 has a minor hole: it fixes a FILE_READ_ATTRIBUTES mask for the remote query, but the project's remote check has only ever run on a FILE_LIST_DIRECTORY handle, and the design reads a failed query as 'local', so a failure leaves the bug in place without warning. Settling that takes one IsRemoteRoot run on this PC's Z:\\, which only opens the share's root.",
+  "why": "",
+  "round": "landed"
  }
 }
