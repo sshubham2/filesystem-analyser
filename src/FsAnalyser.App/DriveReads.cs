@@ -24,8 +24,9 @@ internal static class DriveReads
     /// Every read's outcome is posted to the context before that read counts itself back, and the completion is posted
     /// after the last count, so with a first-in-first-out context every answer that came in before the completion has been
     /// delivered by the time the awaiting caller resumes. The window's DriveStatus changes at that moment, and the test
-    /// hook's hold on the report releases at that change. The hold is also protected by priority: the dispatcher delivers
-    /// these posts at Normal, ahead of the hook's Render-priority check. A release that is short by the same number of
+    /// hook's hold on the report releases at that change. The hold is also protected by priority: the posts arrive at the
+    /// priority of the context Start was called on, which for the window's LoadDrives is the Loaded handler's (Send, in an
+    /// off-screen probe), above the hook's Render-priority check. A release that is short by the same number of
     /// buttons in every run could not be caught by a window case. No Task.WhenAny and no WaitAsync: the project rule
     /// 'Cancel never abandons the scan thread' forbids them in the App, and the completion is a source set on the context.
     /// </remarks>

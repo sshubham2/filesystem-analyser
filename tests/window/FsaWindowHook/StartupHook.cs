@@ -854,7 +854,8 @@ internal class StartupHook
     }
 
     // As HoldUntilEnded: an item of Render priority kept queued holds the report, at Loaded, while the drives'
-    // continuation, at Normal, and the layout, at Render, still run.
+    // continuation, at the priority of the Loaded handler LoadDrives runs on (Send in a probe; see DriveReads), and the
+    // layout, at Render, still run.
     private static void HoldForDrives(Application app, string mode, TextBlock status, string loading, Panel drives, int extra, Stopwatch since)
     {
         if (status.Text != loading)
@@ -929,7 +930,7 @@ internal class StartupHook
             button.IsEnabled = wasEnabled;
         }
     }
-    // Drive buttons shaped like the app's own (LoadDrives): the first real one's padding, margin and alignment,
+    // Drive buttons shaped like the app's own (DriveButton, which LoadDrives fills the panel with): the first real one's padding, margin and alignment,
     // and the same two lines of text. They are never clicked; they only take the room a ready drive would.
     private static void AddDrives(Panel drives, int extra)
     {
