@@ -90,11 +90,12 @@ public class W001RootSpellingCorpusTests
     [Fact]
     public async Task EveryRootTheAppScansAsOneFolderListsTheSameFiles()
     {
-        string tree = Path.Combine(Path.GetTempPath(), "w002-spellings-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Path.Combine(tree, "a", "b"));
-        File.WriteAllText(Path.Combine(tree, "a", "b", "f.txt"), "x");
-        File.WriteAllText(Path.Combine(tree, "g.txt"), "x");
-        try
+        // The fixture is a TempTree, which puts its trees where the Core tests' rule allows (never %SystemRoot%\Temp).
+        using var fixture = new TempTree();
+        string tree = fixture.Folder("spelled");
+        fixture.Folder(@"spelled\a\b");
+        fixture.File(@"spelled\a\b\f.txt", 1);
+        fixture.File(@"spelled\g.txt", 1);
         {
             using JsonDocument corpus = Corpus();
             List<(string Id, string Root)> rows = [];
@@ -114,10 +115,6 @@ public class W001RootSpellingCorpusTests
 
             List<string> wrong = [.. rows.Where(r => !output.Contains($"listed {r.Id} 2", StringComparison.Ordinal)).Select(r => $"{r.Id} [{r.Root}] did not list 2 files")];
             Assert.True(wrong.Count == 0, string.Join(Environment.NewLine, wrong) + Environment.NewLine + output);
-        }
-        finally
-        {
-            Directory.Delete(tree, recursive: true);
         }
     }
 }
