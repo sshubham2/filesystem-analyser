@@ -1,8 +1,8 @@
 <#
-SL-107 (design review m1 and m2): the counts-only rule over the committed whole-C:\ record.
+SL-107 (design review m1 and m2), moved by SL-003: the counts-only rule over the committed proof-run records.
 
-Bug: the first draft of the rule in .taad/fitness.yaml, 'the committed whole-C:\ record carries counts, codes and reasons,
-never a path', fired on a drive letter followed by an escaped backslash pair or a slash, and on a "path" key. Write-W001Record
+Bug: the first draft of the rule in .taad/fitness.yaml, 'a committed proof-run record carries counts, codes and reasons,
+never a path' (SL-107 wrote it over the one whole-C:\ record, SL-003 over docs/proof-runs/*.json), fired on a drive letter followed by an escaped backslash pair or a slash, and on a "path" key. Write-W001Record
 refuses any string with a backslash or a slash, so the rule was weaker than the writer it backs: a UNC path, a relative path,
 a %VAR%-rooted path, a path typed by hand with single backslashes (valid JSON when they read as \t or \n) and a separator
 spelled as a \uXXXX escape all passed it, in a file that publishes the person's folder names once it is committed (Q-016).
@@ -18,9 +18,9 @@ This reads the patterns from .taad/fitness.yaml (never a copy of them), the rows
 and applies the patterns to each row's file text as .NET regexes (the patterns use a character class, an alternation and a
 lookahead, which mean the same in Python's re, the engine's dialect). It also loads Write-W001Record from
 tests/window/WindowCases.ps1 by its parse and checks the writer and the rule agree on every writer row, and applies the rule
-to the records that exist on this machine: artifacts/w001-run.json and, once a person has committed it,
-.taad/slices/SL-089/c-drive-run.json. The engine's own Fitness is run over planted copies by eng/rules-harness (rows S83-S85
-and P36 of plants.json).
+to the records that exist on this machine: artifacts/w001-run.json and every docs/proof-runs/*.json. The engine's own
+Fitness is run over planted copies by eng/rules-harness (rows S91-S94 and P41 of plants.json, planted at
+docs/proof-runs/w001-c-drive.json).
 
   pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-107-RecordPathRule.Tests.ps1
 
@@ -33,8 +33,8 @@ $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $Fitness = Join-Path $Repo '.taad\fitness.yaml'
 $Corpus = Join-Path $PSScriptRoot 'SL-107-RecordPathRuleCorpus.json'
 $Cases = Join-Path $Repo 'tests\window\WindowCases.ps1'
-$RuleName = 'the committed whole-C:\ record carries counts, codes and reasons, never a path'
-$RecordRel = '.taad/slices/SL-089/c-drive-run.json'
+$RuleName = 'a committed proof-run record carries counts, codes and reasons, never a path'
+$RecordGlob = 'docs/proof-runs/*.json'
 $script:Failures = [System.Collections.Generic.List[string]]::new()
 
 function Check([bool] $condition, [string] $what) {
@@ -45,8 +45,9 @@ function Check([bool] $condition, [string] $what) {
     }
 }
 
-# The must_not_match patterns of one entry of .taad/fitness.yaml, by its whole '  - name: ...' header line: the single-quoted
-# scalars on lines of their own after its '    must_not_match:' line, '' read as one quote. Also its files glob.
+# The must_not_match patterns of one entry of .taad/fitness.yaml, by its whole '  - name: ...' header line: the scalars on lines of
+# their own after its '    must_not_match:' line, single-quoted ('' read as one quote) or plain (as the engine appended them, which
+# YAML reads as written). Also its files glob.
 function Read-YamlEntry([string[]] $lines, [string] $header) {
     $entry = -1
     for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i].TrimEnd() -ceq $header) { $entry = $i; break } }
@@ -61,11 +62,13 @@ function Read-YamlEntry([string[]] $lines, [string] $header) {
     if ($key -lt 0) { throw "the entry '$header' has no must_not_match" }
     $found = New-Object System.Collections.Generic.List[string]
     for ($n = $key + 1; $n -lt $lines.Count; $n++) {
-        $m = [regex]::Match($lines[$n], '^\s+- ''(.*)''$')
+        $m = [regex]::Match($lines[$n], '^ {4}- (.+?)\s*$')
         if (-not $m.Success) { break }
-        $found.Add($m.Groups[1].Value.Replace("''", "'"))
+        $scalar = $m.Groups[1].Value
+        if ($scalar.Length -ge 2 -and $scalar.StartsWith("'") -and $scalar.EndsWith("'")) { $scalar = $scalar.Substring(1, $scalar.Length - 2).Replace("''", "'") }
+        $found.Add($scalar)
     }
-    if ($found.Count -eq 0) { throw "the entry '$header' has no single-quoted patterns under must_not_match" }
+    if ($found.Count -eq 0) { throw "the entry '$header' has no patterns under must_not_match" }
     [pscustomobject]@{ Files = $files; Patterns = $found.ToArray() }
 }
 
@@ -83,8 +86,9 @@ $yaml = [IO.File]::ReadAllLines($Fitness)
 $entry = Read-YamlEntry $yaml ("  - name: $RuleName")
 $rule = @($entry.Patterns | ForEach-Object { [regex]::new($_) })
 Write-Output "$($rule.Count) patterns read for the counts-only rule, files $($entry.Files)"
-Check ($entry.Files -ceq $RecordRel) "the rule covers $RecordRel"
-Check ((Get-Content -LiteralPath $Cases -Raw).Contains('.taad\slices\SL-089\c-drive-run.json')) 'the rule covers the file W-001 writes for a whole C: drive (WindowCases.ps1)'
+Check ($entry.Files -ceq $RecordGlob) "the rule covers $RecordGlob"
+$casesText = Get-Content -LiteralPath $Cases -Raw
+Check ($casesText.Contains('docs\proof-runs') -and -not $casesText.Contains('.taad\slices')) 'the rule covers the folder W-001 writes its records to (WindowCases.ps1 names docs\proof-runs, and not the engine''s slice folder)'
 
 $corpus = Get-Content -LiteralPath $Corpus -Raw | ConvertFrom-Json
 $firstDraft = @($corpus.before_patterns | ForEach-Object { [regex]::new($_) })
@@ -137,13 +141,16 @@ if ($null -ne $writer) {
     }
 }
 
-# The records that exist on this machine.
-foreach ($live in @(@('artifacts/w001-run.json', 'the last W-001 record on this machine'), @($RecordRel, 'the committed whole-C:\ record'))) {
-    $path = Join-Path $Repo ($live[0] -replace '/', '\')
+# The records that exist on this machine: the last W-001 record under artifacts, and every record under docs/proof-runs.
+$live = @(@{ Rel = 'artifacts/w001-run.json'; What = 'the last W-001 record on this machine' })
+$proofRuns = Join-Path $Repo 'docs\proof-runs'
+if (Test-Path -LiteralPath $proofRuns) { foreach ($f in Get-ChildItem -LiteralPath $proofRuns -Filter '*.json' -File) { $live += @{ Rel = "docs/proof-runs/$($f.Name)"; What = 'a committed proof-run record' } } }
+foreach ($entryLive in $live) {
+    $path = Join-Path $Repo ($entryLive.Rel -replace '/', '\')
     if (Test-Path -LiteralPath $path) {
-        Check ((Hits $rule ([IO.File]::ReadAllText($path))) -eq 0) "$($live[1]) ($($live[0])) is quiet under the rule"
+        Check ((Hits $rule ([IO.File]::ReadAllText($path))) -eq 0) "$($entryLive.What) ($($entryLive.Rel)) is quiet under the rule"
     }
-    else { Write-Output "  --    $($live[1]) ($($live[0])) does not exist here, so there is nothing to apply the rule to" }
+    else { Write-Output "  --    $($entryLive.What) ($($entryLive.Rel)) does not exist here, so there is nothing to apply the rule to" }
 }
 
 Write-Output ''

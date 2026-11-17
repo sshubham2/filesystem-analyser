@@ -1,0 +1,152 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-003",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-11-17T18:45:40.139Z",
+ "head": "a9d394cb6cde4e10c544f02b5232f537a2c4bd43",
+ "run_id": 11244,
+ "summary": "The design matches the tree where it can be checked. The hook arms RowsMode for stop mode before the progress-trigger branch (StartupHook.cs:376-377, then 496-502), so the stop-plus-rows pairing that must be verified is wired in code. The default trigger deadline is 3600 s (663). The armed stop logs its 'acted ... ms=' line after the delay and just before the press (611), so stopToEndingMs leaves out the 2 s delay as the design claims. The CfProvider 'tree' folders have on-demand population turned off, so listing them raises no callback (Program.cs:160). The engine has already appended the three new rules (fitness.yaml:1495-1524). Their unquoted plain scalars parse to the same strings as SL-107's. The old entry at 1296-1302 is still present, and the design removes it. No RuleCases row and no AppArgument producer refers to the five retired scripts.\n\nTwo majors.\n\n(1) -Stopped allows nothing for folders that change between the two runs. The spike behind that decision did not look inside C:\\Users\\sshub apart from Temp, nor at OneDrive or the CrossDevice root, and it only ever saw code 5. So the invariant marked 'holds' is not proven for the folders most likely to change. A change there gives the maintainer's two-scan run a false FAILED.\n\n(2) The new 'refused-another-code' class is counted but never fails the run. The design's reason for that, 'a holder that appeared since the scan', is contradicted by the repo's own measurement: an access check fails with 5 before a sharing check can return 32 (HeldFolderReasonTests:43). So on a code-5 row, that class is the signature of the C4 defect itself, yet the C:\\ record would still say 'held'.\n\nMinors:\n- The writer refuses a reason that contains '/'. Windows' own message for 995 does ('I/O'), so the regression -Stopped and W-003 look for leaves no record.\n- The finished part of the record can be lost when the stopped run fails, and a later plain run overwrites it.\n- Two gaps around atFolders and Stop timing, neither covered by a Fact. The progress line puts 'atfolders=' before 'folders=', so a loose parse reads the trigger value rather than the count reached. And a Stop that lands in the sizing pass is still judged 'held'.\n- Q-010 is now answered but is still listed as an open question.\n- Extra: the record could carry the panel's position on screen, to answer Q-002.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The design matches the tree where it can be checked. The hook arms RowsMode for stop mode before the progress-trigger branch (StartupHook.cs:376-377, then 496-502), so the stop-plus-rows pairing that must be verified is wired in code. The default trigger deadline is 3600 s (663). The armed stop logs its 'acted ... ms=' line after the delay and just before the press (611), so stopToEndingMs leaves out the 2 s delay as the design claims. The CfProvider 'tree' folders have on-demand population turned off, so listing them raises no callback (Program.cs:160). The engine has already appended the three new rules (fitness.yaml:1495-1524). Their unquoted plain scalars parse to the same strings as SL-107's. The old entry at 1296-1302 is still present, and the design removes it. No RuleCases row and no AppArgument producer refers to the five retired scripts.\n\nTwo majors.\n\n(1) -Stopped allows nothing for folders that change between the two runs. The spike behind that decision did not look inside C:\\Users\\sshub apart from Temp, nor at OneDrive or the CrossDevice root, and it only ever saw code 5. So the invariant marked 'holds' is not proven for the folders most likely to change. A change there gives the maintainer's two-scan run a false FAILED.\n\n(2) The new 'refused-another-code' class is counted but never fails the run. The design's reason for that, 'a holder that appeared since the scan', is contradicted by the repo's own measurement: an access check fails with 5 before a sharing check can return 32 (HeldFolderReasonTests:43). So on a code-5 row, that class is the signature of the C4 defect itself, yet the C:\\ record would still say 'held'.\n\nMinors:\n- The writer refuses a reason that contains '/'. Windows' own message for 995 does ('I/O'), so the regression -Stopped and W-003 look for leaves no record.\n- The finished part of the record can be lost when the stopped run fails, and a later plain run overwrites it.\n- Two gaps around atFolders and Stop timing, neither covered by a Fact. The progress line puts 'atfolders=' before 'folders=', so a loose parse reads the trigger value rather than the count reached. And a Stop that lands in the sizing pass is still judged 'held'.\n- Q-010 is now answered but is still listed as an open question.\n- Extra: the record could carry the panel's position on screen, to answer Q-002.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "nature": "defect",
+    "claim": "-Stopped fails on any notInFinished or codeChanged row and allows nothing for folders that change between the runs. The transfer table marks 'the unlistable set does not change between the runs' as holds. The only evidence is spike denied-set-gains-no-folders-in-30-min, and its own scope note says it did not look inside C:\\Users\\sshub apart from Temp, nor at OneDrive or the container store. It also used FindFirstFileExW only and saw nothing but code 5.\n\nA whole-C:\\ W-001 scans exactly those areas: the maintainer's AppData, OneDrive, and the CrossDevice (Phone Link) root that spike sync-roots-match-scanner-env found and never opened. Whether a listing there succeeds, or which cloud error it gets, depends on whether the provider and phone are reachable, and the stopped run comes up to an hour after the finished one. A 362/363 or timeout row that appears in only one run, or changes code, makes the maintainer's -Stopped run FAILED. That costs another pair of whole-C:\\ scans with kernel pool possibly held until restart, for a transient and not a product defect.\n\nThe harness already treats this as possible within a single run: the oracle tallies a folder created or changed after the scan started rather than calling it a leak.",
+    "evidence": "Spike denied-set-gains-no-folders-in-30-min evidence: 'Scope limit: the walk did not look inside C:\\Users\\sshub except Temp, and did not look at the layer store or OneDrive'. Spike sync-roots-match-scanner-env: 'The CrossDevice folder itself was not opened.' Design cross_domain_transfer invariant 1 status 'holds'. Key decision: 'an allowance would only hide a regression'. Lesson #873: an earlier C:\\ record had 559 unreadable folders against the spike's 549.",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 6217,
+     "text": "if ($probe.TimesRead -and ($probe.CreationUtc -gt $scanStartUtc -or $probe.ChangeUtc -gt $scanStartUtc)) { return 'changed-since-scan' }"
+    },
+    "fix": "Mark the invariant must-verify, not holds. In Compare-StoppedRows:\n- Class a notInFinished row whose folder's creation or change time is after the finished run started as 'new-since-finished', tallied as the oracle already does.\n- Make codeChanged and notInFinished rows where either code is not 5 INCONCLUSIVE rather than FAILED.\nKeep FAILED for code 995 and for code-5 rows that existed before the finished run. Add both branches to the Compare-StoppedRows Fact.\nTo settle the question instead: repeat the two-walk spike, 30 minutes apart, over C:\\Users\\sshub including the OneDrive and CrossDevice roots. It lists names only, which is TAAD's to run."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "error-paths",
+    "nature": "defect",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 6216,
+    "claim": "C4's only real evidence on C:\\ is the 'refused-another-code' class. The design counts it and does not fail on it, so W-001 can end 'held' with refusedWithAnotherCode > 0.\n\nThe stated reason, 'a holder that appeared since the scan is not a product defect', does not hold on this tree. The repo's own measurement shows an access refusal (5) taking precedence over a sharing violation (32): a folder both denied and held answers 5. So a folder whose ACL refused the scan's plain open still answers 5 to the oracle however it is held now. A code-5 row that now probes 32 had an ACL that let the plain open through. That is HeldFolderReasonTests' shape, where the product must record the plain open's 32: the C4 defect itself, or at best an ACL change plus a new holder.\n\nThe other C4 check, Get-ReasonCodeMismatches, compares a row's reason with that same row's code. Both come from folder.Win32Error, so it cannot see a code taken from the wrong call.",
+    "evidence": "Design, C4 component: 'The new class is tallied, not failed, because a holder that appeared since the scan is not a product defect'. HeldFolderReasonTests asserts that on h, held without read sharing and denied FILE_WRITE_ATTRIBUTES, the keep-last-access open (which asks for that right) gets 5 while the plain open gets 32.",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/HeldFolderReasonTests.cs",
+     "line": 43,
+     "text": "Assert.Equal((ErrorAccessDenied, ErrorSharingViolation), (TestNative.FolderOpenError(h, KeepOpen), TestNative.FolderOpenError(h, PlainOpen)));"
+    },
+    "fix": "Count 'refused-another-code' as a failure in Get-W001Verdict, or at least as 'inconclusive' with a console line saying C4 is unproven by this run. Never let the verdict be 'held' while it is above 0. Drop the 'transient holder' rationale. Keep the corpus row (plant 'held', expect 'refused-another-code') and add a Get-W001Verdict case for it to W001ProofTests."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "nature": "defect",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 6256,
+    "claim": "Write-W001Record throws, and writes nothing, on any string it does not allow. That includes a panel reason containing '/'.\n\nUnreadableRows.Reason gives code 995 no wording of its own, so its reason is Windows' message: 'The I/O operation has been aborted ... (Windows error 995)', which has a slash. A 995 row is exactly the regression -Stopped (aborted) and W-003 (cutFolderRows) exist to catch, and W-003's record carries byCode reasons. When the defect is found, the throw discards the record of the maintainer's game day.\n\nThe same throw-after-the-run hits any label left out of the hand-grown allowed set (completed, rig, tailscale, wifi-off and so on), after a whole-C:\\ run of up to 3600 s.",
+    "class_of": "strings the record writer refuses only after the run",
+    "threat": "accident",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 6256,
+     "text": "if ($value -notin $allowed -and $value -cnotmatch '^[0-9a-f]{40}$' -and ($value -cnotin $reasons -or $value -match '[\\\\/]')) { $strays.Add($value) }"
+    },
+    "fix": "Make the writer replace a refused string with null and record a 'withheldStrings' count, rather than throwing. The fitness rule still fences the file. In byCode, keep the code and count, and write the reason only when it holds no slash or backslash. Add a 995 row to the W-003 and Compare-StoppedRows Facts, and check that a record is still written."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "nature": "defect",
+    "claim": "The W-001 -Stopped record is written 'once, at the end of the command'. The contract's 'Timeout at 3600 s: FAILED, and no record' does not separate the finished run from the stopped run. If the stopped run times out, throws, or ends on the early return when it writes no report, the finished whole-C:\\ run (C1b, C2 and the Q-001 figures) is lost along with it. The maintainer must then redo both scans.\n\nThe contract also accepts that a later run without -Stopped overwrites the file without the 'stopped' part. If that happens before the maintainer commits, the C5 evidence is gone.",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 6300,
+     "text": "if ($null -eq $run.Report) { return }"
+    },
+    "fix": "Write the finished part as soon as the finished run is judged. Rewrite the same file with the 'stopped' part added once that run ends, and in a finally block with stopped.verdict 'failed' or 'inconclusive' when it did not finish. That is still one changed file per command. Make a run without -Stopped keep an existing file's 'stopped' part only when the commit matches, or refuse to overwrite a record that has one unless -Force is given."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "defect",
+    "file": "tests/window/FsaWindowHook/StartupHook.cs",
+    "line": 739,
+    "claim": "The design reads atFolders 'from the acted mode=stop ... folders=n line'. That line is 'acted mode=stop atfolders=N folders=M sized=S current=<path> ...', so a regex like folders=(\\d+) matches inside 'atfolders=' and records the trigger value, not the count reached. No Fact covers this parse.\n\nThe same line marks the second gap. When sized is not '-', the trigger was met in the sizing pass, after every folder was listed (StartupHook.cs:730), so Stop cut no folder short. Get-StoppedVerdict still calls a Cancelled run 'held', and C5 is then proven vacuously. This is the design's must-verify precondition, 'the second run really is partial', checked only by status.",
+    "quote": {
+     "path": "tests/window/FsaWindowHook/StartupHook.cs",
+     "line": 739,
+     "text": "Log($\"acted mode={mode} {trigger.Describe()} folders={folders} sized={sized?.ToString() ?? \"-\"} current={current} ms={Clock.ElapsedMilliseconds} utc={Utc()}\");"
+    },
+    "fix": "Parse with ' folders=(\\d+) ' and ' sized=(\\S+) ', with a leading space, and record both. Make Get-StoppedVerdict return inconclusive (and retry with n halved) when sized is not '-'. Add both to the AStoppedRow... Fact."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "drift-from-design",
+    "nature": "defect",
+    "claim": "The design still lists E003-1's `-not (Test-Path .taad\\slices)` as an open question. Q-010 has since answered it: E003-1 is rewritten to 'W-001 writes nothing under .taad'. That means `git grep -n -i taad -- tests/window/WindowCases.ps1` shows no path W-001 writes to, and after a W-001 run `git status --porcelain --untracked-files=all -- .taad` shows nothing new apart from the engine's SL-003 records, with no c-drive-run.json anywhere under .taad. The answer is the newer fact. The design agrees with it on substance (it does not delete the engine's records, and it adds rule 3) but should drop the question and take the decided check as E003-1's acceptance.",
+    "evidence": "Q-010 DECIDED (question-answerer): 'Proposed E003-1: \"W-001 writes nothing under .taad.\" It passes when both of these hold ...'. Design open_questions[0] and key decision 9.",
+    "fix": "Remove the open question. State E003-1 as Q-010 decided it, and note that architecture rule 3 (`\\.taad[\\\\/]+slices` over WindowCases.ps1) is its gate-time half."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "extra",
+    "claim": "The W-001 C:\\ record carries mftBytes and unseen so that the maintainer's one C:\\ run answers open question Q-001. It carries nothing for Q-002, whether the panel is on screen or a scroll away at a finished whole-drive ending. 'window.CoveragePanel.visible' is IsVisible, which is true even when the panel is outside OutcomeTexts' 76 px view (lesson #874). So the same expensive run cannot settle what 'shows the coverage panel' means in practice.",
+    "evidence": "Lesson #874: use CoveragePanel.top against OutcomeTexts.actualHeight plus OutcomeTexts.verticalOffset. Q-002 is open.",
+    "fix": "Add coverage.panelTop, textsHeight and textsOffset, all integers from the report's existing window keys, to the W-001 record. Counts only, no check."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M1: the no-allowance stopped relation is marked 'holds' on a spike that left out C:\\Users\\sshub (apart from Temp), OneDrive and the CrossDevice root. M2: the 'transient holder' reason for counting refused-another-code without failing is contradicted by HeldFolderReasonTests:43 (an access refusal wins over a sharing violation).\n\nChecked and holding:\n- The hook arms RowsMode for stop mode (StartupHook.cs:376-377) before DriveAtProgress (496-502).\n- The trigger deadline defaults to 3600 s (663).\n- MarkerDeadline is 60 s on the launch clock (189, 593).\n- Folders in CfProvider's 'tree' have population turned off (Program.cs:160).\n- Scanner sync roots only govern keep-last-access (Scanner.cs:325-334), so the rig and real modes take the same hydration path."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "m3: a Stop that lands in the sizing pass after every folder was listed is judged 'held'. m5 (extra): the record could answer Q-002 as it answers Q-001.\n\nOutside claims checked on the web:\n- FindFirstFile does report RECALL_ON_DATA_ACCESS for an online-only OneDrive file (stackoverflow.com/questions/54560454: 0x00500020), and it masks REPARSE_POINT. The reader descends into plain directories too, so it works in either placeholder mode.\n- Microsoft Learn (learn.microsoft.com/en-us/windows-hardware/drivers/ifs/placeholders_guidance): a minifilter 'can remove this attribute ... once the entire data is available locally'. So real-mode 'hydrated' sees only full hydration; a partial hydration keeps the attribute. This is noted, with no cheap fix through listings.\n- PowerShell issue #7152 shows that enumerating OneDrive through pwsh's provider downloaded files. The design's FindFirstFileExW Seam reader avoids that route, and must keep avoiding it."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "M2: the one signal that tells the C4 defect apart has no consequence for the verdict. Get-ReasonCodeMismatches compares each row's reason with that same row's code, so it cannot see a code taken from the wrong call."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none. Three case functions, a shared writer, six Facts, no hook or product change. Get-ReasonCodeMismatches is close to a tautology but costs one function and is folded into M2."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "m2: the W-001 contract's 'Timeout at 3600 s: no record' does not separate the finished run from the stopped one, and an overwrite by a plain run is accepted. The W-002 and W-003 contracts otherwise state NOT RUN, INCONCLUSIVE and FAILED for each branch."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "m1: the writer throws on a reason containing a slash (995's Windows message has 'I/O') or on a label missing from the allowed set, and writes nothing, after an expensive run. m2: the finished part is lost when the stopped run fails."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "m4: Q-010 is answered and the design still carries it as open. The design otherwise matches the constraints:\n- the plant rows are removed;\n- no RuleCases C-006 to C-014 is affected (grep of the repository found S83, S86 and P36 only in plants.json, the tests/bugs scripts and docs);\n- the readers of .taad/slices are retired;\n- records go under docs/proof-runs;\n- no documentation is planned."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "The engine already appended the three rules (fitness.yaml:1495-1524) as unquoted plain scalars. They parse to SL-107's strings, but the corpus runner's Read-YamlEntry must read that form; the design already says so. Rule 3's pattern hits only WindowCases.ps1:6272 and 6367 today, and both are changed.\n\nInvariants that hold only by remembering:\n- the writer's allowed set (folded into m1);\n- a future proof case must join $ProofCases;\n- W-003 record keys must avoid the finish-line regexes.\nOnly the first can cost a run's record."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "m3: no Fact covers the atFolders and sized parse of the 'acted' line, and a loose regex reads 'atfolders='. The six planned Facts cover the failing halves of every other pure helper. M2's verdict branch needs a Get-W001Verdict case."
+   },
+   {
+    "dimension": "security",
+    "result": "none: no record holds a path. The writer refuses one, and fitness rule 1 fences docs/proof-runs/*.json with SL-107's patterns. The hook's 'current=' and the provider's 'path=' lines stay in the case folder and on the console. File names come only from fixed labels and a drive letter."
+   }
+  ]
+ }
+}

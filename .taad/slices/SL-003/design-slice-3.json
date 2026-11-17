@@ -1,0 +1,665 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-003",
+ "stage": "design-slice",
+ "attempt": 3,
+ "at": "2026-11-17T19:06:49.828Z",
+ "head": "",
+ "run_id": 11252,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "There was one proposal (practice), and it is taken as the core. It fits how the code is already built:\n- Every proof case is a function in tests/window/WindowCases.ps1, beside W-001, N-005 and N-006.\n- It reuses the hooked launch, the rows dump, CheckPanelAgrees, the stall rig, the CfProvider rig and Write-W001Record.\n- It changes no product code and no hook code.\n\nThe only fork the last attempt left open was measured by the risk spike, and the answer was go. On 3 of 3 stopped runs, stop mode with FSA_HOOK_AT_FOLDERS plus FSA_HOOK_ROWS=1 ended Cancelled with sized '-' and gave a full rows dump. Row lines, the closing count, the header and core.unreadable all agreed. The 'acted ... ms' and 'rows read ... ms' values came from one clock. So -Stopped and W-003's timing need no hook change, and the design keeps its shape.\n\nThe practice designer raised over_engineering_flag against its own design. I took that as a real signal and trimmed further:\n- Get-W001Verdict keeps its signature. The new oracle class is counted with the leaks, the same way leaks are already handled.\n- The coverage figures are copied by one walk that drops strings, not by a hand-kept field list.\n\nReading the tree also forced three seam changes, recorded in coherence_check:\n1. The engine has already appended this slice's three fitness rules (.taad/fitness.yaml:1495-1524). The SL-107 rule is therefore deleted, not renamed.\n2. The moved guard keeps the five plant rows that prove it fires under Fitness's own reading, re-planted at docs/proof-runs.\n3. W-003's rig judgement follows N-005's real rule for t and u, instead of a fixed count of 2 rows.\n\nEverything here is cheap to reverse: test harness code, one tests/bugs script, fitness.yaml and plants.json. The irreversible part is the maintainer's own whole-C:\\ run (kernel pool possibly held until a restart). It stays theirs, and is already filed as checked_by person.",
+  "components": [
+   {
+    "name": "W-001 whole-drive proof (finished run)",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "responsibility": "Get-W001RootShape classes -Root as one of four shapes:\n- local-letter: matches ^[A-Za-z]:\\\\?$ and DriveInfo.DriveType is not Network;\n- network-letter;\n- unc;\n- folder.\n\nOn a local-letter root, W-001 keeps every existing check (wcifs-layer-store precaution on, CheckPanelAgrees, the oracle, the checker controls) and adds four:\n- report.outcome is 'completed';\n- report.coverage is not null and window.CoveragePanel.visible is true;\n- reasonCodeMismatches is 0;\n- the 'refused-another-code' count is 0.\nOn a network-letter root, coverage is recorded when present but not required, because Q-003 is open.\n\nThe wait goes from 1200 s to 3600 s.\n\nThe record adds:\n- outcome;\n- coverage: Get-CountsOnly(report.coverage), meaning every number, boolean and null at any depth, with strings dropped. It also carries panelTop, textsHeight and textsOffset (rounded integers or null, from window.CoveragePanel.top and OutcomeTexts.actualHeight / verticalOffset), kept as data for Q-002 with no check on them;\n- reasonCodeMismatches;\n- oracle.refusedAnotherCode.\nNothing compares unseen with the $MFT figure. Q-001 is open and lesson #872 says the C:\\ shape is unmeasured; the record's figures will answer it.\n\nGet-ProofRecordPath gives docs/proof-runs/w001-<lower-case letter>-drive.json for both letter shapes, and artifacts/w001-run.json for unc and folder.\n\nWrite order: the record is written as soon as the finished run is judged. Before scanning, a letter run without -Stopped or -Force throws if its file already holds a 'stopped' part.",
+    "key_interactions": "Invoke-HookedRun 'rows' with FSA_HOOK_ROWS=1, Read-RowsDump, CheckPanelAgrees, Get-OracleRow, Get-CheckerControls (its folders stay in the case folder, outside the scanned root), Get-W001Verdict, Get-RecordByCode, Get-CountsOnly and Write-W001Record."
+   },
+   {
+    "name": "W-001 -Stopped (stopped-run comparison)",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "responsibility": "This runs only after the finished run has a report with status Completed. Otherwise the case is already FAILED, and no stopped part is written.\n\nThe checker controls stay planted. The stopped run uses stop mode with FSA_HOOK_ROWS=1 and FSA_HOOK_AT_FOLDERS = max(1, floor(finished core.folders / 2)), and waits 3600 s.\n\nRead-ActedLine takes the folder count from ' folders=(\\d+) ', the sizing state from ' sized=(\\S+) ' and the time from ' ms=(\\d+) (?:utc|sincearmed)='. The leading spaces matter: they keep 'atfolders=' from being read as the count, and they cover the armed form as well. A run counts as partial only when it is Cancelled with sized '-'. Otherwise the case retries with n halved, up to 3 attempts, and then ends inconclusive.\n\nCheckPanelAgrees runs on the stopped run, then Compare-StoppedRows. Rows are keyed by path, OrdinalIgnoreCase. Folder times come through a $timesOf parameter. Its default lists the parent folder and reads the creation and last-write times from the find data, without opening the folder. Each stopped row gets one class:\n- code 995: aborted;\n- path absent from the finished tab, folder created or written after the finished run started: newSinceFinished;\n- path absent, code 5: notInFinished;\n- path absent, code not 5: otherCodeDiffers;\n- path present, kind or code different, either code not 5: otherCodeDiffers;\n- path present, both codes 5, kind different: codeChanged.\n\nGet-StoppedVerdict:\n- failed when aborted, notInFinished or codeChanged is above 0;\n- inconclusive when otherCodeDiffers is above 0, or no run was partial;\n- held otherwise.\nnewSinceFinished is only tallied.\n\nThe same file is rewritten with a 'stopped' part: status, outcome, atFolders, foldersAtStop, sizedAtStop (null for '-'), attempts, folders, rows, notInFinished, newSinceFinished, otherCodeDiffers, codeChanged, aborted and verdict. The rewrite happens in a finally, so a timeout or a throw still writes verdict 'failed'. Offending paths are printed to the console only.",
+    "key_interactions": "Uses the hook's progress trigger (StartupHook.cs:739) and RowsMode, both unchanged. Read-ActedLine, Compare-StoppedRows and Get-StoppedVerdict are pure, so W001ProofTests loads them from the script's parse."
+   },
+   {
+    "name": "C4 evidence: the 'refused-another-code' oracle class and the reason/code invariant",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "responsibility": "Get-OracleRow gains the class 'refused-another-code': a code-5 NothingListed row whose plain-mask probe now fails with an error other than 0, 2, 3 or 5. HeldFolderReasonTests shows that a denial answers 5 ahead of a sharing violation. So a folder that still denies the plain open answers 5, and any other refusal means the plain open got past the ACL. That is the signature of a code recorded from the wrong call.\n\nTest-W001 adds this class to the 'opened' tally. Its count gets its own Check and is passed to Get-W001Verdict inside the leak argument, the same way leaks are handled at WindowCases.ps1:6326 and 6334. Get-W001Verdict's signature does not change.\n\nGet-ReasonCodeMismatches counts two kinds of row:\n- a row whose reason differs from that of the first row with the same code;\n- a row whose reason ends '(Windows error N)' with N other than its own code.\nIt copies no wording table. This is a consistency check only; the oracle class above is the check that can see a code taken from the wrong call.",
+    "key_interactions": "W001OracleCorpus.json gains a row: NothingListed, code 5, plant 'held', expect 'refused-another-code'. W001OracleTests gains the 'held' plant, a listable folder held through TestNative.HoldFolderSharingNoRead until the oracle has run."
+   },
+   {
+    "name": "Counts-only record helpers",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "responsibility": "Write-W001Record keeps its name and its strict throw. Its allowed set gains these fixed labels: completed, cancelled, root-unreadable, refused, local-letter, network-letter, rig, sync-root, home, tailscale, stall, wifi-off, tunnel-down and server-asleep.\n\nGet-RecordByCode builds byCode as code and count, with the reason only when the reason holds no '/' or '\\'; otherwise the reason is null. The 995 reason ('The I/O operation ...') holds a slash, and it is exactly the row -Stopped and W-003 exist to record, so it must never make the writer throw after an hour-long run.\n\nGet-CountsOnly copies numbers, booleans and nulls and drops every string.\n\nGet-ProofRecordPath and Get-W001RootShape are pure.\n\nThe point is that every caller passes the writer only what it accepts. A throw from the writer is then a writer bug, never a run outcome.",
+    "key_interactions": "Covered by the record fitness rule and by tests/bugs/SL-107-RecordPathRule.Tests.ps1, which checks that the writer and the rule agree on every corpus row."
+   },
+   {
+    "name": "W-002 OneDrive no-hydration proof",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "responsibility": "Rig mode (-IncludeCloud, no -Root):\n- Clear-StaleCloudRoots, then a fresh root under Get-CloudCaseBase, served by Start-CfProvider 'tree'; wait for READY.\n- List the root with the Seam reader.\n- Run the app in plain report mode through Start-App and Format-AppArgument (no hook, app pid kept, 120 s wait).\n- List the root again.\n- dataFetches = the provider's 'CB FETCH_DATA pid=<app pid>' lines.\n- Teardown: Remove-CloudRoot. A root still registered, or a folder left behind, fails the case.\n\nReal mode (-Root <sync root>, the maintainer's run): the same listing, scan and listing, with dataFetches null. The prompt asks for an idle OneDrive.\n\nGet-HydrationTally gives:\n- onlineOnlyBefore and onlineOnlyAfter;\n- hydrated: files online-only before, present after, and no longer online-only;\n- goneSinceBefore.\nVerdicts: failed when hydrated or dataFetches is above 0; inconclusive when onlineOnlyBefore is 0.\n\nRecords go to docs/proof-runs/w002-rig.json or w002-onedrive.json. Exactly one key matches online.?only.*before, one matches online.?only.*after, and 'hydrated' is the only key that contains 'hydrat'.",
+    "key_interactions": "The N-006 cloud helpers, CfProvider's 'tree' scenario, the Seam reader and Write-W001Record."
+   },
+   {
+    "name": "Listing-only online-only reader (Seam)",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "responsibility": "One more static method in Initialize-SeamWin32's Add-Type source. It returns path -> attributes for every file under a root, using FindFirstFileExW (FindExInfoBasic, FIND_FIRST_EX_LARGE_FETCH) on \\\\?\\ paths.\n- It never opens a file.\n- It descends into plain directories and into directories whose reparse tag is a cloud tag ((tag & 0xFFFF0FFF) == 0x9000001A), and into no other reparse point.\nOnline-only means FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS (0x400000), as in CloudPlaceholderTests. Paths stay in memory only.",
+    "key_interactions": "Used by W-002 only. Get-HydrationTally is pure and takes the two maps."
+   },
+   {
+    "name": "W-003 share Stop-timing proof",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "responsibility": "Rig mode (-IncludeNetwork, no -Root):\n- One stop run through Invoke-SmbSeamRun $case $true (armed stop 2000 ms after s's hold, rig killed 8 s after it).\n- stopToEndingMs = the 'rows read ... ms' value minus the acted line's ms. It must be above 0; both come from StartupHook.Clock (spike).\n- CheckPanelAgrees with no fixed count, then CheckSeamRow for a ('NothingListed', 5) and b ('ListedPartway', 59).\n- cutFolderRows = rows for s, plus rows with code 995, plus rows for t or u whose first rig open came after the closing line's stopUtc. That is N-005's rule. t and u may legitimately be listed before the Stop, so no fixed count of 2 rows is required.\n- No 127.0.0.1 mapping may be left.\n- Inconclusive when the rig never served, or the hold, a's refusal or b's failure came after the Stop.\n\nReal mode (-Root <share> -Network home|tailscale -Link wifi-off|tunnel-down|server-asleep), the maintainer's run:\n- Armed stop with a case-owned marker, FSA_HOOK_CANCEL_DELAY_MS=2000 and FSA_HOOK_ROWS=1.\n- The person makes the cut and types 'cut', which writes the marker. This must happen within the hook's fixed 60 s MarkerDeadline from app start.\n- Wait-App 600 s.\n- A scan that ended before Stop, a refused marker, or any answer other than 'cut' is inconclusive.\n- cutFolderRows = rows with code 995.\n\nThe record is written in a finally, whatever the ending: network, link, status, outcome, stopToEndingMs, rows, byCode, cutFolderRows and verdict. Files go to docs/proof-runs/w003-rig.json or w003-<network>-<link>.json. No pass bar for the time is invented.",
+    "key_interactions": "Uses the stall rig, the hook's armed stop mode (unchanged), RowsMode, Read-ActedLine and Write-W001Record."
+   },
+   {
+    "name": "Case wiring",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "responsibility": "Parameters and case lists:\n- The -Case ValidateSet gains W-002 and W-003.\n- -Root is accepted for W-001, W-002 and W-003.\n- -Stopped and -Force are switches for W-001 only.\n- -Network and -Link are ValidateSets for W-003 only.\n- W-002 joins $CloudCases. W-003 joins $NetworkCases and $HookedCases.\n- A new $ProofCases = 'W-001','W-002','W-003' is filtered out of -Case All. 'All -IncludeCloud' or 'All -IncludeNetwork' therefore never writes under docs/proof-runs.\n\nLine 134's throw becomes '-Root is for W-001, W-002 and W-003 only'.\n\nThe file must hold no line containing 'taad', for Q-010's git grep. Rewritten comments must say 'docs/proof-runs' and never name the old location.",
+    "key_interactions": "W001ProofTests reads the script's parse to pin the All filter and the ValidateSet labels."
+   },
+   {
+    "name": "Fitness rules and plant rows over the proof-run records",
+    "lives_at": ".taad/fitness.yaml",
+    "responsibility": "The three '# settled by SL-003' entries the engine already appended (.taad/fitness.yaml:1495-1524) are this design's architecture_rules, word for word. The builder does not add them again.\n\nThe builder:\n- deletes the SL-107 entry 'the committed whole-C:\\ record carries counts, codes and reasons, never a path' (from line 1296), whose files is .taad/slices/SL-089/c-drive-run.json;\n- in eng/rules-harness/plants.json, sets awaiting_file to { 'a committed proof-run record carries counts, codes and reasons, never a path': 'docs/proof-runs/w001-c-drive.json' };\n- removes rows S83, S84, S85, S86 and P36, and adds five rows with new unused ids, the same texts, new-file at docs/proof-runs/w001-c-drive.json under the new rule name (xunit quiet; fitness fire for the four S rows and quiet for the P row);\n- adds two rows for 'the window harness neither reads nor writes TAAD's slice records': one inserting a statement naming .taad\\slices\\X into WindowCases.ps1 (fitness fire), one naming docs\\proof-runs (quiet);\n- updates the wording of plants.json line 2 and of harness.py's load_awaiting docstring (line 594) to name the new path.\nNone of RuleCases C-006 to C-014 reads S83-S86 or P36, so none is retired.",
+    "key_interactions": "eng/rules-harness/harness.py's load_awaiting and Planting (a new-file row plants over an awaited file). All three rules sit below the first '# settled by' marker, so none has an xUnit twin."
+   },
+   {
+    "name": "Guard corpus runner (rewritten)",
+    "lives_at": "tests/bugs/SL-107-RecordPathRule.Tests.ps1",
+    "responsibility": "Changes to the script:\n- $RuleName becomes the new rule's name.\n- $RecordRel becomes 'docs/proof-runs/w001-c-drive.json'.\n- The files check expects 'docs/proof-runs/*.json'.\n- Line 87 checks that WindowCases.ps1 contains 'docs\\proof-runs' and does not contain '.taad\\slices'.\n- The live pass applies the rule to every docs/proof-runs/*.json and to artifacts/w001-run.json.\n- The header names the replacement plant rows.\nIn SL-107-RecordPathRuleCorpus.json, the 'rule' field gets the new name.",
+    "key_interactions": "Reads .taad/fitness.yaml and Write-W001Record from WindowCases.ps1's parse."
+   },
+   {
+    "name": "Retired scripts",
+    "lives_at": "tests/bugs",
+    "responsibility": "Delete:\n- O-030-ledger-discharge.Tests.ps1\n- SL-062-LedgerCases.ps1\n- SL-068-DecisionCases.ps1\n- SL-107-HarnessPlantsOverRecord.Tests.py\n- SL-107-HandOffCases.ps1\nEach reads .taad/slices. HandOff C-004 also scans the whole D:\\ unattended, and would now leave a record under docs/proof-runs. None is in the default suite, and none is an AppArgumentCorpus producer.",
+    "key_interactions": "None is in the default suite, and no producer row in AppArgumentCorpus.json names any of them."
+   },
+   {
+    "name": "W001ProofTests and the oracle corpus row",
+    "lives_at": "tests/FsAnalyser.Core.Tests",
+    "responsibility": "A new W001ProofTests.cs loads functions from WindowCases.ps1's parse, as W001OracleTests does. It covers:\n- Compare-StoppedRows (with a stubbed $timesOf), all six classes, and Get-StoppedVerdict;\n- Read-ActedLine on the spike's exact progress line ('acted mode=stop atfolders=15151 folders=15202 sized=- current=X:\\b148\\s026 ms=2289 utc=...' gives 15202, '-' and 2289) and on the armed form;\n- the partial rule;\n- Get-ReasonCodeMismatches;\n- Get-RecordByCode with a 995 row, after which Write-W001Record writes and does not throw;\n- Get-CountsOnly on a coverage object that holds a remainder text;\n- Get-W001RootShape and Get-ProofRecordPath;\n- every -Network and -Link ValidateSet value and every fixed label, each in the writer's allowed set;\n- the $ProofCases filter out of All;\n- Get-HydrationTally.\nW001OracleTests and its corpus gain the 'held' plant and the 'refused-another-code' row.",
+    "key_interactions": "Runs in the default suite with no new trait, so the FsaDefaultTestFilter contract is untouched."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "WindowCases.ps1 -Case W-001 [-Root <drive|folder>] [-Stopped] [-Force]",
+    "kind": "cli",
+    "auth_model": "Runs as an ordinary, non-elevated account. -Root C:\\ (finished, and with -Stopped) is the maintainer's run only: a cold scan of C: has measured about 537 MB of kernel pool, which may be held until a restart (lesson #474). The loop runs W-001 only on SUBST letters over %TEMP% trees (E003-1 to E003-3).",
+    "error_cases": "Throws:\n- no -Root, or a -Root that is not a folder;\n- -Stopped or -Force with another case;\n- a letter run without -Stopped or -Force whose record already holds a 'stopped' part (before scanning).\n\nINCONCLUSIVE (exit 3):\n- elevated;\n- the checker controls misbehaved;\n- the stopped run was never partial in 3 attempts, or otherCodeDiffers is above 0.\n\nFAILED (exit 1):\n- the finished run timed out at 3600 s: no record;\n- on a local letter, outcome not 'completed', null coverage or a hidden panel, reasonCodeMismatches above 0, refused-another-code above 0, or a leak: the finished part is written with verdict 'failed';\n- the stopped run is aborted, or notInFinished or codeChanged is above 0, or it timed out or threw: stopped.verdict 'failed', written in a finally.",
+    "notes": "One command makes the whole PS-033 proof: pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case W-001 -Root C:\\ -Stopped, giving docs/proof-runs/w001-c-drive.json. W-001 is never in -Case All."
+   },
+   {
+    "name": "WindowCases.ps1 -Case W-002 -IncludeCloud [-Root <sync root>]",
+    "kind": "cli",
+    "auth_model": "Rig mode registers and removes a TAAD-made sync root under Get-CloudCaseBase. -Root on the maintainer's OneDrive is their run, because a hydration would change OneDrive's copy of their own files.",
+    "error_cases": "NOT RUN (exit 2): without -IncludeCloud.\n\nINCONCLUSIVE:\n- the provider was not READY;\n- onlineOnlyBefore is 0.\n\nFAILED:\n- hydrated is above 0;\n- dataFetches is above 0;\n- a rig root is still registered, or its folder is left, after teardown;\n- the app timed out at 120 s.",
+    "notes": "The record goes to docs/proof-runs/w002-rig.json or w002-onedrive.json. Its keys include onlineOnlyBefore, onlineOnlyAfter, hydrated, goneSinceBefore, dataFetches, status, outcome, source and verdict. No other key matches online.?only.*before, online.?only.*after or hydrat (E003-4 counts them)."
+   },
+   {
+    "name": "WindowCases.ps1 -Case W-003 -IncludeNetwork [-Root <share> -Network home|tailscale -Link wifi-off|tunnel-down|server-asleep]",
+    "kind": "cli",
+    "auth_model": "Rig mode makes and removes its own non-persistent loopback mapping. Real mode is the maintainer's: they make the cut and type 'cut'. Cutting Wi-Fi, taking Tailscale down and putting the server to sleep are physical or other-machine acts.",
+    "error_cases": "NOT RUN (exit 2): without -IncludeNetwork.\n\nINCONCLUSIVE:\n- the rig never served;\n- the hold, a's refusal or b's failure came after the Stop;\n- an answer other than 'cut', or the marker refused after the hook's 60 s deadline;\n- the scan ended before the Stop.\n\nFAILED:\n- cutFolderRows is above 0;\n- no timing could be read;\n- a mapping is left;\n- the app timed out.\n\nThe record is written in a finally whatever the ending.",
+    "notes": "stopToEndingMs runs from Stop pressed to the stopped ending on screen, on one in-process Stopwatch. Lesson #887: on a day the share's server is down, the exe can stay alive and locked for minutes after its window closes. That is not a regression."
+   },
+   {
+    "name": "Proof-run record docs/proof-runs/<case>-<source>.json",
+    "kind": "function",
+    "auth_model": "Written only through Write-W001Record. It holds integers, booleans, nulls, the 40-hex commit, labels from the allowed set, and panel reasons free of separators.",
+    "error_cases": "Any other string makes the writer throw and write nothing. Callers rule that out ahead of the write: Get-RecordByCode nulls reasons that hold a separator, Get-CountsOnly drops strings, and a Fact pins the labels.",
+    "notes": "W-001 keeps every existing key, and the change is additive only. It adds:\n- outcome;\n- coverage{counts-only copy of report.coverage, panelTop, textsHeight, textsOffset};\n- reasonCodeMismatches;\n- oracle.refusedAnotherCode;\n- with -Stopped: stopped{status, outcome, atFolders, foldersAtStop, sizedAtStop, attempts, folders, rows, notInFinished, newSinceFinished, otherCodeDiffers, codeChanged, aborted, verdict}."
+   },
+   {
+    "name": "Fitness rules over the records, plants.json and WindowCases.ps1",
+    "kind": "function",
+    "auth_model": "Read by the engine's Fitness at every gate, and by eng/rules-harness.",
+    "error_cases": "With no docs/proof-runs/*.json committed, the record rule matches no file. The harness accepts that only through awaiting_file pointing at docs/proof-runs/w001-c-drive.json.",
+    "notes": "These are the three SL-003 entries already in .taad/fitness.yaml:1495-1524 (see architecture_rules). E003-1's acceptance is Q-010's git check plus the WindowCases.ps1 rule at gate time."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "There is one record file per proof source under docs/proof-runs:\n- w001-<letter>-drive.json for drive-letter roots;\n- w002-rig.json or w002-onedrive.json;\n- w003-rig.json or w003-<network>-<link>.json.\nUNC and folder roots keep artifacts/w001-run.json.\n\nW-001 writes the finished part as soon as that run is judged, and rewrites the same file with the 'stopped' part in a finally. A letter run without -Stopped or -Force refuses, before scanning, to overwrite a file that holds a 'stopped' part.\n\nCoverage is required on local letters only, and is recorded without being required on network letters.",
+    "reversibility": "cheap",
+    "rationale": "Finish lines 1-3 need exactly one new or changed record per command. Writing early keeps an hour-long C:\\ run if the stopped run fails. Letter-only names keep separators out of file names. Q-003 (is there a panel on Z:\\ itself) is open, so W-001 must not fail on its unknown answer."
+   },
+   {
+    "decision": "The record guard moves to the SL-003 entries the engine has already appended:\n- the SL-107 entry is deleted, not renamed;\n- awaiting_file is re-keyed to the new rule name and docs/proof-runs/w001-c-drive.json;\n- S83-S86 and P36 are removed;\n- the same five texts are re-planted at docs/proof-runs/w001-c-drive.json under new ids;\n- the WindowCases.ps1 rule gets one fire plant and one quiet plant.",
+    "reversibility": "cheap",
+    "rationale": "Renaming the old entry would leave two rules with the same patterns, one of them over a dead path. The constraint removes the plant rows that point at .taad/slices. The replacements point at docs/proof-runs, and without them nothing would prove the moved guard fires under Fitness's Python reading (lesson #75). The proposal named that gap as its own risk."
+   },
+   {
+    "decision": "E003-1 as planted cannot pass on uat, and the design does not try to make that one line pass. Its line `-not (Test-Path .taad\\slices)` fails whatever is built, because the engine commits its own slice records. Following Q-010, the acceptance for that half is:\n- `git grep -n -i taad -- tests/window/WindowCases.ps1` prints nothing;\n- after a run, `git status --porcelain --untracked-files=all -- .taad` shows nothing beyond the engine's own SL-003 records and fitness.yaml.\nEvery other check in E003-1 is met as written.",
+    "reversibility": "cheap",
+    "rationale": "Q-010 is answered: the check is rewritten. That answer is newer than the finish line's text and nothing measured contradicts it. Deleting the engine's records would not hold, because the next merge commits them again. Q-010 was decided by a model, not a person, and the reviewer should know that."
+   },
+   {
+    "decision": "Retire O-030-ledger-discharge, SL-062-LedgerCases, SL-068-DecisionCases, SL-107-HarnessPlantsOverRecord.Tests.py and SL-107-HandOffCases.ps1. Rewrite only SL-107-RecordPathRule.Tests.ps1 and its corpus's rule name. No RuleCases case is retired.",
+    "reversibility": "cheap",
+    "rationale": "The constraint retires the scripts that read .taad/slices. The corpus runner is the kept guard's own test. A grep of tests/rules finds no S83-S86, P36 or SL-089 reference, so none of C-006 to C-014 depends on the removed rows."
+   },
+   {
+    "decision": "Raise W-001's wait from 1200 s to 3600 s for both runs.\n-Stopped uses the existing stop mode with FSA_HOOK_AT_FOLDERS at half the finished folder count, plus FSA_HOOK_ROWS=1, and the hook is not changed.\nA run is partial only when it is Cancelled with sized '-'. Otherwise the case retries with n halved, up to 3 times, then ends inconclusive.",
+    "reversibility": "cheap",
+    "rationale": "Spike c-drive-elapsed-within-w001-timeout was no-go: earlier C:\\ walks reached 1,299 s, and a timeout writes no report. Spike hook-stop-atfolders-with-rows-dump was go on 3 of 3 runs. A trigger met during the sizing pass cuts no folder short, so it proves nothing about C5."
+   },
+   {
+    "decision": "Compare-StoppedRows fails only on the shapes a cut folder leaves:\n- 995 rows;\n- code-5 rows the finished tab lacks, for folders that existed before the finished run;\n- code-5 rows whose kind changed.\nRows created or written after the finished run started are tallied. Any difference where either code is not 5 makes the verdict inconclusive.",
+    "reversibility": "cheap",
+    "rationale": "Spike denied-set-gains-no-folders-in-30-min held on 549 of 549 folders, but never looked under C:\\Users\\sshub, OneDrive or the CrossDevice root. Spike sync-roots-match-scanner-env found that root unknown to the scanner, and provider errors there can come and go between runs. An unproven input may cost a rerun, but never produces a false FAILED."
+   },
+   {
+    "decision": "C4 is evidenced by the 'refused-another-code' oracle class. Its count has its own Check and is added to the leak argument of an unchanged Get-W001Verdict. A reason/code consistency count sits beside it as a weaker second check.",
+    "reversibility": "cheap",
+    "rationale": "HeldFolderReasonTests shows that a denial answers 5 ahead of a sharing violation. A code-5 row that now probes with another code therefore means the plain open got through, which is the shape where the product must have kept the plain open's code. Keeping the signature means the existing Theory and every caller need no change."
+   },
+   {
+    "decision": "Counts only, enforced by the callers:\n- Write-W001Record stays strict and throws;\n- Get-RecordByCode writes a null reason wherever the reason holds '/' or '\\';\n- coverage is copied by Get-CountsOnly, which drops strings;\n- a Fact pins every label into the allowed set.",
+    "reversibility": "cheap",
+    "rationale": "The corpus runner checks that the writer and the rule agree on every row, so the writer cannot be loosened. The 995 reason ('The I/O operation ...') holds a slash, and it is exactly the regression -Stopped and W-003 record. A walk that drops strings cannot leak panel text such as remainder.text, and needs no field list to keep in step with the report."
+   },
+   {
+    "decision": "Online-only means FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS. It is read by a Seam method that only lists, never opens a file, and descends only into plain and cloud-tagged directories. hydrated counts files that were online-only before, are present after, and are no longer online-only.",
+    "reversibility": "cheap",
+    "rationale": "It is the project's own marker (CloudPlaceholderTests), and a reader that only lists cannot cause the hydration it checks for. A file that is gone is kept apart from one that was hydrated."
+   },
+   {
+    "decision": "W-003 times Stop to the ending from the acted line's ms to the 'rows read' ms, on the one hook clock. In rig mode it judges the cut folder by N-005's rule: s, any 995 row, and t or u when first opened after the Stop. In real mode the existing armed marker is written when the person types 'cut', within the hook's fixed 60 s MarkerDeadline. W-001, W-002 and W-003 never run under -Case All.",
+    "reversibility": "cheap",
+    "rationale": "The spike confirmed that both ms values come from StartupHook.Clock. N-005's code shows t and u may be listed before the Stop, so a fixed count of 2 rows would fail a correct run. A hook change to lengthen the marker deadline is ruled out. Wi-Fi off and Tailscale down are instant, and the maintainer can have the server's sleep ready before starting."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal, taken as the core.\n\nKept:\n- the case functions and their record shapes;\n- the -Stopped mechanism, which the spike measured as go;\n- the M1 and M2 classes;\n- the writer's strictness and the byCode filtering;\n- the script retirements.\n\nChanged at the seams after reading the tree:\n- the engine-appended SL-003 fitness entries are adopted, and SL-107's entry is deleted rather than renamed;\n- the five plant rows are re-planted at docs/proof-runs rather than dropped;\n- W-003's rig judgement uses N-005's rule for t and u rather than a fixed count of 2 rows;\n- Get-W001Verdict keeps its signature;\n- coverage is copied by a walk that drops strings;\n- coverage is required on local letters only (Q-003 is open).\n\nIts over_engineering_flag was honoured, and this design trims further."
+   }
+  ],
+  "coherence_check": "There was one proposal, so there is no composition to check across designers. Nothing here has yet survived a disagreement, and the reviewer should treat this as the first time anyone argues with it.\n\nI checked the proposal's pieces against the tree and against each other.\n\n(1) Fitness entries. The engine had already appended three '# settled by SL-003' entries (.taad/fitness.yaml:1495-1524; git status shows fitness.yaml modified). They are:\n- a docs/proof-runs/*.json record rule with SL-107's three patterns;\n- a plants.json rule;\n- a WindowCases.ps1 rule with the proposal's own '\\.taad[\\\\/]+slices' pattern.\nThe proposal would have renamed the SL-107 entry as well, giving two rules with the same patterns. Redesigned: those three entries are this design's architecture_rules, word for word. The builder deletes the SL-107 entry and adds no fitness entry. awaiting_file is keyed by the appended rule's name.\n\n(2) Plant rows. The proposal removed S83-S86 and P36 and listed the result as its own risk: no plant would prove the moved guard fires under Fitness's reading. Changed: the same five texts are planted at docs/proof-runs/w001-c-drive.json under new ids. harness.py's Planting already plants over an awaited file. The constraint is read as 'rows pointing at .taad/slices go'.\n\n(3) Strict writer against the finally. The writer throws by design, and the stopped part is written in a finally. A throw there would hide the run's real ending. The seam is made consistent by having callers pass the writer only what it accepts (Get-RecordByCode, Get-CountsOnly, labels pinned by a Fact). A throw is then a writer bug that fails loudly, never a run outcome.\n\n(4) Two notions of a partial run. W-001 -Stopped uses the progress trigger; its acted line carries atfolders, folders and sized. W-003 uses the armed marker; its acted line carries enabled, visible, ms and sincearmed. Read-ActedLine reads ms with ' ms=(\\d+) (?:utc|sincearmed)=', so both forms parse, and the leading space keeps 'atfolders=' from being read as the count.\n\n(5) W-003's rig row count. The proposal expected exactly 2 rows. N-005 (WindowCases.ps1:5798-5800) shows t and u are judged by when they were first opened relative to the Stop. Changed to that rule.\n\n(6) Error contract. Every case uses the harness's existing endings: NOT RUN exit 2, INCONCLUSIVE exit 3, FAILED exit 1. Every record goes through one writer under one fitness rule.\n\n(7) E003-1 against Q-010. The planted E003-1 holds a line, `-not (Test-Path .taad\\slices)`, that fails on uat whatever is built. Q-010 (answered, by a model) rewrites that half as a git check, so the design meets every other line and records that the planted test exits 1 on that line alone. That is not a defect in the slice.\n\n(8) No outside-defect workaround. No product code changes and no outside defect is stepped around, so no new setting or notice is needed. The existing wcifs-layer-store precaution is only checked to be on.\n\n(9) Staleness. Changing tests/window/WindowCases.ps1 makes the person's network pass stale (docs/design/SL-020-scanner.md:239-249); their W-003 share runs are that re-check. The C:\\ and OneDrive lists cover src/**, which this slice does not touch.\n\n(10) Where the evidence comes from. Window cases give no signal without an interactive desktop (lesson #261). Build and code review report E003-1 to E003-5 as not run, and validate runs them. Fitness op=check and the rules harness must run before review (lessons #279, #486).\n\n(11) Known residue for the maintainer's C:\\ run. The CrossDevice sync root is unknown to Scanner.SyncRootsFromEnvironment (spike no-go). Under the M1 classes it can make -Stopped INCONCLUSIVE, never FAILED. Changing the scanner belongs to another epic, not this design.",
+  "architecture_rules": [
+   {
+    "name": "a committed proof-run record carries counts, codes and reasons, never a path",
+    "files": "docs/proof-runs/*.json",
+    "must_not_match": [
+     "/",
+     "\\\\(?![\"u])|\\\\u00(?:5[cC]|2[fF])",
+     "\"path\"\\s*:"
+    ],
+    "because": "These files are committed records of scans of the maintainer's own C:\\, OneDrive and shares. A path in one, or a dumped row with a 'path' key, publishes their folder names (Q-016). Write-W001Record refuses a slash or a backslash only at write time, so without this rule a hand edit before the commit, or a later writer, would pass every gate. The patterns are SL-107's, unchanged: a valid record's only backslashes are the JSON escapes for a quote and for a code unit that is not a separator."
+   },
+   {
+    "name": "the rules harness plants nothing into, and waits on nothing under, .taad/slices",
+    "files": "eng/rules-harness/plants.json",
+    "must_not_match": [
+     "\"file\"\\s*:\\s*\"\\.taad/slices/",
+     "\"awaiting_file\"\\s*:.*\\.taad/slices/"
+    ],
+    "because": ".taad/slices holds the engine's own slice records, which it prunes and rewrites at merges (21632dc removed 771 files there). A plant row there collides with an engine record. An awaited file there waits on a record no proof run writes any more, so the clean baseline would accept the guard as unmatched for ever (SC-005)."
+   },
+   {
+    "name": "the window harness neither reads nor writes TAAD's slice records",
+    "files": "tests/window/WindowCases.ps1",
+    "must_not_match": [
+     "\\.taad[\\\\/]+slices"
+    ],
+    "because": "W-001 wrote its whole-C:\\ record into .taad/slices/SL-089, which the engine owns and pruned, so the record owed since SL-107 was never kept. Window cases give no signal without an interactive desktop (lesson #261), so only a text rule catches a case pointed back there at gate time."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "W-001 writes its whole-drive record where it is kept",
+    "shape": "the root is a whole SUBST drive letter over a %TEMP% tree with one folder this account may not list",
+    "why": "The record path was a branch on 'whole drive and starts with C:'. A letter other than C:, or a path left behind under .taad or artifacts, is exactly the SC-005 defect. The retired scripts must also be gone.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E003-1-W001RecordUnderProofRuns.Tests.ps1 must print 'ok' on every line except 'nothing was written under .taad/slices', which Q-010 replaces. For that half: git grep -n -i taad -- tests/window/WindowCases.ps1 prints nothing, and git status --porcelain --untracked-files=all -- .taad lists nothing beyond .taad/fitness.yaml and .taad/slices/SL-003/",
+    "material": true
+   },
+   {
+    "behaviour": "W-001 requires and records the coverage panel's figures on a whole drive",
+    "shape": "a local whole-drive root whose ending shows the coverage panel",
+    "why": "W-001 never read outcome or coverage ('coverage' appears 0 times in WindowCases.ps1). A finished run with no panel would pass, and C1a stays partial.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E003-2-W001NeedsTheCoverageFigures.Tests.ps1",
+    "material": true
+   },
+   {
+    "behaviour": "W-001 -Stopped compares a run stopped partway with the finished run",
+    "shape": "two refused folders that sort first, then 30,000 empty folders, so the Stop lands mid-walk",
+    "why": "No case ever stopped a run and compared its tab with a finished run's. C5 needs a stopped run that is really partial, and a comparison that is written down.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E003-3-W001StoppedRunAddsNoFolder.Tests.ps1",
+    "material": true
+   },
+   {
+    "behaviour": "classify a stopped run's row against the finished tab",
+    "shape": "each of the six classes: a 995 row; a code-5 row absent from the finished tab; one absent but created after the finished run began; a non-5 row absent; a non-5 row whose code differs; a code-5 row whose kind changed",
+    "why": "Without M1's split, an hour-long real C:\\ pair with provider churn reads as FAILED. Without the 995 and notInFinished branches, a folder Stop cut short passes.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~W001ProofTests",
+    "material": true
+   },
+   {
+    "behaviour": "decide whether a stopped run was partial, from the hook's acted line",
+    "shape": "the progress form, whose 'atfolders=' comes before 'folders=', with sized '-' or a number, or a run that ended Completed; and the armed form, whose ms is followed by sincearmed=",
+    "why": "A loose 'folders=(\\d+)' reads the trigger value. A trigger met in the sizing pass cuts no folder short, so it would be taken for proof of C5.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~W001ProofTests",
+    "material": true
+   },
+   {
+    "behaviour": "show that a row's code is the code of the call that failed (C4)",
+    "shape": "a code-5 NothingListed row whose folder now answers the plain open with 32, because it is held without read sharing",
+    "why": "Get-OracleRow classes any non-zero probe as 'refused' without comparing codes, so a code taken from the keep-last-access open instead of the plain open passes today.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~W001OracleTests",
+    "material": true
+   },
+   {
+    "behaviour": "check that each row's reason belongs to its code",
+    "shape": "a row whose reason ends '(Windows error N)' with N not its own code, and two rows with one code but different reasons",
+    "why": "CheckPanelAgrees checks only that reasons are not blank, and byCode keeps the first row's reason, so a mismatched reason is never seen.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~W001ProofTests",
+    "material": true
+   },
+   {
+    "behaviour": "write a record after an expensive run",
+    "shape": "a row with code 995, whose reason 'The I/O operation ...' holds a slash; and a coverage object holding remainder.text",
+    "why": "Write-W001Record throws on any string with a separator, or one that is not a reason, so the very regression -Stopped records, or the panel's own text, would lose an hour-long run's record.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~W001ProofTests",
+    "material": true
+   },
+   {
+    "behaviour": "label a record, and keep proof cases out of All",
+    "shape": "every -Network and -Link value, every fixed label, and -Case All with -IncludeCloud and -IncludeNetwork",
+    "why": "A label missing from the allowed set makes the writer throw at the end of a real run. A proof case under All would write under docs/proof-runs, or register a sync root, unasked.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~W001ProofTests",
+    "material": true
+   },
+   {
+    "behaviour": "classify W-001's root",
+    "shape": "'C:\\\\', 'C:', a network letter such as Z:\\\\, a UNC share root, and a folder",
+    "why": "GetPathRoot calls a UNC root a whole drive. Requiring coverage on a network letter would build on the open Q-003, and the record path depends on the shape.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~W001ProofTests",
+    "material": true
+   },
+   {
+    "behaviour": "prove a scan hydrates no online-only file",
+    "shape": "the CfProvider 'tree' rig root, whose files are online-only before the scan",
+    "why": "No case compares online-only state before and after a scan. The real OneDrive run is the maintainer's, so the loop's proof of the case is the rig.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E003-4-OneDriveProofCaseOnTheRig.Tests.ps1",
+    "material": true
+   },
+   {
+    "behaviour": "tally hydration",
+    "shape": "a file still online-only; one hydrated; one gone since the first listing; and a root with no online-only file at all",
+    "why": "A gone file read as hydrated fails falsely, and a root with nothing online-only would 'hold' while proving nothing.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~W001ProofTests",
+    "material": true
+   },
+   {
+    "behaviour": "time Stop to a usable window on a share that stopped answering, and keep the cut folder out",
+    "shape": "the stall rig holding s's listing, with t and u first opened before or after the Stop",
+    "why": "No Stop on a share has ever been timed, and a fixed count of 2 rows would fail a correct run in which t or u was listed before the Stop.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E003-5-ShareProofCaseOnTheRig.Tests.ps1",
+    "material": true
+   },
+   {
+    "behaviour": "guard committed records against paths at their new place",
+    "shape": "a record holding a UNC path, a single-backslash path, a forward-slash path, a 'path' key, and a whole valid record, each planted at docs/proof-runs/w001-c-drive.json",
+    "why": "docs/proof-runs/*.json matches no file until the maintainer commits one. Only plants show the moved rule fires under Fitness's reading, and only the awaiting_file entry lets the clean baseline pass.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-107-RecordPathRule.Tests.ps1 and python -I eng/rules-harness/harness.py --scenario all (with the TAAD engine its header names)",
+    "material": true
+   }
+  ],
+  "code_claims": [
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "Test-W001",
+    "claim": "Runs Invoke-HookedRun 'rows' with FSA_HOOK_ROWS=1 and a 1200 s wait and checks core.status 'Completed', never outcome or coverage. It writes a whole-drive C: record to .taad\\slices\\SL-089\\c-drive-run.json and every other record to artifacts\\w001-run.json."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "Write-W001Record",
+    "claim": "Its allowed set is held, failed, inconclusive, whole-drive, folder, Completed, Cancelled, RootUnreadable and Refused. It throws, writing nothing, on any other string that is not a 40-hex commit or a given reason free of slashes and backslashes."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "Get-OracleRow",
+    "claim": "A code-5 NothingListed row whose probe error is not 0, 2 or 3 is classed 'refused', without comparing that error with the row's code."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "Get-W001Verdict",
+    "claim": "Takes the controls, a leak count and a failure count. It returns 'failed' on any failure or leak, 'inconclusive' when a checker control misbehaved, and otherwise 'held'."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "Get-CheckerControls",
+    "claim": "Plants control-denied and control-refused-keep in the case folder it is given, not in the scanned root."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "CheckPanelAgrees",
+    "claim": "Takes the report, the rows dump, a label and an optional expected count that defaults to -1."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "Invoke-SmbSeamRun",
+    "claim": "Runs once on a fresh stall rig with FSA_HOOK_FAIL_LISTING b|3|59 and FSA_HOOK_ROWS=1. In stop mode it arms FSA_HOOK_ARMED with the rig's marker and FSA_HOOK_CANCEL_DELAY_MS 2000, kills the rig 8 s after the hold, and returns Exit, Hold, KillUtc, Report, Log, Dump and Opens."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "Test-N005",
+    "claim": "After Stop, judges t and u by the time the rig first opened them relative to the Stop, and requires no 127.0.0.1 mapping to be left."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "Get-CloudCaseBase",
+    "claim": "Is N-006's place for sync roots: %TEMP%, unless that is under the Windows folder, in which case the user's own Local\\Temp."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "Start-CfProvider",
+    "claim": "Starts the CfProvider rig with a scenario and a root, beside Receive-Provider, Remove-CloudRoot and Clear-StaleCloudRoots."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "CloudCases",
+    "claim": "$CloudCases is 'N-006', $NetworkCases is N-001 to N-005, and the -Case ValidateSet ends with N-005, N-006 and W-001."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "-Root is for -Case W-001 only",
+    "claim": "The script throws when -Root is given to any case but W-001."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/StartupHook.cs",
+    "symbol": "MarkerDeadline",
+    "claim": "Armed mode waits at most 60 s on the hook's clock for the marker file, then logs a refused line and presses nothing."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/StartupHook.cs",
+    "symbol": "DriveArmed",
+    "claim": "When armed stop presses Cancel, it logs 'acted mode=stop enabled=... visible=... ms=<Clock> sincearmed=...'."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/StartupHook.cs",
+    "symbol": "Sizing",
+    "claim": "A progress-trigger action logs 'acted mode={mode} {trigger} folders={folders} sized={sized or -} current=... ms=... utc=...'. sized is set only while the current text starts with \"Reading each file's own size: \"."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/RowsMode.cs",
+    "symbol": "rows read count=",
+    "claim": "At the ending, logs 'rows read count=n notScanned=n realized=n selected=b ms=n' on StartupHook.Clock, and writes a closing rows line with count, elevated and stopUtc."
+   },
+   {
+    "path": "src/FsAnalyser.App/WindowReport.cs",
+    "symbol": "CoverageModel",
+    "claim": "The report's coverage is null unless window.CoverageModel is set and the CoveragePanel is visible."
+   },
+   {
+    "path": "src/FsAnalyser.App/WindowReport.cs",
+    "symbol": "outcome",
+    "claim": "outcome maps the scan status to 'completed', 'cancelled', 'root-unreadable' or 'refused'."
+   },
+   {
+    "path": "src/FsAnalyser.App/WindowReport.cs",
+    "symbol": "verticalOffset",
+    "claim": "The window keys carry OutcomeTexts' actualHeight and verticalOffset, and the CoveragePanel's top, which is null while it is not shown."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "SyncRootsFromEnvironment",
+    "claim": "An internal static method that gives the sync roots the scanner knows when ScanOptions names none."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/CloudPlaceholderTests.cs",
+    "symbol": "RecallOnDataAccess",
+    "claim": "Defines 0x400000 (FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS) and uses it to tell whether the tree's placeholders stayed online-only after a scan."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/HeldFolderReasonTests.cs",
+    "symbol": "AHeldFolderThatRefusesTheLastAccessOpenIsRecordedWithThePlainOpensSharingViolation",
+    "claim": "Holds a folder through TestNative.HoldFolderSharingNoRead before denying it, and expects the scan to record the plain open's sharing violation."
+   },
+   {
+    "path": "src/FsAnalyser.App/UnreadableRows.cs",
+    "symbol": "PlainPhrase",
+    "claim": "Gives plain words for some codes only. Any other code's reason is Windows' own message followed by ' (Windows error N)'."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "settled by SL-003",
+    "claim": "Already holds three SL-003 entries: the record rule over docs/proof-runs/*.json with SL-107's three patterns, the plants.json rule, and the WindowCases.ps1 rule '\\.taad[\\\\/]+slices'. The SL-107 entry still covers .taad/slices/SL-089/c-drive-run.json."
+   },
+   {
+    "path": "eng/rules-harness/plants.json",
+    "symbol": "awaiting_file",
+    "claim": "Maps the SL-107 rule to .taad/slices/SL-089/c-drive-run.json. Rows S83 to S86 and P36 plant new files at that path, P36 being a whole valid record expected quiet."
+   },
+   {
+    "path": "eng/rules-harness/harness.py",
+    "symbol": "load_awaiting",
+    "claim": "Lets a rule listed under awaiting_file match no file in the clean baseline. Planting lets a new-file row plant over an awaited file that already exists."
+   },
+   {
+    "path": "tests/bugs/SL-107-RecordPathRule.Tests.ps1",
+    "symbol": "RecordRel",
+    "claim": "Sets $RuleName to the SL-107 rule and $RecordRel to .taad/slices/SL-089/c-drive-run.json, and asserts that WindowCases.ps1 contains '.taad\\slices\\SL-089\\c-drive-run.json'."
+   },
+   {
+    "path": "tests/bugs/O-030-ledger-discharge.Tests.ps1",
+    "symbol": "ledgerPath",
+    "claim": "Reads .taad/slices/SL-038/build-slice-2.json and throws 'Ledger file not found' when it is absent."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/AppArgumentTests.cs",
+    "symbol": "EveryScriptThatLaunchesTheAppIsListedAndQuotesByTheRule",
+    "claim": "Requires only scripts matching FsAnalyser.App.exe, Start-App or Invoke-App to be producers in the corpus, and fails on a listed producer file that is not there."
+   },
+   {
+    "path": "tests/CfProvider/Program.cs",
+    "symbol": "stop-seam",
+    "claim": "Accepts the scenarios stall, tree, silent, stop-seam, unregister, probe and delete."
+   }
+  ],
+  "outside_claims": [
+   {
+    "claim": "FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS (0x400000) marks a cloud file whose data is not fully local. A FindFirstFileExW listing returns it without fetching any data.",
+    "evidence": "recalled",
+    "source": "memory; the repo relies on the same marker (CloudPlaceholderTests.cs:41, EntryClassifierTests.cs:15)",
+    "if_wrong": "W-002 reads onlineOnlyBefore as 0, ends INCONCLUSIVE and E003-4 fails. The predicate would then move to the cloud reparse tag plus another attribute; the keys stay the same."
+   },
+   {
+    "claim": "The cloud reparse tags IO_REPARSE_TAG_CLOUD to CLOUD_F differ only in bits 12-15 of 0x9000001A, so (tag & 0xFFFF0FFF) == 0x9000001A recognises every one.",
+    "evidence": "recalled",
+    "source": "memory; EntryClassifierTests.cs:78 uses 0x9000001A",
+    "if_wrong": "The reader skips some OneDrive folders, and the real-mode tally undercounts without failing."
+   },
+   {
+    "claim": "Listing a OneDrive folder that is not yet populated can make the provider create placeholders, but does not fetch file data.",
+    "evidence": "recalled",
+    "source": "memory",
+    "if_wrong": "The real W-002 run, which is the maintainer's, could change OneDrive state through its own listings. The rig run is unaffected."
+   },
+   {
+    "claim": "WIN32_FIND_DATA carries creation and last-write times but no change time, so an ACL change between the two runs is not seen as 'new since'.",
+    "evidence": "recalled",
+    "source": "memory",
+    "if_wrong": "Nothing more is caught. As written, a folder whose ACL turned to deny between the runs reads as notInFinished, which is FAILED. Spike denied-set-gains-no-folders-in-30-min saw 0 such folders on C:\\ outside the user profile."
+   },
+   {
+    "claim": "The hook's 'acted ... ms' and 'rows read ... ms' come from one Stopwatch, and the rows-read value is the later.",
+    "evidence": "measured",
+    "source": "spike hook-stop-atfolders-with-rows-dump: StartupHook.cs:739 and RowsMode.cs:155; 2373>=2289, 2356>=2275, 2716>=2632",
+    "if_wrong": "stopToEndingMs would be meaningless."
+   },
+   {
+    "claim": "Stop mode with FSA_HOOK_AT_FOLDERS plus FSA_HOOK_ROWS=1 acts during the listing on a 30,000-folder SUBST tree, and leaves a full rows dump that agrees with the report.",
+    "evidence": "measured",
+    "source": "spike hook-stop-atfolders-with-rows-dump, 3/3 runs at 30,302 folders",
+    "if_wrong": "-Stopped would need a hook change."
+   },
+   {
+    "claim": "Whole-C:\\ walks on this PC have taken up to 1,299 s before the probe pass, and up to 500 s in post-probe records.",
+    "evidence": "measured",
+    "source": "spike c-drive-elapsed-within-w001-timeout",
+    "if_wrong": "3600 s could still time out, writing no finished record."
+   },
+   {
+    "claim": "DriveInfo.DriveType on a mapped letter whose server is down returns Network without blocking.",
+    "evidence": "measured",
+    "source": "lesson #878 (SL-001, real Z:\\)",
+    "if_wrong": "Classing W-001's root could stall on a dead share."
+   },
+   {
+    "claim": "Windows' message for error 995 ('The I/O operation has been aborted ...') contains a forward slash.",
+    "evidence": "recalled",
+    "source": "memory",
+    "if_wrong": "Harmless: the filter is general and nulls any reason with a separator."
+   },
+   {
+    "claim": "Fitness does not prune a 'docs' folder and matches files' whole text, so docs/proof-runs/*.json is read.",
+    "evidence": "recalled",
+    "source": "lesson #75 (pruned names include packages and dist)",
+    "if_wrong": "The record rule never fires. The re-planted S rows, expected fitness 'fire', would show it as PLANT-BROKEN or a divergence."
+   },
+   {
+    "claim": "A cold whole-C: scan has measured about 537 MB of kernel pool, which may be held until a restart.",
+    "evidence": "measured",
+    "source": "docs/design/SL-107-c-drive-run.md:3-21 (earlier record), as the survey read it",
+    "if_wrong": "Nothing in the design changes. The run stays the maintainer's either way."
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Metamorphic testing (compilers, scientific software) and SRE game days",
+   "pattern": "Nothing can say in advance which folders a stopped C:\\ scan should list as unreadable. So W-001 -Stopped checks a relation between two runs on the same input: a stopped walk adds no code-5 failures and no aborted rows that the finished walk lacks. Differences that a change in the input can explain are tallied or left undecided, never failed. The share case is a game day: a person injects the fault, the clock runs inside the process, and a sanitised after-action record is committed.",
+   "transfer_found": true,
+   "rationale": "The relation needs no new reference answer and catches exactly C5's defect: a folder Stop cut short shows up as a 995 row, or as a code-5 row the finished tab lacks. Separating input changes is what metamorphic testing does when the system under test reads a live environment.",
+   "invariants": [
+    {
+     "precondition": "Apart from what Stop does, the set of folders refused with code 5 does not change between the finished and the stopped run.",
+     "status": "must-verify",
+     "evidence": "Spike denied-set-gains-no-folders-in-30-min: 549/549, 0 newly denied, but it left out C:\\Users\\sshub, OneDrive, the layer store and CrossDevice. The relation is enforced only for code-5 rows that existed before the finished run; non-5 differences are INCONCLUSIVE."
+    },
+    {
+     "precondition": "A row's identity is stable across the two runs.",
+     "status": "holds",
+     "evidence": "Same -Root, and RowsMode dumps the path. Spike: every stopped row was in R0 with the same kind and code, 3/3."
+    },
+    {
+     "precondition": "The second run is really partial.",
+     "status": "holds",
+     "evidence": "Spike: Cancelled with sized '-' at 15,202-18,302 of 30,302 folders, and z-deny-z was missing from every stopped run. W-001 checks this on every run and retries."
+    },
+    {
+     "precondition": "A wrongly recorded cut folder leaves a mark the relation can see.",
+     "status": "holds",
+     "evidence": "Settle turns any call made after the cancel into 995, and FolderDone drops a 995 when a cancel was requested (survey: SynchronousIoCancel.cs:422, Scanner.cs:384-385). A regression shows as an aborted or notInFinished row."
+    },
+    {
+     "precondition": "The game day's fault is injected by the person, never by the loop.",
+     "status": "holds",
+     "evidence": "W-003 real mode writes the marker only after the person types 'cut'. The loop's rig mode stalls a TAAD-made loopback server."
+    }
+   ]
+  },
+  "channeled_experts": [
+   "T. Y. Chen (metamorphic testing: a relation between two runs in place of an oracle)",
+   "John Allspaw (game days: a human-injected fault, an in-process clock, a written after-action record)"
+  ],
+  "prior_art": [
+   {
+    "pattern": "A committed verification record lists each claim with PASS or FAIL, the environment it ran in, and counts compared before and after.",
+    "where": "https://github.com/Pnwcomputers/Fix-DriveAccess/blob/main/docs/VERIFICATION.md",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-07-28"
+   },
+   {
+    "pattern": "A share scan marks counts cut short by a limit as 'Limited', a lower bound, apart from finished 'OK' counts. A stopped tab is treated as a subset of the finished one.",
+    "where": "https://docs.qualys.com/en/vmdr/latest/scans/windows_share_sample_pc_report.htm",
+    "authority": "official",
+    "basis": "cited"
+   },
+   {
+    "pattern": "One execution per source, each with its own status, object count and duration: one record per proof source.",
+    "where": "https://docs.netwrix.com/docs/accessanalyzer/26_1/scans/scan-executions",
+    "authority": "official",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Real-OneDrive end-to-end tests run on dedicated test accounts. Here the only account is the maintainer's, so the loop proves the case on a local cloud-files rig.",
+    "where": "https://wundwell.com/?_=%2Fabraunegg%2Fonedrive%2Fblob%2Fmaster%2Fdocs%2Fend_to_end_testing.md%23Bgcc%2BHW4Zd%2FKInen7RWd8AEe",
+    "authority": "oss",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Metamorphic testing: where no oracle exists, check a relation between related runs, and separate input-change violations from violations of the relation.",
+    "where": "Chen, Cheung and Yiu, metamorphic testing literature",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Approval-test scrubbers strip machine-specific values such as paths before a record is committed.",
+    "where": "ApprovalTests scrubbers",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "The Cloud Files API marks a placeholder whose data is not local with FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS, and enumerating a directory reads attributes without fetching data.",
+    "where": "Microsoft Cloud Files API documentation",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Game days: a human-injected fault, an in-process clock and an after-action record.",
+    "where": "SRE / resilience engineering practice",
+    "authority": "community",
+    "basis": "recalled"
+   }
+  ],
+  "decidable_disagreements": [],
+  "taste_disagreements": [
+   "The verdict: the proposal gave Get-W001Verdict a refusedAnotherCode parameter. This design adds that count to the leak argument and gives it its own Check, as leaks already have, so the signature does not change. Either works.",
+   "The plant rows: the proposal removed S83-S86 and P36 without replacement. This design re-plants the same five texts at docs/proof-runs under new ids. A reviewer reading the constraint's 'only the plant rows that point at .taad/slices are removed' more strictly may disagree.",
+   "Copying coverage: by a named field list (the proposal) or by a walk that drops strings (this design).",
+   "Compare-StoppedRows keeps six classes. Merging codeChanged into notInFinished would be simpler, at the cost of the console naming which happened.",
+   "The -Force guard against overwriting a stopped part is a small convenience that could be dropped, since git shows the change anyway."
+  ],
+  "whats_new": [
+   "W-001 on a local drive letter: checks outcome 'completed', the coverage panel shown and its figures present; records the coverage numbers plus panelTop, textsHeight and textsOffset.",
+   "W-001: the 'refused-another-code' oracle class (counted with the leaks) and the reason/code consistency count.",
+   "W-001: records under docs/proof-runs/w001-<letter>-drive.json, written as soon as the finished run is judged; a 3600 s wait; a -Force guard.",
+   "W-001 -Stopped: a stop at half the folder count; Read-ActedLine for both acted-line forms; the partial rule; Compare-StoppedRows (six classes); Get-StoppedVerdict; the 'stopped' part written in a finally.",
+   "Get-W001RootShape, Get-ProofRecordPath, Get-RecordByCode (null reason where the reason holds a separator) and Get-CountsOnly.",
+   "W-002: online-only counts before and after, and hydrated, on the CfProvider 'tree' rig or a real sync root.",
+   "A Seam reader that only lists, for file attributes under a root; Get-HydrationTally.",
+   "W-003: Stop-to-ending timing on the hook clock, and cutFolderRows by N-005's rule, on the stall rig or a real share; record written in a finally.",
+   "Wiring: W-002 and W-003 in the ValidateSet and the cloud and network gates; -Root for all three; -Stopped and -Force; -Network and -Link; $ProofCases kept out of All.",
+   "Fitness: the SL-107 entry deleted; the engine-appended SL-003 entries adopted; awaiting_file re-keyed; S83-S86 and P36 replaced by five rows at docs/proof-runs; two plants for the WindowCases.ps1 rule; plants.json line 2 and the harness.py docstring reworded.",
+   "SL-107-RecordPathRule.Tests.ps1 and its corpus's rule name rewritten for the new rule and path.",
+   "Retired: O-030-ledger-discharge, SL-062-LedgerCases, SL-068-DecisionCases, SL-107-HarnessPlantsOverRecord.Tests.py, SL-107-HandOffCases.ps1.",
+   "W001ProofTests.cs for the pure helpers; W001OracleTests' 'held' plant and its corpus row."
+  ],
+  "whats_reused": [
+   "Test-W001's checker controls, pool readings, wcifs-layer-store check and existing oracle classes.",
+   "Invoke-HookedRun, Invoke-WithHook, Start-App, Wait-App and Format-AppArgument.",
+   "Read-RowsDump, CheckPanelAgrees, Get-HeaderCount, Get-RowsByLeaf and CheckSeamRow.",
+   "Write-W001Record's strict refusal, under its own name.",
+   "The hook's stop mode with FSA_HOOK_AT_FOLDERS plus FSA_HOOK_ROWS=1 (measured by the spike) and its armed mode, both unchanged.",
+   "RowsMode's row dump, 'rows read ... ms' line and closing line.",
+   "Invoke-SmbSeamRun, Start-SeamRig, Get-RigMappings, Remove-RigMappingsLeft and N-005's judgement of t and u.",
+   "The N-006 cloud helpers and CfProvider's 'tree' scenario.",
+   "Initialize-SeamWin32's Seam class, extended by one method.",
+   "TestNative.HoldFolderSharingNoRead for the new corpus plant.",
+   "SL-107's three patterns and harness.py's awaiting_file mechanism.",
+   "W001OracleTests' technique of loading functions from the script's parse.",
+   "The finish lines' SUBST and %TEMP% trees, so the loop never scans the real C:\\, OneDrive or a share."
+  ],
+  "retier": {
+   "tier": "medium",
+   "why": "The design changes .taad/fitness.yaml and eng/rules-harness/plants.json, which the engine's Fitness and the rules harness read at every gate of every slice. It deletes a settled SL-107 rule and five of its plant rows. Its replacement covers a glob, docs/proof-runs/*.json, that matches no file until the maintainer commits a record, and only the re-planted rows show it fires under Fitness's own reading. It also defines the committed record format that the person's proof runs and the release rest on. A wrong glob or a mis-keyed awaiting_file would silently remove the privacy guard, with every gate still green."
+  },
+  "reason": "Attempt 2, rewritten with the spike's answer to fork O-002. Stop mode with FSA_HOOK_AT_FOLDERS plus FSA_HOOK_ROWS=1 held on 3 of 3 runs, so the design keeps its shape with no hook change. The composition also fixes three seams against the tree: it adopts the fitness entries the engine had already appended, re-plants the moved guard's rows, and makes W-003's rig judgement follow N-005's rule for t and u."
+ }
+}

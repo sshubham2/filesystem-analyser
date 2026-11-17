@@ -590,11 +590,12 @@ def describe_not_run(names: list) -> str:
 def load_awaiting(path: str) -> dict:
     """The rules allowed to match no file in the clean baseline: rule name -> the file they match once it exists.
 
-    A rule over a file that only a person's run produces (SL-107's counts-only rule over the committed
-    .taad/slices/SL-089/c-drive-run.json) matches nothing until that file is committed, and Fitness takes that
-    for a pass. It is listed under 'awaiting_file' in plants.json, and is allowed to match no file only while
+    A rule over a file that only a person's run produces (SL-003's counts-only rule over the committed proof-run
+    records, docs/proof-runs/*.json, awaited as docs/proof-runs/w001-c-drive.json) matches nothing until that file is
+    committed, and Fitness takes that for a pass. It is listed under 'awaiting_file' in plants.json, and is allowed to match no file only while
     its file is absent from the scratch copy: once the file exists, the rule must match it like any other. The
-    rows that plant that file (op new-file) plant over it when it exists, and put its bytes back (Planting._create).
+    rows that plant that file (op new-file) plant over it when it exists, and its bytes are put back (Planting._create
+    saves them, Planting.restore writes them back).
     """
     try:
         with open(path, encoding="utf-8") as handle:

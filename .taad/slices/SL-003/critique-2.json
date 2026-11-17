@@ -1,0 +1,299 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-003",
+ "stage": "critique",
+ "attempt": 2,
+ "at": "2026-11-17T19:21:28.118Z",
+ "head": "a9d394cb6cde4e10c544f02b5232f537a2c4bd43",
+ "run_id": 11253,
+ "summary": "Attempt 2 answers all seven earlier findings:\n- M1: Compare-StoppedRows has six classes. Rows that are new since the finished run are tallied, non-5 differences are inconclusive, and the invariant is now must-verify.\n- M2: refused-another-code is counted with the leaks, so the verdict fails.\n- m1: Get-RecordByCode writes a null reason wherever the reason holds a separator, and Get-CountsOnly drops strings.\n- m2: the finished part is written as soon as that run is judged, the stopped part in a finally, with the -Force guard.\n- m3: Read-ActedLine parses with a leading space, and a run is partial only when Cancelled with sized '-'.\n- m4: Q-010's check is adopted.\n- m5: panelTop, textsHeight and textsOffset are recorded.\n\nThe new seams check out against the tree:\n- WindowCases.ps1 has exactly 2 lines containing 'taad', and both change, so Q-010's git grep can print nothing.\n- harness.py's Planting._create creates missing parent folders (makedirs, created_dirs), so the re-planted rows can create docs/proof-runs.\n- plants.json already uses insert-after, so the WindowCases.ps1 plants need no harness change.\n- WindowReport says 'measured' holds at most the 'mft' entry, so dropping its id loses nothing.\n- N-005's rule for t and u is at 5726-5734.\n\nFour minors, all new or reintroduced by the rework:\n1. W-002's verdict no longer looks at the report's status. A scan that was refused, could not read its root or wrote no report would end 'held' as proof that nothing was hydrated. Attempt 1 failed that case.\n2. W-003's rig rule for the cut folder drops N-005's 'or never' branch.\n3. Get-W001RootShape can return 'unc', which the writer's allowed set does not hold.\n4. The re-tier to medium contradicts the constraint that every slice but the 'Stop cut short' one keeps the minimal defaults.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "Attempt 2 answers all seven earlier findings:\n- M1: Compare-StoppedRows has six classes. Rows that are new since the finished run are tallied, non-5 differences are inconclusive, and the invariant is now must-verify.\n- M2: refused-another-code is counted with the leaks, so the verdict fails.\n- m1: Get-RecordByCode writes a null reason wherever the reason holds a separator, and Get-CountsOnly drops strings.\n- m2: the finished part is written as soon as that run is judged, the stopped part in a finally, with the -Force guard.\n- m3: Read-ActedLine parses with a leading space, and a run is partial only when Cancelled with sized '-'.\n- m4: Q-010's check is adopted.\n- m5: panelTop, textsHeight and textsOffset are recorded.\n\nThe new seams check out against the tree:\n- WindowCases.ps1 has exactly 2 lines containing 'taad', and both change, so Q-010's git grep can print nothing.\n- harness.py's Planting._create creates missing parent folders (makedirs, created_dirs), so the re-planted rows can create docs/proof-runs.\n- plants.json already uses insert-after, so the WindowCases.ps1 plants need no harness change.\n- WindowReport says 'measured' holds at most the 'mft' entry, so dropping its id loses nothing.\n- N-005's rule for t and u is at 5726-5734.\n\nFour minors, all new or reintroduced by the rework:\n1. W-002's verdict no longer looks at the report's status. A scan that was refused, could not read its root or wrote no report would end 'held' as proof that nothing was hydrated. Attempt 1 failed that case.\n2. W-003's rig rule for the cut folder drops N-005's 'or never' branch.\n3. Get-W001RootShape can return 'unc', which the writer's allowed set does not hold.\n4. The re-tier to medium contradicts the constraint that every slice but the 'Stop cut short' one keeps the minimal defaults.",
+  "findings": [
+   {
+    "id": "n1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "file": "tests/window/WindowCases.ps1",
+    "claim": "W-002's verdict is now 'failed when hydrated or dataFetches is above 0; inconclusive when onlineOnlyBefore is 0', and its contract's FAILED list is hydrated, dataFetches, a rig root left, or a timeout. Nothing looks at the report's status. A scan that ends Refused or RootUnreadable, or an app that exits early with no report, reads none of the files. Its before and after listings agree, hydrated is 0 and dataFetches is 0, so the case ends 'held'. On the maintainer's OneDrive that is a committed no-hydration proof of C8 from a scan that never read the folder. Attempt 1 failed 'on a report not Completed'; the rework dropped it.",
+    "evidence": "Design, W-002 component: 'Verdicts: failed when hydrated or dataFetches is above 0; inconclusive when onlineOnlyBefore is 0.' Contract W-002 error_cases: no status branch.",
+    "fix": "Make W-002 FAILED when there is no report or a non-zero exit, and INCONCLUSIVE when core.status is not 'Completed'. Check this before judging hydrated. Add both to the Get-HydrationTally/verdict Fact."
+   },
+   {
+    "id": "n2",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 5729,
+    "claim": "W-003's rig rule says cutFolderRows counts 'rows for t or u whose first rig open came after the closing line's stopUtc. That is N-005's rule.' N-005 exempts t or u only when the rig first saw it BEFORE the Stop. A row for a leaf the rig never saw also fails there ('first opened after the Stop or never ... is no row'). Such a row is a client-side failure after the rig was killed, recorded with a network code: the regression where a folder read after Stop becomes a row. W-003's wording does not count it.",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 5729,
+     "text": "if ($null -ne $seen -and $seen -lt $stopUtc) {"
+    },
+    "fix": "Count rows for t or u unless the rig first opened that leaf before stopUtc, which includes a leaf it never opened. Simplest: call CheckSeamMain's t/u loop or mirror it. Add the 'never seen' case to the W-003 Fact."
+   },
+   {
+    "id": "n3",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 6251,
+    "claim": "Get-W001RootShape returns local-letter, network-letter, unc or folder. The allowed set adds local-letter and network-letter, which implies the shape is recorded, but it does not add 'unc'. 'folder' is already allowed. If the record carries the shape (in scope or a new key), a W-001 run on a UNC share root throws at the write after its scan, which is the family m1 closed. The design does not say which key holds the shape, so the planned 'every fixed label' Fact catches this only if it enumerates Get-W001RootShape's outputs.",
+    "class_of": "strings the record writer refuses only after the run",
+    "threat": "accident",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 6251,
+     "text": "$allowed = @('held', 'failed', 'inconclusive', 'whole-drive', 'folder', 'Completed', 'Cancelled', 'RootUnreadable', 'Refused')"
+    },
+    "fix": "Name the key that carries the shape. Add 'unc' to the allowed set, or record the shape only for the two letter shapes. Have the label Fact enumerate Get-W001RootShape's outputs, not a hand list."
+   },
+   {
+    "id": "n4",
+    "severity": "minor",
+    "dimension": "drift-from-design",
+    "nature": "defect",
+    "claim": "The design asks to re-tier the slice ('retier': tier medium) because it edits fitness.yaml and plants.json. The project constraint is decided: 'The slice for \"A folder Stop cut short counts as not reached, not unreadable\" is cut at high risk ... The rest of the project keeps the minimal defaults.' Attempt 1 itself said 'No re-tier is asked' for that reason. The privacy-guard concern is real, but the design already answers it through the re-planted fire and quiet rows and the Fitness and harness runs it requires before review.",
+    "evidence": "Design 'retier': {tier: medium, why: '... A wrong glob or a mis-keyed awaiting_file would silently remove the privacy guard'}. Constraints: '(process) ... The rest of the project keeps the minimal defaults.'",
+    "fix": "Drop the re-tier. If the designer believes the guard move warrants more process, put that to the person as a question instead of re-tiering against a decided constraint."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "Earlier M1 is answered: the unlistable-set invariant is now must-verify, and non-5 differences are inconclusive. Earlier M2 is answered on the repo's own evidence (HeldFolderReasonTests:43).\n\nChecked against the tree:\n- 'measured' holds only an 'mft' entry or none (WindowReport.cs:84-86), so Get-CountsOnly dropping its id leaves the Q-001 figure readable.\n- WindowCases.ps1 has 2 lines matching -i 'taad' (6272, 6367), both changing.\n- The armed and progress acted lines match the design's ' ms=(\\d+) (?:utc|sincearmed)=' (StartupHook.cs:611, 739)."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "n1: W-002 ignores the report's status, so a scan that read nothing holds. A last-write time after the finished run's start also tallies a folder that changed ACL and gained children as newSinceFinished. This loosens the check, but a folder Stop cut short still shows as 995 (FAILED), so that is accepted."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "none: each m1/m3 family is now closed at a seam (Get-RecordByCode, Get-CountsOnly, Read-ActedLine), not by caller discipline."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none of substance. The design itself calls -Force and the six-class split optional, and both are cheap."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "n2: W-003's cut-folder rule drops N-005's 'or never' branch (WindowCases.ps1:5726-5734).\n\nThe -Force guard throws when a SUBST letter's record already holds a 'stopped' part. Whether the engine-planted E003 lines clean up between runs cannot be checked: they are not in the tree, since no tests/window/E00* file exists. Attempt 1 said they restore docs/proof-runs. Noted, not filed."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "The earlier m1 and m2 are answered: the finished part is written early, the stopped part and W-003's record in a finally, and byCode reasons are nulled where they hold a separator. Nothing new, apart from n3's 'unc' label."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "n4: the re-tier contradicts the minimal-defaults constraint.\n\nRe-planting the five rows at docs/proof-runs is consistent with 'only the plant rows that point at .taad/slices are removed'. Q-010 is adopted, and the engine-appended SL-003 entries (fitness.yaml:1495-1524) are taken word for word, with the SL-107 entry deleted."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "n3: 'unc' is missing from the writer's allowed set.\n\nPlants: insert-after is an existing op (plants.json), and Planting._create makes parent folders and records created_dirs (harness.py:422-424), so new-file rows at docs/proof-runs/w001-c-drive.json are plantable and restorable.\n\nNone of the three rules has an xUnit twin, being below the first '# settled by' marker."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "The Facts now cover the six stopped classes, both acted-line forms, the partial rule, a 995 byCode row through the writer, Get-CountsOnly, the root shapes, the labels and the All filter. n1 and n2's branches need adding to the W-002 and W-003 Facts."
+   },
+   {
+    "dimension": "security",
+    "result": "none: records carry no path. Strings are dropped or limited to a fixed set, and reasons holding a separator are nulled. The hook's current= and the provider's path= stay in logs and the console. File names come from a letter and fixed labels only, and fitness rule 1 fences docs/proof-runs/*.json."
+   }
+  ]
+ },
+ "prescribed": {
+  "host": 644,
+  "at": "2026-11-17T19:25:27.942Z",
+  "runs": [
+   {
+    "run_id": 11255,
+    "resumed_from": "9f67e45c-ef9a-4cab-99d1-cfb7207fbb24",
+    "ending": "completed",
+    "cost_usd": 1.7468702,
+    "lost_resume": false
+   }
+  ],
+  "keys_sent": [
+   {
+    "finding_id": 1851,
+    "key": "n1",
+    "digest": "944e1513c3a65e78"
+   },
+   {
+    "finding_id": 1852,
+    "key": "n2",
+    "digest": "8a444e42f01ea3d6"
+   },
+   {
+    "finding_id": 1853,
+    "key": "n3",
+    "digest": "c22167da3d8e7658"
+   },
+   {
+    "finding_id": 1854,
+    "key": "n4",
+    "digest": "8f4fe57c1d343726"
+   },
+   {
+    "finding_id": 1844,
+    "key": "M1",
+    "digest": "ca1a28d86df3890c"
+   },
+   {
+    "finding_id": 1845,
+    "key": "M2",
+    "digest": "95c49e96fa6a161c"
+   },
+   {
+    "finding_id": 1846,
+    "key": "m1",
+    "digest": "72d5b9ce9753ec22"
+   },
+   {
+    "finding_id": 1847,
+    "key": "m2",
+    "digest": "3816f96d979118c1"
+   },
+   {
+    "finding_id": 1848,
+    "key": "m3",
+    "digest": "78b4d1387d257b1f"
+   },
+   {
+    "finding_id": 1849,
+    "key": "m4",
+    "digest": "eefdfb3861453d57"
+   }
+  ],
+  "verdicts": [
+   {
+    "finding_id": 1851,
+    "key": "n1",
+    "digest": "944e1513c3a65e78",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "- App.xaml.cs:12-15 and 91-97: exit 0 only with a report written; codes 2, 3 and 70 otherwise.\n- WindowReport.cs:268-271: outcome maps every ScanStatus.\n- CfProvider Program.cs:160-162: the 'tree' scenario turns population off.\n- I walked the order the prescription sets: exit or report first, then status, then the tally.",
+    "why": "The order itself is safe. Exit 0 always comes with a report (App.xaml.cs:91-97), so 'non-zero exit or no report: FAILED' and then 'status not Completed: INCONCLUSIVE' are distinct. A RootUnreadable or Refused scan opened nothing under the root, so INCONCLUSIVE ahead of the tally hides no real hydration.\n\nThe hole is the second way a scan can read nothing: status Completed with the root's folders as unreadable rows.\n- On the rig, a provider that died leaves 363 leftovers, as in C-006's 'every row is a code-363 leftover'.\n- On the real OneDrive, a client that is not running gives cloud-provider errors.\nIn both, the app read no file, hydrated and dataFetches are 0, and the after-listing counts the unreadable files as goneSinceBefore. The case ends 'held' while proving nothing, the same class n1 was filed for.\n\nThe prescription also says nothing about the record on its new FAILED branch. Built the way WindowCases.ps1:6341 builds its record, `[string]$null` is '', and Write-W001Record throws on it (see m2).",
+    "instead": "- Also make W-002 INCONCLUSIVE when report.core.unreadable > 0 for any folder under the root, or when goneSinceBefore > 0 on the rig.\n- Build the record's status and outcome as $null, not [string]$null, when there is no report.\n- Add a 'Completed with unreadable rows' case and a 'no report' record write to the verdict Fact."
+   },
+   {
+    "finding_id": 1852,
+    "key": "n2",
+    "digest": "8a444e42f01ea3d6",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "Read CheckSeamMain (tests/window/WindowCases.ps1:5708-5737) and N-005's call to it (5799-5800). My own finding n2 asserted the rule the prescription now copies.",
+    "why": "N-005 does not exempt a t or u row whose leaf was opened before the Stop. Both branches fail on any row:\n- 5731 (opened before the Stop): `Check ($rows.Count -eq 0) \"${what}: $leaf, a readable folder opened before the Stop, is no row\"`.\n- 5734 (after the Stop or never): `Check ($rows.Count -eq 0) ...`.\nThe timing only changes the message and whether the absence counts as held or inconclusive. CheckSeamMain also requires exactly 2 rows (5715: `CheckPanelAgrees $run.Report $run.Dump $what 2`).\n\nThe prescription 'counts a t or u row unless the rig first opened that leaf before stopUtc'. So a t row opened before the Stop and still being listed when Stop cut it passes. If the product regressed and kept that call's code (59 after the rig's kill, or 995) as a row, the prescription lets it through. That is the cut-folder regression W-003 exists to catch.\n\nThe design dropped the fixed 2-row count on the same misreading ('t and u may legitimately be listed before the Stop'). Listed before the Stop, they are no row.",
+    "instead": "In rig mode, make cutFolderRows count every row for s, t or u, plus every row with code 995, whatever its timing. That is CheckSeamMain's rule. Keep CheckPanelAgrees' expected count of 2, or call CheckSeamMain directly. Use firstSeen only for the console line and for the held-or-inconclusive call, as N-005 does. The W-003 Fact covers a t row opened before the Stop, which fails."
+   },
+   {
+    "finding_id": 1853,
+    "key": "n3",
+    "digest": "c22167da3d8e7658",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "- tests/window/WindowCases.ps1:6251 (the allowed set) and 6284 and 6338 (scope).\n- Get-W001RootShape as designed: 'local-letter: matches ^[A-Za-z]:\\\\?$ and DriveInfo.DriveType is not Network'.\n- Lesson #878, on a default-suite test that depends on this PC's Z:\\.",
+    "why": "Naming the key 'rootShape' and adding 'unc' to the allowed set closes the write-time throw.\n\nThe Fact 'takes its values from Get-W001RootShape's outputs'. A pure function's outputs can only be collected by calling it with inputs that reach every branch. The 'network-letter' branch reads DriveInfo.DriveType, so a default-suite Fact can reach it only on a machine with a mapped network drive: this PC's Z:\\, whose server is sometimes down. Lesson #878 is the record of that very defect in SL-001.\n\nOtherwise the Fact quietly covers three of the four labels, and a later rename of 'network-letter' goes unseen until a real share run throws at the write.",
+    "instead": "Give Get-W001RootShape a $driveTypeOf parameter (a scriptblock defaulting to [System.IO.DriveInfo]::new($letter).DriveType), and have the Fact stub it to reach all four shapes. Or have the Fact read the function's string return literals from the script's AST and check each one is in the allowed set."
+   },
+   {
+    "finding_id": 1854,
+    "key": "n4",
+    "digest": "8f4fe57c1d343726",
+    "verdict": "holds",
+    "severity": "none",
+    "checked": "- The constraint: '... The rest of the project keeps the minimal defaults'.\n- The design's 'retier' field.\n- The re-planted fire and quiet rows and the Fitness and harness runs required before review.\n- Planting._create creates the parent folders a plant needs (eng/rules-harness/harness.py:422-424), so the docs/proof-runs plants can run.",
+    "why": "Withdrawing the re-tier puts the slice back under the decided constraint, and no build work depends on the tier. The privacy-guard risk the re-tier cited is carried by plants that can run: new-file rows create docs/proof-runs, and restore removes it. I could find no input or path the withdrawal leaves uncovered.",
+    "instead": ""
+   },
+   {
+    "finding_id": 1844,
+    "key": "M1",
+    "digest": "ca1a28d86df3890c",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "- Seam.Probe (tests/window/WindowCases.ps1:5435-5450): times are read only through a second FILE_READ_ATTRIBUTES open, and only when the plain open succeeded.\n- The design's $timesOf default: 'lists the parent folder and reads the creation and last-write times from the find data'. The design's own outside claim says WIN32_FIND_DATA has no change time.\n- The 30-min spike's falsifier: 'any created before t0 means an ACL changed ... no creation-time allowance would cover it'.",
+    "why": "The prescription classes a notInFinished row as newSinceFinished when its 'creation or change time' is after the finished run started. The built path reads creation and last-write from the parent's listing, and that listing has no change time. An ACL change moves the change time, not the last-write time. So the case the spike named as the one a time allowance must cover, a pre-existing folder whose ACL turned to deny between the runs, still reads notInFinished with code 5 and ends FAILED. That is the false FAILED M1 was accepted to remove.\n\nThe prescription also gives no class when the times cannot be read: the folder was deleted after the stopped scan, or the parent cannot be listed. A temporary denied folder made and removed between the runs (installer or Temp folders inside the profile, the area the spike skipped) would then fall to notInFinished, FAILED, by default.",
+    "instead": "Read times through a FILE_READ_ATTRIBUTES-only open of the folder itself, as Probe's second open does (GetFileInformationByHandleEx FileBasicInfo, which carries ChangeTime). NTFS normally grants read-attributes to a folder whose parent can be listed, even when listing the folder itself is denied. Fall back to the parent's listing only when that open fails.\n\nClass a row whose times cannot be read at all (gone, or refused) as otherCodeDiffers, INCONCLUSIVE, never notInFinished. Add a 'created before, changed after' stub and a 'times unreadable' stub to the Compare-StoppedRows Fact."
+   },
+   {
+    "finding_id": 1845,
+    "key": "M2",
+    "digest": "95c49e96fa6a161c",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "- tests/FsAnalyser.Core.Tests/HeldFolderReasonTests.cs:40-43: an access check fails with 5 before a sharing violation can return 32.\n- Get-OracleRow (tests/window/WindowCases.ps1:6212-6218) and Seam.Probe (5435-5450): Extended() adds the \\\\?\\ prefix (5402-5407), so a long path does not fake a 206.\n- The design's choice to count the class with the leaks.",
+    "why": "The reasoning holds: a code-5 row that now probes with another code had an ACL that let the plain open through. Probe opens with the \\\\?\\ prefix (5402-5407), so a long path cannot fake a 206.\n\nThe new class is counted with the leaks, but the leak class has an exemption the new class lacks. A folder that opens is a leak only when it was not created or changed after the scan began (6217: `if ($probe.TimesRead -and ($probe.CreationUtc -gt $scanStartUtc -or $probe.ChangeUtc -gt $scanStartUtc)) { return 'changed-since-scan' }`). Probe reads those times only when the plain open succeeded (5438-5439), and for this class it did not. So a folder whose ACL was reset after the scan and is now held, or that was deleted and recreated and is now in use, fails the whole-C:\\ run, where the same change on an unheld folder is tallied. The change is the same, and the case is asymmetric. This sits in the area M1 already found unproven: the profile, AppData and OneDrive.",
+    "instead": "Before returning 'refused-another-code', read the folder's times through a FILE_READ_ATTRIBUTES-only open, as Probe's second open does, whatever the plain open's error. Return 'changed-since-scan' when the creation or change time is after $scanStartUtc. Only otherwise return 'refused-another-code', which fails the run. Give the W001OracleCorpus 'held' row a twin whose ACL is changed after scan start and expects 'changed-since-scan'."
+   },
+   {
+    "finding_id": 1846,
+    "key": "m1",
+    "digest": "72d5b9ce9753ec22",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "- tests/bugs/SL-107-RecordPathRule.Tests.ps1:115-131: the writer is loaded from the parse, and the writer and the rule must agree.\n- Write-W001Record (tests/window/WindowCases.ps1:6250-6262).\n- WindowReport.cs:268-271, the outcome values.\n- The record's string sources at 6337 and 6341.\n- No Set-StrictMode in WindowCases.ps1; only $ErrorActionPreference='Stop' at 131.",
+    "why": "Keeping the writer strict and filtering at the callers is right: the corpus runner fixes the writer's refusal. Nulling a byCode reason that holds a separator closes 995 and every other message with 'I/O' in it, and every outcome and status value is in the extended set.\n\nThe class has another spelling the prescription does not name: a string built by [string] cast from a missing value. `status = [string]$run.Report.core.status` (6341) gives '' when there is no report, and `commit = [string]$commit` (6337) gives '' when git rev-parse fails. Without strict mode, $null.core.status is $null, and [string]$null is ''. '' is not in the allowed set, not a 40-hex commit, and not a reason, so the writer throws. This bites exactly the paths m2 and n1 add: records written from a run that has no report.\n\nThe Fact 'writes a record from every new allowed label' checks that labels are accepted. It does not check what the cases actually emit.",
+    "instead": "- Every string a case puts in a record goes through one helper that returns $null for anything empty or missing: status, outcome, commit, labels.\n- The Facts include a record built from a run whose Report is $null, and one whose commit is empty, and check that it is written."
+   },
+   {
+    "finding_id": 1847,
+    "key": "m2",
+    "digest": "3816f96d979118c1",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "- Test-W001's early return when there is no report (tests/window/WindowCases.ps1:6300) and its record fields (6336-6366).\n- The lack of strict mode.\n- The prescription's 'finally ... with stopped.verdict failed or inconclusive when it did not finish'.\n- Glob **/E003*: no file. The finish lines are engine-planted, so whether they clear docs/proof-runs between runs, which the -Force guard depends on, cannot be read.",
+    "why": "Writing the finished part early, rewriting in a finally and the -Force guard fix the loss and overwrite cases.\n\nThe finally write's main use is a stopped run that timed out, which leaves no report. If its status and outcome are built the way the existing record builds them (`[string]$run.Report.core.status`, 6341), they become ''. The writer throws inside the finally, so the stopped part is never written, and the throw replaces the case's real outcome on the console. That is the outcome m2 exists to prevent. W-003's 'record written in a finally whatever the ending' has the same flaw on a timeout.\n\nThe -Force guard also throws before scanning when a SUBST letter's record from an earlier E003-3 run is still on disk. That is safe only if the planted finish lines restore docs/proof-runs, and they are not in the tree to check.",
+    "instead": "- In the finally, build the stopped part with status and outcome as $null when the run has no report.\n- Wrap the rewrite so that a writer throw is reported as a writer bug next to the run's outcome, not instead of it.\n- Add a Fact: a stopped part from a run with Report $null and exit 'TIMEOUT' is written with verdict 'failed'.\n- State that the E003 scripts must remove the docs/proof-runs files they create, or let the guard ignore records whose scope is a SUBST letter over %TEMP%."
+   },
+   {
+    "finding_id": 1848,
+    "key": "m3",
+    "digest": "78b4d1387d257b1f",
+    "verdict": "holds",
+    "severity": "none",
+    "checked": "- StartupHook.cs:739, the line format 'acted mode={mode} atfolders=N folders={folders} sized={sized or -} current={current} ms=... utc=...'.\n- StartupHook.cs:722-733, how sized is read and when a folder trigger fires in the sizing pass.\n- StartupHook.cs:755, the 'refused ... ended before the trigger' line.\n- RowsMode's other log lines: 'rows armed', 'rows read'. None begins 'acted'.\n- How the first match falls with a hostile current= text.",
+    "why": "' folders=(\\d+) ' matches once only, because 'atfolders=' is preceded by 'm', not a space. folders= and sized= come before current=, so a folder path holding ' folders=' cannot win the first match. A run whose trigger never fired has no acted line, so Read-ActedLine returns null, the run is not partial, and the case retries. sized is '-' unless the current text starts with \"Reading each file's own size: \", which appears only after the listing has finished, so 'Cancelled and sized -' really means the Stop came during the listing. I could not make the rule accept a run with no folder cut short, or reject a genuinely partial one.",
+    "instead": ""
+   },
+   {
+    "finding_id": 1849,
+    "key": "m4",
+    "digest": "eefdfb3861453d57",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "- Q-010's decision text: 'E003-1 has to be rewritten so that it checks what W-001 writes'.\n- The design's case: 'must print ok on every line except ... which Q-010 replaces'.\n- Glob **/E003*: none in the tree.\n- `rg -i -c taad tests/window/WindowCases.ps1`: 2 lines (6272 and 6367), both rewritten by the slice, so Q-010's git grep can print nothing.",
+    "why": "The two git checks are right, and they can pass. But Q-010 settled that the check is to be rewritten, and the prescription, like the design, leaves the planted E003-1 line `-not (Test-Path .taad\\slices)` in place, exiting 1 for ever.\n\nE003-1 is a material finish line, and the E003 scripts are engine-planted and not yet in the tree. Any stage that judges it by its exit code (build, code review, validate) will read red on every run and on uat whatever is built, and the slice can halt there. The prescription names nobody to change that line and no way for a gate to read 'every line but one'.",
+    "instead": "Say who rewrites the line and when. The builder replaces E003-1's '.taad\\slices' line with Q-010's two checks when the script is planted:\n- `git grep -n -i taad -- tests/window/WindowCases.ps1` prints nothing;\n- `git status --porcelain --untracked-files=all -- .taad` lists nothing beyond .taad/fitness.yaml and .taad/slices/SL-003/.\nIf the builder may not edit planted finish lines, raise that to the engine as an obligation now, so validate does not halt on a known red."
+   }
+  ],
+  "unmatched": [],
+  "unchecked": [],
+  "moved": [],
+  "annotated": [
+   "finding:1851",
+   "finding:1852",
+   "finding:1853",
+   "finding:1844",
+   "finding:1845",
+   "finding:1846",
+   "finding:1847",
+   "finding:1849"
+  ],
+  "counts": {
+   "holds": 2,
+   "hole": 8,
+   "unworkable": 0,
+   "no_verdict": 0
+  },
+  "summary": "Two prescriptions hold as written: n4 and m3. The other eight have holes, none of them a blocker.\n\n- **n2 (my own fix) misreads N-005.** N-005 fails any row for t or u, whether or not the leaf was opened before the Stop (WindowCases.ps1:5731 and 5734), and it requires exactly 2 rows (5715). The prescription lets a t or u row through when the leaf was opened before the Stop, which is exactly the regression the case exists to catch.\n- **M1** names the folder's change time, but the design reads the time from the parent's listing. That listing has no change time, and an ACL change does not move the last-write time, so an ACL change between the runs still ends FAILED. It also says nothing about a folder whose times cannot be read because it is gone.\n- **M2** fails the new class with no changed-since-scan exemption, unlike the leak class it is counted with (6217). Probe reads times only when the plain open succeeds (5438-5439).\n- **m2 and m1:** the 'stopped' part written in a finally on a timeout, and W-003's record written whatever the ending, would build status with `[string]$null`, which is ''. The writer refuses '', so it throws exactly when m2 says the record must still be written. The script runs without strict mode.\n- **n1** closes only the status path. A Completed scan that left the root's folders unreadable (OneDrive not running, a rig provider that died) still ends 'held'.\n- **n3** has the label Fact enumerate Get-W001RootShape's outputs. The function's 'network-letter' branch depends on this PC's mapped drives unless that lookup is injectable.\n- **m4** leaves the planted E003-1 line exiting 1 for ever, though Q-010 says the check must be rewritten. No E003* file exists in the tree yet.",
+  "why": "",
+  "round": "landed"
+ }
+}
