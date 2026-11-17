@@ -718,7 +718,7 @@ internal class StartupHook
                     scanSeen = true;
                     string counters = (window.FindName("CountersText") as TextBlock)?.Text ?? "";
                     string current = (window.FindName("CurrentFolderText") as TextBlock)?.Text ?? "";
-                    int folders = FoldersIn(counters);
+                    int folders = CountersReading.FoldersIn(counters);
                     const string Sizing = "Reading each file's own size: ";
                     int? sized = current.StartsWith(Sizing, StringComparison.Ordinal) ? LeadingNumber(current[Sizing.Length..]) : null;
                     if (trigger.Past is { } past && passedAt is null && sized is null && HasPassed(current, past))
@@ -757,17 +757,6 @@ internal class StartupHook
             Thread.Sleep(ProbeEvery);
         }
         Log($"refused mode={mode} reason=the trigger {trigger.Describe()} was not met within {trigger.Deadline.TotalSeconds:N0} s");
-    }
-
-    // "1,234 files, 5,678 folders, ...": the folder count, whatever the thousands separator.
-    private static int FoldersIn(string counters)
-    {
-        int at = counters.IndexOf(" folders", StringComparison.Ordinal);
-        if (at < 0)
-            return 0;
-        int start = counters.LastIndexOf(", ", at, StringComparison.Ordinal);
-        string digits = new(counters[(start < 0 ? 0 : start + 2)..at].Where(char.IsAsciiDigit).ToArray());
-        return int.TryParse(digits, out int n) ? n : 0;
     }
 
     private static int? LeadingNumber(string text)

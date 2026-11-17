@@ -296,6 +296,322 @@ public class VolumeUsageTests(ITestOutputHelper output)
         }
     }
 
+    // ---- SL-001: no figure for a root on a network file system (SC-015), and the $MFT answered beside the used figure ----
+
+    /// <summary>
+    /// A root that is remote, or that could not be opened to be asked, gets no figure, and the used probe is never called: a mapped
+    /// drive's GetDiskFreeSpaceExW answers the server volume's figures, and the rest of a server's disk is not this scan's gap. The
+    /// remote answer is fed in, as a network drive cannot be made here; the real redirector's is the next test's, where this PC has one.
+    /// </summary>
+    [Fact]
+    public void ARemoteRootGetsNoFigure()
+    {
+        int usedCalls = 0;
+        Func<string, long?> used = _ =>
+        {
+            usedCalls++;
+            return 1234;
+        };
+
+        Assert.Null(VolumeSpace.Read(@"Z:\", isRemote: _ => true, used));
+        Assert.Null(VolumeSpace.Read(@"Z:\", isRemote: _ => null, used)); // the open failed: nothing can be said of the root
+        Assert.Equal(0, usedCalls);
+        Assert.Equal(1234, VolumeSpace.Read(@"C:\", isRemote: _ => false, used));
+        Assert.Equal(1, usedCalls);
+    }
+
+    [Fact]
+    public async Task ARemoteRootAnswersBothFiguresNullAndNeverReadsTheMft()
+    {
+        int mftCalls = 0;
+        var figure = new TaskCompletionSource<long?>();
+        var mft = new TaskCompletionSource<long?>();
+
+        VolumeSpace.Start(@"Z:\", figure, reader: root => VolumeSpace.Read(root, isRemote: _ => true, used: _ => 1234), FigureWait, anyRoot: false,
+            mft, mftReader: _ =>
+            {
+                Interlocked.Increment(ref mftCalls);
+                return 99;
+            });
+
+        Assert.Null(await figure.Task.WaitAsync(FigureWait));
+        Assert.Null(await mft.Task.WaitAsync(FigureWait));
+        Assert.Equal(0, Volatile.Read(ref mftCalls));
+    }
+
+    /// <summary>
+    /// The window reads the $MFT only after the used figure has landed as a number and never waits for it, so the thread answers it
+    /// strictly first. A continuation that runs where the figure completes reads the $MFT task at that moment, 200 times.
+    /// </summary>
+    [Fact]
+    public async Task TheMftIsAnsweredBeforeTheUsedFigure()
+    {
+        for (int round = 0; round < 200; round++)
+        {
+            var figure = new TaskCompletionSource<long?>();
+            var mft = new TaskCompletionSource<long?>();
+            bool? mftCompleteWhenTheFigureLanded = null;
+            _ = figure.Task.ContinueWith(_ => mftCompleteWhenTheFigureLanded = mft.Task.IsCompleted, TaskContinuationOptions.ExecuteSynchronously);
+
+            VolumeSpace.Start(@"Q:\", figure, reader: _ => 5, TimeSpan.FromSeconds(30), anyRoot: false, mft, mftReader: _ => 7);
+
+            Assert.Equal(5, await figure.Task.WaitAsync(FigureWait));
+            SpinWait.SpinUntil(() => mftCompleteWhenTheFigureLanded is not null, FigureWait);
+            Assert.True(mftCompleteWhenTheFigureLanded, $"round {round}: the used figure landed while the $MFT was still pending");
+            Assert.Equal(7, await mft.Task);
+        }
+    }
+
+    [Fact]
+    public async Task TheBoundAnswersBothFiguresNullWhenTheReadNeverReturns()
+    {
+        using var release = new ManualResetEventSlim();
+        var figure = new TaskCompletionSource<long?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mft = new TaskCompletionSource<long?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            VolumeSpace.Start(@"Q:\", figure, reader: _ => { release.Wait(); return 5; }, TimeSpan.FromMilliseconds(200), anyRoot: false,
+                mft, mftReader: _ => 7);
+
+            Assert.Null(await figure.Task.WaitAsync(FigureWait));
+            Assert.True(mft.Task.IsCompletedSuccessfully);
+            Assert.Null(await mft.Task);
+        }
+        finally
+        {
+            release.Set();
+        }
+        // The read that returns late finds both answered and changes neither.
+        await Task.Delay(100);
+        Assert.Null(await figure.Task);
+        Assert.Null(await mft.Task);
+    }
+
+    [Fact]
+    public async Task AThrowingMftProbeLeavesTheMftNullAndStillAnswersTheUsedFigure()
+    {
+        var figure = new TaskCompletionSource<long?>();
+        var mft = new TaskCompletionSource<long?>();
+
+        VolumeSpace.Start(@"Q:\", figure, reader: _ => 5, FigureWait, anyRoot: false, mft,
+            mftReader: _ => throw new InvalidOperationException("the $MFT read threw"));
+
+        Assert.Equal(5, await figure.Task.WaitAsync(FigureWait));
+        Assert.Null(await mft.Task.WaitAsync(FigureWait));
+        Assert.True(mft.Task.IsCompletedSuccessfully && figure.Task.IsCompletedSuccessfully, "neither is faulted");
+    }
+
+    /// <summary>A volume that could not say what is in use is no figure, so the $MFT is not read: the panel needs both or neither.</summary>
+    [Fact]
+    public async Task NoUsedFigureMeansTheMftIsNeverRead()
+    {
+        bool mftRead = false;
+        var figure = new TaskCompletionSource<long?>();
+        var mft = new TaskCompletionSource<long?>();
+
+        VolumeSpace.Start(@"Q:\", figure, reader: _ => null, FigureWait, anyRoot: false, mft, mftReader: _ =>
+        {
+            mftRead = true;
+            return 7;
+        });
+
+        Assert.Null(await figure.Task.WaitAsync(FigureWait));
+        Assert.Null(await mft.Task.WaitAsync(FigureWait));
+        Assert.False(mftRead);
+    }
+
+    /// <summary>A test that substitutes the used read never reads the real disk's $MFT: with no $MFT reader given, there is none.</summary>
+    [Fact]
+    public async Task ASubstitutedUsedReadWithNoMftReaderGivesNoMft()
+    {
+        var figure = new TaskCompletionSource<long?>();
+        var mft = new TaskCompletionSource<long?>();
+
+        VolumeSpace.Start(SystemRoot, figure, reader: _ => 5, FigureWait, anyRoot: false, mft);
+
+        Assert.Equal(5, await figure.Task.WaitAsync(FigureWait));
+        Assert.Null(await mft.Task.WaitAsync(FigureWait));
+    }
+
+    [Fact]
+    public void ARootThatIsNotAWholeDriveAnswersBothFiguresAtOnce()
+    {
+        var figure = new TaskCompletionSource<long?>();
+        var mft = new TaskCompletionSource<long?>();
+
+        VolumeSpace.Start(@"C:\Users", figure, reader: _ => 5, FigureWait, anyRoot: false, mft, mftReader: _ => 7);
+
+        Assert.True(figure.Task.IsCompletedSuccessfully && mft.Task.IsCompletedSuccessfully);
+        Assert.Null(figure.Task.Result);
+        Assert.Null(mft.Task.Result);
+    }
+
+    /// <summary>The scan hands the $MFT's completion source to the read, and the figure and the $MFT land on the result's store.</summary>
+    [Fact]
+    public async Task AScanRecordsTheMftBesideTheFigure()
+    {
+        using var tree = new TempTree();
+        tree.File("a.bin", 10);
+        var options = new ScanOptions { VolumeReader = _ => 42, VolumeMftReader = _ => 7, ReadVolumeOfAnyRoot = true };
+
+        ScanResult result = Scans.Run(tree.Root, options);
+
+        Assert.Equal(42, await result.Store.VolumeUsed.WaitAsync(FigureWait));
+        Assert.Equal(7, await result.Store.VolumeUsedMft.WaitAsync(FigureWait));
+    }
+
+    [Fact]
+    public async Task AFolderScanAnswersTheMftNullAtOnce()
+    {
+        using var tree = new TempTree();
+        tree.File("a.bin", 10);
+
+        ScanResult result = Scans.Run(tree.Root);
+
+        Assert.True(result.Store.VolumeUsedMft.IsCompletedSuccessfully, "a folder scan answers the $MFT at once");
+        Assert.Null(await result.Store.VolumeUsedMft);
+    }
+
+    [Fact]
+    public async Task ADriveLetterWithNoVolumeRecordsNoMftEither()
+    {
+        string root = FreeDriveLetter() + @":\";
+
+        ScanResult result = await Task.Run(() => Scanner.Scan(root, new ScanProgress(), CancellationToken.None)).WaitAsync(ScanWait);
+
+        Assert.Equal(ScanStatus.RootUnreadable, result.Status);
+        Assert.Null(await result.Store.VolumeUsed.WaitAsync(FigureWait));
+        Assert.Null(await result.Store.VolumeUsedMft.WaitAsync(FigureWait));
+    }
+
+    /// <summary>
+    /// U-001's route on this PC's real volume: the system drive's own $MFT, the same through a SUBST letter over a folder of it, which is
+    /// not a file named $MFT in that folder (a decoy of that name, ten bytes, is planted), against the oracle the window cases use,
+    /// FileInfo of the volume's own $MFT. The $MFT grows while the tests run, so the three agree within 64 MiB. The SUBST letter is
+    /// a local root: its remote answer is false, and the composed default read gives its figure.
+    /// </summary>
+    [Fact]
+    public void TheMftFigureOfASubstLetterIsTheVolumeUnderIt()
+    {
+        using var tree = new TempTree();
+        tree.File("$MFT", 10); // a decoy: GetFileAttributesEx of Y:\$MFT would size this, not the volume's
+        string volume = Path.GetPathRoot(tree.Root)!;
+        char letter = FreeDriveLetter();
+        string drive = letter + @":\";
+        RunSubst($"{letter}:", tree.Root);
+        try
+        {
+            Assert.True(Kernel32.TryGetMftValidData(volume, out long direct, out int directError), $"{volume}$MFT: Win32 error {directError}");
+            Assert.True(Kernel32.TryGetMftValidData(drive, out long throughSubst, out int substError), $"{drive}$MFT: Win32 error {substError}");
+            long oracle = new FileInfo(volume + "$MFT").Length;
+            output.WriteLine($"{volume}$MFT direct {direct:N0}, through {drive} {throughSubst:N0}, FileInfo {oracle:N0}");
+
+            Assert.True(throughSubst > 1024 * 1024, $"the figure through {drive} is {throughSubst:N0}: the decoy, not the volume's $MFT");
+            Assert.InRange(Math.Abs(direct - throughSubst), 0, Slack);
+            Assert.InRange(Math.Abs(oracle - throughSubst), 0, Slack);
+
+            Assert.False(Kernel32.IsRemoteRoot(drive), $"{drive} is a SUBST over a local folder");
+            Assert.False(Kernel32.IsRemoteRoot(volume), $"{volume} is a local volume");
+            long? figure = VolumeSpace.Read(drive);
+            Assert.True(figure is > 0, $"the default read of {drive} gave {figure}");
+        }
+        finally
+        {
+            RunSubst($"{letter}:", "/D");
+        }
+    }
+
+    /// <summary>
+    /// A program that holds the root for read, write and delete cannot take away the volume thread's answer and with it the coverage
+    /// line (review m3): the holder is this test's own handle on the folder a SUBST letter stands for. Measured while building this: Windows
+    /// ignores the share mode of an open that asks only for FILE_READ_ATTRIBUTES, so this passes with a narrower one too (FILE_SHARE_READ),
+    /// and the share mode cannot be told by a test. That the root is opened in one place, with the arguments fixed there, is held by
+    /// FailCriticalErrorsTests.Kernel32MakesOnlyThePathCallsThatRunInsideTheScope, which counts the CreateFile calls in Kernel32.cs.
+    /// </summary>
+    [Fact]
+    public void TheRootOpenSharesWithAProgramThatHoldsTheRootForWriteAndDelete()
+    {
+        const uint GenericRead = 0x80000000, Delete = 0x00010000, GenericWrite = 0x40000000;
+        using var tree = new TempTree();
+        tree.File("a.bin", 10);
+        char letter = FreeDriveLetter();
+        string drive = letter + @":\";
+        RunSubst($"{letter}:", tree.Root);
+        try
+        {
+            using Kernel32.CriticalErrorBoxOff boxOff = Kernel32.CriticalErrorBoxOff.Begin();
+            using Microsoft.Win32.SafeHandles.SafeFileHandle holder = Kernel32.CreateFile(boxOff, tree.Root, GenericRead | GenericWrite | Delete,
+                Kernel32.FILE_SHARE_ALL, 0, Kernel32.OPEN_EXISTING, Kernel32.FILE_FLAG_BACKUP_SEMANTICS, 0);
+            Assert.False(holder.IsInvalid, $"the holder's own open of {tree.Root} failed");
+
+            Assert.False(Kernel32.IsRemoteRoot(drive), $"{drive} could not be asked while a program held {tree.Root} for write and delete");
+            Assert.True(Kernel32.TryGetMftValidData(drive, out _, out int error), $"{drive}$MFT: Win32 error {error} while the root was held");
+        }
+        finally
+        {
+            RunSubst($"{letter}:", "/D");
+        }
+    }
+
+    /// <summary>A share's final path is in \\?\UNC\ form, in any case; a drive letter's and a volume GUID's are not.</summary>
+    [Theory]
+    [InlineData(@"\\?\UNC\server\share\", true)]
+    [InlineData(@"\\?\unc\server\share\folder", true)]
+    [InlineData(@"\\?\C:\", false)]
+    [InlineData(@"\\?\C:\UNCle\", false)]
+    [InlineData(@"\\?\Volume{0b1d2e3f-0000-0000-0000-100000000000}\", false)]
+    [InlineData(@"\\server\share\", false)]
+    [InlineData("", false)]
+    public void AFinalPathInUncFormNamesAShare(string finalPath, bool share) =>
+        Assert.Equal(share, Kernel32.IsUncFinalPath(finalPath));
+
+    /// <summary>A drive letter with nothing behind it cannot be asked: no remote answer, no $MFT, no figure.</summary>
+    [Fact]
+    public void ADriveLetterWithNothingBehindItCannotBeAsked()
+    {
+        string root = FreeDriveLetter() + @":\";
+
+        Assert.Null(Kernel32.IsRemoteRoot(root));
+        Assert.False(Kernel32.TryGetMftValidData(root, out long bytes, out _), $"a figure of {bytes:N0} for {root}");
+        Assert.Null(VolumeSpace.Read(root));
+    }
+
+    /// <summary>
+    /// The real redirector, wherever this PC has a mapped network drive (nothing is skipped: with none, only the local half is
+    /// asked): its root opened for attributes answers remote, and the composed default read gives it no figure, so a mapped drive is
+    /// not offered a coverage line that blames a server's disk on this account (SC-015). It opens only the share's root, lists nothing
+    /// and changes no mapping. A share that stopped answering cannot hold the test past its bound.
+    /// </summary>
+    [Fact]
+    public async Task EveryMappedNetworkDriveOnThisPcIsRemoteAndGetsNoFigure()
+    {
+        string[] network = [.. DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Network).Select(d => d.Name)];
+        output.WriteLine($"network drives on this PC: {(network.Length == 0 ? "none" : string.Join(", ", network))}");
+
+        foreach (string root in network)
+        {
+            bool? remote = await Task.Run(() => Kernel32.IsRemoteRoot(root)).WaitAsync(FigureWait);
+            long? figure = await Task.Run(() => VolumeSpace.Read(root)).WaitAsync(FigureWait);
+            output.WriteLine($"{root} remote={remote?.ToString() ?? "unknown"} figure={figure?.ToString("N0") ?? "none"}");
+
+            Assert.True(remote, $"{root} is a network drive and its root handle did not say so");
+            Assert.Null(figure);
+        }
+        Assert.False(Kernel32.IsRemoteRoot(SystemRoot), $"{SystemRoot} is local");
+    }
+
+    private static void RunSubst(params string[] arguments)
+    {
+        var start = new ProcessStartInfo("subst.exe") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+        foreach (string argument in arguments)
+            start.ArgumentList.Add(argument);
+        using Process process = Process.Start(start)!;
+        Task<string> stdout = process.StandardOutput.ReadToEndAsync();
+        Task<string> stderr = process.StandardError.ReadToEndAsync();
+        Assert.True(process.WaitForExit(30_000), "subst.exe did not finish in 30 s");
+        Assert.True(process.ExitCode == 0, $"subst {string.Join(' ', arguments)} exited {process.ExitCode}: {stdout.Result} {stderr.Result}");
+    }
+
     // Get-Volume's Size minus SizeRemaining, from Windows PowerShell as an ordinary user. No retry and no skip:
     // a failure fails the test with what PowerShell said.
     private static long GetVolumeUsed(char letter)

@@ -51,7 +51,7 @@ public sealed partial class TopLevelRowText
         TopLevelState.StoppedPartway => $"{row.Name}  (stopped partway)",
         TopLevelState.Unreadable => $"{row.Name}  ({UnreadableRows.KindText(row.FailedKind)})",
         TopLevelState.NotFollowed => $"{row.Name}  (link, not followed)",
-        TopLevelState.NotScanned => $"{row.Name}  (size not counted: Windows container layers)",
+        TopLevelState.NotScanned => $"{row.Name}  ({UnreadableRows.NotScannedShortText(UnreadableRows.FlaggedReason)})",
         TopLevelState.Done when row.Revised => $"{row.Name}  (revised)",
         _ => row.Name,
     };

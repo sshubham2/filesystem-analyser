@@ -506,9 +506,16 @@ public class FailCriticalErrorsTests
                 found.AddRange(pattern.Matches(line).Select(m => (m.Groups[1].Value, line.Trim())));
         }
 
-        string[] read = ["CreateFile", "CreateFileW", "CreateFileW", "GetDiskFreeSpaceEx", "GetDiskFreeSpaceEx", "GetDiskFreeSpaceExW"];
+        // SL-001 added the second CreateFile (OpenRootForQuery, the one open of a drive's root the volume thread's queries share)
+        // and the GetFileAttributesEx import, its entry-point name and its one call (TryGetMftValidData), each inside the scope
+        // its caller begins.
+        string[] read =
+        [
+            "CreateFile", "CreateFile", "CreateFileW", "CreateFileW", "GetDiskFreeSpaceEx", "GetDiskFreeSpaceEx", "GetDiskFreeSpaceExW",
+            "GetFileAttributesEx", "GetFileAttributesEx", "GetFileAttributesExW",
+        ];
         Assert.True(found.Select(f => f.Name).Order(StringComparer.Ordinal).SequenceEqual(read),
-            "Kernel32.cs makes path calls other than the ones read for SL-077 (" + string.Join(", ", read) + "). Put each new one " +
+            "Kernel32.cs makes path calls other than the ones read for SL-077 and SL-001 (" + string.Join(", ", read) + "). Put each new one " +
             "inside a CriticalErrorBoxOff, then add it to this list:\n" + string.Join("\n", found.Select(f => $"{f.Name}: {f.Line}")));
     }
 

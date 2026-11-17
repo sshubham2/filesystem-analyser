@@ -189,7 +189,8 @@ public static class Scanner
         {
             // First, before any way out of the scan, so that whatever its ending the figure is answered or
             // owned by its read (SL-043, m5). Nothing here waits for it.
-            VolumeSpace.Start(display, _store.VolumeUsedSource, options.VolumeReader, options.VolumeReadBound, options.ReadVolumeOfAnyRoot);
+            VolumeSpace.Start(display, _store.VolumeUsedSource, options.VolumeReader, options.VolumeReadBound, options.ReadVolumeOfAnyRoot,
+                _store.VolumeUsedMftSource, options.VolumeMftReader);
             if (store.Kind == StoreVerdictKind.Refuse)
                 return Finish(ScanStatus.Refused);
             _reader.ExcludedStore = store.Excluded;

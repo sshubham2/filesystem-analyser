@@ -584,6 +584,9 @@ rules:
     - src/FsAnalyser.Core/Analysis/LargestFiles.cs
     # SL-046: the file-kind breakdown reads a returned store, as LargestFiles does.
     - src/FsAnalyser.Core/Analysis/KindBreakdown.cs
+    # SL-001: the size-not-read pass reads a returned store, as LargestFiles and KindBreakdown do: the coverage panel hands it
+    # ScanResult.Store of a scan that has returned, and nothing in Core calls it while a scan runs.
+    - src/FsAnalyser.Core/Analysis/SizeNotRead.cs
   - name: the window does not sort the folder tree in its XAML either
     files: src/FsAnalyser.App/*.xaml
     must_not_match:
@@ -1424,3 +1427,46 @@ rules:
     except_files:
     - src/FsAnalyser.Core/Store/ScanStore.cs
     - src/FsAnalyser.Core/AtLeastFigures.cs
+  # settled by SL-001
+  - name: in the App, only UnreadableRows words the container layer store
+    files: src/FsAnalyser.App/**/*.cs
+    must_not_match:
+    - (?i)"[^"\r\n]*\b(?:container layers?\b|wcifs(?![-\w]))
+    because: 'The tab row, the tree note, the top-level title, the ending note, the refusal
+      and the coverage panel must say the same thing about one folder. Today five hand-typed
+      copies agree only by luck (SC-021). The next edit to one copy leaves the surfaces describing
+      the store differently, and a second precaution would inherit the wcifs wording with no
+      warning (SC-046).
+
+
+      This is a tripwire for the named spellings (#486). Known gaps: a phrase split across a
+      + concatenation, the content lines of a raw """ literal, and a reworded phrase.
+
+
+      Known false fire: a string closed earlier on a line followed by a trailing comment that
+      mentions the store. Reword the comment.'
+    except_files:
+    - src/FsAnalyser.App/UnreadableRows.cs
+  - name: no count in the App is written with a fixed plural
+    files: src/FsAnalyser.App/**/*.cs
+    must_not_match:
+    - \{[^{}\r\n]*:N0\}\s*(?:files|folders|links)\b
+    because: 'FigureText.Count is how the window writes a count wherever it shows one. A raw
+      :N0 followed by a fixed plural writes ''1 files'' and ''1 folders''. That has happened
+      on this PC: ledger run 1098''s ''1 folders unreadable'' and run 2148''s ''1 files were
+      deleted'' (SC-044). It fires on exactly today''s four lines, MainWindow.xaml.cs:342, :343,
+      :640 and :642, and is quiet on Count(...) and on FigureText''s own `{n:N0} {noun}s`.
+
+
+      This is a tripwire for the named spellings. Known gaps: ToString("N0") + " files", other
+      format strings, and other nouns.'
+  - name: the report never reads the coverage panel's screen lines
+    files: src/FsAnalyser.App/WindowReport.cs
+    must_not_match:
+    - \bCoverageLines\b
+    - \bScreenLines\b
+    because: The panel's on-screen lines name each folder by its full path. The report must
+      hold counts, ids and path-free texts only, because the engine stores it and a path publishes
+      the person's folder names (Q-016). E001-5 checks only that the report is ASCII, and a
+      %TEMP% path is ASCII, so nothing else would catch a builder copying the panel's text or
+      lines into 'coverage' or 'CoveragePanel'.
