@@ -11,6 +11,15 @@ internal static class FigureText
 {
     internal static string Count(long n, string noun) => n == 1 ? $"1 {noun}" : $"{n:N0} {noun}s";
 
+    /// <summary>
+    /// The scanning panel's counters line (SL-044): files, folders, size and size on disk, and the folders that could not be read
+    /// once there are any. Every count through <see cref="Count"/>, so one file or one folder is '1 file' and '1 folder' here as
+    /// everywhere else. The window cases' hook reads the folder count back from this text (CountersReading.FoldersIn).
+    /// </summary>
+    internal static string Counters(long files, long folders, long bytes, long onDisk, long unreadable) =>
+        $"{Count(files, "file")}, {Count(folders, "folder")}, {FormatSize(bytes)} ({FormatSize(onDisk)} on disk)" +
+        (unreadable > 0 ? $", {Count(unreadable, "folder")} unreadable" : "");
+
     internal static string FormatSize(long bytes)
     {
         string[] units = ["bytes", "KB", "MB", "GB", "TB", "PB"];

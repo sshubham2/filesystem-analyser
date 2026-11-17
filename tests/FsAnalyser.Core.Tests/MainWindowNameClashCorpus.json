@@ -1,0 +1,82 @@
+{
+  "about": "SL-001, O-018: the class 'member-name clashes inside MainWindow'. MainWindow is a partial class: its XAML generates one field per x:Name, and its code-behind declares members, in a namespace that holds the App's other types. Three ways a name is produced twice by accident, each a compile error or a silent hiding. x-name-member-clash: an x:Name and a member the code-behind declares share a name (the generated field and the member, CS0102). member-kind-clash: a method and a property, field or event of the code-behind share a name (CS0102), where overloaded methods do not. x-name-hides-type: an x:Name is also the name of a type of the App's namespace, so inside MainWindow the generated field hides the type and a call through the type name does not compile (the design's first pure class, CoverageText, against its TextBlock). 'expect' is the list of '<rule>:<name>' the checker must report for the row, in order of rule then name, and empty for a row that must stay quiet. The first two rows are the design's own names before the fix (a class CoverageText beside a TextBlock named CoverageText; a property Coverage beside the static method Coverage), which is the code before the fix failing the rows it is claimed to close.",
+  "rows": [
+    {
+      "name": "the design's first pure class beside a TextBlock of that name",
+      "xaml": "<TextBlock x:Name=\"CoverageText\" TextWrapping=\"Wrap\" />",
+      "code": "public partial class MainWindow : Window\n{\n    private void ShowCoverage()\n    {\n    }\n}",
+      "types": ["CoverageText", "FigureText"],
+      "expect": ["x-name-hides-type:CoverageText"]
+    },
+    {
+      "name": "the design's internal Coverage property beside the static Coverage method",
+      "xaml": "<TextBlock x:Name=\"OutcomeDetail\" />",
+      "code": "public partial class MainWindow : Window\n{\n    internal CoverageBreakdown? Coverage { get; private set; }\n\n    private static string Coverage(bool finished, long seenOnDisk, long volumeInUse)\n    {\n        return \"\";\n    }\n}",
+      "types": ["CoverageBreakdown"],
+      "expect": ["member-kind-clash:Coverage"]
+    },
+    {
+      "name": "a method named like a generated field",
+      "xaml": "<StackPanel x:Name=\"CoveragePanel\">\n  <TextBlock x:Name=\"CoverageLines\" />\n</StackPanel>",
+      "code": "public partial class MainWindow : Window\n{\n    private void CoverageLines()\n    {\n    }\n}",
+      "types": [],
+      "expect": ["x-name-member-clash:CoverageLines"]
+    },
+    {
+      "name": "a property named like a generated field",
+      "xaml": "<TextBlock x:Name=\"OutcomeTitle\" />",
+      "code": "public partial class MainWindow : Window\n{\n    internal string OutcomeTitle { get; set; }\n}",
+      "types": [],
+      "expect": ["x-name-member-clash:OutcomeTitle"]
+    },
+    {
+      "name": "a field named like a generated field, with a tuple type",
+      "xaml": "<Border x:Name=\"Finished\" />",
+      "code": "public partial class MainWindow : Window\n{\n    private static readonly (Brush Border, Brush Background) Finished = (Solid(\"#FF5E9E4A\"), Solid(\"#FFF2F9EE\"));\n}",
+      "types": [],
+      "expect": ["x-name-member-clash:Finished"]
+    },
+    {
+      "name": "an event beside a method of its name",
+      "xaml": "",
+      "code": "public partial class MainWindow : Window\n{\n    internal event EventHandler? EndingShown;\n\n    private void EndingShown()\n    {\n    }\n}",
+      "types": [],
+      "expect": ["member-kind-clash:EndingShown"]
+    },
+    {
+      "name": "a nested type named like a generated field",
+      "xaml": "<TextBlock x:Name=\"DriveChoice\" />",
+      "code": "public partial class MainWindow : Window\n{\n    private sealed record DriveChoice(string Root, string Label);\n}",
+      "types": [],
+      "expect": ["x-name-member-clash:DriveChoice"]
+    },
+    {
+      "name": "the fix: CoveragePanelText and a CoverageLines TextBlock, a CoverageModel property beside the Coverage method",
+      "xaml": "<StackPanel x:Name=\"CoveragePanel\" Visibility=\"Collapsed\">\n  <TextBlock x:Name=\"CoverageLines\" TextWrapping=\"Wrap\" />\n</StackPanel>",
+      "code": "public partial class MainWindow : Window\n{\n    internal CoverageBreakdown? CoverageModel { get; private set; }\n\n    private void ShowCoverage(CoverageBreakdown? panel)\n    {\n    }\n\n    private void HideCoverage()\n    {\n    }\n\n    private static string Coverage(bool finished, long seenOnDisk, long volumeInUse)\n    {\n        return \"\";\n    }\n}",
+      "types": ["CoveragePanelText", "CoverageBreakdown", "CoverageFacts", "CoverageFolder"],
+      "expect": []
+    },
+    {
+      "name": "overloads of one method are one kind",
+      "xaml": "<TextBlock x:Name=\"OutcomeNotes\" />",
+      "code": "public partial class MainWindow : Window\n{\n    private static string Count(long n)\n    {\n        return \"\";\n    }\n\n    private static string Count(int n, string noun)\n    {\n        return \"\";\n    }\n}",
+      "types": [],
+      "expect": []
+    },
+    {
+      "name": "an x:Name inside a template is a name in that template, not a field of the window",
+      "xaml": "<ListBox.ItemTemplate>\n  <DataTemplate>\n    <TextBlock x:Name=\"ShareText\" Text=\"{Binding ShareText}\" />\n  </DataTemplate>\n</ListBox.ItemTemplate>\n<Style TargetType=\"ScrollViewer\">\n  <Setter Property=\"Template\">\n    <Setter.Value>\n      <ControlTemplate TargetType=\"ScrollViewer\">\n        <Border x:Name=\"Finished\" />\n      </ControlTemplate>\n    </Setter.Value>\n  </Setter>\n</Style>\n<TextBlock x:Name=\"OutcomeDetail\" />",
+      "code": "public partial class MainWindow : Window\n{\n    private static readonly (Brush Border, Brush Background) Finished = (Solid(\"#FF5E9E4A\"), Solid(\"#FFF2F9EE\"));\n}",
+      "types": ["ShareText"],
+      "expect": []
+    },
+    {
+      "name": "a member named like a type is not a clash (the type's own name is not an x:Name)",
+      "xaml": "<TextBlock x:Name=\"OutcomeDetail\" />",
+      "code": "public partial class MainWindow : Window\n{\n    internal KindBreakdownResult? Kinds { get; private set; }\n}",
+      "types": ["Kinds", "KindBreakdownResult"],
+      "expect": []
+    }
+  ]
+}

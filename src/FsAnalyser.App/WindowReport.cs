@@ -37,7 +37,8 @@ namespace FsAnalyser.App;
 ///     "window": { "OutcomeTitle": Text, "OutcomeDetail": [Text split into lines], "CountersText": Text,
 ///                 "PickerPanel": { "actualHeight": number }, "DrivePanel": { "buttons": number },
 ///                 "OutcomePanel": { "visible": bool, "actualHeight": number },
-///                 "OutcomeTexts": { "actualHeight": number, "extentHeight": number, "inView": bool },
+///                 "OutcomeTexts": { "actualHeight": number, "extentHeight": number, "inView": bool, "verticalOffset": number },
+///                 "CoveragePanel": { "visible": bool, "actualHeight": number, "top": number or null },
 ///                 "TopLevelHeader": Text,
 ///                 "OutcomeTabs": { "visible": bool, "selected": x:Name or null, "actualHeight": number, "stripRows": number },
 ///                 "LargestFilesTab": { "visible": bool, "selected": bool, "inView": bool, "actualHeight": number, "header": Text },
@@ -59,6 +60,8 @@ namespace FsAnalyser.App;
 ///               "unreadable", "skippedStores", "notScanned", "opensUnderExcludedStore" } or null,
 ///     "outcome": "completed" | "cancelled" | "root-unreadable" | "refused" or null, "refusal": "container-layer-store" or null,
 ///     "workarounds": [ { "id", "on" } ],   (SL-095)
+///     "coverage": { "volumeInUse", "seenOnDisk", "unseen", "folders": [ { "kind", "size" } ], "measured": [ { "id", "bytes", "text" } ],
+///                   "remainder": { "bytes", "includesStore", "text" }, "sizeNotRead": { "files", "bytes", "text" } or null } or null,   (SL-001)
 ///     "topLevel": { "rows", "reading", "notRead", "stoppedPartway", "unreadable", "notScanned", "bytes", "onDisk", "files",
 ///                   "final" },   (SL-039; absent when the results list shows nothing)
 ///     "kinds": [ { "id", "label", "files", "size", "onDisk" } ] }   (SL-046; absent when no kinds were computed)
@@ -71,6 +74,22 @@ namespace FsAnalyser.App;
 /// "refusal", a refused root being "refused" with "container-layer-store"; "workarounds", each precaution against an
 /// outside defect (Core's KnownWorkarounds) by id with whether it was on; and "topLevel"'s "notScanned".
 /// Counts and ids only, never a path (Q-016).
+/// SL-001 added, all additive: the top-level "coverage", the whole-drive coverage panel's figures as the window holds them, and
+/// window "CoveragePanel" and "OutcomeTexts"' "verticalOffset". "coverage" is null unless the panel is on screen, which it is
+/// for a finished scan of a whole local drive whose volume figure landed, and not for a folder, a share or mapped drive
+/// (the volume read gives those no figure), a stopped, refused or unreadable root, or a scan that counted more than the volume
+/// reports in use. "volumeInUse" is what the volume reports, "seenOnDisk" what the scan counted ("core"'s "bytesOnDisk"), and
+/// "unseen" their difference, never negative. "folders" is every folder the scan knows it missed, with no name and no path and
+/// with a "size" of null, the one left out on purpose ("not-scanned") first and then the ones that could not be read, one
+/// each ("unreadable", as many as "core"'s "unreadable"); the screen may name fewer of them. "measured" is the parts of
+/// "unseen" that were measured: the $MFT's valid data length ("mft") or none, when the volume is not NTFS, the $MFT could not
+/// be read or it is more than "unseen". "remainder" is the rest of "unseen" ("bytes", so "measured" plus "remainder" is
+/// "unseen"): space an ordinary account cannot read, never a measured figure, with whether it includes the container layer store
+/// ("includesStore"). "sizeNotRead" is the files whose own size could not be read, kept apart from "unseen" (they are in
+/// "seenOnDisk", at the on-disk size the folder listing gave), or null when there are none. Every "text" is the words the
+/// panel draws for that part, copied, and holds no path. CoveragePanel's "top" is where the panel starts inside OutcomeTexts'
+/// content, null while it is not shown, and it is in view only when "top" less OutcomeTexts' "verticalOffset" is under
+/// OutcomeTexts' "actualHeight": while the outcome's sections are shown the texts are capped, and the panel is a scroll away.
 /// "kinds" is the files by kind that KindsList (SL-046) is written from, in its order, largest on disk first: each
 /// kind's stable id ("disk-images"), its label as the list shows it, and its files, bytes and bytes on disk as Core
 /// added them up. Its sums are the root's, so they are "core"'s files, bytes and bytesOnDisk, after a stop too. It
@@ -98,12 +117,15 @@ namespace FsAnalyser.App;
 /// LargestFilesTab and UnreadableTab are the tabs themselves: "visible" and "inView" are about the header, and
 /// "header" is its text. A section's controls are out of the visual tree while another tab is selected, so they read
 /// visible false, inView false and fullRows 0 then, whatever actualHeight they kept from when they were last on
-/// screen. UnreadableExpander is what the unreadable folders were before SL-065, kept with the meaning it had: it is
-/// read from UnreadableTab, and "expanded" is whether that tab is selected, the one way their list is on screen.
+/// screen. UnreadableExpander is what the unreadable folders were before SL-065: it is read from UnreadableTab, so since
+/// SL-095 its "visible" is true when a folder could not be read OR when one was left out on purpose (the container layer
+/// store), and "expanded" is whether that tab is selected, the one way their list is on screen. Neither says that a folder
+/// could not be read: how many did is "core"'s "unreadable", which is what a check of that reads.
 /// FolderTree (SL-044) is the folder tree a completed scan shows in TopLevelList's place: its layout only, never
 /// a row's name or figures (Q-016). Its "realizedRows" are the tree rows built at any depth, and a row is one of
 /// its "fullRows" when its own line, not the folders opened under it, lies wholly inside the viewport. Later
-/// screens ADD keys; they never rename one or change what it holds. "window" is the evidence a check
+/// screens ADD keys; they never rename one, and a key keeps the meaning it was documented with, except where a remark here
+/// says it was widened (UnreadableExpander, above). "window" is the evidence a check
 /// compares with the tree it built. The largestFiles* keys are read from the list's own rows and from the
 /// window's timing of the one call that ranked them; they never hold a name or a path. "core" is the
 /// ScanResult behind the ending, straight from the same process: it only says which side is wrong when the
@@ -146,6 +168,18 @@ internal static class WindowReport
                     actualHeight = window.OutcomeTexts.ActualHeight,
                     extentHeight = window.OutcomeTexts.ExtentHeight,
                     inView = InView(window.OutcomeTexts),
+                    verticalOffset = window.OutcomeTexts.VerticalOffset,
+                },
+                // The coverage panel's layout only, with no text: its folder lines carry paths (Q-016). 'top' is where it starts
+                // inside the outcome texts, and only while it is shown: a collapsed panel keeps a stale offset that would read
+                // as 'in view'.
+                CoveragePanel = new
+                {
+                    visible = window.CoveragePanel.IsVisible,
+                    actualHeight = window.CoveragePanel.ActualHeight,
+                    top = window.CoveragePanel.IsVisible
+                        ? window.CoveragePanel.TranslatePoint(new Point(0, 0), window.OutcomeTextsContent).Y
+                        : (double?)null,
                 },
                 TopLevelHeader = window.TopLevelHeader.Text,
                 OutcomeTabs = new
@@ -241,6 +275,20 @@ internal static class WindowReport
             // The precautions against outside defects as the window holds them, by id: on or off (SL-095). Rendered from
             // Core's list as it is, naming no entry.
             ["workarounds"] = KnownWorkarounds.All.Select(w => new { id = w.Id, on = window.EnabledWorkarounds.Contains(w.Id) }).ToArray(),
+            // SL-001: the whole-drive coverage panel's figures, copied from the model the panel was drawn from, with no formatting
+            // and no text built here, and never from the panel's lines (which hold paths, Q-016). Null while no panel is shown.
+            ["coverage"] = window.CoverageModel is { } cover && window.CoveragePanel.IsVisible
+                ? new
+                {
+                    volumeInUse = cover.VolumeInUse,
+                    seenOnDisk = cover.SeenOnDisk,
+                    unseen = cover.Unseen,
+                    folders = cover.Folders.Select(f => new { kind = f.Kind, size = f.Size }).ToArray(),
+                    measured = cover.Measured.Select(m => new { id = m.Id, bytes = m.Bytes, text = m.Text }).ToArray(),
+                    remainder = new { bytes = cover.Remainder.Bytes, includesStore = cover.Remainder.IncludesStore, text = cover.Remainder.Text },
+                    sizeNotRead = cover.SizeNotRead is { } apart ? new { files = apart.Files, bytes = apart.Bytes, text = apart.Text } : null,
+                }
+                : null,
         };
         // The rows the results list holds, counted: never a name or a path (Q-016), only how many rows are in
         // each state and what they add up to. Absent when the list shows nothing.

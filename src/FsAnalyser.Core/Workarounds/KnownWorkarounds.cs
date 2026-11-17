@@ -6,8 +6,9 @@ namespace FsAnalyser.Core.Workarounds;
 /// <summary>
 /// One precaution the app takes against a defect that is not this project's: in Windows, a driver, a runtime or a
 /// service the app depends on. Each is one checkbox in the window's Settings, on at every launch until a person turns it
-/// off, and the window words it from these fields alone: what the outside defect is and where it lives, what the app
-/// does to avoid it, and what turning it off brings back.
+/// off, and the window words it from these fields: what the outside defect is and where it lives, what the app
+/// does to avoid it, and what turning it off brings back. The endings' own words for a folder a precaution left out are
+/// written once, in the App's UnreadableRows, from these fields and the record of what was left out.
 /// </summary>
 /// <param name="Id">A short, stable id, as the window report names it.</param>
 /// <param name="Title">The checkbox's label.</param>

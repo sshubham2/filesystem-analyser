@@ -107,7 +107,7 @@ internal sealed class FolderTreeNode : INotifyPropertyChanged
     /// </summary>
     public string Note => _session.Store is not { } store ? ""
         : store.Kind(_entry) == EntryKind.Link ? "link, not followed"
-        : (store.Flags(_entry) & EntryFlags.NotScanned) != 0 ? "size not counted: Windows container layers, skipped to avoid a leak in Windows' wcifs.sys driver; see Settings"
+        : (store.Flags(_entry) & EntryFlags.NotScanned) != 0 ? UnreadableRows.NotScannedText(UnreadableRows.FlaggedReason)
         : _notListed ? TopLevelRowText.NotReadYet
         : _session.FailedKind(_entry) is { } failed ? UnreadableRows.KindText(failed)
         : "";

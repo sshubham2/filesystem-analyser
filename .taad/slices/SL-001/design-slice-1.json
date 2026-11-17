@@ -1,0 +1,644 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-001",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-11-17T08:49:34.550Z",
+ "head": "21632dc5f6fffe0ad9d968a1bff71076ad4c8f41",
+ "run_id": 11120,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "reason": "One proposal (practice), checked against the tree. Composed with six corrections where the tree contradicted it or a finish-line script would have failed: a type/x:Name clash, folder paths reaching the report, a fitness pattern that fired on a legitimate id, an untestable private hook function, the missing NTFS guard before the $MFT read, and a wrong count of Start callers. Retiered to medium because the design changes what public ScanStore.VolumeUsed answers for remote roots, adds public Core API, and adds report schema-1 fields that the engine and six finish-line scripts read.",
+  "selection_rationale": "Only the practice proposal was handed in, so selecting meant checking it against the tree, the survey and the six planted finish-line scripts, not choosing between designs. The core holds up against reality.\n- The volume figure is already read on a bounded background thread that is handed only completion sources (VolumeSpace.Start, VolumeSpace.cs:37-55). A second completion source, answered first on that same thread, gets the $MFT figure to the App without anything waiting on it. The existing tripwire NothingWaitsOnTheVolumeFigure (ArchitectureRulesTests.cs:146) covers it through the VolumeUsed name prefix.\n- AddVolumeInUse (MainWindow.xaml.cs:699-706) is the one place the ending completes before EndingShown. That is where the report has to see the panel.\n- Every figure the panel needs is already on ScanResult and ScanStore: Unreadable, SkippedStores, ProbeFailures, EntryFlags.ProbeFailed and ChargedOnDisk.\n- The remote test already exists as FileRemoteProtocolInfo in DecideLastAccess (Scanner.cs:309-318).\n- U-001 measured the only route by which an ordinary account can size the $MFT: GetFileAttributesExW on <volume>\\$MFT.\n- The practice designer flagged over-engineering against themselves and trimmed to one measured part plus one labelled remainder. That trim is kept: the unbuilt drill-down is exactly what U-001 rules out for an ordinary account.\n\nSix things were changed where the tree or the finish lines disagreed with the proposal:\n1. The pure class 'CoverageText' and a TextBlock with x:Name 'CoverageText' would collide inside MainWindow, where the generated field hides the type and the call fails to compile. The class is renamed CoveragePanelText and the TextBlock CoverageLines.\n2. The proposal's CoverageFolder carried the row Text, which holds a path, on the same record the report serialises. That violates Q-016 one careless copy away. The screen lines are split into ScreenLines, which never reach WindowReport, and a rule enforces it.\n3. Its fitness pattern `\\bwcifs\\b` would fire on a legitimate \"wcifs-layer-store\" id literal. It becomes `wcifs(?![-\\w])`.\n4. The hook's FoldersIn is private in StartupHook, and the hook is not compiled into any test. It moves to a WPF-free file linked into Core.Tests, so that '1 folder' is settled by a machine.\n5. The $MFT read is gated on the root's volume being NTFS, through the already-imported GetVolumeInformationByHandle, rather than on a recalled 'fails on FAT/ReFS'.\n6. The proposal said 18 existing tests call VolumeSpace.Start. Start has exactly one caller (Scanner.Execute); tests reach it through ScanOptions.VolumeReader. The optional parameters stay, for the right reason.\n\nThe decision on mapped drives (no figure, so no line and no panel) matches the code's own comment that a share adds no line (MainWindow.xaml.cs:689). It breaks no window case: the only volume-line checks are V-001, at WindowCases.ps1:2340 and :2349, both on local roots.",
+  "components": [
+   {
+    "name": "Volume read: remote check and $MFT figure (Core)",
+    "lives_at": "src/FsAnalyser.Core/Scanning/VolumeSpace.cs",
+    "responsibility": "Same bounded background thread as today.\n- Start gains optional parameters: `TaskCompletionSource<long?>? mft = null` and `Func<string,long?>? mftReader = null`.\n- Early 'not a drive root' path: answers mft null, then figure null.\n- The Task.Delay bound answers mft null, then figure null.\n- The default read is composed of three probes the tests can substitute: remote, used and mft. Remote is Kernel32.IsRemoteRoot. If it says remote, or its open fails, there is no figure. Otherwise used is TryGetVolumeUsed, unchanged. When used is a number, mft is Kernel32.TryGetMftValidData.\n- On the thread, mft.TrySetResult comes strictly before figure.TrySetResult. So whenever VolumeUsed completes with a number, VolumeUsedMft is already complete, set either by the thread or by the bound.\n- A substituted VolumeReader with no mftReader gives mft null, so tests never read the real disk.\n- A throwing mft probe leaves mft null and still answers used.\n- IsDriveRoot keeps its shape-only rule, which OnlyAWholeDriveIsADriveRoot pins.\n- The thread is still handed only completion sources (TheVolumeReadHoldsNoScanStore).",
+    "key_interactions": "Scanner.Execute passes _store.VolumeUsedSource and the new _store.VolumeUsedMftSource. It is the only caller of Start. Tests reach Start through ScanOptions.VolumeReader and ReadVolumeOfAnyRoot, and may call the internal Start and its probes directly (InternalsVisibleTo Core.Tests)."
+   },
+   {
+    "name": "Kernel32 additions (Native)",
+    "lives_at": "src/FsAnalyser.Core/Native/Kernel32.cs",
+    "responsibility": "(1) IsRemoteRoot(string root), giving bool? where null means it could not tell. Inside one CriticalErrorBoxOff it opens the root through the existing CreateFile(in boxOff, ...) wrapper with FILE_READ_ATTRIBUTES and FILE_FLAG_BACKUP_SEMANTICS, then calls GetFileInformationByHandleEx(FileRemoteProtocolInfo, 128-byte buffer). Success means remote. A failed open returns null, which VolumeSpace treats as no figure.\n(2) TryGetMftValidData(string root, out long bytes, out int error). Inside one CriticalErrorBoxOff it:\n- opens the root the same way;\n- requires GetVolumeInformationByHandle's file-system name to be \"NTFS\";\n- calls GetFinalPathNameByHandle(FinalPathNormalizedDos), which gives \\\\?\\C:\\... through a SUBST letter;\n- calls a new GetVolumePathNameW import on that path;\n- calls a new GetFileAttributesExW import on <volumePath>$MFT.\nIt succeeds only for a non-directory with a size above 0. The figure is MftValidDataLength (U-001: the same figure by both routes).",
+    "key_interactions": "Kernel32.cs is excepted from PathOpensGoOnlyThroughTheGuardedOpen. FailCriticalErrorsTests.Kernel32MakesOnlyThePathCallsThatRunInsideTheScope counts its named path calls, so the builder adds the new CreateFile calls and the GetFileAttributesEx/GetFileAttributesExW declaration, entry point and call to that test's expected list, each sitting inside a scope. GetVolumePathNameW is not on the rule's list."
+   },
+   {
+    "name": "ScanStore.VolumeUsedMft",
+    "lives_at": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "responsibility": "An additive public `Task<long?> VolumeUsedMft` and an internal `VolumeUsedMftSource` (RunContinuationsAsynchronously), beside VolumeUsed and VolumeUsedSource. The VolumeUsed prefix is deliberate: the existing no-wait tripwire and its fitness twin then cover it with no rule edit.",
+    "key_interactions": "Answered only by VolumeSpace's thread or its bound. The App receives it as a plain Task<long?> parameter. The parameter must not be named with the VolumeUsed prefix, or the tripwire fires. The App reads it only when IsCompletedSuccessfully."
+   },
+   {
+    "name": "SizeNotRead analysis (Core.Analysis)",
+    "lives_at": "src/FsAnalyser.Core/Analysis/SizeNotRead.cs",
+    "responsibility": "A read-only pass over a returned store. OnDisk(ScanStore) sums ChargedOnDisk over file entries flagged EntryFlags.ProbeFailed. That is the space those files add to seenOnDisk at the listing's size, already inside core.bytesOnDisk. It uses only charged sizes and only the store (TheAnalysisReadsOnlyChargedSizesAndOnlyFromTheStore). The file count shown stays result.ProbeFailures, so the panel and the note cannot give two counts. Scanner.Correct stamps ProbeFailed exactly where it counts _probeFailures (Scanner.cs:547-548).",
+    "key_interactions": "Called from ShowOutcome only when the scan finished and ProbeFailures > 0. That is one pass, about the cost of KindBreakdown."
+   },
+   {
+    "name": "CoveragePanelText: panel model and words (pure App)",
+    "lives_at": "src/FsAnalyser.App/CoveragePanelText.cs",
+    "responsibility": "No WPF. Added to the Core.Tests link list.\n\nRecords:\n- CoverageFacts(NotScanned rows, Unreadable rows, SizeNotReadFiles, SizeNotReadOnDisk)\n- CoverageBreakdown(VolumeInUse, SeenOnDisk, Unseen, ScreenLines, Folders, Measured, Remainder, SizeNotRead)\n- CoverageFolder(Kind 'not-scanned'|'unreadable', long? Size = null). It carries no text and no path.\n- CoveragePart(Id, Bytes, Text)\n- CoverageRemainder(Bytes, IncludesStore, Text)\n- CoverageSizeNotRead(Files, Bytes, Text)\n\nBuild(facts, finished, seenOnDisk, volumeInUse, mft):\n- Returns null unless finished and unseen >= 0.\n- Folders: the store rows first, then the unreadable rows, in the tab's order.\n- ScreenLines (screen only, paths inside) is a heading, then one line per folder drawn as its existing NotScannedRow.Text or UnreadableRow.Text, then the measured, remainder and size-not-read lines.\n- Measured is [mft] only when 0 < mft <= unseen. Its id is 'mft', its text contains 'Measured' and 'valid data length', and it names the $MFT.\n- Remainder bytes are unseen minus the measured bytes. Its text says it is 'space this account cannot read' and that it is what is left over. It never contains the word 'measured'. It names 'the folders named above' only when there are any, and 'other than the $MFT' only when the $MFT was measured. When a store was left out it appends UnreadableRows.NotScannedInRemainder(reason). IncludesStore is NotScanned.Count > 0.\n- SizeNotRead is null when files == 0. Otherwise it says those files are not part of the unseen space and are counted in what the scan saw, at the on-disk size the folder listing gave, through FigureText.Count.\n\nIt also holds the two outcome notes, ProbeFailuresNote(n) and VanishedNote(n), through FigureText.Count with matching its/their. For n >= 2 they are byte-identical to today's (E001-4 matches '2 files could not be opened to read their true size on disk*'). It must not spell 'at least' or 'not read yet', which are written once elsewhere.",
+    "key_interactions": "Reads UnreadableRows for the store's words and FigureText for every figure. MainWindow draws ScreenLines. WindowReport serialises everything except ScreenLines."
+   },
+   {
+    "name": "Store words, one source (UnreadableRows)",
+    "lives_at": "src/FsAnalyser.App/UnreadableRows.cs",
+    "responsibility": "The only App file that writes the container layer store's words (SC-021). Each function is keyed on what the record carries (SC-046), with one arm per named reason and a neutral fallback ('left out on purpose; see Settings') that is true of any reason, mirroring KindText:\n- NotScannedText(reason): the list row and tree note, bytes unchanged.\n- NotScannedShortText(reason): the top-level title's 'size not counted: Windows container layers'.\n- NotScannedNote(reason, path, KnownWorkaround? why): the OutcomeNotes line, bytes unchanged. WindowCases.ps1:5181 and :5209 match it.\n- RefusedText(ScanRefusal, KnownWorkaround? why): the refusal prose, bytes unchanged.\n- NotScannedInRemainder(reason): the panel's 'It includes the Windows container layer store, which this scan left out unopened.'\nA constant, FlaggedReason = NotScannedReason.ContainerLayerStore, is the one place that ties EntryFlags.NotScanned and TopLevelState.NotScanned (which carry no reason) to the reason they stand for. A test asserting NotScannedReason has exactly one member stands beside it, and its message names FolderTreeNode.Note and TopLevelRowText.TitleOf, so a second precaution turns red there first.",
+    "key_interactions": "FolderTreeNode.cs:110, TopLevelRowText.cs:54 and MainWindow.xaml.cs:613-618 and :648 call it instead of typing the literal. The KnownWorkarounds summary comment ('from these fields alone') is corrected to say the endings word the store through UnreadableRows."
+   },
+   {
+    "name": "MainWindow wiring",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "responsibility": "Ending:\n- ShowOutcome calls HideCoverage() first.\n- It builds CoverageFacts from the notScanned and unreadable rows it already builds for the tab, plus ProbeFailures and SizeNotRead.OnDisk. OnDisk is computed only when finished and ProbeFailures > 0.\n- It passes the facts and result.Store.VolumeUsedMft to ShowVolumeInUse. The closure holds the window, the generation, the texts, the facts and two tasks, never the result or the store (M1).\n- AddVolumeInUse keeps its generation guard. When the figure is a long, it writes OutcomeDetail exactly as today, then calls ShowCoverage(CoveragePanelText.Build(...)) with the $MFT task's value if it IsCompletedSuccessfully, else null. EndingShown is raised last in every case.\n- ShowCoverage(null) means HideCoverage: panel collapsed, Coverage model null. Otherwise it sets CoverageLines.Text to the joined ScreenLines, sets the internal Coverage model and makes CoveragePanel Visible.\n- HideCoverage is also called by ShowProblem and at scan start, beside HideUnreadable (:244).\n\nOutside the panel:\n- ShowProgress writes CountersText through FigureText.Counters, which goes through Count.\n- The two notes go through CoveragePanelText.\n- The refusal and not-scanned notes go through UnreadableRows.\n- The comment above Coverage(...) changes to say the panel explains the gap. The comment above ShowVolumeInUse changes to say a mapped drive gets no figure.",
+    "key_interactions": "Every Stopped ending reaches AddVolumeInUse with Finished=false and Build returns null, so a stop never shows the panel. That is always, not sometimes (#100). An over-count (unseen < 0) shows none either. The Coverage(...) line text is untouched."
+   },
+   {
+    "name": "CoveragePanel control",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml",
+    "responsibility": "Inside OutcomeTextsContent, between OutcomeDetail and OutcomeNotes: `<StackPanel x:Name=\"CoveragePanel\" Visibility=\"Collapsed\" Margin=\"0,6,0,0\">` holding one wrapping `<TextBlock x:Name=\"CoverageLines\" TextWrapping=\"Wrap\"/>`. It scrolls with the other outcome texts, which are capped at 76 px while tabs show. The UnreadableTab comment at :371-372 is corrected (SC-047): the tab also holds a folder left out on purpose, and is headed 'Not scanned (N)' when that is all it holds.",
+    "key_interactions": "No existing x:Name is renamed, so the hook and the report keep reading their controls. OutcomeDetail stays at 4 lines (Test-V001, E001-6)."
+   },
+   {
+    "name": "Report fields and contract comments",
+    "lives_at": "src/FsAnalyser.App/WindowReport.cs",
+    "responsibility": "Adds a top-level \"coverage\" key, always present. It is null unless window.Coverage is set and CoveragePanel.IsVisible. Otherwise it holds { volumeInUse, seenOnDisk, unseen, folders[{kind, size}], measured[{id, bytes, text}], remainder{bytes, includesStore, text}, sizeNotRead{files, bytes, text} | null }, copied from the model with no formatting and no text built here. It never reads ScreenLines or CoverageLines (Q-016).\n\nAdds window \"CoveragePanel\": { visible, actualHeight }, with no text.\n\nThe schema remarks gain these keys. Lines 101-102 and 106 are corrected (SC-047): since SL-095, UnreadableTab, and so UnreadableExpander.visible, is true when a folder could not be read OR was left out on purpose. The number of unreadable folders is core.unreadable.",
+    "key_interactions": "Read by the E001-1..6 scripts, read-window.ps1 and the engine."
+   },
+   {
+    "name": "Fitness rules (three, settled by SL-001)",
+    "lives_at": ".taad/fitness.yaml",
+    "responsibility": "Appended at the end of rules under '# settled by SL-001'. They are not twinned in xUnit, and 'rules:' stays the last top-level key. They are the three architecture_rules of this design:\n- the store's words are written once;\n- no count is written with a fixed plural;\n- the report never reads the panel's screen lines.\nEach is worded as a tripwire for named spellings, with its known gaps stated in its because (#486). Its must-fire and must-stay-quiet rows are in the corpus script below (#846).",
+    "key_interactions": "Fitness op=check is run before review, because dotnet test does not carry these (#279). The builder checks any engine-appended entry against this design's text and deletes duplicates (#389)."
+   },
+   {
+    "name": "Rules corpus check",
+    "lives_at": "tests/bugs/SL-001-WrittenOnceRules.Tests.ps1",
+    "responsibility": "Reads the three new entries' patterns from .taad/fitness.yaml by rule name and runs them with [regex].\n\nMust-fire rows:\n- today's five store copies: MainWindow.xaml.cs:614, :615 and :648, FolderTreeNode.cs:110, TopLevelRowText.cs:54;\n- $\"...Windows Container Layers...\" and @\"wcifs.sys\";\n- today's four fixed plurals: MainWindow.xaml.cs:342, :343, :640 and :642;\n- `lines = window.Coverage.ScreenLines` and `window.CoverageLines.Text`.\n\nMust-stay-quiet rows:\n- `UnreadableRows.NotScannedText(UnreadableRows.FlaggedReason)`;\n- `\"container-layer-store\"` and `\"wcifs-layer-store\"`;\n- comment lines MainWindow.xaml.cs:906 and FolderTreeNode.cs:96;\n- `$\"{Count(t.Files, \"file\")} and ...\"`, `$\"Reading each file's own size: {p.FilesSized:N0} of {p.FilesToSize:N0}\"` and FigureText's `$\"{n:N0} {noun}s\"`;\n- `CoveragePanel = new { visible = window.CoveragePanel.IsVisible }` and `folders = c.Folders.Select(f => new { kind = f.Kind, size = f.Size })`.\nAfter the build it also runs each rule over the real tree and expects zero matches.",
+    "key_interactions": "Patterns use only constructs Python re and .NET agree on: inline (?i) at the start, character classes and negative lookahead (#75)."
+   },
+   {
+    "name": "Hook counters reading",
+    "lives_at": "tests/window/FsaWindowHook/CountersReading.cs",
+    "responsibility": "FoldersIn moves out of StartupHook.cs into a new WPF-free internal static class, linked into Core.Tests like StopTarget.cs. It looks for the first ' folder' (Ordinal) instead of ' folders', so '1 file, 1 folder, ...' reads 1. The first match is always the counters' own folder count, before any ', N folder(s) unreadable'.",
+    "key_interactions": "StartupHook.cs:721 calls CountersReading.FoldersIn for the stop trigger. The Core.Tests csproj gains the link."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "--report schema 1: top-level \"coverage\"",
+    "kind": "cli",
+    "auth_model": "none (a local file written by the app it ran)",
+    "error_cases": "null (key present) for:\n- a folder root;\n- a share or mapped network drive, or a SUBST letter over one;\n- a figure that did not land within the bound;\n- a stopped scan, Could not read, or Refused;\n- an over-count (unseen < 0);\n- the time from scan start until the panel is drawn.\nsizeNotRead is null when ProbeFailures == 0. measured is [] when the volume is not NTFS, the $MFT read failed, or $MFT > unseen.",
+    "notes": "Shape is exactly the E001-5 header:\n{ volumeInUse, seenOnDisk (= core.bytesOnDisk), unseen (= volumeInUse - seenOnDisk),\n  folders: [{ kind: 'not-scanned'|'unreadable', size: null }] (store first, then unreadable rows in path order, one per distinct folder named),\n  measured: [{ id: 'mft', bytes, text }],\n  remainder: { bytes (= unseen - sum measured), includesStore, text },\n  sizeNotRead: { files, bytes, text } | null }.\nAdditive under schema 1; no existing key is renamed or changes what it holds. Every text is the string the panel draws for that part and holds no path or name (Q-016). The file stays ASCII through the default encoder."
+   },
+   {
+    "name": "--report window \"CoveragePanel\"",
+    "kind": "ui",
+    "notes": "{ visible: CoveragePanel.IsVisible, actualHeight }, keyed by the control's x:Name like every window key. No text, because the panel's folder lines carry paths. Every window key E001-5 lists remains."
+   },
+   {
+    "name": "ScanStore.VolumeUsedMft",
+    "kind": "function",
+    "error_cases": "null when the used figure is null (folder root, remote root, failed or late read), when the volume is not NTFS or its $MFT could not be read, or when the bound passed. Never faulted.",
+    "notes": "Public Task<long?>, additive. When VolumeUsed has completed with a number, this is already complete. Nothing waits on it (NothingWaitsOnTheVolumeFigure, through the prefix). The figure is $MFT's valid data length, not its allocation (U-001)."
+   },
+   {
+    "name": "ScanStore.VolumeUsed for remote roots (behaviour change)",
+    "kind": "function",
+    "error_cases": "The volume thread's open of the root fails: null. FileRemoteProtocolInfo answered: null. Otherwise as today.",
+    "notes": "Decides SC-015: a mapped drive, a DFS letter, or a SUBST letter over a network path gets no figure, so no coverage line and no panel. A local drive's line is unchanged word for word. SC-010 may reuse Kernel32.IsRemoteRoot, but never on the UI thread, because the open can hang on a dead server. DriveInfo.DriveType is enough for a picker."
+   },
+   {
+    "name": "CoveragePanelText.Build",
+    "kind": "function",
+    "error_cases": "Returns null unless finished && volumeInUse - seenOnDisk >= 0.",
+    "notes": "Pure and link-compiled into Core.Tests. Invariants pinned by unit tests:\n- measured bytes + remainder bytes == unseen;\n- the remainder text matches '(?i)cannot read' and never matches '(?i)(?<!not |never )\\bmeasured\\b';\n- it contains 'container layer' if and only if includesStore;\n- the measured text matches '(?i)\\bmeasured\\b';\n- Folders carry no text and no size;\n- no text outside ScreenLines contains a path separator."
+   },
+   {
+    "name": "UnreadableRows store words",
+    "kind": "function",
+    "notes": "NotScannedText, NotScannedShortText, NotScannedNote, RefusedText and NotScannedInRemainder: each has one arm per named reason and a neutral fallback. A test enumerates Enum.GetValues<NotScannedReason>() and fails when a value falls through to the fallback. Another pins today's four strings byte for byte. FlaggedReason ties the reason-less flag surfaces to today's single reason."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "A mapped network drive gets no volume figure at all: no coverage line and no panel, rather than share wording. The test is FileRemoteProtocolInfo on the root's own handle, made inside the bounded volume-read thread.",
+    "reversibility": "cheap",
+    "rationale": "On a share, GetDiskFreeSpaceExW reports the server volume's figures (measured: Z:\\ here reports 3.6 GB used), and the scan saw one folder of it. No wording makes that gap true, and the code already says a share adds no line (MainWindow.xaml.cs:689).\n\nAsking the handle covers the alias classes a shape check cannot tell apart (#13):\n- mapped letter: none;\n- DFS letter: none;\n- SUBST over a UNC path or mapped folder: none;\n- SUBST over a local folder: line and panel, figure of the volume under it (existing m3);\n- \\\\?\\X:\\: same as X:\\;\n- UNC root, volume mounted on a folder, junction-backed root: not drive roots, none, as today.\nOn the thread, a dead server can hold neither the scan nor its cancel (O-031)."
+   },
+   {
+    "decision": "The $MFT is the panel's one measured part. It is read at scan start on the volume thread, only when the root's volume is NTFS, by this route: the root handle's final DOS path, then GetVolumePathNameW, then GetFileAttributesExW(<volume>$MFT). It is labelled as its valid data length.",
+    "reversibility": "cheap",
+    "rationale": "U-001 found this is the only part a non-elevated account can size, by this route and not through \\\\.\\C: or fsutil. Going through the final path is what lets a SUBST letter (every finish-line rig) reach C:\\$MFT, which is E001-3's oracle. The NTFS gate uses the already-imported GetVolumeInformationByHandle instead of trusting a recalled failure on FAT/exFAT/ReFS. Reading the $MFT beside the used figure keeps both from one moment."
+   },
+   {
+    "decision": "The $MFT figure reaches the App through a second completion source, ScanStore.VolumeUsedMft, answered before VolumeUsed on the same thread. VolumeUsed's type is unchanged.",
+    "reversibility": "expensive",
+    "rationale": "VolumeUsed is documented public Core API. A second additive task leaves every existing use alone. The answer order means the App never waits: when used lands as a number, the $MFT task is already complete. The VolumeUsed prefix keeps the no-wait tripwire and its fitness twin covering it with no rule edit. It is additive public API, so removing it later is a contract change."
+   },
+   {
+    "decision": "The report's schema-1 'coverage' and window 'CoveragePanel' have exactly the E001-5 shape. They are present but null while no panel is on screen, carry texts copied from the model, and hold no path. CoveragePanel carries no text.",
+    "reversibility": "expensive",
+    "rationale": "The six finish-line scripts, read-window.ps1 and the engine read it, and the contract only ever adds keys. Copying the model keeps WindowReport from formatting or building text. Keeping the folder lines (ScreenLines) out of the record the report touches, and enforcing that with a rule, keeps Q-016 from depending on reviewer attention."
+   },
+   {
+    "decision": "The panel is a sibling control directly under OutcomeDetail (CoveragePanel, holding the TextBlock CoverageLines). The pure model is CoveragePanelText. Nothing goes into OutcomeDetail.",
+    "reversibility": "cheap",
+    "rationale": "Test-V001 and E001-6 pin OutcomeDetail at its 4 lines, with line 3 word for word. A sibling changes neither. The class is not named 'CoverageText', because a TextBlock of that x:Name would hide the type inside MainWindow and fail to compile."
+   },
+   {
+    "decision": "The panel is drawn only in AddVolumeInUse, when detail.Finished is true, the figure is a long, and unseen >= 0. The over-count ending and every stopped, refused or unreadable ending show none.",
+    "reversibility": "cheap",
+    "rationale": "Drawing it there puts it on screen before EndingShown, so the report includes it. Every Stopped ending reaches that point with Finished=false, so the no-panel-on-stop rule holds every time (#100). With no unseen space there is nothing to explain."
+   },
+   {
+    "decision": "The $MFT is left out of measured when it is not above 0 or exceeds unseen. The remainder is then the whole of the unseen space.",
+    "reversibility": "cheap",
+    "rationale": "A negative remainder would be a false figure. The c-drive spike's clause (b), whether the unseen space on C:\\ is at least the $MFT, is still undecided, so the panel stays honest either way."
+   },
+   {
+    "decision": "sizeNotRead counts ProbeFailures, and its bytes are the ChargedOnDisk of ProbeFailed entries. Files that vanished before their probe stay a note only.",
+    "reversibility": "cheap",
+    "rationale": "Those bytes are what those files add to seenOnDisk at the listing's size, so they cannot be inside the unseen space. They are shown apart, as the constraint requires. Taking the count from ProbeFailures means the panel and the note never disagree. Vanished files are no longer on the volume, so they are not part of a coverage breakdown."
+   },
+   {
+    "decision": "The store's words live in UnreadableRows only, keyed on NotScannedReason (and ScanRefusal), with one arm per reason and a neutral fallback. FlaggedReason serves the two surfaces that carry only a flag, and a fitness tripwire guards the rule. No new setting: the outside defect is the wcifs.sys kernel leak in Windows, which this product cannot fix. Its precaution is the existing KnownWorkarounds entry 'wcifs-layer-store' with its existing checkbox. The panel adds the notice beside the result it changed: it names the store as left out, and the remainder's words say they include it.",
+    "reversibility": "cheap",
+    "rationale": "UnreadableRows already owns NotScannedText, is link-tested, and is the home of the KindText written-once pattern, which this mirrors. Enumerating the reasons turns a forgotten arm red, as UnreadableRowsTests does for kinds. A fallback is used rather than a throw because the converter path must not throw."
+   },
+   {
+    "decision": "The panel names folders by reusing the tab's NotScannedRow.Text and UnreadableRow.Text, store first, one per distinct entry, uncapped, in one wrapping TextBlock. The report's folders[] holds only kind and size.",
+    "reversibility": "cheap",
+    "rationale": "Finish line 2 says 'each'. Reusing the rows adds no wording, and the panel and the tab cannot disagree. How many there are on a real C:\\ is the spike's undecided clause (c). A long list is a scroll away inside OutcomeTexts, like the rest of its texts."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal, taken as the core. It raised over_engineering_flag against itself and trimmed to one measured part plus a labelled remainder; the trim is kept. Six corrections against the tree:\n1. The CoverageText class and x:Name clash, renamed to CoveragePanelText and CoverageLines.\n2. Folder text with paths split off the report-facing model (ScreenLines), plus a rule.\n3. The fitness pattern now spares 'wcifs-layer-store'.\n4. FoldersIn moved to a linked pure file so it can be tested.\n5. An NTFS gate before the $MFT read.\n6. Start has one caller, not 18 test calls.\nTwo rules were added (fixed plurals, and the report reading no screen lines), and a corpus script for all three."
+   }
+  ],
+  "coherence_check": "There was one proposal, so there is no composition to check. Nothing in this design has yet survived a disagreement, and the critique is the first thing that will argue with it.\n\nWhat was checked instead is whether the pieces of the single proposal, once corrected, agree with each other and with the tree.\n\n(1) Consistency of the two volume tasks. Used and $MFT are answered on one thread in a fixed order ($MFT first), and the bound answers both the same way. So 'used landed as a number' implies the $MFT task is complete, and the App never waits. The closure holds two tasks and plain facts, never the result or the store, which keeps M1 and TheVolumeReadHoldsNoScanStore true.\n\n(2) One error contract. Every failure is null and never a fault, for VolumeUsed and VolumeUsedMft alike. A null figure means no line and no panel, and EndingShown is always raised.\n\n(3) Seam redesigned: the model against the report. The proposal's CoverageFolder put the row text, which holds a path, on the record WindowReport serialises. That conflicts with Q-016. Kept: the report serialises the model. Redesigned: folder lines live only in ScreenLines, and a rule forbids WindowReport from naming them.\n\n(4) Seam redesigned: a name clash. A class named CoverageText and a TextBlock with that x:Name cannot coexist in MainWindow. Renamed to CoveragePanelText and CoverageLines.\n\n(5) Mapped drives against the existing comment. Giving them no figure matches 'a share adds no line' (MainWindow.xaml.cs:689). No window case expects a line on a mapped drive; the only volume-line checks are WindowCases.ps1:2340 and :2349, both local.\n\n(6) Wording rules against each other. The panel reuses UnreadableRows' texts. It must not spell the 'at least' or 'not read yet' words that are written once elsewhere. The new store-words rule's must-stay-quiet rows include the designed correct calls, and 'wcifs-layer-store' is spared by `wcifs(?![-\\w])`.\n\n(7) Test-V001 (4 lines) and E001-6 (word for word) against the panel. The panel is a sibling control, so both hold.\n\n(8) Stopped endings. Build returns null on !finished, and every Stopped ending reaches AddVolumeInUse with Finished=false. The partial line is unchanged.\n\nArchitecture rules are three tripwires, each guarding a defect a green suite would not show:\n- a store word in a second App file;\n- a fixed plural on a count;\n- the report reading the panel's path-bearing lines.\nThe no-wait, no-store-on-the-volume-thread and path-call rules already exist and cover the new code through naming and placement.\n\nLessons applied:\n- #389 / #464: every cited line was re-read in the tree.\n- #13: the alias classes are enumerated in the remote decision.\n- #725: sized by its 14-row matrix, and retiered.\n- #359: the hook's FoldersIn contract and the rules-parity placement were read.\n- #486 / #846: tripwire wording, plus a corpus with must-fire and must-stay-quiet rows.\n- #75 / #279: Fitness op=check before review; pattern constructs common to Python and .NET.\n- #100: 'always' for Stopped.\n- #71: everything observable through report fields.",
+  "architecture_rules": [
+   {
+    "name": "in the App, only UnreadableRows words the container layer store",
+    "files": "src/FsAnalyser.App/**/*.cs",
+    "must_not_match": [
+     "(?i)\"[^\"\\r\\n]*\\b(?:container layers?\\b|wcifs(?![-\\w]))"
+    ],
+    "except_files": [
+     "src/FsAnalyser.App/UnreadableRows.cs"
+    ],
+    "because": "The tab row, the tree note, the top-level title, the ending note, the refusal and the coverage panel must say the same thing about one folder. Today five hand-typed copies agree only by luck (SC-021). The next edit to one copy leaves the surfaces describing the store differently, and a second precaution would inherit the wcifs wording with no warning (SC-046).\n\nThis is a tripwire for the named spellings (#486). Known gaps: a phrase split across a + concatenation, the content lines of a raw \"\"\" literal, and a reworded phrase.\n\nKnown false fire: a string closed earlier on a line followed by a trailing comment that mentions the store. Reword the comment."
+   },
+   {
+    "name": "no count in the App is written with a fixed plural",
+    "files": "src/FsAnalyser.App/**/*.cs",
+    "must_not_match": [
+     "\\{[^{}\\r\\n]*:N0\\}\\s*(?:files|folders|links)\\b"
+    ],
+    "because": "FigureText.Count is how the window writes a count wherever it shows one. A raw :N0 followed by a fixed plural writes '1 files' and '1 folders'. That has happened on this PC: ledger run 1098's '1 folders unreadable' and run 2148's '1 files were deleted' (SC-044). It fires on exactly today's four lines, MainWindow.xaml.cs:342, :343, :640 and :642, and is quiet on Count(...) and on FigureText's own `{n:N0} {noun}s`.\n\nThis is a tripwire for the named spellings. Known gaps: ToString(\"N0\") + \" files\", other format strings, and other nouns."
+   },
+   {
+    "name": "the report never reads the coverage panel's screen lines",
+    "files": "src/FsAnalyser.App/WindowReport.cs",
+    "must_not_match": [
+     "\\bCoverageLines\\b",
+     "\\bScreenLines\\b"
+    ],
+    "because": "The panel's on-screen lines name each folder by its full path. The report must hold counts, ids and path-free texts only, because the engine stores it and a path publishes the person's folder names (Q-016). E001-5 checks only that the report is ASCII, and a %TEMP% path is ASCII, so nothing else would catch a builder copying the panel's text or lines into 'coverage' or 'CoveragePanel'."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "show the coverage panel and put it in the report",
+    "shape": "a finished scan of a whole local drive (a SUBST letter over a %TEMP% tree) whose volume figure lands, with unseen >= 0",
+    "why": "This is the one branch that draws the panel. It must land before EndingShown, or the report is written without it. The report must carry 'coverage' with exactly the E001-5 shape, plus window CoveragePanel.visible, and every existing key, field and exit code must be unchanged.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E001-1-CoveragePanelOnlyOnAFinishedWholeDrive.Tests.ps1 ; pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E001-5-CoverageReportFieldsAdditive.Tests.ps1"
+   },
+   {
+    "behaviour": "show no coverage panel",
+    "shape": "a folder root (the same tree by its folder path)",
+    "why": "VolumeSpace answers null for a non-drive root, and AddVolumeInUse must then call ShowCoverage(null). Otherwise a panel from an earlier state could stay, and 'coverage' would not be null.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E001-1-CoveragePanelOnlyOnAFinishedWholeDrive.Tests.ps1"
+   },
+   {
+    "behaviour": "show no coverage panel",
+    "shape": "a drive-letter root that could not be read (a free letter with nothing behind it)",
+    "why": "RootUnreadable goes through ShowProblem, which never reaches AddVolumeInUse. ShowProblem must call HideCoverage itself, and the volume thread's failed root open must answer null.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E001-1-CoveragePanelOnlyOnAFinishedWholeDrive.Tests.ps1"
+   },
+   {
+    "behaviour": "show no coverage panel, and keep the partial line word for word",
+    "shape": "a whole-drive scan stopped mid-scan by the hook's stop mode, whose volume figure still lands",
+    "why": "A Stopped ending reaches AddVolumeInUse with Finished=false every time (#100). The panel needs Build's finished guard, and the partial-scan line must read exactly as before.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E001-1-CoveragePanelOnlyOnAFinishedWholeDrive.Tests.ps1 ; pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E001-6-CoverageLinesWordForWord.Tests.ps1"
+   },
+   {
+    "behaviour": "show no coverage panel",
+    "shape": "the scan counted more on disk than the volume reports in use (unseen < 0)",
+    "why": "With no unseen space there is nothing to split, and a negative remainder would be a false figure. The over-count line must stay as it is. No window rig can produce an over-count, so a unit test settles it: CoveragePanelTextTests, where Build returns null for volumeInUse < seenOnDisk, and also for finished=false.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx   (CoveragePanelTextTests)"
+   },
+   {
+    "behaviour": "name each unreadable folder, with no size",
+    "shape": "two folders under the whole-drive root that this account may not list (ACL deny RD)",
+    "why": "Folders come from UnreadableRows.Build, one per distinct entry. The 'unreadable' entries must equal core.unreadable, and none may carry a size.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E001-2-CoveragePanelNamesEachFolderWithNoSize.Tests.ps1"
+   },
+   {
+    "behaviour": "name the container layer store as left out, and say the remainder includes it (precaution on)",
+    "shape": "a SUBST letter over %ProgramData%\\Microsoft\\Windows\\Containers with wcifs-layer-store on, so the store is reached and left out unopened",
+    "why": "This branches on SkippedStores.Count. There must be one 'not-scanned' entry with no size, includesStore true, and the remainder's words must name the container layer store. Nothing may open the store (opensUnderExcludedStore 0). This is the notice beside the result the precaution changed.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E001-2-CoveragePanelNamesEachFolderWithNoSize.Tests.ps1 ; pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E001-3-CoverageRemainderAndMeasuredMft.Tests.ps1"
+   },
+   {
+    "behaviour": "word the remainder without the store",
+    "shape": "no store left out: none under the root, or the precaution switched off so the store is scanned as picked",
+    "why": "This is the other position of the switch. includesStore must be false, and the words must not mention a container layer. The off position is never run on this PC's real store, because scanning it is the kernel leak the precaution avoids. Two checks settle it: E001-3's no-store tree, and CoveragePanelTextTests feeding facts with no NotScanned rows, which is what the precaution-off scan produces.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E001-3-CoverageRemainderAndMeasuredMft.Tests.ps1 ; pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx   (CoveragePanelTextTests)"
+   },
+   {
+    "behaviour": "size the volume's $MFT as the one measured part",
+    "shape": "a SUBST letter over a folder on the NTFS volume C:, whose $MFT is reachable only through the handle's final path",
+    "why": "GetFileAttributesExW('Y:\\$MFT') through a SUBST letter names a file inside the target folder. Only the final path plus GetVolumePathNameW reaches C:\\$MFT, E001-3's oracle (within 64 MiB). It must be labelled measured and taken out of the remainder.\n\nVolumeUsageTests.TheMftFigureOfASubstLetterIsTheVolumeUnderIt settles the route on real disk before any window run, and TheMftIsAnsweredBeforeTheUsedFigure pins the order.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E001-3-CoverageRemainderAndMeasuredMft.Tests.ps1 ; pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx   (VolumeUsageTests)"
+   },
+   {
+    "behaviour": "leave the remainder as the whole unseen space",
+    "shape": "no $MFT figure: a volume that is not NTFS, a $MFT read that failed or threw, a figure of 0, or a $MFT above the unseen space",
+    "why": "measured must be [] and remainder.bytes must equal unseen. A throwing $MFT probe must still answer the used figure. Otherwise the line would vanish, or the remainder would go negative.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx   (CoveragePanelTextTests; VolumeUsageTests: a throwing mft probe still answers used, a substituted reader gives mft null)"
+   },
+   {
+    "behaviour": "report files whose own size could not be read, apart from the unseen space",
+    "shape": "two 64 KiB files whose size probe is refused (deny S,RA), and a clean tree where every size was read",
+    "why": "sizeNotRead must be {2 files, 128 KiB} and never subtracted from unseen. It must be null when ProbeFailures is 0. SizeNotReadTests pins that the count of ProbeFailed entries equals ProbeFailures on the wof-denied fixture.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E001-4-CoverageSizeNotReadApart.Tests.ps1 ; pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx   (SizeNotReadTests)"
+   },
+   {
+    "behaviour": "write a count of one in the singular, and still read it in the hook",
+    "shape": "a count of exactly 1: one file, one folder, one unreadable folder, one probe failure, one vanished file",
+    "why": "Fixed plurals write '1 files' and '1 folders' (SC-044). FigureText.Counters must give '1 file, 1 folder, ..., 1 folder unreadable'. The notes must read '1 file could not be opened to read its true size on disk; its listed size was used.' and keep their n >= 2 bytes.\n\nCountersReadingTests pins FoldersIn reading 1 from '1 file, 1 folder, ...' and 4022 from '4,77,757 files, 4,022 folders, 108.8 GB (108.8 GB on disk), 1 folder unreadable'.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx   (FigureText Counters pin, CoveragePanelTextTests notes, CountersReadingTests)"
+   },
+   {
+    "behaviour": "give a mapped network drive no coverage line and no panel, while a local drive keeps its line word for word",
+    "shape": "a root whose handle answers FileRemoteProtocolInfo (mapped letter, DFS letter, SUBST over a network path)",
+    "why": "Without the check, the rest of the server's disk is blamed on metadata and unreadable folders (SC-015). The checks:\n- VolumeUsageTests.ARemoteRootGetsNoFigure feeds the composed default read a remote probe that says true, and expects null with no used or mft probe called.\n- Kernel32.IsRemoteRoot on a local root returns false.\n- E001-6 pins the local line word for word.\nThe real redirector answer is filed for the person's network pass.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx   (VolumeUsageTests) ; pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E001-6-CoverageLinesWordForWord.Tests.ps1"
+   },
+   {
+    "behaviour": "word a folder left out on purpose from one source, keyed on its reason",
+    "shape": "a store word typed in a second App file, or a NotScannedReason value with no named arm",
+    "why": "SC-021 and SC-046: copies drift, and a lone `_` arm gives the next precaution the wcifs words with no warning.\n- UnreadableRowsTests enumerates NotScannedReason and fails when a value reaches the fallback.\n- It pins today's four strings byte for byte (WindowCases.ps1:5181 and :5209 read the note).\n- It asserts the enum has one member beside FlaggedReason.\n- The corpus script runs the new rules' must-fire and must-stay-quiet rows and the real tree.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx   (UnreadableRowsTests) ; pwsh -NoProfile -ExecutionPolicy Bypass -File tests/bugs/SL-001-WrittenOnceRules.Tests.ps1"
+   }
+  ],
+  "channeled_experts": [
+   "DaisyDisk hidden-space breakdown (cited)",
+   "Underbrush 'Not seen by the scan' (cited)",
+   "Bank reconciliation with a labelled plug"
+  ],
+  "code_claims": [
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "Coverage",
+    "claim": "The static Coverage(finished, seenOnDisk, volumeInUse) writes the over-count, the finished ('so M of it was not seen by this scan (file-system metadata, folders it could not read, ...)') and the partial arms, and its comment defers explaining the gap to a later coverage panel."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "AddVolumeInUse",
+    "claim": "Returns when the generation is stale; otherwise rewrites OutcomeDetail as Counted + Coverage(...) + Elapsed when the figure is a long, then raises EndingShown."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "ShowVolumeInUse",
+    "claim": "Hangs a ContinueWith on the Task<long?> figure that dispatches AddVolumeInUse, holding the window, the generation and an OutcomeDetailText but not the result or the store."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "OutcomeDetailText",
+    "claim": "A private sealed record (Counted, Elapsed, Finished, SeenOnDisk) carries the ending's texts to the volume continuation."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "ShowProgress",
+    "claim": "Writes CountersText with raw :N0 counts and the fixed plurals 'files', 'folders' and ', N folders unreadable'."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "ShowOutcome",
+    "claim": "Writes the ProbeFailures and VanishedBeforeProbe notes with :N0 and a fixed plural, hand-writes the refusal prose and the '(Windows container layers)' not-scanned note, shows UnreadableTab headed 'Not scanned (N)' when only the store was left out, and calls ShowVolumeInUse last."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "ReadDrives",
+    "claim": "Keeps drives whose DriveType is Fixed, Removable or Network, so mapped drives are offered as whole-drive roots."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml",
+    "symbol": "OutcomeTextsContent",
+    "claim": "The StackPanel inside the OutcomeTexts ScrollViewer holds OutcomeTitle, OutcomeDetail and OutcomeNotes, and the ScrollViewer gets MaxHeight 76 while OutcomeTabs is visible."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml",
+    "symbol": "UnreadableTab",
+    "claim": "Its XAML comment still says the tab holds the folders the scan could not open, only when there are any."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/VolumeSpace.cs",
+    "symbol": "IsDriveRoot",
+    "claim": "Checks only the display-form shape (letter, colon, backslash) with no drive-type check, so SUBST and mapped letters pass."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/VolumeSpace.cs",
+    "symbol": "Start",
+    "claim": "Answers null at once for a non-drive root unless anyRoot, arms a Task.Delay bound that answers null, and runs reader ?? Read on a background thread handed only the completion source, the root and the reader."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "DecideLastAccess",
+    "claim": "Works out remote from whether the FileRemoteProtocolInfo query answers on the root handle, and uses it only for _keepLastAccess, never storing it."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "StoreSkipped",
+    "claim": "Records NotScannedFolder(folder, NotScannedReason.ContainerLayerStore, ContainerLayerStore.WorkaroundId), flags the entry NotScanned, and never opens the store."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "Execute",
+    "claim": "Calls VolumeSpace.Start with _store.VolumeUsedSource and options.VolumeReader first, before any way out of the scan; it is Start's only caller."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "Correct",
+    "claim": "A probe error that is not 'gone' adds EntryFlags.ProbeFailed and increments _probeFailures together, while a gone file only increments _vanished."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "VolumeUsedSource",
+    "claim": "ScanStore exposes public Task<long?> VolumeUsed backed by an internal TaskCompletionSource<long?> VolumeUsedSource created with RunContinuationsAsynchronously."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/ScanStore.cs",
+    "symbol": "ChargedOnDisk",
+    "claim": "ScanStore has a public ChargedOnDisk(int index) accessor."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/ScanResult.cs",
+    "symbol": "NotScannedReason",
+    "claim": "A public enum with the single member ContainerLayerStore, carried by NotScannedFolder alongside WorkaroundId; NotScannedFolder's doc says its size is in the volume's coverage gap."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Store/EntryKind.cs",
+    "symbol": "ProbeFailed",
+    "claim": "EntryFlags has a ProbeFailed member with value 16."
+   },
+   {
+    "path": "src/FsAnalyser.App/UnreadableRows.cs",
+    "symbol": "NotScannedText",
+    "claim": "Switches on NotScannedReason with only a discard arm returning the 'size not counted: Windows container layers, skipped to avoid a leak in Windows' wcifs.sys driver; see Settings' sentence."
+   },
+   {
+    "path": "src/FsAnalyser.App/UnreadableRows.cs",
+    "symbol": "KindText",
+    "claim": "Has one arm per named UnreadableKind and a plain 'could not be read' fallback, and is the single wording source of a failed folder's kind."
+   },
+   {
+    "path": "src/FsAnalyser.App/FolderTreeNode.cs",
+    "symbol": "Note",
+    "claim": "Types out the same store literal as UnreadableRows.NotScannedText for an entry flagged EntryFlags.NotScanned instead of calling it."
+   },
+   {
+    "path": "src/FsAnalyser.App/TopLevelRowText.cs",
+    "symbol": "TitleOf",
+    "claim": "The TopLevelState.NotScanned arm writes its own '(size not counted: Windows container layers)' wording."
+   },
+   {
+    "path": "src/FsAnalyser.App/FigureText.cs",
+    "symbol": "Count",
+    "claim": "Returns '1 noun' for a count of one and '{n:N0} nouns' otherwise."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/StartupHook.cs",
+    "symbol": "FoldersIn",
+    "claim": "A private static that finds the folder count by IndexOf(\" folders\") and the digits after the preceding ', ', returning 0 when ' folders' is absent."
+   },
+   {
+    "path": "src/FsAnalyser.App/WindowReport.cs",
+    "symbol": "UnreadableExpander",
+    "claim": "UnreadableExpander is read from UnreadableTab, and the remarks still say it is kept with the meaning it had and that later screens never change what a key holds."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Native/Kernel32.cs",
+    "symbol": "FinalPathNormalizedDos",
+    "claim": "Kernel32 already imports GetFinalPathNameByHandleW (documented as resolving subst drives) with the flag constant FinalPathNormalizedDos, and imports GetVolumeInformationByHandleW and GetFileInformationByHandleEx with FileRemoteProtocolInfo = 13."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/ArchitectureRulesTests.cs",
+    "symbol": "NothingWaitsOnTheVolumeFigure",
+    "claim": "Forbids VolumeUsed\\w*.(Task.)?(Wait|WaitAsync|GetAwaiter|Result) and an await of VolumeUsed in Core and App sources, case-insensitively, so any name with the VolumeUsed prefix is covered."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/FailCriticalErrorsTests.cs",
+    "symbol": "Kernel32MakesOnlyThePathCallsThatRunInsideTheScope",
+    "claim": "Counts Kernel32.cs's matches of the path-call rule's patterns against a fixed expected list (CreateFile, CreateFileW x2, GetDiskFreeSpaceEx x2, GetDiskFreeSpaceExW), so a new GetFileAttributesEx import or CreateFile call fails it until the list is updated."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "in the App, only UnreadableRows writes a failed folder's kind in words",
+    "claim": "A written-once rule over src/FsAnalyser.App/**/*.cs excepting UnreadableRows.cs exists for the kind words, but no rule covers the container-layer wording."
+   }
+  ],
+  "outside_claims": [
+   {
+    "claim": "GetDiskFreeSpaceExW on a mapped network drive answers the server volume's figures, so the used figure is not the share's.",
+    "evidence": "measured",
+    "source": "Build-check survey: Z:\\ (DriveType Network) total 106,146,160,640, free 102,284,365,824, used 3,861,794,816 via DriveInfo; that a share is usually one folder of that volume is recalled",
+    "if_wrong": "Nothing breaks. Giving no figure for remote roots is still the honest choice."
+   },
+   {
+    "claim": "GetFileInformationByHandleEx(FileRemoteProtocolInfo) succeeds only on a handle on a network file system (SMB redirector, DFS) and fails on local NTFS, including through a SUBST letter over a local folder.",
+    "evidence": "recalled",
+    "source": "memory; the project already relies on it in Scanner.DecideLastAccess and documents it at Kernel32.cs:50",
+    "if_wrong": "If it answers on local volumes, every whole-drive scan loses its coverage line and panel; E001-1, -3, -5 and -6 fail at once. If some redirector (WebDAV, a third-party mount) does not answer it, that letter keeps today's wording, which is no regression."
+   },
+   {
+    "claim": "GetFinalPathNameByHandleW with FILE_NAME_NORMALIZED | VOLUME_NAME_DOS, on a handle opened through a SUBST letter, returns the target's \\\\?\\C:\\... path.",
+    "evidence": "recalled",
+    "source": "memory; Kernel32.cs:138-141 documents the same resolution, which SL-095's store check depends on",
+    "if_wrong": "On a SUBST rig the $MFT read fails, measured is [], and E001-3's 'measured the volume's $MFT' check fails. VolumeUsageTests.TheMftFigureOfASubstLetterIsTheVolumeUnderIt shows it before any window run."
+   },
+   {
+    "claim": "GetVolumePathNameW accepts a \\\\?\\-prefixed path and returns the volume's mount point (\\\\?\\C:\\, or a mounted-folder path), consistent with the volume GetDiskFreeSpaceExW reports for that path.",
+    "evidence": "recalled",
+    "source": "memory",
+    "if_wrong": "The builder takes the volume root from the final path's drive letter instead. Only the inside of TryGetMftValidData changes; volumes mounted on folders would then read the parent's $MFT, and the NTFS and > unseen guards still keep the remainder non-negative."
+   },
+   {
+    "claim": "A Medium-integrity, non-elevated account can read <volume root>\\$MFT through GetFileAttributesExW, and the size returned is MftValidDataLength (10,540,285,952 B on this PC's C:, equal to FSCTL_GET_NTFS_VOLUME_DATA's figure).",
+    "evidence": "measured",
+    "source": "U-001 (M2 and M3 on C:\\ and \\\\?\\C:\\$MFT, token gate passed)",
+    "if_wrong": "No measured part is available, and E001-3's $MFT checks cannot pass."
+   },
+   {
+    "claim": "Shadow-copy storage, System Volume Information and other users' profiles cannot be sized by an ordinary account. A directory's own size field is its index size, not its contents.",
+    "evidence": "measured",
+    "source": "U-001 (vssadmin exit 2, WMI 'Initialization failure', SVI error 5, 7 profiles error 5, directory size fields 4,096-49,152)",
+    "if_wrong": "More parts could be measured. The design would stay the same with more 'measured' entries."
+   },
+   {
+    "claim": "On a SUBST letter, GetDiskFreeSpaceExW reports the volume under the target folder.",
+    "evidence": "measured",
+    "source": "Build-check survey: Y:\\ over a 1-file scratch tree reported 810.7 GB in use (the C: volume)",
+    "if_wrong": "The SUBST rigs would not reach the line at all, and V-001 would already be failing."
+   },
+   {
+    "claim": "Opening a directory with FILE_READ_ATTRIBUTES | FILE_FLAG_BACKUP_SEMANTICS and querying it does not update that directory's last-access time.",
+    "evidence": "recalled",
+    "source": "memory; Scanner.cs:273 comment 'an open alone moves no time'",
+    "if_wrong": "The volume thread's extra root opens would move the root folder's last-access time on local NTFS, which SL-056 avoids. The fix would be to reuse the scan's own root handle decision instead."
+   },
+   {
+    "claim": "PowerShell's [IO.FileInfo]::new('C:\\$MFT').Length (E001-3's oracle) returns the same figure GetFileAttributesExW gives.",
+    "evidence": "recalled",
+    "source": "memory (.NET FileInfo fills its state through GetFileAttributesEx)",
+    "if_wrong": "E001-3's oracle would differ from the panel. Its 64 MiB tolerance absorbs growth between the two reads, not a different route."
+   }
+  ],
+  "prior_art": [
+   {
+    "pattern": "A named 'hidden space' item for used space the scan could not reach, broken down into known parts and a final 'still hidden' remainder of unaccounted space",
+    "where": "https://daisydiskapp.com/guide/4/en/HiddenSpace/",
+    "authority": "official",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Show the gap between drive used space and scanned total as 'Not seen by the scan' so rows add up to used space, list usual causes (shadow copies, folders that could not be opened, file-system bookkeeping), and say how many folders could not be read",
+    "where": "https://www.ltclabs.dev/docs/underbrush/troubleshooting/not-seen-by-scan",
+    "source_date": "2026-10-22",
+    "authority": "official",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Vendor explanation of a total below drive size: access restrictions and system reserved storage that no app sees and the scan does not represent",
+    "where": "https://knowledgebase.jam-software.com/treesize_free/index2.shtml",
+    "authority": "official",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Failure mode: one unexplained 'unknown' figure that users then hunt for as if it were files",
+    "where": "https://learn.microsoft.com/en-us/answers/questions/1688633/mismatch-of-used-disk-space-unknown-files-in-windi",
+    "source_date": "2024-05-28",
+    "authority": "community",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Disk tools list mounted network drives beside local ones, so whole-drive logic must tell them apart",
+    "where": "https://poppydisk.com/docs/scan/drive",
+    "authority": "official",
+    "basis": "cited"
+   },
+   {
+    "pattern": "Tools that size the gap fully read the MFT directly, which needs administrator rights; not available to an ordinary account (U-001)",
+    "where": "WizTree / Everything-style MFT readers",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Bank-reconciliation 'unreconciled difference': itemise the known reconciling items and carry the rest as a labelled plug, never booked as an identified item",
+    "where": "general accounting practice",
+    "authority": "community",
+    "basis": "recalled"
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Accounting reconciliation (statement against ledger)",
+   "pattern": "List the reconciling items you can identify independently, and carry the leftover as one labelled 'unreconciled difference' that is never presented as an identified item, with items + difference == the gap",
+   "transfer_found": true,
+   "rationale": "The panel reconciles the volume's used figure against what the scan counted. The named folders are identified items with no amount. The $MFT is the one item measured independently. The remainder is the plug. The finish lines test this shape exactly: measured + remainder == unseen, and the remainder is never labelled measured. DaisyDisk's 'still hidden' (cited) is the same pattern in production. The failure it avoids is the single 'unknown' figure people hunt for as though it were files (the cited Q&A).",
+   "invariants": [
+    {
+     "precondition": "Items plus the plug equal the gap exactly (measured bytes + remainder bytes == unseen)",
+     "status": "holds",
+     "evidence": "By construction in CoveragePanelText.Build (remainder = unseen - sum measured); pinned by CoveragePanelTextTests and by the arithmetic in E001-3 and E001-4"
+    },
+    {
+     "precondition": "A measured item is measured independently of the total and never exceeds the gap",
+     "status": "must-verify",
+     "evidence": "The $MFT comes from GetFileAttributesExW, a different route from GetDiskFreeSpaceExW (U-001: two routes agree), and the guard drops it when it exceeds unseen. Whether the unseen space on the real C:\\ is at least the $MFT is the c-drive spike's undecided clause (b), filed for the person."
+    },
+    {
+     "precondition": "The plug is never worded as an identified or measured item",
+     "status": "holds",
+     "evidence": "The remainder wording is set in one pure function and checked by E001-3's regexes inside a unit test ('cannot read' present, no unnegated 'measured')"
+    },
+    {
+     "precondition": "Items already inside the counted side are not reconciled again (files whose own size was not read are not in the gap)",
+     "status": "holds",
+     "evidence": "sizeNotRead bytes are the ChargedOnDisk of ProbeFailed entries, already inside core.bytesOnDisk = seenOnDisk. They are shown apart, and E001-4 checks unseen == volumeInUse - seenOnDisk."
+    }
+   ]
+  },
+  "decidable_disagreements": [],
+  "taste_disagreements": [
+   "Mapped drive: no line and no panel (chosen) versus share wording such as 'this share is part of a bigger server volume'. The brief left the choice to this design; no-figure is cheaper to reverse and cannot mislead.",
+   "Reason-less flag surfaces (tree note, top-level title): a FlaggedReason constant plus a single-member tripwire test (chosen) versus threading NotScannedReason through FolderTreeSession and TopLevelRow, which is a Core change to TopLevelTracker.",
+   "Panel placement: a sibling TextBlock under OutcomeDetail inside the capped OutcomeTexts scroll region (chosen) versus a 'Coverage' tab of its own in OutcomeTabs, which would add a section and change tab order and selection.",
+   "sizeNotRead bytes: the listing's on-disk size, i.e. ChargedOnDisk, the side that bears on the unseen space (chosen), versus the listing's file size. In E001-4's 64 KiB files the two are equal.",
+   "Home of the counters sentence: FigureText.Counters (chosen) versus a new pure ScanningText file."
+  ],
+  "filed_for_later": [
+   {
+    "what": "Allow one non-elevated, report-mode scan of the whole C:\\ drive with this build. Read 'coverage' from the report: the panel is present; the unseen space against the $MFT (the spike's clause b); and how many unreadable folders the panel names (clause c).",
+    "why": "A whole-drive scan of the person's own C:\\ needs their allow (the c-drive-ending-can-carry-panel spike stopped there). The finish lines are settled on SUBST rigs without it.",
+    "who": "person"
+   },
+   {
+    "what": "Run the network pass this slice makes stale: N-001..N-004 and StalledShareTests. Add the new opt-in SMB-LOOPBACK fact (VolumeUsageTests.AMappedLoopbackShareGetsNoFigure, trait Network=SMB-LOOPBACK, already in FsaDefaultTestFilter) showing that a mapped loopback share gets VolumeUsed null, and confirm in the window that a scan of the mapped Z:\\ shows no coverage line and no panel.",
+    "why": "These change the machine's SMB mappings and scan a whole mapped drive, so they are person-run. The slice touches MainWindow.xaml(.cs), Scanning/** and the hook, which are on the staleness list in docs/design/SL-020-scanner.md:239-249. The deterministic branch is settled in the default suite by the injected remote probe.",
+    "who": "person"
+   }
+  ],
+  "whats_new": [
+   "Kernel32.IsRemoteRoot and Kernel32.TryGetMftValidData (NTFS gate via GetVolumeInformationByHandle, final path, new GetVolumePathNameW and GetFileAttributesExW imports, inside CriticalErrorBoxOff)",
+   "VolumeSpace: default read composed of remote, used and mft probes; remote roots answer null; optional mft source and reader; mft answered before used; the bound answers both",
+   "ScanStore.VolumeUsedMft (public Task<long?>) and internal VolumeUsedMftSource",
+   "Core.Analysis SizeNotRead.OnDisk(store): ChargedOnDisk summed over ProbeFailed files",
+   "Pure App CoveragePanelText.cs (CoverageFacts/Breakdown/Folder/Part/Remainder/SizeNotRead records, Build, ProbeFailuresNote, VanishedNote), linked into Core.Tests",
+   "FigureText.Counters(files, folders, bytes, onDisk, unreadable) through Count",
+   "UnreadableRows: NotScannedShortText, NotScannedNote, RefusedText, NotScannedInRemainder, FlaggedReason; NotScannedText given a named arm and a neutral fallback",
+   "XAML CoveragePanel (StackPanel) with the CoverageLines TextBlock under OutcomeDetail; MainWindow ShowCoverage/HideCoverage and the internal Coverage model",
+   "WindowReport: top-level 'coverage' and window 'CoveragePanel'; remarks for them; SC-047 comment fixes (WindowReport.cs:101-102 and :106, MainWindow.xaml:371-372); KnownWorkarounds summary comment corrected",
+   "Three fitness rules under '# settled by SL-001', and the corpus script tests/bugs/SL-001-WrittenOnceRules.Tests.ps1",
+   "tests/window/FsaWindowHook/CountersReading.cs (FoldersIn reads ' folder'), linked into Core.Tests",
+   "Core.Tests: CoveragePanelTextTests, SizeNotReadTests, CountersReadingTests, new VolumeUsageTests facts (remote root gives null, mft before used, bound answers both, throwing mft probe, SUBST $MFT equals the volume's), UnreadableRows store-word pins and reason enumeration, FigureText.Counters '1 file, 1 folder' pin",
+   "FailCriticalErrorsTests expected Kernel32 path-call list updated for the new CreateFile and GetFileAttributesEx calls"
+  ],
+  "whats_reused": [
+   "The bounded volume-read thread and its no-wait discipline (VolumeSpace, SL-043/O-031) and the NothingWaitsOnTheVolumeFigure tripwire through the VolumeUsed prefix",
+   "The FileRemoteProtocolInfo info class DecideLastAccess already uses as the remote test",
+   "Kernel32.CreateFile(in CriticalErrorBoxOff, ...), GetFinalPathNameByHandle/FinalPathNormalizedDos and GetVolumeInformationByHandle, already imported",
+   "U-001's measured $MFT route and its labelling condition (valid data length)",
+   "UnreadableRows.Build and UnreadableRows.NotScanned rows and their Text as the panel's folder lines (the same rows as the tab)",
+   "FigureText.Count and FormatSize for every figure in the panel, the counters and the notes",
+   "The KindText arm-per-member plus neutral-fallback pattern and its enumeration test",
+   "The written-once fitness rule pattern (kind words, unread word)",
+   "AddVolumeInUse as the one place the ending completes before EndingShown",
+   "The WindowReport additive-key convention and the copy-the-model approach Kinds uses",
+   "ScanStore.ChargedOnDisk and EntryFlags.ProbeFailed for the size-not-read bytes",
+   "The SUBST-over-%TEMP% whole-drive rig of V-001 and the E001 scripts"
+  ],
+  "retier": {
+   "tier": "medium",
+   "why": "Medium is needed because the design changes contracts other code reads:\n- ScanStore.VolumeUsed now answers null for remote roots. That is documented public Core API, read by the App and planned for reuse by SC-010.\n- It adds public API (ScanStore.VolumeUsedMft).\n- It adds schema-1 report fields that the engine, read-window.ps1 and six finish-line scripts parse.\n- It adds native calls to Kernel32 under a counting test.\n- It adds three fitness rules, which draw spelling-class findings (#486, #846).\nBy its 14-row case matrix it is not a low-risk slice (#725)."
+  },
+  "stack_chosen": [],
+  "open_questions": []
+ }
+}

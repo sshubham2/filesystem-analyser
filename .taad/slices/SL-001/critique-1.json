@@ -1,0 +1,153 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-001",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-11-17T09:14:33.499Z",
+ "head": "21632dc5f6fffe0ad9d968a1bff71076ad4c8f41",
+ "run_id": 11123,
+ "summary": "The core of the design holds against the tree. The volume thread already exists and is bounded. The FileRemoteProtocolInfo test is already the project's remote check, and the existing last-access tests pass on local NTFS, so local roots are indirectly shown not to answer it. Every figure the panel needs is on ScanResult. Scanner.Correct sets ProbeFailed and counts _probeFailures together (Scanner.cs:547-548). Calling ShowVolumeInUse unconditionally means a stopped scan really does reach AddVolumeInUse with Finished=false. The engine-appended rules at .taad/fitness.yaml:1427-1469 match the design's architecture_rules word for word, and the patterns behave as claimed against the must-fire and must-stay-quiet rows I traced.\n\nTwo major problems are about what the person will actually see on a real whole drive.\n1. The folder list is uncapped and comes before the figures, but this PC's own record shows a C:\\ scan with 559 unreadable folders. That already answers the spike's undecided clause (c), whose limit was 20.\n2. On every finished ending the Largest files tab shows, so the outcome texts are capped at 76 px. The title and the four OutcomeDetail lines already fill that, so the whole panel always starts out of view. Its report key cannot show this.\n\nFour minor problems:\n- An internal `Coverage` property would clash with the existing static `Coverage(...)` method, so MainWindow would not compile (CS0102).\n- The no-wait guard covers the $MFT task only through its name, and the design tells the App to rename it.\n- The two new root opens leave share mode unstated.\n- The report drops the raw $MFT figure, which the check filed for the person's C:\\ run needs.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The core of the design holds against the tree. The volume thread already exists and is bounded. The FileRemoteProtocolInfo test is already the project's remote check, and the existing last-access tests pass on local NTFS, so local roots are indirectly shown not to answer it. Every figure the panel needs is on ScanResult. Scanner.Correct sets ProbeFailed and counts _probeFailures together (Scanner.cs:547-548). Calling ShowVolumeInUse unconditionally means a stopped scan really does reach AddVolumeInUse with Finished=false. The engine-appended rules at .taad/fitness.yaml:1427-1469 match the design's architecture_rules word for word, and the patterns behave as claimed against the must-fire and must-stay-quiet rows I traced.\n\nTwo major problems are about what the person will actually see on a real whole drive.\n1. The folder list is uncapped and comes before the figures, but this PC's own record shows a C:\\ scan with 559 unreadable folders. That already answers the spike's undecided clause (c), whose limit was 20.\n2. On every finished ending the Largest files tab shows, so the outcome texts are capped at 76 px. The title and the four OutcomeDetail lines already fill that, so the whole panel always starts out of view. Its report key cannot show this.\n\nFour minor problems:\n- An internal `Coverage` property would clash with the existing static `Coverage(...)` method, so MainWindow would not compile (CS0102).\n- The no-wait guard covers the $MFT task only through its name, and the design tells the App to rename it.\n- The two new root opens leave share mode unstated.\n- The report drops the raw $MFT figure, which the check filed for the person's C:\\ run needs.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "claim": "The panel names every unreadable folder, uncapped, with one line each, and puts the measured, remainder and size-not-read lines after that list. The design treats the count on a real C:\\ as the spike's undecided clause (c), but the repository already answers it: a C:\\ scan on this PC recorded 559 unreadable folders before it was cancelled, and W-001 found 446 under C:\\ProgramData\\Microsoft\\Windows\\WER alone. On the slice's main target, C:\\, the figures that explain M would sit under 500+ wrapped path lines inside the outcome texts' 76-px scroll region. The panel also repeats, as one unvirtualised TextBlock, the list the Unreadable folders tab already shows. No case covers more than two folders (E001-2).",
+    "evidence": "docs/design/SL-095-runs/spike-87-2026-10-04/L.json:3 and :26 (root C:\\, unreadableFolders 559, Cancelled at 3,313,298 entries). docs/design/SL-089-seams.md:26 ('446 rows = header 446 = core.unreadable 446'). Design CoveragePanelText: 'ScreenLines ... is a heading, then one line per folder ..., then the measured, remainder and size-not-read lines'. Key decision: 'uncapped, in one wrapping TextBlock'. Spike c-drive-ending-can-carry-panel clause (c): 'at most 20 unreadable folders'.",
+    "quote": {
+     "path": "docs/design/SL-095-runs/spike-87-2026-10-04/L.json",
+     "line": 26,
+     "text": "\"unreadableFolders\": 559,"
+    },
+    "fix": "Order ScreenLines figures first: measured, remainder and size-not-read straight under the heading, then the folders. On screen, draw the store row plus at most a fixed number of unreadable rows, and end with an 'and N more' line written through FigureText.Count that points to the Unreadable folders tab. Keep the report's folders[] complete so E001-2's count still holds. Add a unit case in CoveragePanelTextTests with more rows than the cap."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "nature": "defect",
+    "file": "src/FsAnalyser.App/MainWindow.xaml",
+    "line": 302,
+    "claim": "The design puts the panel as a sibling under OutcomeDetail inside OutcomeTexts and says 'it scrolls with the other outcome texts'. It does not account for the panel never being in view at a finished ending. ShowLargestFiles makes LargestFilesTab Visible at every Completed or Cancelled ending (MainWindow.xaml.cs:734). OutcomeTabs is then visible, and that caps OutcomeTexts at 76 px. The 16-px semibold title plus OutcomeDetail's 6-px margin and four lines, with the coverage line wrapping, already come to about 90 px or more. So the whole panel starts below the visible region on every whole-drive ending, not just a long list. The planned report key CoveragePanel {visible, actualHeight} cannot reveal this, because IsVisible stays true for content scrolled out of a ScrollViewer. Validate would therefore read 'panel shown' while the person sees none of it.",
+    "evidence": "MainWindow.xaml:296-311 (OutcomeTexts ScrollViewer, DataTrigger on OutcomeTabs Visible giving MaxHeight 76, OutcomeTitle FontSize 16). MainWindow.xaml.cs:734 (LargestFilesTab.Visibility = Visible). Design CoveragePanel control: 'It scrolls with the other outcome texts, which are capped at 76 px while tabs show'. Report contract: CoveragePanel '{ visible: CoveragePanel.IsVisible, actualHeight }'.",
+    "quote": {
+     "path": "src/FsAnalyser.App/MainWindow.xaml",
+     "line": 302,
+     "text": "<Setter Property=\"MaxHeight\" Value=\"76\" />"
+    },
+    "fix": "Decide placement knowing the panel always lands out of view. Either take the rejected alternative (a Coverage section in OutcomeTabs), or keep the sibling and state that it is a scroll away. In both cases add the panel's top offset inside OutcomeTextsContent (TranslatePoint) to the CoveragePanel report key, so a check can compare it with OutcomeTexts.actualHeight."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "file": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "line": 857,
+    "claim": "The design gives MainWindow an internal property named Coverage ('sets the internal Coverage model'; the report reads 'window.Coverage'; the corpus must-fire row is 'lines = window.Coverage.ScreenLines'). It also keeps the existing static method Coverage(bool, long, long) ('The Coverage(...) line text is untouched'). C# does not allow a property and a method of the same name in one type (CS0102), so MainWindow does not compile. This is the same class of clash as the design's own correction 1 (CoverageText).",
+    "class_of": "member-name clashes inside MainWindow (generated x:Name fields, methods, properties)",
+    "threat": "accident",
+    "evidence": "MainWindow.xaml.cs:857, design 'MainWindow wiring' and 'Report fields', corpus row list.",
+    "quote": {
+     "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+     "line": 857,
+     "text": "private static string Coverage(bool finished, long seenOnDisk, long volumeInUse)"
+    },
+    "fix": "Name the model property something else, such as CoverageModel, and use that name in the report contract and the corpus must-fire row. Alternatively, rename the static line method to CoverageLine."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "claim": "The guard that keeps anything from waiting on the $MFT task works only by remembering. NothingWaitsOnTheVolumeFigure matches names that start with VolumeUsed. Yet the design says the App's parameter 'must not be named with the VolumeUsed prefix, or the tripwire fires', so the App's own read of the task falls outside the guard by design. For a remote or dead root the task stays pending until the bound, so a later `.Result` or `.Wait()` on it anywhere but AddVolumeInUse (for example in ShowOutcome) would freeze the UI thread for up to 30 s, and no rule would fire. The correctness of the reads that are allowed also depends on the answer order, which only the thread's code and one test enforce.",
+    "evidence": "Design ScanStore.VolumeUsedMft key_interactions; fitness.yaml:210-216 (App no-wait rule on VolumeUsed\\w* names); ScanOptions.cs:35.",
+    "quote": {
+     "path": "src/FsAnalyser.Core/Scanning/ScanOptions.cs",
+     "line": 35,
+     "text": "public TimeSpan VolumeReadBound { get; init; } = TimeSpan.FromSeconds(30);"
+    },
+    "fix": "Give the App one task instead of two. Add an additive `Task<VolumeFigures?> VolumeUsedFigures` (a record with long? Used and long? Mft), completed once by the thread or the bound. The App hangs its single continuation on it. That removes the second task, removes the answer-order invariant, and keeps the VolumeUsed prefix under the existing guard."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "under-engineering",
+    "nature": "defect",
+    "claim": "Kernel32.IsRemoteRoot and TryGetMftValidData each open the root through CreateFile with their own arguments written in place. The design gives access (FILE_READ_ATTRIBUTES) and flags (BACKUP_SEMANTICS) but not share mode. Every existing open in Core passes FILE_SHARE_ALL. A narrower share mode at either new call site would make the volume thread's open of the root race the scan's own open of the same root, and lose to every program holding C:\\ open. The result would be no figure and no line on whole-drive scans. Nothing in the planned tests runs with competing handles. Both sites, plus any later SC-010 reuse, have to remember the same arguments.",
+    "evidence": "Design Kernel32 additions (1) and (2); SynchronousIoCancel.cs:508 and :535 pass FILE_SHARE_ALL; Kernel32.cs:18.",
+    "quote": {
+     "path": "src/FsAnalyser.Core/Scanning/SynchronousIoCancel.cs",
+     "line": 508,
+     "text": "opened = Kernel32.CreateFile(boxOff, win32Path, access, Kernel32.FILE_SHARE_ALL, 0, Kernel32.OPEN_EXISTING, flags, 0);"
+    },
+    "fix": "Write one private Kernel32 helper, such as OpenRootForQuery(in boxOff, root), with FILE_READ_ATTRIBUTES, FILE_SHARE_ALL, OPEN_EXISTING and FILE_FLAG_BACKUP_SEMANTICS fixed. Better still, open the root once on the volume thread and run the remote, NTFS-gate and final-path probes on that one handle."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "claim": "The report's coverage key cannot tell 'the $MFT exceeded the unseen space' apart from 'the $MFT read failed' or 'the volume is not NTFS'. All three give measured [] and no figure. Yet the item filed for the person says to read the unseen space against the $MFT (spike clause b) from the report's 'coverage'. That clause is exactly the transfer's unproven precondition 'a measured item ... never exceeds the gap'. In the case where the precondition fails, the report as designed holds nothing to show it, and the panel quietly falls back to the whole remainder.",
+    "evidence": "Design contract 'measured is [] when the volume is not NTFS, the $MFT read failed, or $MFT > unseen'; filed_for_later item 1; cross_domain_transfer invariant 2 'must-verify'.",
+    "fix": "Add `mft`, the $MFT valid data length as read (a byte count, or null when the read failed or the volume is not NTFS), to the coverage key whether or not it was used as a measured part. Clause (b) can then be decided from the report alone."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "extra",
+    "claim": "For C10 (SC-015), the only check of the real redirector is the person's network pass. The default-suite test feeds an injected remote=true probe, so it proves only the plumbing. This PC has a real mapped Z:\\ (DriveType Network, measured by the build check). Calling Kernel32.IsRemoteRoot(@\"Z:\\\") and the composed default read on Z:\\ opens only the share's root for attributes. It lists no folder and changes no SMB mapping, so TAAD can settle the real branch itself at validate instead of leaving it to the person.",
+    "evidence": "Build-check survey: 'Z:\\ is Network: total 106,146,160,640 ... used 3,861,794,816'; design case 'give a mapped network drive no coverage line' ('The real redirector answer is filed for the person's network pass').",
+    "fix": "At validate, run a one-off probe: IsRemoteRoot(\"Z:\\\") == true and the default composed read == null on Z:\\. Record it as reality contact for C10, and leave only the window scan of Z:\\ on the person's list."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M2: the panel is assumed to be seen, but it sits below the 76-px cap on every finished ending. Recalled claims checked:\n- FileRemoteProtocolInfo failing on local NTFS is supported indirectly, because DecideLastAccess relies on it and the local last-access tests pass (1111 passed).\n- GetFinalPathNameByHandle resolving a SUBST letter is already relied on by SL-095 (Kernel32.cs:138-148).\n- GetVolumePathNameW with a \\\\?\\ path: the search could not confirm it from Microsoft's page. The design has a fallback and a real-disk test before any window run, so it is not load-bearing.\n- Transfer precondition 'measured independently and never exceeds the gap': if it fails, the guard drops the $MFT and the panel stays honest. The report then cannot show why (m4)."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "M1: the repository's own C:\\ record has 559 unreadable folders, against an uncapped list that comes before the figures. The over-count, stopped, refused, root-unreadable, folder-root and non-NTFS paths all lead to no panel or measured [] as designed. Stopped always reaches AddVolumeInUse with Finished=false (MainWindow.xaml.cs:622 and :683), which matches #100."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "m3: two inline CreateFile call sites with no share mode stated; one helper, or one handle on the volume thread, would make the slip impossible to write."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none of consequence. The $MFT part is required by U-001's ONLY UNDER ('next to a separately sized $MFT'). folders[].size is always null, which is dead schema but pinned by the planted E001-5 shape. The three tripwire rules plus a corpus are proportionate under lessons #486 and #846."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "m1: the Coverage property clashes with the Coverage(...) method (CS0102). m4: the coverage key has no raw $MFT figure, so clause (b) cannot be decided from the report. M2: the CoveragePanel key cannot show the panel is out of view."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "none: every failure of VolumeUsed and VolumeUsedMft is null and never a fault. A throwing $MFT probe still answers the used figure. EndingShown is raised on every path (AddVolumeInUse in every case, ShowProblem directly). HideCoverage sits at scan start, in ShowProblem and at the top of ShowOutcome, so no stale panel survives."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "none: the brief's criteria and the five merged fixes each map to a component and a case. The engine-appended entries at fitness.yaml:1427-1469 match the design's architecture_rules exactly (#389 checked). RefusedText and NotScannedNote keep the bytes that WindowCases.ps1:5146, :5181 and :5209 match."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "m2: the no-wait guard covers the $MFT task only through its name, and the design renames it in the App. Checked and holding:\n- the window-never-touches-the-store rule allows result.Store;\n- the Analysis rule forbids raw Size and OnDisk, and SizeNotRead uses ChargedOnDisk;\n- FileSystemCallsGoThroughTheCancelGuard is not tripped, because the new calls sit inside Kernel32.cs;\n- the FailCriticalErrorsTests list update is planned;\n- the hook-file move satisfies the hook rules (no using FsAnalyser)."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "M1: no case has more than two unreadable folders. M2: no check can see the panel's position. m5: the real redirector branch can be measured on this PC's Z:\\ by TAAD itself. The stop, over-count, no-store, store, size-not-read, count-of-one and FoldersIn cases are otherwise well matched to the 14-row matrix (#725)."
+   },
+   {
+    "dimension": "security",
+    "result": "none: Q-016 holds by construction for folders, because CoverageFolder carries no text and NotScannedInRemainder takes only the reason. ScreenLines is fenced from WindowReport by the appended rule. The report already carries the store's system path in OutcomeNotes.lines from before this slice; that is outside this slice's scope."
+   }
+  ]
+ }
+}

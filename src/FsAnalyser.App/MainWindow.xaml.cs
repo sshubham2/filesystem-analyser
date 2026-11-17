@@ -242,6 +242,7 @@ public partial class MainWindow : Window
         RevealStatus.Visibility = Visibility.Collapsed;
         LastRevealOutcome = null;
         HideUnreadable();
+        HideCoverage(); // nor its coverage panel
         HideLargestFiles(); // the last scan's list is never shown as this one's
         EnsureSelectedTabIsVisible(); // none is: the next ending opens on its own first section
         AwaitKinds(); // nor its kinds
@@ -339,8 +340,7 @@ public partial class MainWindow : Window
     {
         if (_progress is not { } p)
             return;
-        string unreadable = p.Unreadable > 0 ? $", {p.Unreadable:N0} folders unreadable" : "";
-        CountersText.Text = $"{p.Files:N0} files, {p.Folders:N0} folders, {FormatSize(p.Bytes)} ({FormatSize(p.BytesOnDisk)} on disk){unreadable}";
+        CountersText.Text = Counters(p.Files, p.Folders, p.Bytes, p.BytesOnDisk, p.Unreadable);
         // Once every folder is listed, the scan reads each file's own size (SL-056): say so, not the last folder.
         CurrentFolderText.Text = p.FilesToSize > 0
             ? $"Reading each file's own size: {p.FilesSized:N0} of {p.FilesToSize:N0}"
@@ -600,6 +600,7 @@ public partial class MainWindow : Window
     private void ShowOutcome(ScanResult result)
     {
         LastResult = result;
+        HideCoverage(); // this ending's panel, if it has one, comes with its volume figure (AddVolumeInUse)
         if (result.Status == ScanStatus.RootUnreadable)
         {
             ShowProblem($"Could not read {result.Root}", $"{Win32Message(result.RootError)} (Windows error {result.RootError})");
@@ -610,12 +611,7 @@ public partial class MainWindow : Window
             // Decided in Core, before anything was opened (Q-179, Q-182), because the Settings precaution the result
             // names is on (Q-186): the line says why, in that precaution's words, and that its checkbox lifts it.
             KnownWorkaround? why = KnownWorkarounds.Find(result.RefusalWorkaroundId);
-            ShowProblem($"Not scanned: {result.Root}",
-                "Windows container layers can't be scanned safely: the wcifs filter leaks kernel memory and a System handle " +
-                "for each entry read, until a full restart. This folder is in the Windows container layer store, so nothing " +
-                "in it was read." + (why is null ? "" :
-                $"\n{why.Defect}\nWhere it lives: {why.WhereItLives}\nWhile the Settings checkbox '{why.Title}' is ticked, as " +
-                "it is at every start, a folder at or inside the store is not scanned. You can turn this protection off in Settings."));
+            ShowProblem($"Not scanned: {result.Root}", UnreadableRows.RefusedText(result.Refusal, why));
             return;
         }
 
@@ -637,18 +633,13 @@ public partial class MainWindow : Window
         if (!result.FileIdsAvailable)
             notes.Add("This drive does not report file IDs, so a file with more than one name (a hardlink) may be counted more than once.");
         if (result.ProbeFailures > 0)
-            notes.Add($"{result.ProbeFailures:N0} files could not be opened to read their true size on disk; their listed size was used.");
+            notes.Add(CoveragePanelText.ProbeFailuresNote(result.ProbeFailures));
         if (result.VanishedBeforeProbe > 0)
-            notes.Add($"{result.VanishedBeforeProbe:N0} files were deleted before their true size could be read; their listed size was used.");
+            notes.Add(CoveragePanelText.VanishedNote(result.VanishedBeforeProbe));
         // Beside the totals they are missing from: what was left out on purpose, and why (SL-095).
         IReadOnlyList<NotScannedRow> notScanned = UnreadableRows.NotScanned(result.SkippedStores, result.Store.GetPath);
         foreach (NotScannedRow row in notScanned)
-        {
-            KnownWorkaround? why = KnownWorkarounds.Find(row.WorkaroundId);
-            notes.Add($"Not scanned, size not counted: {row.Path} (Windows container layers)." + (why is null ? "" :
-                $" Skipped to avoid a leak in {why.WhereItLives} {why.Defect} The Settings checkbox '{why.Title}' left it out; " +
-                "it can be turned off in Settings."));
-        }
+            notes.Add(UnreadableRows.NotScannedNote(row.Reason, row.Path, KnownWorkarounds.Find(row.WorkaroundId)));
         OutcomeNotes.Text = string.Join("\n", notes);
         OutcomeNotes.Visibility = notes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
@@ -680,29 +671,71 @@ public partial class MainWindow : Window
             ShowTreeButton.Visibility = Visibility.Visible;
         ShowKinds(result); // after the tree, which a failure here cannot take away; a stopped scan's kinds too
         OutcomePanel.Visibility = Visibility.Visible;
-        ShowVolumeInUse(result.Store.VolumeUsed, _scanGeneration, detail); // and then EndingShown
+
+        // The coverage panel's facts, from the rows above and the scan's own counts. The size of the files whose own size could
+        // not be read is added up only for a scan that finished and had any: it is one pass over the store, the cost of the kinds.
+        int sizeNotRead = finished ? result.ProbeFailures : 0;
+        var facts = new CoverageFacts(notScanned, unreadable, sizeNotRead, sizeNotRead > 0 ? SizeNotRead.OnDisk(result.Store) : 0);
+        ShowVolumeInUse(result.Store.VolumeUsed, result.Store.VolumeUsedMft, _scanGeneration, detail, facts); // and then EndingShown
     }
 
     // The volume line comes from the scan's own read of the volume, which may still be running when the
     // scan returns (SL-043). The ending is on screen without it and never waits for it; the line goes in when
     // the figure lands, and EndingShown is raised then, so whoever listens reads the whole ending. Null (a
-    // folder or a share, or no answer within the read's bound) adds no line. What waits for the figure holds
-    // the window, this scan's generation and the texts, never the result or its store, so a read stuck on a
-    // dead drive keeps no scan the window has moved on from in memory (M1). A figure that lands after another
-    // scan started is dropped. A figure that has already landed takes the same way, one dispatcher turn later,
-    // so every case that reaches this reaches the path a slow volume takes (SL-043, m2).
-    private void ShowVolumeInUse(Task<long?> figure, int generation, OutcomeDetailText detail) =>
-        figure.ContinueWith(landed => Dispatcher.InvokeAsync(() => AddVolumeInUse(landed, generation, detail)),
+    // folder, a share or mapped network drive, or no answer within the read's bound) adds no line: the volume
+    // read gives a root on a network file system no figure, because a share is usually one folder of a bigger
+    // server volume and the rest of that volume is not this scan's gap (SL-001, SC-015). What waits for the figure
+    // holds the window, this scan's generation, the texts and the panel's facts, never the result or its store, so a
+    // read stuck on a dead drive keeps no scan the window has moved on from in memory (M1). A figure that lands
+    // after another scan started is dropped. A figure that has already landed takes the same way, one dispatcher
+    // turn later, so every case that reaches this reaches the path a slow volume takes (SL-043, m2). The $MFT's
+    // size is answered by the same read strictly before the figure, so it is complete whenever the figure is a number
+    // and is read without waiting. A stopped scan reaches AddVolumeInUse too, always, with Finished false, and has no panel.
+    private void ShowVolumeInUse(Task<long?> figure, Task<long?> mft, int generation, OutcomeDetailText detail, CoverageFacts facts) =>
+        figure.ContinueWith(landed => Dispatcher.InvokeAsync(() => AddVolumeInUse(landed, mft, generation, detail, facts)),
             CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
 
     // On the UI thread, with the figure's task completed: nothing here blocks.
-    private void AddVolumeInUse(Task<long?> landed, int generation, OutcomeDetailText detail)
+    private void AddVolumeInUse(Task<long?> landed, Task<long?> mft, int generation, OutcomeDetailText detail, CoverageFacts facts)
     {
         if (generation != _scanGeneration)
             return;
         if (landed.IsCompletedSuccessfully && landed.Result is long used)
+        {
             OutcomeDetail.Text = detail.Counted + Coverage(detail.Finished, detail.SeenOnDisk, used) + "\n" + detail.Elapsed;
+            long? mftSize = mft.IsCompletedSuccessfully ? mft.Result : null;
+            ShowCoverage(CoveragePanelText.Build(facts, detail.Finished, detail.SeenOnDisk, used, mftSize));
+        }
         EndingShown?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// The coverage panel on screen, as the report reads it; null while none is shown. Set only with the panel visible, in
+    /// <see cref="ShowCoverage"/>, and cleared with it.
+    /// </summary>
+    internal CoverageBreakdown? CoverageModel { get; private set; }
+
+    // The panel under the ending's coverage line, for a whole-drive scan that finished and whose figure landed. It sits inside
+    // the outcome texts, which are capped at 76 px while any section of the ending is shown, and every finished ending shows the
+    // largest files: so the panel is a scroll away from the title and the four lines above it, never in view at first. Its
+    // figures come first and the folders after them, so the first scroll shows what the space is.
+    private void ShowCoverage(CoverageBreakdown? panel)
+    {
+        if (panel is null)
+        {
+            HideCoverage();
+            return;
+        }
+        CoverageModel = panel;
+        CoverageLines.Text = string.Join("\n", panel.ScreenLines);
+        CoveragePanel.Visibility = Visibility.Visible;
+    }
+
+    private void HideCoverage()
+    {
+        CoverageModel = null;
+        CoverageLines.Text = "";
+        CoveragePanel.Visibility = Visibility.Collapsed;
     }
 
     // The largest single files anywhere under the root, from the store of a scan that has returned, so
@@ -852,8 +885,9 @@ public partial class MainWindow : Window
         KindsCaption.Text = "";
     }
 
-    // What the scan saw against what the volume says is in use. The gap is not explained here yet:
-    // metafiles, unreadable folders and the rest belong to the coverage panel of a later slice.
+    // What the scan saw against what the volume says is in use: the one line under the ending's counts. Its words are the
+    // ones PS-012 settled and stay as they are. The gap is explained beneath it by the coverage panel (CoveragePanelText),
+    // for a finished scan only; this line says the gap exists.
     private static string Coverage(bool finished, long seenOnDisk, long volumeInUse)
     {
         long unseen = volumeInUse - seenOnDisk;
@@ -873,6 +907,7 @@ public partial class MainWindow : Window
         OutcomeDetail.Text = why;
         OutcomeNotes.Visibility = Visibility.Collapsed;
         HideUnreadable();
+        HideCoverage();
         HideLargestFiles();
         EnsureSelectedTabIsVisible(); // no section: the texts take the whole panel
         HideKinds();

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
@@ -195,6 +196,171 @@ internal static unsafe partial class Kernel32
         error = 0;
         return TryUsedBytes(total, free, out used);
     }
+
+    // FILE_REMOTE_PROTOCOL_INFO is 116 bytes; the buffer is rounded up.
+    private const int RemoteProtocolInfoSize = 128;
+
+    // GetFileAttributesEx's information level for the plain attribute data (GetFileExInfoStandard).
+    private const int GetFileExInfoStandard = 0;
+
+    /// <summary>
+    /// Opens a drive's root for a query and nothing else (SL-001): FILE_READ_ATTRIBUTES only, shared with every other
+    /// open (FILE_SHARE_ALL, as every open in Core is, so it never races the scan's own open of the same root and never
+    /// loses to a program that holds the drive), backup semantics so a directory opens. Nothing is listed, no data is
+    /// read, and an open for attributes alone moves no last-access time. The one place the volume thread's root opens
+    /// are spelled, so <see cref="IsRemoteRoot"/> and <see cref="TryGetMftValidData"/> cannot differ in them.
+    /// </summary>
+    private static SafeFileHandle OpenRootForQuery(in CriticalErrorBoxOff boxOff, string root) =>
+        CreateFile(boxOff, root, FILE_READ_ATTRIBUTES, FILE_SHARE_ALL, 0, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
+
+    /// <summary>
+    /// Whether <paramref name="root"/> is on a network file system: a mapped drive, a DFS letter, a SUBST letter over a
+    /// network path. Asked of the root's own handle, so a shape check cannot be fooled by a letter (SL-001, SC-015). Two
+    /// signals, either of which says remote: GetFileInformationByHandleEx's FileRemoteProtocolInfo, answered only for a
+    /// handle on a network file system (the one the scan's own last-access decision uses), and a final path in
+    /// <c>\\?\UNC\</c> form, which a share gives whatever the info class's access rule is. The critical-error box is off
+    /// for the calls. The volume thread only, never the UI thread: the open can wait on a server that stopped answering.
+    /// </summary>
+    /// <returns>True, or false for a local root; null when the root could not be opened, so nothing can be said of it.</returns>
+    internal static bool? IsRemoteRoot(string root)
+    {
+        using CriticalErrorBoxOff boxOff = CriticalErrorBoxOff.Begin();
+        using SafeFileHandle handle = OpenRootForQuery(boxOff, root);
+        if (handle.IsInvalid)
+            return null;
+        byte* info = stackalloc byte[RemoteProtocolInfoSize];
+        if (GetFileInformationByHandleEx(handle, FileRemoteProtocolInfo, info, RemoteProtocolInfoSize))
+            return true;
+        return TryFinalPath(handle, out string? finalPath) && IsUncFinalPath(finalPath);
+    }
+
+    /// <summary>Whether a final path (<see cref="FinalPathNormalizedDos"/>) names a share: <c>\\?\UNC\server\share</c>.</summary>
+    internal static bool IsUncFinalPath(string finalPath) =>
+        finalPath.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The size of the NTFS volume's $MFT under <paramref name="root"/>, its valid data length, the one part of the space a
+    /// scan cannot list that an ordinary account can measure (U-001): GetFileAttributesExW of <c>&lt;volume&gt;\$MFT</c>. Not
+    /// its allocation, which an ordinary account cannot read. The volume is the root handle's own, found from its final
+    /// path and GetVolumePathNameW, so a SUBST letter reaches the volume under its folder and not a file named $MFT in it.
+    /// Only on NTFS: the handle's file-system name says so first. The critical-error box is off for the calls. The volume
+    /// thread only.
+    /// </summary>
+    /// <returns>False, with the Win32 error, when the volume is not NTFS (<see cref="ERROR_NOT_SUPPORTED"/>), the root
+    /// could not be opened, or the $MFT could not be read; a size of 0 or a directory is no figure either.</returns>
+    internal static bool TryGetMftValidData(string root, out long bytes, out int error)
+    {
+        bytes = 0;
+        using CriticalErrorBoxOff boxOff = CriticalErrorBoxOff.Begin();
+        using SafeFileHandle handle = OpenRootForQuery(boxOff, root);
+        if (handle.IsInvalid)
+        {
+            error = Marshal.GetLastPInvokeError();
+            return false;
+        }
+
+        const int NameLength = 261; // MAX_PATH + 1, as GetVolumeInformationByHandleW asks
+        char* fileSystem = stackalloc char[NameLength];
+        if (!GetVolumeInformationByHandle(handle, null, 0, null, null, null, fileSystem, NameLength))
+        {
+            error = Marshal.GetLastPInvokeError();
+            return false;
+        }
+        if (!new string(fileSystem).Equals("NTFS", StringComparison.Ordinal))
+        {
+            error = ERROR_NOT_SUPPORTED;
+            return false;
+        }
+
+        if (!TryFinalPath(handle, out string? finalPath))
+        {
+            error = Marshal.GetLastPInvokeError();
+            return false;
+        }
+        string? volume = VolumeRootOf(finalPath);
+        if (volume is null)
+        {
+            error = ERROR_PATH_NOT_FOUND;
+            return false;
+        }
+        if (!GetFileAttributesEx(volume + "$MFT", GetFileExInfoStandard, out Win32FileAttributeData data))
+        {
+            error = Marshal.GetLastPInvokeError();
+            return false;
+        }
+        long size = ((long)data.FileSizeHigh << 32) | data.FileSizeLow;
+        if ((data.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 || size <= 0)
+        {
+            error = ERROR_INVALID_PARAMETER;
+            return false;
+        }
+        bytes = size;
+        error = 0;
+        return true;
+    }
+
+    // The path the handle's file is reached by, in \\?\ form with its drive letter, from GetFinalPathNameByHandleW.
+    private static bool TryFinalPath(SafeFileHandle handle, [NotNullWhen(true)] out string? path)
+    {
+        path = null;
+        char* buffer = stackalloc char[1024];
+        uint written = GetFinalPathNameByHandle(handle, buffer, 1024, FinalPathNormalizedDos);
+        if (written == 0)
+            return false;
+        if (written < 1024)
+        {
+            path = new string(buffer, 0, (int)written);
+            return true;
+        }
+        char[] larger = new char[written + 1];
+        fixed (char* chars = larger)
+        {
+            uint again = GetFinalPathNameByHandle(handle, chars, (uint)larger.Length, FinalPathNormalizedDos);
+            if (again == 0 || again >= larger.Length)
+                return false;
+            path = new string(chars, 0, (int)again);
+        }
+        return true;
+    }
+
+    // The volume's own root, with its trailing backslash, for a final path: GetVolumePathNameW, and where it does not
+    // answer for a \\?\ path, the drive letter's root when the path begins \\?\X:\.
+    private static string? VolumeRootOf(string finalPath)
+    {
+        char* buffer = stackalloc char[MaxVolumePath];
+        if (GetVolumePathName(finalPath, buffer, MaxVolumePath))
+        {
+            string volume = new(buffer);
+            if (volume.Length > 0)
+                return volume.EndsWith('\\') ? volume : volume + "\\";
+        }
+        return finalPath.Length >= 7 && finalPath.StartsWith(@"\\?\", StringComparison.Ordinal) && char.IsAsciiLetter(finalPath[4])
+            && finalPath[5] == ':' && finalPath[6] == '\\'
+            ? finalPath[..7]
+            : null;
+    }
+
+    private const int MaxVolumePath = 1024;
+
+    // WIN32_FILE_ATTRIBUTE_DATA: the attributes, three FILETIMEs (kept as pairs of words) and the size in two words.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Win32FileAttributeData
+    {
+        public uint FileAttributes;
+        public uint CreationTimeLow, CreationTimeHigh;
+        public uint LastAccessTimeLow, LastAccessTimeHigh;
+        public uint LastWriteTimeLow, LastWriteTimeHigh;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+    }
+
+    [LibraryImport("kernel32.dll", EntryPoint = "GetFileAttributesExW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetFileAttributesEx(string fileName, int infoLevelId, out Win32FileAttributeData fileInformation);
+
+    [LibraryImport("kernel32.dll", EntryPoint = "GetVolumePathNameW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetVolumePathName(string fileName, char* volumePathName, uint bufferLength);
 
     /// <summary>
     /// Tests only: set on a thread before it calls <see cref="TryGetVolumeUsed"/>, and called there inside the

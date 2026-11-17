@@ -27,6 +27,13 @@ internal sealed class ScanOptions
     public Func<string, long?>? VolumeReader { get; init; }
 
     /// <summary>
+    /// The $MFT read, given the root as <see cref="VolumeReader"/> is; <see cref="VolumeSpace.ReadMft"/> when null and no
+    /// <see cref="VolumeReader"/> was given, and none when one was, so a test that substitutes the used read never reads
+    /// the real disk's $MFT (SL-001).
+    /// </summary>
+    public Func<string, long?>? VolumeMftReader { get; init; }
+
+    /// <summary>
     /// How long the used-space figure waits for the volume before it is given up as null. A local volume answers in
     /// well under a millisecond; on a share that stopped answering the call waits as long as the SMB client does
     /// (21 to 66 s measured), and the figure does not wait that long. The read's thread itself stays parked until

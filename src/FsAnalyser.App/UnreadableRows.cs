@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text.RegularExpressions;
 using FsAnalyser.Core.Scanning;
+using FsAnalyser.Core.Workarounds;
 
 namespace FsAnalyser.App;
 
@@ -103,10 +104,77 @@ public static partial class UnreadableRows
         return rows;
     }
 
+    // ---- A folder left out on purpose (SL-095): the one place its words are written (SC-021, SC-046) ----
+    //
+    // The list's row, the folder tree's note, the results list's title, the ending's note, the refusal and the coverage panel
+    // all word the Windows container layer store through the functions below, so no surface can say another thing about it (the
+    // fitness rule 'in the App, only UnreadableRows words the container layer store'). Each is keyed on what the record carries,
+    // NotScannedReason (or ScanRefusal), with one arm per named reason and a neutral fallback that is true of any folder left
+    // out on purpose, as KindText does for a failed one: a second precaution that leaves a folder out gets the fallback, never
+    // the first one's wcifs words, until it has an arm of its own, and UnreadableRowsTests turns a forgotten arm red.
+
+    /// <summary>
+    /// The reason the two surfaces that carry only a flag stand for: the folder tree's note reads EntryFlags.NotScanned and the
+    /// results list's title reads TopLevelState.NotScanned, and neither carries a NotScannedReason. Core has one reason today, so
+    /// the flag means it. A second reason makes this wrong, and UnreadableRowsTests.NotScannedReasonHasOneMember fails first,
+    /// naming those two surfaces, so that the reason is carried to them before the second arm is written.
+    /// </summary>
+    internal const NotScannedReason FlaggedReason = NotScannedReason.ContainerLayerStore;
+
     /// <summary>Why a folder was left out, in the list's words: its size is not counted, and on purpose.</summary>
     internal static string NotScannedText(NotScannedReason reason) => reason switch
     {
-        _ => "size not counted: Windows container layers, skipped to avoid a leak in Windows' wcifs.sys driver; see Settings",
+        NotScannedReason.ContainerLayerStore =>
+            "size not counted: Windows container layers, skipped to avoid a leak in Windows' wcifs.sys driver; see Settings",
+        _ => "size not counted: left out on purpose; see Settings",
+    };
+
+    /// <summary>The same in the results list's title, short: after the folder's name, in brackets.</summary>
+    internal static string NotScannedShortText(NotScannedReason reason) => reason switch
+    {
+        NotScannedReason.ContainerLayerStore => "size not counted: Windows container layers",
+        _ => "size not counted: left out on purpose",
+    };
+
+    /// <summary>
+    /// The ending's note for a folder left out on purpose: where it was, why, and, when the precaution that left it out is known,
+    /// the outside defect it avoids and the checkbox that lifts it. <paramref name="why"/> is that precaution (null for an id the
+    /// list does not hold, which drops the second sentence).
+    /// </summary>
+    internal static string NotScannedNote(NotScannedReason reason, string path, KnownWorkaround? why) => reason switch
+    {
+        NotScannedReason.ContainerLayerStore => $"Not scanned, size not counted: {path} (Windows container layers)." + (why is null ? "" :
+            $" Skipped to avoid a leak in {why.WhereItLives} {why.Defect} The Settings checkbox '{why.Title}' left it out; " +
+            "it can be turned off in Settings."),
+        _ => $"Not scanned, size not counted: {path} (left out on purpose)." + (why is null ? "" :
+            $" The Settings checkbox '{why.Title}' left it out; it can be turned off in Settings."),
+    };
+
+    /// <summary>
+    /// The ending's text for a scan that was refused before anything was opened: why, and, when the precaution that refused it is
+    /// known, the outside defect, where it lives, and the checkbox that lifts the refusal.
+    /// </summary>
+    internal static string RefusedText(ScanRefusal refusal, KnownWorkaround? why) => refusal switch
+    {
+        ScanRefusal.ContainerLayerStore =>
+            "Windows container layers can't be scanned safely: the wcifs filter leaks kernel memory and a System handle " +
+            "for each entry read, until a full restart. This folder is in the Windows container layer store, so nothing " +
+            "in it was read." + (why is null ? "" :
+            $"\n{why.Defect}\nWhere it lives: {why.WhereItLives}\nWhile the Settings checkbox '{why.Title}' is ticked, as " +
+            "it is at every start, a folder at or inside the store is not scanned. You can turn this protection off in Settings."),
+        _ => "This folder was not scanned, on purpose." + (why is null ? "" :
+            $"\nWhile the Settings checkbox '{why.Title}' is ticked, as it is at every start, it is not scanned. " +
+            "You can turn this protection off in Settings."),
+    };
+
+    /// <summary>
+    /// What the coverage panel says of a folder left out on purpose, in the words of the space it leaves in the unseen part:
+    /// named as left out, with no size, and included in the remainder, which is not a measured figure.
+    /// </summary>
+    internal static string NotScannedInRemainder(NotScannedReason reason) => reason switch
+    {
+        NotScannedReason.ContainerLayerStore => "It includes the Windows container layer store, which this scan left out unopened.",
+        _ => "It includes a folder this scan left out on purpose.",
     };
 
     /// <summary>

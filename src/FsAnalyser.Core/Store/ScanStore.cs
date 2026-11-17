@@ -68,6 +68,7 @@ public sealed partial class ScanStore
     private int _nameUsed = NamePageChars;
     private readonly FileIdIndex _fileIds;
     private readonly TaskCompletionSource<long?> _volumeUsed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<long?> _volumeUsedMft = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public ScanStore()
     {
@@ -95,6 +96,23 @@ public sealed partial class ScanStore
     /// after it, so that the rule that nothing in Core waits on the figure matches a wait on this too (M2).
     /// </summary>
     internal TaskCompletionSource<long?> VolumeUsedSource => _volumeUsed;
+
+    /// <summary>
+    /// The size of the volume's $MFT, its valid data length (U-001), read by the same thread as <see cref="VolumeUsed"/> in
+    /// the same breath, so the window can set the one measured part of the space the scan did not see apart from the rest
+    /// (SL-001). Null when the volume is not NTFS, its $MFT could not be read, the root is not a whole local drive, or the
+    /// read's bound passed; always null when <see cref="VolumeUsed"/> is.
+    /// </summary>
+    /// <remarks>
+    /// Never null itself, completed at most once and never faulted, and nothing in Core waits for it. It is answered strictly
+    /// before <see cref="VolumeUsed"/>, so once that has completed with a number this one is complete too, and a reader
+    /// that looks only after it never meets it pending. Named after the figure so that the rule that nothing waits on the
+    /// figure covers this one too.
+    /// </remarks>
+    public Task<long?> VolumeUsedMft => _volumeUsedMft.Task;
+
+    /// <summary>The completion source behind <see cref="VolumeUsedMft"/>, which the scan hands to the volume read.</summary>
+    internal TaskCompletionSource<long?> VolumeUsedMftSource => _volumeUsedMft;
 
     /// <summary>The containing folder's index, or -1 for the root.</summary>
     public int Parent(int index) => At(index, out int i).Parent[i];
