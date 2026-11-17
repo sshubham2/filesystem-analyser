@@ -1,0 +1,181 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-002",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-11-17T14:22:36.427Z",
+ "head": "3ab847cb921227980cc33ed8adb0220de15c5e62",
+ "run_id": 11178,
+ "summary": "The core of SC-052 holds up against the tree. Each drive gets its own background thread. Every outcome and the settle are posted to one captured context, outcome first and settle after, and the settle comes at min(all back, 2 s). That keeps StartupHook.HoldForDrives' rule, \"the first DriveStatus change means the drives are in\" (StartupHook.cs:859-885), true by construction. Place keeps late buttons ahead of the hook's extras. The engine has already appended the two fitness rules (fitness.yaml:1474-1493), they match their stated shape, and Task.WhenAny is correctly avoided.\n\nOne major defect. The SC-050 fix gives each drive button a TextBlock as its logical Content, with \"no local Foreground so the disabled grey still comes from the template\". Community sources show that the Button template's TextElement.Foreground on the ContentPresenter does not reach TextBlock content. During every scan, while SetPickersEnabled(false) is in force, the drive labels would stay black and the buttons would look clickable. No check would notice.\n\nMinor issues:\n- **Ordering failure would go unseen.** The design says a FIFO-ordering failure \"would show\" in B-007. It would not, because CheckDrives only asserts buttons >= extra.\n- **Startup check can fail when nothing stalled.** Its \"no RENDER-PATH verdict on any stretch\" clause can fire on a short wait made of a hook move's SyncFlush.\n- **The cited E002-1/2/3 finish lines are not in the tree.** This repeats lesson #876.\n- **xUnit 2.9.3 sets a context for every test.** It installs AsyncTestSyncContext, so the \"Start with no context throws\" case as written cannot pass.\n- **The 250 ms twin with T005Batch is held only by a comment.**\n- **Stale proof runs are under-reported.** The design names only the network pass as stale. The C:\\ and OneDrive runs go stale too.\n- **The must-verify \"process exits promptly\" precondition is unproven.** Spike 1's Sandbox could settle it without the person.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The core of SC-052 holds up against the tree. Each drive gets its own background thread. Every outcome and the settle are posted to one captured context, outcome first and settle after, and the settle comes at min(all back, 2 s). That keeps StartupHook.HoldForDrives' rule, \"the first DriveStatus change means the drives are in\" (StartupHook.cs:859-885), true by construction. Place keeps late buttons ahead of the hook's extras. The engine has already appended the two fitness rules (fitness.yaml:1474-1493), they match their stated shape, and Task.WhenAny is correctly avoided.\n\nOne major defect. The SC-050 fix gives each drive button a TextBlock as its logical Content, with \"no local Foreground so the disabled grey still comes from the template\". Community sources show that the Button template's TextElement.Foreground on the ContentPresenter does not reach TextBlock content. During every scan, while SetPickersEnabled(false) is in force, the drive labels would stay black and the buttons would look clickable. No check would notice.\n\nMinor issues:\n- **Ordering failure would go unseen.** The design says a FIFO-ordering failure \"would show\" in B-007. It would not, because CheckDrives only asserts buttons >= extra.\n- **Startup check can fail when nothing stalled.** Its \"no RENDER-PATH verdict on any stretch\" clause can fire on a short wait made of a hook move's SyncFlush.\n- **The cited E002-1/2/3 finish lines are not in the tree.** This repeats lesson #876.\n- **xUnit 2.9.3 sets a context for every test.** It installs AsyncTestSyncContext, so the \"Start with no context throws\" case as written cannot pass.\n- **The 250 ms twin with T005Batch is held only by a comment.**\n- **Stale proof runs are under-reported.** The design names only the network pass as stale. The C:\\ and OneDrive runs go stale too.\n- **The must-verify \"process exits promptly\" precondition is unproven.** Spike 1's Sandbox could settle it without the person.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "nature": "defect",
+    "claim": "The design's DriveButton puts `Content = new TextBlock { Text = choice.Label }` with \"no local Foreground so the disabled grey still comes from the template\". That rests on the recalled claim that the default Button template greys a disabled button's content through an inherited TextElement.Foreground that a TextBlock picks up. A TextBlock that is the Button's logical Content inherits from its logical parent, the Button, not from the template's ContentPresenter. The Aero2 IsEnabled=false trigger sets TextElement.Foreground on the contentPresenter only. Drive buttons are disabled for the whole of every scan (SetPickersEnabled(false)). After this slice their labels would stay ControlText-black on greyed chrome, while ChooseFolderButton and SettingsButton, whose Content is a string, grey as today. Nothing in the loop reads a foreground: the census checks only the Content type, and the report has no foreground key. So the regression would ship unseen.",
+    "evidence": "https://stackoverflow.com/questions/65181067/wpf-foreground-inheritance: a ContentPresenter with TextElement.Foreground=\"Yellow\" colours `<Button Content=\"Test A\"/>`, but `<Button><TextBlock Text=\"Test B\"/></Button>` stays black. https://stackoverflow.com/questions/50650511: a disabled trigger setting TextElement.Foreground on TargetName=contentPresenter does not grey a Button whose content is a StackPanel. https://learn.microsoft.com/en-us/answers/questions/1429464: the button's foreground does not change when its content is a TextBlock. Disabled during a scan: MainWindow.xaml.cs:224-230, called at :254 and :295.",
+    "file": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "line": 228,
+    "end_line": 229,
+    "quote": {
+     "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+     "line": 228,
+     "text": "foreach (UIElement button in DrivePanel.Children)"
+    },
+    "fix": "In DriveButton, and the same in the hook's AddDrives, bind the label TextBlock's Foreground to its ContentPresenter's TextElement.Foreground: `SetBinding(TextBlock.ForegroundProperty, new Binding { Path = new PropertyPath(TextElement.ForegroundProperty), RelativeSource = new RelativeSource(RelativeSourceMode.FindAncestor, typeof(ContentPresenter), 1) })`. That keeps the Content-type census as designed. To settle it before the build, rerun the survey's off-screen accesskey.ps1 rig with IsEnabled=false. After ApplyTemplate and UpdateLayout, compare the TextBlock's Foreground for string content and for TextBlock content, with and without the binding."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "defect",
+    "claim": "The design's safety net for its recalled FIFO claim does not exist. The outside_claims entry for DispatcherSynchronizationContext ordering says that if it is wrong, the hold releases before the last drive's button is in, and \"B-007's buttons count (3 real buttons plus the hook's extras) would show it\". CheckDrives asserts only added == extra and buttons >= extra (26). A release one real button short logs buttons=28 and passes. The new labels clause also passes, because it requires only that the two numbers are equal and non-zero (2/2). So no loop check can see the ordering failure the design names. The only guard is the pump unit test, which exercises DriveReads on a hand-made context, not WPF's dispatcher.",
+    "evidence": "tests/window/WindowCases.ps1:1994-1998 (CheckDrives). The design's outside_claims, the FIFO entry's if_wrong.",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 1997,
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 1997,
+     "text": "Check ($drives.Count -eq 1 -and (Field $line 'added') -eq \"$extra\" -and [int](Field $line 'buttons') -ge $extra)"
+    },
+    "fix": "In B-007's hooked runs, also check that the report's window.DrivePanel.buttons equals the hook's buttons= on the same run. The report is written after the hold, so a real button that landed after the release makes them differ on a PC whose drives all answer within 2 s. Alternatively, check that the labels denominator is the same in every hooked run of the case."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "defect",
+    "claim": "SL-002-StartupStallStacks.Tests.ps1 fails when \"neither the top-level verdict nor any stretch's verdict is RENDER-PATH\" is not met, whatever the stretch's wait. RENDER-PATH fires whenever half a matched stretch is in SyncFlush. In T-005 the hook moves and resizes the window every 50 ms, and each move is a synchronous render flush. SL-080 recorded that the hook's moves held the UI thread in SyncFlush for about half the run. So a short wait made mostly of a move can read RENDER-PATH with stalled=false: the scan's ~85 ms, or the rescan's 45-60 ms, which the survey read as CANNOT-READ. The check would then report a failure when nothing stalled. The design's evidence that this does not happen is one traced run (scan SPLIT, renderShare 0.114).",
+    "evidence": "StallStacks.ps1:220-226 (the RENDER-PATH rule). docs/design/SL-080-move-stall.md:260-261 ('the hook's moves hold the UI thread in SyncFlush for about half the run'). Survey: one traced run, rescan CANNOT-READ.",
+    "file": "tests/window/StallStacks.ps1",
+    "line": 220,
+    "quote": {
+     "path": "tests/window/StallStacks.ps1",
+     "line": 220,
+     "text": "$inRender = @($chain | Where-Object { $kinds.Render[$_] }).Count -gt 0 -or $renderShare -ge 0.5"
+    },
+    "fix": "Apply the RENDER-PATH clause only to stretches whose stalled is true, or drop it: stalled=false at 250 ms already rules out SL-080's stall, which is T005Batch's definition. To settle it, run the startup check about 10 times and count RENDER-PATH verdicts on stretches under 250 ms."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "nature": "defect",
+    "claim": "The design rests two decisions on finish-line scripts that are not in the tree. It says \"the approved E002-1 and E002-2 finish lines guard\" the stall and that \"E002-2 already judges the no-path launch\", and it uses that as the reason for building no no-path check. It also sets FSA_T005_HEIGHT=644 \"as E002-1 does\". A grep of the whole repository finds 'E002' only in .taad/slices/SL-002/design-slice-1.json. No tests/window/*E002* exists. This is lesson #876 again: in SL-001 the cited E001-* scripts were missing too, and the builder had to write tests/window/SL-001-CoveragePanel.Tests.ps1. After this slice, nothing in the repository judges the no-path launch: the survey's launch rig was a scratch script in %TEMP%. The 644 px height is inherited from a file nobody can read. It does happen to be valid: in the current Initialized hook, SL-080:95-99 recorded no height difference.",
+    "evidence": "Glob tests/window/*E002*: no files. Grep E002|E-002 across the repository: only the design json. Design key_decisions[0], the rationale for decision 'StallStacks no stall at startup', and the startup check component.",
+    "file": "tests/window/AppArgumentCorpus.json",
+    "line": 31,
+    "quote": {
+     "path": "tests/window/AppArgumentCorpus.json",
+     "line": 31,
+     "text": "{ \"file\": \"tests/window/SL-001-CoveragePanel.Tests.ps1\", \"check\": \"not-a-launcher\""
+    },
+    "fix": "Either state that E002-* are engine-planted at validation and owed by no builder, or drop the claim that they guard anything here and say that no in-repository check covers the no-path launch. Justify FSA_T005_HEIGHT=644 from SL-080-move-stall.md:95-99, or run T-005 at its default height, as the survey's four passing runs did."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "defect",
+    "claim": "The case \"Start with no context throwing\" cannot pass as written under xUnit 2.9.3. That version replaces SynchronizationContext.Current with Xunit.Sdk.AsyncTestSyncContext for every test method, async or not. Called from a [Fact] body, Start finds a non-null context and does not throw. Any DriveReads test whose body slips off the private pump would also post to xUnit's context, which forwards to the pool, not a FIFO single thread. The ordering and on-pump-thread assertions would then be testing the wrong context.",
+    "evidence": "https://github.com/xunit/xunit/issues/3014: '2.9.0: Replace the SynchronizationContext with the Xunit.Sdk.AsyncTestSyncContext ... for public void test methods as well'. https://github.com/xunit/xunit/issues/2573: AsyncTestSyncContext is set in TestInvoker and cannot be opted out of in v2.",
+    "file": "tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+    "line": 24,
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+     "line": 24,
+     "text": "<PackageReference Include=\"xunit\" Version=\"2.9.3\" />"
+    },
+    "fix": "Run the no-context case on a new Thread that calls SynchronizationContext.SetSynchronizationContext(null) before calling Start. In the pump harness, assert that SynchronizationContext.Current is the pump inside each test body."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "under-engineering",
+    "nature": "extra",
+    "claim": "The new `$StallLine = 250.0` in StallStacks.ps1 is a second copy of T005Batch.ps1's `$Stall = 250.0`, and only a comment links the two. The design calls them twins. If either changes, the batch and the startup check will disagree on what a stall is, and nothing will fail. The project already enforces copies like this mechanically (RuleCopiesAgreeTests for fitness twins).",
+    "evidence": "tests/window/T005Batch.ps1:89 and its uses at :264, :299, :300, :331. The design's StallStacks component.",
+    "file": "tests/window/T005Batch.ps1",
+    "line": 89,
+    "quote": {
+     "path": "tests/window/T005Batch.ps1",
+     "line": 89,
+     "text": "$Stall = 250.0"
+    },
+    "fix": "Have StallStacks' Invoke-SelfTest read the `$Stall = <n>` line from T005Batch.ps1 and fail when it differs from $StallLine."
+   },
+   {
+    "id": "m6",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "required",
+    "claim": "filed_for_later says only that this slice makes the network pass stale. The project's constraints also put src/FsAnalyser.App on the rerun list for the C:\\ and OneDrive proof runs. This slice changes MainWindow.xaml.cs and adds src/FsAnalyser.App/DriveReads.cs, so those runs go stale too, and the design does not say so.",
+    "evidence": "Constraint: 'For the C:\\ and OneDrive runs it is src/FsAnalyser.Core/Scanning, ... and src/FsAnalyser.App.' The design's filed_for_later[0] names only the SL-020 network staleness list.",
+    "fix": "Add the C:\\ and OneDrive proof runs to the person's filed item as also stale."
+   },
+   {
+    "id": "m7",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "nature": "extra",
+    "claim": "The cross-domain must-verify precondition, that the process exits promptly while a read thread is stuck in a dead share's redirector call, is unproven. If it is false, closing the window leaves FsAnalyser.App.exe alive for as long as the call blocks (spike 1: root calls over 180 s, ReadDrives 563 s). The published exe stays locked against republishing. On a day Z:\\'s server is down, WindowCases runs end 'timeout', so exitReason is not 'closed' and the new startup check fails. Today's single pool thread has the same exposure, so this is not a regression. But the design's 2 s release now lets every hooked case reach that exit instead of refusing at 20 s.",
+    "evidence": "Design cross_domain_transfer.invariants[3] (must-verify). Spike 1: in after1, three threads were left blocked at the 180 s cap. Today's code: MainWindow.xaml.cs:162. T-005 exitReason: WindowCases.ps1:2940-2944.",
+    "file": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "line": 162,
+    "quote": {
+     "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+     "line": 162,
+     "text": "List<DriveChoice> drives = await Task.Run(ReadDrives); // a network drive can block"
+    },
+    "fix": "Settle it in spike 1's Sandbox set-up, which needs no person and no change to this PC: a console whose Main returns while an IsBackground thread is inside GetVolumeInformationW on the silenced Y:\\. Time the gap between Main's return and process exit."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M1: the recalled claim that the template greys TextBlock content is contradicted by the community sources cited. m3: the E002-1/2/3 finish lines are cited as guards but are not in the tree. The FIFO DispatcherSynchronizationContext claim holds for posts to one captured context at one priority. The spike-measured listing and DriveType behaviour holds."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "Checked these cases against the contract: a slow drive that still answers (>2 s, so DriveStatus settles early and the hold releases without it, as the contract says), only dead drives (the no-drives sentence, then 'Drives'), arrivals after AddDrives (Place keeps them ahead of the extras), arrivals during a scan (IsEnabled=!_scanning), and posts after dispatcher shutdown (silently aborted). Nothing new to file."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "m5: the 250 ms stall line is copied into StallStacks with only a comment as its link. The hook-hold ordering, outcome before decrement before settle, sits inside DriveReads by construction, which is good."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none filed. The late-exception rethrow path and its two tests guard an exception ReadDrive cannot realistically throw (it already catches IOException and UnauthorizedAccessException), but they are cheap. Generic DriveReads.Start is justified as the only way to prove SC-052 in the default suite without a device. The existing VolumeSpace.Start (Core) is a close in-repository precedent, a dedicated background thread plus Task.Delay bound, that the design does not mention."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "m6: the C:\\ and OneDrive proof runs go stale too. The 'drives in' line's new labels key is additive, and every reader uses Field (WindowCases.ps1:591-592, 1965-2010). The -Run change in StallStacks breaks no caller (T005Batch.ps1:213 always passes -Run)."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "m7: the must-verify precondition on process exit is unproven. A late exception rethrown on the dispatcher in report mode triggers Discard and exit 70 (App.xaml.cs:84-89), exactly as a ReadDrives exception does today, so this is not a regression."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "none. Checked against the brief: criterion 3 is read as the T-005 scan phase started at launch, which is where SL-080's stall sat (about 130 ms after StartScan). SC-050 and SC-052 are both addressed inside LoadDrives and ReadDrive, as the build check directed."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "The engine-appended rules at fitness.yaml:1474-1493 match the design. The label pattern matches only MainWindow.xaml.cs:168 at HEAD (grep). Task.WhenAny is avoided, as fitness.yaml:425-430 requires. src/** gains no FSA_HOOK_ or FSA_T005_ name. The new script is listed as not-a-launcher in AppArgumentCorpus (lesson #876). No implicit TextBlock style exists in App XAML that TextBlock content would newly pick up."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "m1: CheckDrives cannot see the ordering failure the design says it would. m2: the RENDER-PATH clause can fail the startup check when nothing stalled. m4: xUnit 2.9.3's AsyncTestSyncContext breaks the no-context case. The SC-052 wiring in LoadDrives stays unproven in the loop by project rule: a real hold needs an SMB mapping, per spike 2's constraints."
+   },
+   {
+    "dimension": "security",
+    "result": "none: no new input surface. Drive labels go into a TextBlock, and the report schema is unchanged."
+   }
+  ]
+ }
+}

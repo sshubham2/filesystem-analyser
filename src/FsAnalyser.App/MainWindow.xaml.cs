@@ -157,50 +157,77 @@ public partial class MainWindow : Window
 
     // ---- Picking ----
 
+    // How long the picker waits for every drive before it says what it has (SC-052): DriveStatus leaves "Looking for drives..."
+    // when the last answer is in, or after this, whichever is first. A drive whose server is asleep keeps its own thread
+    // waiting (a drive call cannot be cancelled) and gets its button, in its place, whenever it does answer. Between about
+    // 0.5 s and 10 s keeps both the test hook's 20 s deadline for the buttons and the same moment as before on a PC whose
+    // drives all answer in milliseconds.
+    private static readonly TimeSpan DriveStatusWait = TimeSpan.FromSeconds(2);
+
     private async Task LoadDrives()
     {
-        List<DriveChoice> drives = await Task.Run(ReadDrives); // a network drive can block
         DrivePanel.Children.Clear();
-        foreach (DriveChoice drive in drives)
-        {
-            var button = new Button
+        // The list and each drive's type are read without opening any drive (measured on a share that had stopped answering: 0 ms),
+        // so they come first, off the UI thread as before; what opens a drive's root, the reads below, can block for minutes.
+        DriveInfo[] drives = await Task.Run(() => DriveInfo.GetDrives()
+            .Where(drive => drive.DriveType is DriveType.Fixed or DriveType.Removable or DriveType.Network).ToArray());
+        var shown = new List<int>(); // the reads whose buttons are in, by index: DrivePanel's buttons stay in the drives' order
+        bool settled = false;
+        await DriveReads.Start(
+            drives.Select(drive => (Func<DriveChoice?>)(() => ReadDrive(drive))).ToList(),
+            (index, choice) =>
             {
-                Content = drive.Label,
-                Padding = new Thickness(12, 6, 12, 6),
-                Margin = new Thickness(0, 0, 8, 0), // one line of them, above DriveScroller's scroll bar
-                HorizontalContentAlignment = HorizontalAlignment.Left,
-                IsEnabled = !_scanning,
-            };
-            button.Click += (_, _) => StartScan(drive.Root);
-            DrivePanel.Children.Add(button);
-        }
-        DriveStatus.Text = drives.Count == 0 ? "No ready drives were found. Choose a folder instead." : "Drives";
+                DrivePanel.Children.Insert(DriveReads.Place(shown, index), DriveButton(choice));
+                if (settled) // a drive that answered after the wait: the sentence for no drives is no longer true
+                    DriveStatus.Text = "Drives";
+            },
+            DriveStatusWait);
+        settled = true;
+        DriveStatus.Text = shown.Count == 0 ? "No ready drives were found. Choose a folder instead." : "Drives";
     }
 
-    private static List<DriveChoice> ReadDrives()
+    // One drive's two lines, or null when it is not ready or stopped being ready while we looked. Runs on a thread of its own.
+    private static DriveChoice? ReadDrive(DriveInfo drive)
     {
-        var drives = new List<DriveChoice>();
-        foreach (DriveInfo drive in DriveInfo.GetDrives())
+        try
         {
-            if (drive.DriveType is not (DriveType.Fixed or DriveType.Removable or DriveType.Network))
-                continue;
-            try
-            {
-                if (!drive.IsReady)
-                    continue;
-                string label = string.IsNullOrEmpty(drive.VolumeLabel) ? drive.DriveType.ToString() : drive.VolumeLabel;
-                drives.Add(new DriveChoice(drive.RootDirectory.FullName,
-                    $"{drive.Name.TrimEnd('\\')}  {label} ({drive.DriveFormat})\n{FormatSize(drive.AvailableFreeSpace)} free of {FormatSize(drive.TotalSize)}"));
-            }
-            catch (IOException)
-            {
-                // it stopped being ready while we looked
-            }
-            catch (UnauthorizedAccessException)
-            {
-            }
+            if (!drive.IsReady)
+                return null;
+            string label = string.IsNullOrEmpty(drive.VolumeLabel) ? drive.DriveType.ToString() : drive.VolumeLabel;
+            return new DriveChoice(drive.RootDirectory.FullName,
+                $"{drive.Name.TrimEnd('\\')}  {label} ({drive.DriveFormat})\n{FormatSize(drive.AvailableFreeSpace)} free of {FormatSize(drive.TotalSize)}");
         }
-        return drives;
+        catch (IOException)
+        {
+            return null; // it stopped being ready while we looked
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    // The label is a TextBlock, never a string: a Button's ContentPresenter reads a string's '_' as an access key, so a volume
+    // labelled WD_BLACK drew as "WDBLACK" and Alt+B started a scan of it (SC-050; the rule above FolderTree in MainWindow.xaml).
+    // The label has no Foreground of its own: the template greys a disabled button's content on its ContentPresenter, as it is for
+    // the whole of a scan, and a TextBlock takes that by inheritance (measured off-screen, whether the button was made disabled or
+    // disabled after). A local Foreground would keep the label black on a greyed button, and so would a binding to an ancestor made
+    // before the label is in the button's template: that one finds DriveScroller's presenter (measured in the app). The test hook's
+    // census disables each real button and reads the label's colour against its presenter's (the 'ink' key).
+    private Button DriveButton(DriveChoice choice)
+    {
+        var label = new TextBlock { Text = choice.Label };
+        var button = new Button
+        {
+            Content = label,
+            Padding = new Thickness(12, 6, 12, 6),
+            Margin = new Thickness(0, 0, 8, 0), // one line of them, above DriveScroller's scroll bar
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            IsEnabled = !_scanning,
+        };
+        System.Windows.Automation.AutomationProperties.SetName(button, choice.Label); // named outright, as a string Content named it
+        button.Click += (_, _) => StartScan(choice.Root);
+        return button;
     }
 
     private void OnChooseFolder(object sender, RoutedEventArgs e)

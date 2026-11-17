@@ -1,0 +1,607 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-002",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-11-17T14:02:33.611Z",
+ "head": "3ab847cb921227980cc33ed8adb0220de15c5e62",
+ "run_id": 11177,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "There was one proposal, from `practice`, and it is the core of this design. I checked it against the tree and the measurements, not against taste. It fits how the code is already shaped. The two fixes stay inside LoadDrives/ReadDrives (MainWindow.xaml.cs:160-204). The pure scheduling goes in a WPF-free App file linked into Core.Tests, which is the same pattern as WorkAreaFit.cs and nine other files. The hook's 'drives in' line gets one more key, read through WindowCases' existing Field. StallStacks already declares `[int] $Run = -1`, so making -Run optional is a one-line guard change plus line selection.\n\nIt can be proven on this machine with no device. A delegate blocked on an event reproduces the SC-052 hold in the default suite. Spike 1 measured that the drives really are independent: C:\\ answered in 0 ms while Y:\\'s root call was blocked for more than 180 s, and one Task per drive finished C:\\ at +33 ms. Spike 2 showed that only a person-run SMB mapping can reproduce the hold for real.\n\nIt is cheap to reverse. The one expensive decision is the DriveStatus lifecycle, and it keeps today's strings and today's moment for a PC whose drives all answer.\n\nIt is the simplest thing that works, and the practice designer's own `over_engineering_flag` is honoured. There is no startup hook mode for a no-path launch and no StallRig-backed picker case. The stall the slice title names was measured absent at HEAD (T-005 0 of 4 stalled, the no-path rig 0 of 4), so the approved E002-1 and E002-2 finish lines guard it and no render code is touched. Where my reading of the tree or of the measurements disagreed with the proposal, I changed the proposal (see coherence_check). The main case: the proposal's SC-050 check counted AccessText elements. The survey measured an AccessText only for a label containing '_', and this PC has no such label, so that check could pass vacuously here. It now reads the button's Content type, which fails against today's code on this PC.",
+  "components": [
+   {
+    "name": "DriveReads (pure scheduling)",
+    "lives_at": "src/FsAnalyser.App/DriveReads.cs",
+    "responsibility": "A new internal static class with no WPF and no DriveInfo in it.\n\n`Start<T>(IReadOnlyList<Func<T?>> reads, Action<int,T> arrived, TimeSpan wait) where T : class` captures SynchronizationContext.Current and throws InvalidOperationException if there is none. It starts one `new Thread { IsBackground = true, Name = \"FsAnalyser drive read <i>\" }` per read, never a thread-pool thread.\n\nEach read thread does three things, in this order:\n1. Posts its outcome to the captured context. A non-null value becomes arrived(i, value). Null posts nothing. An exception posts a callback that faults the returned task if it is not yet settled, and otherwise rethrows the exception with ExceptionDispatchInfo on the context.\n2. Interlocked-decrements a pending count.\n3. If the count reaches 0, posts `settle` to the context.\n\nA `Task.Delay(wait)` continuation also posts `settle`. `settle` is TaskCompletionSource.TrySetResult on a TCS made with RunContinuationsAsynchronously. An empty list returns a completed task.\n\nEvery callback therefore runs on the context, and a read's outcome is always queued before the settle its own decrement triggers. With a FIFO context (the dispatcher, at one priority), every answer that came in before the settle has been delivered before the awaited Start resumes.\n\n`Place(List<int> shown, int index) : int` inserts index into the sorted list of indices already shown (BinarySearch) and returns its position. A comment says why there is no Task.WhenAny: the fitness rule 'Cancel never abandons the scan thread', whose concern (the scan's store) does not arise here.",
+    "key_interactions": "Called once from MainWindow.LoadDrives on the UI thread, so the context is WPF's dispatcher context. It is linked into FsAnalyser.Core.Tests, which has no WPF reference, so that build keeps it WPF-free. The new fitness rule keeps DriveInfo out of it."
+   },
+   {
+    "name": "LoadDrives / ReadDrive / DriveButton",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "responsibility": "LoadDrives:\n1. Clears DrivePanel.\n2. Lists the pickable drives with `await Task.Run(() => DriveInfo.GetDrives()` filtered on DriveType Fixed, Removable or Network). Spike 1 and spike 2 measured GetLogicalDrives and DriveType at 0 ms even on a dead or stalled mapped letter.\n3. Calls `DriveReads.Start(drives.Select(d => (Func<DriveChoice?>)(() => ReadDrive(d))).ToList(), Arrived, DriveStatusWait)`, with DriveStatusWait = 2 s.\n4. Arrived(i, choice) inserts DriveButton(choice) into DrivePanel.Children at DriveReads.Place(shown, i). If the settle has already happened, it also sets DriveStatus.Text = \"Drives\".\n5. After the await, it sets settled = true and DriveStatus.Text exactly as today: 'No ready drives were found. Choose a folder instead.' when nothing is shown, 'Drives' otherwise.\n\nReadDrive(DriveInfo) is today's loop body, returning DriveChoice?. It reads IsReady, VolumeLabel, DriveFormat, AvailableFreeSpace and TotalSize in the same order with the same label format, and returns null for not ready, IOException or UnauthorizedAccessException.\n\nDriveButton(DriveChoice) builds today's Button with:\n- Content = new TextBlock { Text = choice.Label }, with no local Foreground so the disabled grey still comes from the template\n- AutomationProperties.Name = choice.Label\n- Padding 12,6,12,6 and Margin 0,0,8,0\n- HorizontalContentAlignment Left\n- IsEnabled = !_scanning\n- Click calling StartScan(choice.Root)\n\nA one-line comment cites the TextBlock rule in the comment above FolderTree in MainWindow.xaml.\n\nReadDrives and its whole-list await are removed.",
+    "key_interactions": "DriveStatus first leaves 'Looking for drives...' only at the settle. That is after every answering drive's button is in, or at 2 s, which is never earlier than today on a PC whose drives answer. StartupHook.HoldForDrives' release therefore still means the drives are in. A late drive is inserted among the real buttons, at a position counted over real ones only, so it lands before any buttons the hook appended. SetPickersEnabled still walks every child, late ones included."
+   },
+   {
+    "name": "DriveReads unit tests and pump context",
+    "lives_at": "tests/FsAnalyser.Core.Tests/DriveReadsTests.cs",
+    "responsibility": "Default-suite tests with no trait, which touch no real device (lessons #878, #879). A small private single-thread SynchronizationContext (a BlockingCollection pump on a dedicated thread) runs each test body. It records which thread ran each posted callback and any exception a callback throws.\n\nThe tests cover these shapes:\n- a blocked read among answering ones (with a Barrier showing the reads run concurrently)\n- every read answering, with the ordering checked\n- a late answer\n- every read blocked\n- a null result\n- an empty list\n- Place order\n- a throw before the settle\n- a throw after the settle\n- Start with no context throwing\n\nEvery blocked read's event is set in a finally, so no thread outlives its test.",
+    "key_interactions": "FsAnalyser.Core.Tests.csproj gains `<Compile Include=\"..\\..\\src\\FsAnalyser.App\\DriveReads.cs\" Link=\"Linked\\DriveReads.cs\" />` beside WorkAreaFit.cs. There is no new [Trait], so the FsaDefaultTestFilter/OptInTraitTests contract is untouched."
+   },
+   {
+    "name": "Hook 'drives in' label census",
+    "lives_at": "tests/window/FsaWindowHook/StartupHook.cs",
+    "responsibility": "In HoldForDrives, before AddDrives, the hook counts the real Buttons in DrivePanel (all of them are real at that moment) and how many of them have a Content that is a TextBlock with non-empty Text. It appends ` labels=<asTextBlock>/<real>` to the 'drives in' line, right after buttons=. The census reads Content only and forces no layout or template pass.\n\nAddDrives' extra buttons take Content = new TextBlock { Text = <same text> }, so they stay shaped like the app's own. The doc comment at StartupHook.cs:132 that lists the line's keys is updated.",
+    "key_interactions": "This is test-side only, and src/** gains no FSA_HOOK_ name. Against today's code on this PC it logs labels=0/3, so the check fails before the fix. After the fix it logs labels=3/3."
+   },
+   {
+    "name": "CheckDrives assertion",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "responsibility": "CheckDrives gains one Check: the two numbers of Field 'labels' are equal and non-zero ('every ready drive's label is drawn as a TextBlock, as written, with no access key'). Every case that already calls CheckDrives guards SC-050 from then on, including B-007 and the endings at WindowCases.ps1:2140, 2208, 2246, 3361, 4745 and 4798.",
+    "key_interactions": "It reads only the new additive key, through Field. Existing keys and their order on the line are unchanged."
+   },
+   {
+    "name": "StallStacks: optional -Run and a 'stalled' key",
+    "lives_at": "tests/window/StallStacks.ps1",
+    "responsibility": "Changes to StallStacks.ps1:\n- A new pure `Select-SummaryLine($lines, [int]$run)`: run < 0 gives the last non-empty line, otherwise the last line whose .run equals run, or null. Invoke-Read uses it. With -Run omitted and no line, the reason reads 'no summary line in <file>'.\n- The guard at :496 requires only -Summary.\n- `$StallLine = 250.0`, with a comment naming T005Batch.ps1's $Stall as its twin.\n- Read-Run sets `$more.stalled` right after $more is created. It is true when any reached scan or rescan phase has longestWaitMs >= $StallLine, false otherwise, so every result path carries it.\n- Each stretch entry gets `stalled` when it is created, before any `continue`: the same test for a reached phase, null for an unreached one.\n- Invoke-Read's 'no trace written' path carries `stalled` from the line too.\n- Verdicts and every existing key are unchanged.\n\nInvoke-SelfTest:\n- compares an optional expect.stalled at the top level and per stretch\n- asserts Select-SummaryLine on three inline shapes: no run field with -1 gives the last line; runs 0 and 1 with 1 gives line 1; 2 gives null\n\nnamed.json gets expect.stalled true, with its 5 ms rescan stretch expected false. A new fixture, tests/window/fixtures/StallStacks/no-stall.json, has a scan wait of about 85 ms and a rescan of 5 ms, with expect.stalled false and expect.verdict set to whatever the reader gives on that shape. The self-test then reads 14 fixtures.",
+    "key_interactions": "T005Batch.ps1's Invoke-StackReader always passes -Run $line.run and branches on verdict only, so it is unaffected."
+   },
+   {
+    "name": "Startup stall check",
+    "lives_at": "tests/window/SL-002-StartupStallStacks.Tests.ps1",
+    "responsibility": "This is the check for 'the existing stall analysis shows no stall at startup'. It sets FSA_T005_SUMMARY, FSA_T005_TRACE and FSA_T005_HEIGHT=644, as E002-1 does, all in a scratch folder under %TEMP%\\fsa-finish\\<guid>. It then runs `WindowCases.ps1 -Case T-005` unmodified twice: run 0 is a warm-up and not judged, run 1 is traced and judged.\n\nIt takes the summary's last line and its traceFile, and runs `StallStacks.ps1 -Trace <traceFile> -Summary <runs.jsonl> -Out <scratch>\\stacks.json` with no -Run.\n\nIt checks that:\n- the line's exitReason is 'closed'\n- the scan phase was reached\n- stacks.stalled is false\n- the scan stretch's stalled is false\n- neither the top-level verdict nor any stretch's verdict is RENDER-PATH\n\nIt exits 0 when every check holds and 1 otherwise, and removes its scratch folder.",
+    "key_interactions": "It never names the exe and never calls Start-App or Invoke-App. Following lesson #876 it is still listed in tests/window/AppArgumentCorpus.json producers as `not-a-launcher` ('runs WindowCases.ps1 -Case T-005 and StallStacks.ps1; launches nothing itself'). StallStacks installs dotnet-trace into artifacts/tools/dotnet-trace through eng/dotnet.ps1 when it is missing, as it does today."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "No change to the render path, window sizing or OnSourceInitialized for the SL-080 stall. The approved finish lines E002-1 (a T-005 batch) and E002-2 (a no-path probe) guard it, and the new startup check reads StallStacks on the scan started at launch.",
+    "reversibility": "cheap",
+    "rationale": "Measured absent at HEAD with no fix since 3d5ff32:\n- T-005: scan max 82-87 ms, posted about 3.3 s in; longest move 22-26 ms; StallStacks read the traced run as SPLIT with 11% render share.\n- No-path rig: probe max 23 ms, moves 2-6 ms.\n\nA render change could not be told apart from no change."
+   },
+   {
+    "decision": "Each drive is read on its own dedicated background thread (`new Thread { IsBackground = true }`). The read itself has no time limit and nothing cancels it.",
+    "reversibility": "cheap",
+    "rationale": "Spike 1: a dead share's root calls block for more than 180 s, ReadDrives took 563 s, and DriveInfo has no cancel. One thread per drive keeps a dead letter from holding the others, and C:\\'s calls answered in 0 ms meanwhile. An explicit IsBackground thread states in code that it never holds the process open and never sits on the pool the scanner uses. That replaces practice's LongRunning, whose background-ness is a scheduler default and not written in code."
+   },
+   {
+    "decision": "DriveStatus changes once, at min(every read back, 2 s), using today's two strings. A drive that answers later is inserted in letter order, and its arrival turns the no-drives sentence into 'Drives'.",
+    "reversibility": "expensive",
+    "rationale": "StartupHook.HoldForDrives, and every hooked case that holds for drives, rely on 'the first change from the loading text means the drives are in'. On this PC, all drives take 25.7 ms, so the change comes at the same moment as today. 2 s is about 80 times that and 10 times under the hook's 20 s Deadline, so hooked cases still release with a share asleep. Changing this means changing the hook and its cases together."
+   },
+   {
+    "decision": "Every outcome of a read is delivered on the caller's SynchronizationContext: arrivals, the settle, and exceptions. An exception before the settle faults the awaited task. After the settle it is rethrown on the context. Start refuses to run without a context.",
+    "reversibility": "cheap",
+    "rationale": "Delivering the settle through the same Post channel, after the read's own outcome, makes the hook-hold ordering rest only on FIFO posting from one thread. Practice's version set the TCS on the read thread and relied on the internals of await continuations. All picker state is then touched on the UI thread only, so it needs no locks. Rethrowing a late exception on the dispatcher keeps today's behaviour, where an unexpected exception reaches the dispatcher through async void OnLoaded, rather than dropping it silently as the proposal did."
+   },
+   {
+    "decision": "Buttons appear one at a time as drives answer, not in a batch at the bound.",
+    "reversibility": "cheap",
+    "rationale": "The SC-052 criterion is that the ready drives' buttons appear without waiting on a drive that does not answer. A batch at 2 s would still hold C:\\ for 2 s behind a dead Z:\\. DriveReads.Place keeps the order."
+   },
+   {
+    "decision": "The settle uses TaskCompletionSource plus Task.Delay, never Task.WhenAny.",
+    "reversibility": "cheap",
+    "rationale": "The fitness rule 'Cancel never abandons the scan thread' forbids `Task.WhenAny(` across src/FsAnalyser.App/**/*.cs. Its concern is the scan's store, which drive reads do not hold, but editing fitness.yaml costs three or more runs (lesson #880)."
+   },
+   {
+    "decision": "Drive labels are TextBlock content, with AutomationProperties.Name set to the label, rather than a string with '_' doubled.",
+    "reversibility": "cheap",
+    "rationale": "This follows the project rule in the comment above FolderTree (MainWindow.xaml:464-466; SC-050 cited 454-456, which no longer holds, lesson #389). The survey measured that TextBlock content with 'WD_BLACK' builds no AccessText and draws the text as written. It does not depend on the template's RecognizesAccessKey."
+   },
+   {
+    "decision": "SC-050 is checked through the Content type of the app's real buttons: the hook logs `labels=<asTextBlock>/<real>` and CheckDrives asserts on it. It is not checked through a census of AccessText elements, and the report schema gains nothing.",
+    "reversibility": "cheap",
+    "rationale": "The survey measured an AccessText only for a string containing '_', and no volume on this PC has one. From memory, a ContentPresenter builds an AccessText only when the string contains '_', so an AccessText census would read 0 against today's code here and pass vacuously. The Content type fails against today's code on this PC (labels=0/3) and passes after the fix (3/3). Report schema 1 is untouched."
+   },
+   {
+    "decision": "StallStacks' 'no stall at startup' is read from the T-005 scan phase, which is the scan started at launch, taken from the summary's last line, plus an additive `stalled` key at 250 ms. There is no startup phase and no hook mode for a no-path launch.",
+    "reversibility": "cheap",
+    "rationale": "Spike 3 showed that a no-path trace has the samples. But no hook writes a summary with a clock origin for a no-path launch (TreeMode.cs needs an ending), and building one is a new hook mode for a stall measured absent. E002-2 already judges the no-path launch. The 250 ms line is T005Batch.ps1's $Stall, copied with a comment that names its twin."
+   },
+   {
+    "decision": "No workaround setting. Reading drives in parallel is not a workaround for an outside defect.",
+    "reversibility": "cheap",
+    "rationale": "The SMB redirector waiting out its reconnect on a dead share is how Windows behaves, not a defect this app steps around. Nothing is skipped, refused or counted differently: the dead drive's button appears whenever it answers. So no workaround entry, checkbox or notice applies."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "This was the only proposal, and its shape is kept. The design changes it in five places:\n- The settle and every read outcome are posted to the caller's context, instead of a TCS set on the read thread. A late exception is rethrown on the context instead of dropped.\n- Reads run on explicit IsBackground threads instead of LongRunning tasks.\n- The SC-050 census reads the button's Content type, instead of AccessText after UpdateLayout. The survey measured an AccessText only for '_' labels, so the proposal's census could pass vacuously on this PC.\n- StallStacks line selection is factored out so the self-test covers it. A no-stall fixture is added, because all 13 existing fixtures' primary waits are 300 ms or more.\n- A runnable check script is added for the startup criterion, along with two fitness rules."
+   }
+  ],
+  "coherence_check": "There was one proposal, so there is no composition to check. Nothing in this design has yet survived a disagreement, and the critique is the first thing to argue with it.\n\n**What I checked inside the one proposal, against the tree:**\n\n(1) The hook-hold contract against incremental insertion. HoldForDrives (StartupHook.cs:857-886) releases on the first DriveStatus change. With buttons now inserted one at a time, the design must not change DriveStatus before the last answering drive's button is in. The proposal set the TCS on the read thread and relied on the internals of await continuations. I redesigned that seam so the read's outcome and then the settle are both Post-ed to the same context from the same thread, in that order. FIFO posting alone now guarantees the ordering, and the pump-context unit test checks it.\n\n(2) Late arrivals after the hook's AddDrives. Place counts only real buttons, so a late drive lands before the hook's appended extras, and CheckDrives' `buttons >= extra` still holds.\n\n(3) The fitness rules. 'Cancel never abandons the scan thread' forbids Task.WhenAny( in App code, so the design uses no WhenAny and no WaitAsync. 'the shipped app carries no test seam' forbids FSA_HOOK_/FSA_T005_/StartupHook in src/**, and every census is in the hook. 'the main window does not know it is being observed' is untouched. No sort APIs are added to MainWindow.xaml.cs.\n\n(4) The SC-050 check. The proposal said today's code logs accessTexts=3. The survey measured an AccessText only with 'WD_BLACK', so the census now reads the Content type instead.\n\n(5) StallStacks. `$Run` already defaults to -1, and T005Batch's Invoke-StackReader always passes -Run, so making it optional breaks no caller.\n\n(6) AppArgumentTests. The census regex is `FsAnalyser\\.App\\.exe|Start-App|Invoke-App`. None of the planted E002 scripts matches it, and the new check script is listed as not-a-launcher anyway.\n\n(7) Engine-appended fitness entries for this slice (lesson #389). I grepped fitness.yaml for SL-002/SC-050/SC-052/E-002/LoadDrives/DrivePanel and found none.\n\n**The architecture rules.** Two are declared, both written as the defect:\n- A drive's Label assigned straight to Content. This fires at HEAD's MainWindow.xaml.cs:168 and on no other App line.\n- DriveInfo in DriveReads.cs. This has the same shape as the existing StoppingWait rule.\n\nThere is deliberately no WPF-free rule for DriveReads.cs, because the Core.Tests link build already fails on that.",
+  "contracts": [
+   {
+    "name": "DriveReads.Start<T>(IReadOnlyList<Func<T?>> reads, Action<int,T> arrived, TimeSpan wait) : Task",
+    "kind": "function",
+    "error_cases": "- No SynchronizationContext.Current gives InvalidOperationException, synchronously.\n- A read that throws before the settle faults the returned task with that exception.\n- A read that throws after the settle has the exception rethrown on the context, through ExceptionDispatchInfo.\n- An exception thrown inside `arrived` belongs to the context, like any posted callback.\n- Null results are dropped.\n- An empty list returns a completed task.",
+    "notes": "- Each read runs on its own background thread, never the pool, and never waits behind another read.\n- All callbacks run on the context that was current when Start was called.\n- A read posts its outcome before it decrements the pending count, and the settle is posted after that decrement.\n- The task completes at min(every read back, wait). A read still running then may still arrive later, and is delivered as an ordinary arrival.\n- Nothing is cancelled. A blocked read's thread lives until its call returns.\n- No Task.WhenAny."
+   },
+   {
+    "name": "DriveReads.Place(List<int> shown, int index) : int",
+    "kind": "function",
+    "error_cases": "Each index arrives at most once, by construction. Placing a duplicate is a caller bug and is not guarded.",
+    "notes": "Keeps `shown` sorted and returns the insert position, so DrivePanel's real buttons are always in DriveInfo.GetDrives (drive-letter) order."
+   },
+   {
+    "name": "DriveStatus text lifecycle",
+    "kind": "ui",
+    "error_cases": "With only drives that do not answer, the text reads 'No ready drives were found. Choose a folder instead.' at 2 s, and turns to 'Drives' when one answers later.",
+    "notes": "- 'Looking for drives...' (XAML) until the settle, then 'Drives' or the no-drives sentence: exactly today's strings.\n- The first change comes after every answering drive's button is in, or at 2 s, and never earlier than today on a PC whose drives answer.\n- StartupHook.HoldForDrives' release-on-first-change and the report's DrivePanel 'buttons' count are therefore unchanged on this PC.\n- No x:Name is added or renamed."
+   },
+   {
+    "name": "Drive button content",
+    "kind": "ui",
+    "notes": "- Content is a TextBlock holding the two-line label (`<letter>:  <label> (<format>)\\n<free> free of <total>`), never a string. A '_' therefore draws as written and registers no access key.\n- AutomationProperties.Name carries the label.\n- Padding, Margin, alignment, IsEnabled = !_scanning and Click → StartScan(root) are as today."
+   },
+   {
+    "name": "Hook log 'drives in' line",
+    "kind": "event",
+    "error_cases": "A PC with no ready drive logs labels=0/0, which fails CheckDrives' non-zero clause. This project never runs without a ready C:\\.",
+    "notes": "- One additive key, `labels=<asTextBlock>/<real>`, after buttons=, counted over the app's own buttons before AddDrives.\n- Existing keys and their order are unchanged, and every reader uses Field.\n- AddDrives' extra buttons take TextBlock content."
+   },
+   {
+    "name": "StallStacks.ps1 -Trace <nettrace> -Summary <jsonl> [-Run <n>] [-Out <file>] | -SelfTest [-Only <fixture>]",
+    "kind": "cli",
+    "error_cases": "- -Run omitted with an empty summary: CANNOT-READ 'no summary line in <file>'.\n- -Run n with no matching line: CANNOT-READ 'no summary line for run n in <file>', as today.\n- No -Summary: throws its usage message.",
+    "notes": "- -Run omitted means the summary's last non-empty line.\n- The output gains `stalled`. At the top level it is true when any reached scan or rescan phase waited 250 ms or more. Per stretch it is the same test, or null for an unreached phase.\n- Verdicts NAMED/SPLIT/RENDER-PATH/CANNOT-READ and every existing key are unchanged.\n- The self-test accepts an optional expect.stalled."
+   },
+   {
+    "name": "tests/window/SL-002-StartupStallStacks.Tests.ps1",
+    "kind": "cli",
+    "error_cases": "Exit 1 when:\n- the T-005 run wrote no summary line or no trace\n- the scan phase was not reached\n- stalled is not false\n- any verdict is RENDER-PATH\n\nT-005's own exit is printed, not judged.",
+    "notes": "Two T-005 runs, the first a warm-up and the second traced, with FSA_T005_HEIGHT=644, then StallStacks with no -Run. Exit 0 when every check holds."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "show the ready drives while one mapped drive does not answer",
+    "shape": "three reads, the middle one blocked on an event that is never set before the bound (wait 300 ms); the reads meet at a Barrier first",
+    "why": "This is SC-052 itself: a serial or shared-thread read holds C:\\ behind a dead Z:\\ (spike 1: 563 s). Reads 0 and 2 must arrive and Start must settle at the bound, at least about 250 ms and under 10 s. The Barrier shows each read has a thread of its own.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~DriveReadsTests",
+    "material": true
+   },
+   {
+    "behaviour": "release the hook's hold only once every answering drive's button is in",
+    "shape": "every read answers at once, bound 60 s, run on a FIFO single-thread pump context",
+    "why": "HoldForDrives releases on the first DriveStatus change. If the settle overtook the last arrival, the report and hooked cases would count one button short. On the pump, every arrival must have run before the awaited Start resumes, and it must resume in under 5 s, not at the bound.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~DriveReadsTests",
+    "material": true
+   },
+   {
+    "behaviour": "add a drive that answers after 'Drives' is shown",
+    "shape": "one read is blocked past the bound and then released",
+    "why": "A share that wakes up must still get its button. The late arrival must be delivered on the pump thread, not the read's thread, within 5 s of the release, because DrivePanel may only be touched on the UI thread.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~DriveReadsTests",
+    "material": true
+   },
+   {
+    "behaviour": "say no drive is ready when none answers in time",
+    "shape": "every read blocked (two reads, bound 300 ms)",
+    "why": "No decrement ever reaches 0, so only the bound's timer can settle. If it does not, DriveStatus stays at 'Looking for drives...' and every hooked hold refuses at the 20 s Deadline. Start must settle with zero arrivals. LoadDrives then shows the no-drives sentence and flips it to 'Drives' on a later arrival. That two-line branch in WPF code is reviewed by reading, because no loop check can make a real drive fail to answer.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~DriveReadsTests",
+    "material": true
+   },
+   {
+    "behaviour": "skip a drive that is not ready or stops being ready",
+    "shape": "one read returns null (IsReady false, or the IOException/UnauthorizedAccessException ReadDrive catches) among answering ones",
+    "why": "A null must never reach arrived, or a null DriveChoice would become a button. It must still count as back, or Start waits for the bound.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~DriveReadsTests",
+    "material": true
+   },
+   {
+    "behaviour": "handle a PC with no pickable drive letter",
+    "shape": "the read list is empty",
+    "why": "With zero reads, no decrement ever runs. Without its own branch, Start would wait the whole bound before showing the no-drives sentence. Start must complete in under 1 s with a 60 s bound.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~DriveReadsTests",
+    "material": true
+   },
+   {
+    "behaviour": "keep the drive buttons in letter order",
+    "shape": "drives arrive out of letter order: 2, 0, 3, 1",
+    "why": "With one thread per drive, the order of arrival is the order of answer. Without Place, D:\\ could sit before C:\\. The positions returned must be 0, 0, 2, 1, leaving shown = [0, 1, 2, 3].",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~DriveReadsTests",
+    "material": true
+   },
+   {
+    "behaviour": "surface an unexpected failure while reading drives",
+    "shape": "a read throws InvalidOperationException before the bound",
+    "why": "Today such an exception reaches the dispatcher through LoadDrives and async void OnLoaded. Awaiting Start must throw it, never swallow it.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~DriveReadsTests",
+    "material": true
+   },
+   {
+    "behaviour": "surface an unexpected failure from a drive that answered late",
+    "shape": "a read blocked past the bound, then released to throw InvalidOperationException",
+    "why": "After the settle there is no awaiter left. The exception must be rethrown in a callback on the pump, which records it, rather than dropped or thrown on the read's thread (where it would end the process outside the dispatcher). Start's task stays completed, not faulted.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~DriveReadsTests",
+    "material": true
+   },
+   {
+    "behaviour": "draw each drive's label as written, with no access key",
+    "shape": "this PC's real drives (C:\\ 'OS', D:\\ 'Samsung 990 Pro', Z:\\ network): labels with no underscore",
+    "why": "SC-050: a string Content under the default template's RecognizesAccessKey presenter turns '_' into an access key. The hook's 'drives in' line must read labels=3/3. Today's code reads labels=0/3 here, so the check is not vacuous. Report mode's 'buttons' count must still be 3 real buttons plus the hook's extras (B-007 recorded buttons=29).",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case B-007",
+    "material": true
+   },
+   {
+    "behaviour": "draw an underscore label such as WD_BLACK or USB_DISK as written",
+    "shape": "a volume label containing '_' or '__'",
+    "why": "This is the shape SC-050 names. No volume on this PC has one, and relabelling a volume changes the person's system. The survey measured that a TextBlock Content holding 'D:  WD_BLACK (NTFS)' builds no AccessText and draws as written, and the B-007 census proves the app's buttons hold TextBlock content. Together they settle it, and a copy of the Button built in a script would test the copy, not the app.",
+    "material": false
+   },
+   {
+    "behaviour": "read a plain T-005 summary in StallStacks",
+    "shape": "summary lines with no run field and -Run omitted; tagged lines with -Run 1; -Run 2 with no such line",
+    "why": "The survey measured CANNOT-READ 'no summary line for run 0' on a plain T-005 summary, because only FSA_T005_TAG sets run. Select-SummaryLine must give the last line, line 1 and null respectively, and T005Batch's -Run path must stay exact.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/StallStacks.ps1 -SelfTest",
+    "material": true
+   },
+   {
+    "behaviour": "say whether a phase stalled",
+    "shape": "a primary wait of 250 ms or more (named.json, 300 ms), a wait under it (new no-stall.json, about 85 ms), and an unreached phase",
+    "why": "None of the existing verdicts means 'no stall'. `stalled` must be true, false, and null per stretch respectively. It must be set before Read-Run's CANNOT-READ `continue` paths, or a phase that cannot be read loses its answer.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/StallStacks.ps1 -SelfTest",
+    "material": true
+   },
+   {
+    "behaviour": "show no stall at startup in the existing stall analysis",
+    "shape": "a traced T-005 launched with a path at 644 px, after one warm-up run, read by StallStacks with no -Run",
+    "why": "This is the slice's own criterion. It was partial in the build check because nothing could read a plain T-005 trace or state 'no stall'. Top-level stalled and the scan stretch's stalled must both be false, and no verdict may be RENDER-PATH (SL-080 read RENDER-PATH, about 92% in SyncFlush).",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/SL-002-StartupStallStacks.Tests.ps1",
+    "material": true
+   }
+  ],
+  "architecture_rules": [
+   {
+    "name": "a drive's label is never handed to a button as a string",
+    "files": "src/FsAnalyser.App/**/*.cs",
+    "must_not_match": [
+     "\\bContent\\s*=\\s*\\w+\\.Label\\b"
+    ],
+    "because": "A string Content under the default Button template's RecognizesAccessKey ContentPresenter turns '_' into an access key. The survey measured 'WD_BLACK' becoming AccessKey 'B', so Alt+B started a whole-drive scan and the label drew as 'WDBLACK' (SC-050). The only line this matches at HEAD is that defect (MainWindow.xaml.cs:168). The fix, `Content = new TextBlock { Text = choice.Label }`, and SettingsWindow's TextBlock content do not match it."
+   },
+   {
+    "name": "the drive-read scheduler never touches a real drive",
+    "files": "src/FsAnalyser.App/DriveReads.cs",
+    "must_not_match": [
+     "\\bDriveInfo\\b"
+    ],
+    "because": "DriveReads.cs is compiled into FsAnalyser.Core.Tests' default suite. A DriveInfo call there makes that suite depend on this PC's devices, and Z:\\ is a persistent mapping that keeps DriveType Network when its server is down, where a root call blocks for minutes (lesson #878, spike 1). The existing StoppingWait.cs rule forbids DriveInfo for the same reason."
+   }
+  ],
+  "code_claims": [
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "LoadDrives",
+    "claim": "LoadDrives awaits Task.Run(ReadDrives) for the whole list before it adds any button. It then clears DrivePanel, adds one Button per drive with Content = drive.Label (a plain string), and sets DriveStatus.Text once, to 'Drives' or 'No ready drives were found. Choose a folder instead.'"
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "ReadDrives",
+    "claim": "ReadDrives walks DriveInfo.GetDrives() on one thread. It skips drives whose DriveType is not Fixed, Removable or Network, reads IsReady, VolumeLabel, DriveFormat, AvailableFreeSpace and TotalSize in turn, and skips a drive on IOException or UnauthorizedAccessException."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "DriveChoice",
+    "claim": "DriveChoice is a private sealed record of the drive's Root and its two-line Label."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "OnLoaded",
+    "claim": "OnLoaded calls StartScan first when the window was launched with a path, then awaits LoadDrives in both cases. LoadDrives has no other caller."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "SetPickersEnabled",
+    "claim": "SetPickersEnabled sets IsEnabled on every child of DrivePanel, as well as on ChooseFolderButton and SettingsButton."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "_scanning",
+    "claim": "Each drive button is created with IsEnabled = !_scanning."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "FigureText",
+    "claim": "MainWindow imports FigureText statically, and that is where the FormatSize used in the drive label comes from."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml",
+    "symbol": "DriveStatus",
+    "claim": "DriveStatus is a TextBlock whose initial Text is 'Looking for drives...'."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml",
+    "symbol": "DrivePanel",
+    "claim": "DrivePanel is a horizontal StackPanel inside the DriveScroller ScrollViewer."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml",
+    "symbol": "FolderTree",
+    "claim": "The comment above FolderTree states the rule that text is TextBlocks, never a Label or a ContentPresenter over a string, so '_' and '&' in a name show as written."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/StartupHook.cs",
+    "symbol": "HoldForDrives",
+    "claim": "HoldForDrives releases once DriveStatus.Text differs from the loading text. It then calls AddDrives and logs 'drives in ms= held= added= buttons= ...'. Past Deadline it logs a refusal. Otherwise it sleeps 1 ms and re-posts itself at Render priority."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/StartupHook.cs",
+    "symbol": "OutcomePanel",
+    "claim": "The hook records DriveStatus.Text as the loading text when it prepares the window, and posts HoldForDrives at Render priority when OutcomePanel first becomes Visible."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/StartupHook.cs",
+    "symbol": "Deadline",
+    "claim": "The hook's Deadline, which bounds the drives hold, is 20 seconds."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/StartupHook.cs",
+    "symbol": "AddDrives",
+    "claim": "AddDrives appends the extra buttons with string Content, copying the first real Button's Padding, Margin, HorizontalContentAlignment and IsEnabled."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "Cancel never abandons the scan thread",
+    "claim": "This rule forbids 'Task.WhenAny(' in every src/FsAnalyser.App/**/*.cs file."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "the shipped app carries no test seam",
+    "claim": "This rule forbids FSA_HOOK_, FSA_T005_, DOTNET_STARTUP_HOOKS and StartupHook anywhere under src/**."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "the stopping wording is a pure function of elapsed time",
+    "claim": "This rule forbids DriveInfo in src/FsAnalyser.App/StoppingWait.cs, a pure App file linked into Core.Tests. It is the precedent for the new DriveReads.cs rule."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "CheckDrives",
+    "claim": "CheckDrives asserts there is exactly one 'drives in' hook line, that its added count equals the extra drives requested, and that buttons is at least that many."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "Field",
+    "claim": "Field reads a key=value token from a hook log line by key name, so extra keys on the line do not disturb existing readers."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "FSA_T005_HEIGHT",
+    "claim": "T-005 passes FSA_T005_HEIGHT to the hook as FSA_HOOK_HEIGHT."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "traceFile",
+    "claim": "T-005's summary line carries the run's trace path as traceFile."
+   },
+   {
+    "path": "tests/window/StallStacks.ps1",
+    "symbol": "Invoke-Read",
+    "claim": "Invoke-Read picks the summary line whose run field equals the run asked for, and returns CANNOT-READ 'no summary line for run <n>' when none does."
+   },
+   {
+    "path": "tests/window/StallStacks.ps1",
+    "symbol": "Read-Run",
+    "claim": "Read-Run collects extra result keys in $more and reads only the summary phases named 'scan' and 'rescan'."
+   },
+   {
+    "path": "tests/window/StallStacks.ps1",
+    "symbol": "$Run",
+    "claim": "-Run already defaults to -1, and outside -SelfTest the script throws its usage message unless -Summary is given and -Run is 0 or more."
+   },
+   {
+    "path": "tests/window/StallStacks.ps1",
+    "symbol": "New-Result",
+    "claim": "New-Result copies every key of $more into the result after verdict and reason."
+   },
+   {
+    "path": "tests/window/StallStacks.ps1",
+    "symbol": "Invoke-SelfTest",
+    "claim": "The self-test reads each fixture under fixtures/StallStacks and compares its expect block: verdict, an optional blockedUnder, reason, and per-stretch verdict and blockedUnder."
+   },
+   {
+    "path": "tests/window/fixtures/StallStacks/named.json",
+    "symbol": "longestWaitMs",
+    "claim": "named.json's primary phase waits 300 ms, at or over the 250 ms line, as every existing fixture's primary wait does. Its other phase waits 5 ms."
+   },
+   {
+    "path": "tests/window/T005Batch.ps1",
+    "symbol": "Invoke-StackReader",
+    "claim": "T005Batch.ps1 sets $Stall = 250.0, and its Invoke-StackReader always passes -Run $line.run and the line's traceFile to StallStacks.ps1."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+    "symbol": "WorkAreaFit.cs",
+    "claim": "Pure App files such as WorkAreaFit.cs are compiled into Core.Tests by a Compile Include with a Link under Linked\\."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/AppArgumentTests.cs",
+    "symbol": "EveryScriptThatLaunchesTheAppIsListedAndQuotesByTheRule",
+    "claim": "Any script matching 'FsAnalyser\\.App\\.exe', 'Start-App' or 'Invoke-App' must be in AppArgumentCorpus.json's producers. A producer listed as not-a-launcher must exist and must not call Start-App or Invoke-App."
+   }
+  ],
+  "outside_claims": [
+   {
+    "claim": "On a mapped letter whose SMB server has stopped answering, GetLogicalDrives (DriveInfo.GetDrives) and GetDriveTypeW return in 0 ms, the latter with DRIVE_REMOTE. Only the calls that open the root block, for more than 180 s: IsReady, VolumeLabel/DriveFormat and AvailableFreeSpace/TotalSize. C:\\'s calls made meanwhile on other threads return in 0 ms.",
+    "evidence": "measured",
+    "source": "spike dead-mapped-letter-which-calls-block (Windows Sandbox, build 26100)",
+    "if_wrong": "If the listing or DriveType blocked, LoadDrives' Task.Run listing step would hold every button again, and the per-drive split would not be enough."
+   },
+   {
+    "claim": "With the project's StallRig armed, DriveInfo('Y').DriveType returns Network in 0 ms, while every one of ReadDrives' five calls blocks for 60 s or more.",
+    "evidence": "measured",
+    "source": "spike stallrig-holds-picker-drive-read",
+    "if_wrong": "Nothing in this design depends on it. It only confirms that a person-run StallRig case could reproduce the hold."
+   },
+   {
+    "claim": "A WPF Button whose Content is the string 'D:  WD_BLACK (NTFS)\\n...' builds a ContentPresenter with RecognizesAccessKey=True over an AccessText with AccessKey 'B'. With a TextBlock as Content, there is no AccessText and the text draws as written.",
+    "evidence": "measured",
+    "source": "build-check survey, accesskey.ps1 (off-screen Button in pwsh -STA)",
+    "if_wrong": "If TextBlock content still built an AccessText, the SC-050 fix would not work."
+   },
+   {
+    "claim": "ContentPresenter builds an AccessText for a string only when the string contains '_'. Otherwise it builds a plain TextBlock. So today's buttons on this PC hold no AccessText.",
+    "evidence": "recalled",
+    "source": "memory (WPF ContentPresenter template selection)",
+    "if_wrong": "Nothing breaks: the census reads the Content type, which tells string from TextBlock either way. This is only why an AccessText census was rejected as vacuous here."
+   },
+   {
+    "claim": "Callbacks posted through WPF's DispatcherSynchronizationContext from one thread run in the order they were posted (one priority, FIFO). An await on the UI thread resumes through that same context.",
+    "evidence": "recalled",
+    "source": "memory (WPF Dispatcher / DispatcherSynchronizationContext)",
+    "if_wrong": "The hook's hold could release just before the last answering drive's button is in. B-007's buttons count (3 real buttons plus the hook's extras) would show it."
+   },
+   {
+    "claim": "A Button's UI Automation name is not taken from a non-string Content, so AutomationProperties.Name has to be set for screen readers.",
+    "evidence": "recalled",
+    "source": "memory",
+    "if_wrong": "Setting it is then redundant but harmless."
+   },
+   {
+    "claim": "The default Button template greys a disabled button's content through an inherited TextElement.Foreground, which a TextBlock with no local Foreground picks up.",
+    "evidence": "recalled",
+    "source": "memory (WPF Aero2 Button template)",
+    "if_wrong": "Disabled drive buttons would not look greyed during a scan. They would still be disabled. The effect is cosmetic, and it would be fixed by binding Foreground."
+   },
+   {
+    "claim": "A thread with IsBackground = true does not keep a .NET process alive when its last foreground thread ends. An unhandled exception on any thread ends the process.",
+    "evidence": "recalled",
+    "source": "memory (.NET threading)",
+    "if_wrong": "A blocked drive-read thread could keep the app alive after the window closes. Today's single ReadDrives thread has the same exposure, and the person's sleeping-share check is filed to observe it."
+   },
+   {
+    "claim": "A trace armed by EventPipe environment variables at process creation holds UI-thread samples from before the window appears, from about 9 ms after start, through the window becoming visible.",
+    "evidence": "measured",
+    "source": "spike startup-trace-covers-window-appearance",
+    "if_wrong": "The traced T-005 that StallStacks reads would miss the launch-time scan's start, and the startup check would read CANNOT-READ."
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Search and RPC back ends: scatter-gather with a deadline and bulkheads",
+   "pattern": "Fan out one independent call per shard, each in its own bulkhead (thread), and merge the results as they arrive. Answer with partial results at a deadline instead of waiting on the slowest shard. Merge a straggler's late result if it comes, and do not cancel the straggler, because its call cannot be cancelled.",
+   "transfer_found": true,
+   "rationale": "Carried from the practice proposal, which selected this pattern whole.\n- The bulkhead is a background thread per drive.\n- The deadline is DriveStatus' 2 s settle.\n- The merge is an ordered insert on the UI thread.\n\nCancellation is deliberately not imported: DriveInfo's calls cannot be cancelled, and the project's CancelSynchronousIo guard belongs to Core scanning.",
+   "invariants": [
+    {
+     "precondition": "The shards are independent: a blocked call on one drive blocks neither another drive's calls nor the drive listing.",
+     "status": "holds",
+     "evidence": "Spike 1: GetLogicalDrives and GetDriveTypeW took 0 ms with a dead Y:\\, every C:\\ call made while a Y:\\ root call was blocked took 0 ms, and a per-drive task finished C:\\ at +33 ms."
+    },
+    {
+     "precondition": "A late result can be merged without disturbing what is already shown or what readers rely on.",
+     "status": "holds",
+     "evidence": "The merge runs on the dispatcher. Place counts only real buttons, so a late one lands before the hook's appended extras. The report reads only DrivePanel's count, and SetPickersEnabled re-reads all children."
+    },
+    {
+     "precondition": "An abandoned straggler holds nothing but its own thread: no store and no state another component reads.",
+     "status": "holds",
+     "evidence": "ReadDrive touches only DriveInfo and returns a DriveChoice record, so the concern of 'Cancel never abandons the scan thread' (the scan's store) does not arise."
+    },
+    {
+     "precondition": "The process exits promptly when the window closes while a thread is stuck in a dead share's redirector call.",
+     "status": "must-verify",
+     "evidence": "Not measured. Today's single ReadDrives thread has the same exposure. Only a sleeping or offline share shows it, which is person-run (filed)."
+    }
+   ]
+  },
+  "channeled_experts": [
+   "Raymond Chen on GetVolumeInformation and the SMB redirector's reconnect wait",
+   "Stephen Toub on LongRunning tasks versus blocking the thread pool",
+   "WPF ContentPresenter.RecognizesAccessKey / AccessText behaviour"
+  ],
+  "prior_art": [
+   {
+    "pattern": "Time a cross-process SetWindowPos on the target window as the measure of how long a move holds its UI thread. The call is synchronous, so the time includes the target's handling.",
+    "where": "https://github.com/files-community/Files/issues/19028",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-10-12"
+   },
+   {
+    "pattern": "Scatter-gather with a deadline: fan out per shard, merge results as they arrive, answer with partial results at a deadline, and let stragglers finish or be ignored.",
+    "where": "Search back ends and RPC fan-out practice (bulkhead and partial-results patterns)",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "File managers list volumes at once and fill in each volume's label and free space asynchronously, so a disconnected network drive never holds the local ones.",
+    "where": "Windows Explorer behaviour",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Calls that may block for minutes belong on a dedicated thread, not on thread-pool threads that other work needs.",
+    "where": ".NET Task Parallel Library guidance",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "In WPF, a string Content under a ContentPresenter with RecognizesAccessKey=True turns '_' into an access-key marker. The usual fixes are a TextBlock as Content or doubling the underscore.",
+    "where": "WPF ContentPresenter / AccessText documentation and long-standing community answers",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "GetVolumeInformation and GetDiskFreeSpaceEx on a mapped drive whose server is gone wait out the SMB redirector's reconnect and session timeouts. Enumerating logical drives and GetDriveType do not.",
+    "where": "Windows SMB redirector behaviour (matches this slice's spike 1 measurements)",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "decidable_disagreements": [],
+  "taste_disagreements": [
+   "Whether the scheduling deserves its own generic file (DriveReads.cs) or should be inlined in LoadDrives. The practice designer flagged its own helper as over-built. It is kept only because it is the one way to prove SC-052 in the default suite without a device.",
+   "The 2 s DriveStatus bound: anything between about 0.5 s and 10 s keeps both the hook's 20 s Deadline and the 'never earlier than today' property on this PC. 2 s is a judgement.",
+   "Whether Start should refuse to run without a SynchronizationContext, as chosen, or fall back to calling back inline on the read threads, as the proposal did. Refusing makes all state UI-thread-only and the ordering testable on a pump. It also makes every test install a context.",
+   "The name-specific pattern of the label rule (`Content = x.Label`): a renamed member evades it. A broader pattern fired on correct code (`Content = panel;` in SettingsWindow.cs)."
+  ],
+  "filed_for_later": [
+   {
+    "what": "With Z:\\'s server asleep or offline (E-003's sleeping-share runs, or the person's network pass), launch the published exe with no path and check three things:\n- C:\\ and D:\\ buttons appear at once.\n- 'Looking for drives...' turns to 'Drives' within about 2 s.\n- Z:\\ joins in letter order if it answers later.\n\nThen close the window while Z:\\'s read is still blocked, and note whether the process exits promptly. This slice also makes the network pass stale: it changes MainWindow.xaml.cs, StartupHook.cs and WindowCases.ps1, which are on the SL-020 staleness list.",
+    "why": "A drive that does not answer needs a share that stops answering, which changes this machine's SMB mappings or the person's own server (spike 2's constraints). That is person-run by project rule. The loop proves the same isolation with a blocked delegate in DriveReadsTests.",
+    "who": "person"
+   },
+   {
+    "what": "Drag the window by its title bar with the mouse in the first second after it appears, launched both with a path and without, and say whether it follows the pointer without a freeze.",
+    "why": "Every rig here moves the window by SetWindowPos or by setting Left/Top. A real drag runs through DefWindowProc's modal move loop, which no unattended rig drives (survey, SL-080-move-stall.md:210-218). Only a person's hand exercises it.",
+    "who": "person"
+   }
+  ],
+  "retier": {
+   "tier": "medium",
+   "why": "The design rewrites LoadDrives, whose first DriveStatus change is the signal StartupHook.HoldForDrives gates every hooked ending case on. That is a seam the whole window-case suite passes through, and the design adds a timing bound to it. It brings in new cross-thread code whose correctness rests on an ordering invariant: outcome posted before settle. It also extends two contracts other code reads, the hook's 'drives in' line and the StallStacks CLI and output. Lesson #359 records that designs extending this hook and harness drew mostly major findings. The critic should check the hold contract, the ordering and the CLI change against StartupHook.cs, WindowCases.ps1 and T005Batch.ps1 before the build."
+  },
+  "whats_new": [
+   "src/FsAnalyser.App/DriveReads.cs: Start<T> runs one background thread per read, delivers every outcome and the settle on the caller's context, settles at min(all back, bound), rethrows a late exception on the context, and uses no Task.WhenAny. Place keeps drive-letter order.",
+   "tests/FsAnalyser.Core.Tests/DriveReadsTests.cs: a single-thread pump SynchronizationContext and default-suite tests for each DriveReads shape in `cases`, plus the csproj Compile Include link.",
+   "MainWindow.xaml.cs: LoadDrives rebuilt around DriveReads with DriveStatusWait = 2 s; ReadDrive(DriveInfo) and DriveButton(DriveChoice) split out; TextBlock content and AutomationProperties.Name on drive buttons; ReadDrives removed.",
+   "StartupHook.cs: the 'drives in' line gains labels=<asTextBlock>/<real>, and AddDrives' extra buttons take TextBlock content.",
+   "WindowCases.ps1 CheckDrives: asserts that every real drive label is a TextBlock.",
+   "StallStacks.ps1: an optional -Run (the summary's last line), Select-SummaryLine, $StallLine = 250.0, an additive `stalled` key at the top level and per stretch, and self-test support for expect.stalled and the line selection.",
+   "tests/window/fixtures/StallStacks/no-stall.json (an 85 ms scan wait), and expect.stalled added to named.json.",
+   "tests/window/SL-002-StartupStallStacks.Tests.ps1: a warm-up plus a traced T-005 read by StallStacks with no -Run. It is listed as not-a-launcher in tests/window/AppArgumentCorpus.json.",
+   "Two fitness rules: no drive Label as a string Content, and no DriveInfo in DriveReads.cs."
+  ],
+  "whats_reused": [
+   "Today's DriveInfo reads, their order, the label format and FigureText.FormatSize, unchanged inside ReadDrive.",
+   "Today's DriveStatus strings and, on a PC whose drives answer, the moment of their first change.",
+   "StartupHook.HoldForDrives' release-on-status-change contract, unchanged.",
+   "SetPickersEnabled's walk over DrivePanel.Children, which covers buttons inserted late.",
+   "WindowCases.ps1 Field and every existing CheckDrives caller (B-007 and the endings) as the SC-050 guard.",
+   "The FsAnalyser.Core.Tests link-compile pattern for pure App files.",
+   "T-005 with FSA_T005_TRACE, FSA_T005_SUMMARY and FSA_T005_HEIGHT as the traced launch-time run, and StallStacks' own dotnet-trace install into artifacts/tools.",
+   "T005Batch.ps1's 250 ms stall line, as $StallLine's twin.",
+   "The planted finish lines E002-1, E002-2 and E002-3, unchanged, as the epic's guards against the stall and against x:Name breakage."
+  ],
+  "stack_chosen": [],
+  "open_questions": [],
+  "epic_parts": [],
+  "reason": "This is the whole design for epic E-002, whose only part is SC-004. It builds SC-050 (drive labels as TextBlocks), SC-052 (each drive read on its own thread, buttons as drives answer, DriveStatus settled at all-back or 2 s), and a StallStacks reading that can state 'no stall at startup'. It changes no render code, because the SL-080 stall was measured absent at HEAD."
+ }
+}

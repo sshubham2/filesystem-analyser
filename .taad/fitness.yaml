@@ -1470,3 +1470,24 @@ rules:
       the person's folder names (Q-016). E001-5 checks only that the report is ASCII, and a
       %TEMP% path is ASCII, so nothing else would catch a builder copying the panel's text or
       lines into 'coverage' or 'CoveragePanel'.
+
+  # settled by SL-002
+  - name: a drive's label is never handed to a button as a string
+    files: src/FsAnalyser.App/**/*.cs
+    must_not_match:
+    - \bContent\s*=\s*\w+\.Label\b
+    because: A string Content under the default Button template's RecognizesAccessKey ContentPresenter
+      turns '_' into an access key. The survey measured 'WD_BLACK' becoming AccessKey 'B', so
+      Alt+B started a whole-drive scan and the label drew as 'WDBLACK' (SC-050). The only line
+      this matches at HEAD is that defect (MainWindow.xaml.cs:168). The fix, `Content = new
+      TextBlock { Text = choice.Label }`, and SettingsWindow's TextBlock content do not match
+      it.
+  - name: the drive-read scheduler never touches a real drive
+    files: src/FsAnalyser.App/DriveReads.cs
+    must_not_match:
+    - \bDriveInfo\b
+    because: 'DriveReads.cs is compiled into FsAnalyser.Core.Tests'' default suite. A DriveInfo
+      call there makes that suite depend on this PC''s devices, and Z:\ is a persistent mapping
+      that keeps DriveType Network when its server is down, where a root call blocks for minutes
+      (lesson #878, spike 1). The existing StoppingWait.cs rule forbids DriveInfo for the same
+      reason.'
