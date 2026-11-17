@@ -1,0 +1,590 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-003",
+ "stage": "code-review",
+ "attempt": 2,
+ "at": "2026-11-17T21:17:00.118Z",
+ "head": "1476f388e1f2134494712d9a9482e8d747735f5f",
+ "run_id": 11271,
+ "summary": "I re-read the rework (5e510e1..1476f38) against the tree as it now stands. Each of the eight review findings sent back is fixed in tests/window/WindowCases.ps1:\n- Invoke-W001StoppedRun treats an attempt with no report or a non-zero exit as a failure on the spot (6706-6710), and the post-loop 'none was partial' inconclusive is skipped for it (6730).\n- Test-W001 starts the stopped run only after a Completed finished run (6908-6909).\n- Test-W002 no longer checks for Completed unconditionally.\n- Test-W003Real fails when Stop was pressed and the app reached no stopped ending (7223-7225), and a refused marker is now Inconclusive (7212).\n- Get-W001RootShape and Seam.AppRoot follow LongPath.NormalizeRoot.\n- Get-ProofRecordPath takes the letter from the root's own drive part.\n- $wholeDrive now follows the shape.\n\nWhat I ran:\n- 76 tests: W001*, W002*, W003*, WindowCasesHelperTests, ArchitectureRulesTests and RuleCopiesAgreeTests, including the eight repros and the root-spelling corpus. All passed.\n- Fitness: every rule holds. The docs/proof-runs rule matches no file yet, which is expected until a record is committed.\n- The SUBST end-to-end wrapper, run again on the changed code: the finished part held, the stopped run was partial at 18,002 folders with sized '-' and held, the record held no path, nothing was written under .taad, and cleanup was complete.\n\nWhat I did not run:\n- The full suite. The engine's untracked .taad-scratch is in the tree, and AppArgumentTests trips on it (lesson #889).\n- The rules harness, as before.\n\nThe only new item is a stale comment: Test-W001's header still says a second run 'follows' with -Stopped, but it now runs only after a Completed finished run. The two waived items (N-035, N-036) are unchanged in the code, as their waivers decided.\n\nSecond round: This round I went back over the changed code trying to break it, and I found nothing new to file.\n\n**Parsers, matchers and readers**\n- **Read-ActedLine and Get-StopToEndingMs.** The folder count and the sized value are both read before `current=`, so a path in `current=` cannot supply them. The time is anchored at the end of the line, and both forms of the hook's acted line parse. Integers come from interpolated longs, which never carry group separators.\n- **The hook log** is read with Get-Content, which strips CRLF and any BOM.\n- **Read-YamlEntry** reads plain and single-quoted must_not_match scalars. The engine-appended patterns contain no ` #` and no flow indicator that would change their YAML reading. Fitness read them the same way, and every rule holds.\n- **Write-W001Record and the fitness rule.** A Windows message with an embedded line break cannot put `\\r\\n` into a record and trip the rule: UnreadableRows.OneLine folds line breaks into one space before a reason ever reaches the writer.\n- **Get-CountsOnly** drops any DateTime that ConvertFrom-Json produces, so no date string reaches the writer.\n\n**Boundaries**\n- **Get-W001RootShape and Seam.AppRoot** follow LongPath.NormalizeRoot on:\n  - the bare drive, `/` and trailing `\\.` spellings, the `\\\\?\\` and `\\\\?\\UNC\\` forms, and lower-case prefixes;\n  - empty, whitespace and relative roots, which both refuse;\n  - non-ASCII drive letters, which both end in a refusal, despite IsLetter in one against IsAsciiLetter in the other.\n- **Device paths and volume-GUID paths** are outside the corpus's stated bound.\n- **Get-ProofRecordPath** reads the letter only from the root's own drive part.\n\n**Error paths**\n- An abnormal stop attempt now fails at once.\n- A non-zero app exit always means no report (App.xaml.cs discards it on a crash), so the new check message's 'no report' is accurate.\n- The W-003 rig path where a precondition fails after Stop calls Inconclusive and still runs the row checks. That is the same shape as N-005's existing logic (5931-5936), not something this slice introduced.\n\n**Lock and gap**\n- The only check made before slow work and acted on after it is the -Force/stopped-part guard. It is checked before the scan, which can take an hour, and the record is written after. Only a second W-001 writing the same file during that hour could get past it, which I judged too unlikely to file.\n\n**Run this pass**\n- The tests named W001*, W002* and W003*, WindowCasesHelperTests, ArchitectureRulesTests and RuleCopiesAgreeTests: 76 of 76 passed.\n- The SUBST end-to-end wrapper, re-run on the changed code: all checks held.",
+ "payload": {
+  "status": "complete",
+  "verdict": "clean",
+  "summary": "I re-read the rework (5e510e1..1476f38) against the tree as it now stands. Each of the eight review findings sent back is fixed in tests/window/WindowCases.ps1:\n- Invoke-W001StoppedRun treats an attempt with no report or a non-zero exit as a failure on the spot (6706-6710), and the post-loop 'none was partial' inconclusive is skipped for it (6730).\n- Test-W001 starts the stopped run only after a Completed finished run (6908-6909).\n- Test-W002 no longer checks for Completed unconditionally.\n- Test-W003Real fails when Stop was pressed and the app reached no stopped ending (7223-7225), and a refused marker is now Inconclusive (7212).\n- Get-W001RootShape and Seam.AppRoot follow LongPath.NormalizeRoot.\n- Get-ProofRecordPath takes the letter from the root's own drive part.\n- $wholeDrive now follows the shape.\n\nWhat I ran:\n- 76 tests: W001*, W002*, W003*, WindowCasesHelperTests, ArchitectureRulesTests and RuleCopiesAgreeTests, including the eight repros and the root-spelling corpus. All passed.\n- Fitness: every rule holds. The docs/proof-runs rule matches no file yet, which is expected until a record is committed.\n- The SUBST end-to-end wrapper, run again on the changed code: the finished part held, the stopped run was partial at 18,002 folders with sized '-' and held, the record held no path, nothing was written under .taad, and cleanup was complete.\n\nWhat I did not run:\n- The full suite. The engine's untracked .taad-scratch is in the tree, and AppArgumentTests trips on it (lesson #889).\n- The rules harness, as before.\n\nThe only new item is a stale comment: Test-W001's header still says a second run 'follows' with -Stopped, but it now runs only after a Completed finished run. The two waived items (N-035, N-036) are unchanged in the code, as their waivers decided.\n\nSecond round: This round I went back over the changed code trying to break it, and I found nothing new to file.\n\n**Parsers, matchers and readers**\n- **Read-ActedLine and Get-StopToEndingMs.** The folder count and the sized value are both read before `current=`, so a path in `current=` cannot supply them. The time is anchored at the end of the line, and both forms of the hook's acted line parse. Integers come from interpolated longs, which never carry group separators.\n- **The hook log** is read with Get-Content, which strips CRLF and any BOM.\n- **Read-YamlEntry** reads plain and single-quoted must_not_match scalars. The engine-appended patterns contain no ` #` and no flow indicator that would change their YAML reading. Fitness read them the same way, and every rule holds.\n- **Write-W001Record and the fitness rule.** A Windows message with an embedded line break cannot put `\\r\\n` into a record and trip the rule: UnreadableRows.OneLine folds line breaks into one space before a reason ever reaches the writer.\n- **Get-CountsOnly** drops any DateTime that ConvertFrom-Json produces, so no date string reaches the writer.\n\n**Boundaries**\n- **Get-W001RootShape and Seam.AppRoot** follow LongPath.NormalizeRoot on:\n  - the bare drive, `/` and trailing `\\.` spellings, the `\\\\?\\` and `\\\\?\\UNC\\` forms, and lower-case prefixes;\n  - empty, whitespace and relative roots, which both refuse;\n  - non-ASCII drive letters, which both end in a refusal, despite IsLetter in one against IsAsciiLetter in the other.\n- **Device paths and volume-GUID paths** are outside the corpus's stated bound.\n- **Get-ProofRecordPath** reads the letter only from the root's own drive part.\n\n**Error paths**\n- An abnormal stop attempt now fails at once.\n- A non-zero app exit always means no report (App.xaml.cs discards it on a crash), so the new check message's 'no report' is accurate.\n- The W-003 rig path where a precondition fails after Stop calls Inconclusive and still runs the row checks. That is the same shape as N-005's existing logic (5931-5936), not something this slice introduced.\n\n**Lock and gap**\n- The only check made before slow work and acted on after it is the -Force/stopped-part guard. It is checked before the scan, which can take an hour, and the record is written after. Only a second W-001 writing the same file during that hour could get past it, which I judged too unlikely to file.\n\n**Run this pass**\n- The tests named W001*, W002* and W003*, WindowCasesHelperTests, ArchitectureRulesTests and RuleCopiesAgreeTests: 76 of 76 passed.\n- The SUBST end-to-end wrapper, re-run on the changed code: all checks held.",
+  "matches_design": true,
+  "findings": [
+   {
+    "id": "t1",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "text",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 6787,
+    "end_line": 6788,
+    "claim": "Test-W001's header says 'With -Stopped a second run follows'. Since the m2 fix, the second run follows only when the finished run ended Completed (6908-6909). Otherwise the case prints 'no stopped run: the finished run did not end Completed' and writes no stopped part.",
+    "evidence": "WindowCases.ps1:6908 `if ($Stopped -and [string]$run.Report.core.status -ceq 'Completed') { Invoke-W001StoppedRun ... }` and 6909 `elseif ($Stopped) { Write-Output '        no stopped run: the finished run did not end Completed' }`.",
+    "fix": "Reword the sentence to 'With -Stopped, and only when this run ended Completed, a second run follows: ...', adding that otherwise no stopped part is written.",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 6787,
+     "text": "# only). With -Stopped a second run follows: Stop at half the folders, its tab compared with this run's (Invoke-W001StoppedRun),"
+    }
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "VOID. Test-StoppedPartial (Cancelled with sized '-') holds the rule. My re-run of the SUBST wrapper was partial at 18,002 folders."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "VOID. Invoke-W001StoppedRun uses stop mode with FSA_HOOK_AT_FOLDERS and FSA_HOOK_ROWS=1 (6700). The wrapper run logged a rows dump on the stopped ending."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "The prompt and the Enter before launch are at 7191-7193. A refused marker now calls Inconclusive (7212), which is checked before any failure, and the record is still written in the finally (7238-7244). The seconds counter does not show (7199-7203); that is waived as O-051/N-036."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "Re-ran tests/window/SL-003-W001OnASubstDrive.Tests.ps1: the record was at docs/proof-runs/w001-x-drive.json, all checks held, and it was removed afterwards."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "Get-CoverageRecord is unchanged, and in the wrapper re-run the record carried coverage with panelTop."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "Get-WholeDriveReportGaps is used for the local-letter shape. AWholeDriveReportMustBeCompletedAndShowItsCoveragePanel passed."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "RootsAreClassedAndKeptWhereTheirShapeSays and the 34 shape rows of W001RootSpellingCorpusTests passed."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "The wrapper re-run stopped at 18,002 of 30,302 folders with sized '-', and the subset held."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "AStoppedRowIsPutInOneOfTheSixClasses passed."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "AReasonThatDoesNotBelongToItsCodeIsCounted passed."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "W001OracleTests corpus row F17 passed."
+   },
+   {
+    "key": "O-012",
+    "discharged": "cannot-tell",
+    "evidence": "The W-002 rig is built; nobody has run it (it registers a cldflt sync root)."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "AScanIsJudgedAgainstTheOnlineOnlyFilesBeforeAndAfter passed."
+   },
+   {
+    "key": "O-014",
+    "discharged": "cannot-tell",
+    "evidence": "The W-003 stall rig is built; nobody has run it (it maps a loopback share)."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "TheStopToEndingTimeAndTheCutFoldersAreRead and AShareRunsVerdictPutsAMissedMarkerDeadlineFirst passed."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "The SL-107 runner passed in round 1. The rule entry and the runner are unchanged since."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "Compare-StoppedRows is unchanged (6645-6667), and its test passed."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "Get-OracleRow and Get-LeakCount are unchanged; F17, F18 and ARowRefusedWithAnotherCodeFailsTheRun passed."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "The strings corpus test passed."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "The finished part is written first. The stopped part is written in the finally (6740-6743), now including an attempt that ended abnormally."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "Read-ActedLine and Test-StoppedPartial are unchanged, and the acted-line test passed."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "WindowCases.ps1 contains no 'taad'. The wrapper's .taad status check held."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "Waived, but built anyway: panelTop, textsHeight and textsOffset are in Get-CoverageRecord."
+   },
+   {
+    "key": "O-024",
+    "discharged": "yes",
+    "evidence": "The wrapper re-run held."
+   },
+   {
+    "key": "O-025",
+    "discharged": "yes",
+    "evidence": "The wrapper re-run held: local-letter, whole-drive, coverage present."
+   },
+   {
+    "key": "O-026",
+    "discharged": "yes",
+    "evidence": "The wrapper re-run was partial and held."
+   },
+   {
+    "key": "O-027",
+    "discharged": "yes",
+    "evidence": "Its tests passed."
+   },
+   {
+    "key": "O-028",
+    "discharged": "yes",
+    "evidence": "Its tests passed."
+   },
+   {
+    "key": "O-029",
+    "discharged": "yes",
+    "evidence": "F17 passed."
+   },
+   {
+    "key": "O-030",
+    "discharged": "yes",
+    "evidence": "Its test passed."
+   },
+   {
+    "key": "O-031",
+    "discharged": "yes",
+    "evidence": "Its tests passed."
+   },
+   {
+    "key": "O-032",
+    "discharged": "yes",
+    "evidence": "ProofCasesAreNeverRunByCaseAll and the label test passed."
+   },
+   {
+    "key": "O-033",
+    "discharged": "yes",
+    "evidence": "Root-shape tests passed, with the network shape stubbed."
+   },
+   {
+    "key": "O-034",
+    "discharged": "cannot-tell",
+    "evidence": "As O-012: built, not run."
+   },
+   {
+    "key": "O-035",
+    "discharged": "yes",
+    "evidence": "The tally test passed."
+   },
+   {
+    "key": "O-036",
+    "discharged": "cannot-tell",
+    "evidence": "As O-014: built, not run."
+   },
+   {
+    "key": "O-037",
+    "discharged": "yes",
+    "evidence": "Plant rows S91-S94 and P41 at docs/proof-runs/w001-c-drive.json are unchanged. I did not re-run the harness."
+   },
+   {
+    "key": "O-038",
+    "discharged": "yes",
+    "evidence": "Validate measured this against the real system. In code, Compare-StoppedRows fails a pre-existing code-5 folder missing from the finished run, and makes other differences inconclusive, never held. My SUBST pair matched 1 of 1."
+   },
+   {
+    "key": "O-039",
+    "discharged": "yes",
+    "evidence": "Get-HydrationVerdict's order is right, and the unconditional Completed check is gone, so a scan that is not Completed now ends inconclusive."
+   },
+   {
+    "key": "O-040",
+    "discharged": "yes",
+    "evidence": "Get-CutFolderRows and the expected count of 2 are unchanged."
+   },
+   {
+    "key": "O-041",
+    "discharged": "yes",
+    "evidence": "rootShape key and 'unc' are allowed; corpus passed."
+   },
+   {
+    "key": "O-042",
+    "discharged": "yes",
+    "evidence": "No re-tier."
+   },
+   {
+    "key": "O-043",
+    "discharged": "yes",
+    "evidence": "WindowCases.ps1:7223-7225 calls Check $false when the hook acted and there is no report or a TIMEOUT. W003RealStopNoEndingReproTests passed."
+   },
+   {
+    "key": "O-044",
+    "discharged": "yes",
+    "evidence": "WindowCases.ps1:6706-6710: $abnormal is set, Check $false is called and the loop breaks, and 6730 skips the inconclusive. W001StoppedTimeoutReproTests passed."
+   },
+   {
+    "key": "O-045",
+    "discharged": "yes",
+    "evidence": "Same code as O-044. W001StoppedRetryTests passed."
+   },
+   {
+    "key": "O-046",
+    "discharged": "yes",
+    "evidence": "WindowCases.ps1:7212 calls Inconclusive on a refused marker. W003MarkerRefusedReproTests passed."
+   },
+   {
+    "key": "O-047",
+    "discharged": "yes",
+    "evidence": "WindowCases.ps1:6908-6909. W001StoppedAfterIncompleteReproTests passed."
+   },
+   {
+    "key": "O-048",
+    "discharged": "yes",
+    "evidence": "The CheckEqual 'Completed' is removed from Test-W002. W002NotCompletedReproTests passed."
+   },
+   {
+    "key": "O-049",
+    "discharged": "yes",
+    "evidence": "Get-W001RootShape follows NormalizeRoot's steps, Get-ProofRecordPath reads the letter from the root's own drive part, and $wholeDrive follows the shape (6803). W001RootSpellingTests and the 34-row corpus, checked against LongPath.NormalizeRoot, passed. Device paths are excluded by the corpus's stated bound."
+   },
+   {
+    "key": "O-050",
+    "discharged": "yes",
+    "evidence": "Seam.AppRoot is added and ListFiles starts from it. W002ListingRootSpellingTests and the 10 listing rows passed."
+   },
+   {
+    "key": "O-051",
+    "discharged": "no",
+    "evidence": "Waived as N-036. The ReadLineAsync wait at 7199-7203 is unchanged, as the waiver decided."
+   },
+   {
+    "key": "O-052",
+    "discharged": "no",
+    "evidence": "Waived as N-035. Get-OracleRow's 'refused-another-code' branch is unchanged, as the waiver decided."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "I re-ran tests/window/SL-003-W001OnASubstDrive.Tests.ps1 on the changed code. It ran on a SUBST letter over a %TEMP% tree with denied folders, wrote the record at docs/proof-runs/w001-x-drive.json, and wrote nothing under .taad."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "Same run: a whole local letter, outcome completed, and coverage with panelTop in the record."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "Same run: two refused folders sorted first, then 30,000 folders. The stop landed at 18,002 folders with sized '-' and held."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "AStoppedRowIsPutInOneOfTheSixClasses feeds all six classes."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "TheActedLineIsReadInBothFormsAndPartialMeansStoppedWhileListing feeds both forms of the acted line."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "W001OracleTests F17: a real folder held through HoldFolderSharingNoRead."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "AReasonThatDoesNotBelongToItsCodeIsCounted."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "Strings corpus row R01 (the 995 reason) and ACoverageRecordHoldsNoStringAndIsWritten."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "The ValidateSet labels read from the AST, and the script's own $cases statement evaluated for All."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "RootsAreClassedAndKeptWhereTheirShapeSays, plus the 34-row spelling corpus checked against LongPath.NormalizeRoot."
+   },
+   {
+    "key": "C-011",
+    "exercised": "cannot-tell",
+    "evidence": "SL-003-W002OnTheCloudRig.Tests.ps1 has never been run; it registers a cldflt sync root."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "AScanIsJudgedAgainstTheOnlineOnlyFilesBeforeAndAfter."
+   },
+   {
+    "key": "C-013",
+    "exercised": "cannot-tell",
+    "evidence": "SL-003-W003OnTheStallRig.Tests.ps1 has never been run. The real-mode endings are now covered by the W003 repro tests."
+   },
+   {
+    "key": "C-014",
+    "exercised": "yes",
+    "evidence": "Plant rows S91-S94 and P41 at docs/proof-runs/w001-c-drive.json. I did not re-run the harness."
+   }
+  ],
+  "drift": [],
+  "unreviewed": [
+   "tests/FsAnalyser.Core.Tests/W001StoppedTimeoutReproTests.cs, W003RealStopNoEndingReproTests.cs, W003MarkerRefusedReproTests.cs, W001StoppedAfterIncompleteReproTests.cs and W002NotCompletedReproTests.cs: not re-opened. These are the bodies I wrote in round 1, added as given. All of them ran and passed in the 76-test run."
+  ],
+  "second_round": {
+   "run_id": 11272,
+   "filed": 0
+  },
+  "reading_pass": {
+   "state": "none",
+   "why": [],
+   "lens": null,
+   "cut_off": false,
+   "cut_runs": {
+    "line": false,
+    "inputs": false,
+    "any": false
+   },
+   "run_id": null,
+   "session": null,
+   "resumed": null,
+   "asked": [],
+   "asked_hunks": 0,
+   "named": [
+    "tests/FsAnalyser.Core.Tests/W001StoppedAfterIncompleteReproTests.cs",
+    "tests/FsAnalyser.Core.Tests/W001StoppedTimeoutReproTests.cs",
+    "tests/FsAnalyser.Core.Tests/W002NotCompletedReproTests.cs",
+    "tests/FsAnalyser.Core.Tests/W003MarkerRefusedReproTests.cs",
+    "tests/FsAnalyser.Core.Tests/W003RealStopNoEndingReproTests.cs"
+   ],
+   "before": {
+    "read_whole": 5,
+    "changed": 13,
+    "listed": 8
+   },
+   "filed": 0,
+   "read_after": 0,
+   "still_unread": []
+  },
+  "unread_measured": {
+   "measured": true,
+   "why": "",
+   "changed": 13,
+   "read_whole": 5,
+   "deleted": [],
+   "runs": [
+    11258,
+    11260,
+    11271,
+    11272
+   ],
+   "range": {
+    "base": "a9d394cb6cde4e10c544f02b5232f537a2c4bd43",
+    "head": "1476f388e1f2134494712d9a9482e8d747735f5f",
+    "source": "commits",
+    "hunk_base": "5e510e16c6d6c2ffc017351bd2c8206710243cd8",
+    "hunk_base_from": "the earlier review's scope"
+   },
+   "items": [
+    {
+     "path": "tests/FsAnalyser.Core.Tests/W001StoppedAfterIncompleteReproTests.cs",
+     "state": "never-opened",
+     "section": null,
+     "reason": "no Read, Grep, shell read or graph result returned any of its lines",
+     "size_lines": 40,
+     "hunks": [
+      {
+       "lines": [
+        1,
+        40
+       ],
+       "unseen": [
+        [
+         1,
+         40
+        ]
+       ],
+       "scope": {
+        "first": 1,
+        "last": 40,
+        "line": null,
+        "header": null
+       }
+      }
+     ]
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/W001StoppedTimeoutReproTests.cs",
+     "state": "never-opened",
+     "section": null,
+     "reason": "no Read, Grep, shell read or graph result returned any of its lines",
+     "size_lines": 35,
+     "hunks": [
+      {
+       "lines": [
+        1,
+        35
+       ],
+       "unseen": [
+        [
+         1,
+         35
+        ]
+       ],
+       "scope": {
+        "first": 1,
+        "last": 35,
+        "line": null,
+        "header": null
+       }
+      }
+     ]
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/W002NotCompletedReproTests.cs",
+     "state": "never-opened",
+     "section": null,
+     "reason": "no Read, Grep, shell read or graph result returned any of its lines",
+     "size_lines": 39,
+     "hunks": [
+      {
+       "lines": [
+        1,
+        39
+       ],
+       "unseen": [
+        [
+         1,
+         39
+        ]
+       ],
+       "scope": {
+        "first": 1,
+        "last": 39,
+        "line": null,
+        "header": null
+       }
+      }
+     ]
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/W003MarkerRefusedReproTests.cs",
+     "state": "never-opened",
+     "section": null,
+     "reason": "no Read, Grep, shell read or graph result returned any of its lines",
+     "size_lines": 36,
+     "hunks": [
+      {
+       "lines": [
+        1,
+        36
+       ],
+       "unseen": [
+        [
+         1,
+         36
+        ]
+       ],
+       "scope": {
+        "first": 1,
+        "last": 36,
+        "line": null,
+        "header": null
+       }
+      }
+     ]
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/W003RealStopNoEndingReproTests.cs",
+     "state": "never-opened",
+     "section": null,
+     "reason": "no Read, Grep, shell read or graph result returned any of its lines",
+     "size_lines": 37,
+     "hunks": [
+      {
+       "lines": [
+        1,
+        37
+       ],
+       "unseen": [
+        [
+         1,
+         37
+        ]
+       ],
+       "scope": {
+        "first": 1,
+        "last": 37,
+        "line": null,
+        "header": null
+       }
+      }
+     ]
+    },
+    {
+     "path": "eng/rules-harness/harness.py",
+     "state": "partly-opened",
+     "section": "lines 1-387, 483-589, 597-785 of 785",
+     "reason": "a Read returned only part of it; seen only as 27 Grep lines (before the build); seen only through a shell command: $env:taad3_home (before the build), git diff, git diff (before the build); 11 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 785,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/W001ProofTests.cs",
+     "state": "partly-opened",
+     "section": "lines 96-150, 152-194, 196-220, 222, 224-443, 445-528, 530-584, 586-646, 648-661 of 661",
+     "reason": "a Read returned only part of it; seen only through a shell command: git diff; 557 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 661,
+     "hunks": []
+    },
+    {
+     "path": "tests/window/WindowCases.ps1",
+     "state": "partly-opened",
+     "section": "lines 1-99, 190-194, 225-489, 580-5354, 5533-5605, 5607-5643, 5645-5919, 5942-6404, 6406-6488, 6491-6508, 6511-6631, 6634-6675, 6811-6846, 6848-7175, 7246-8143 of 8143",
+     "reason": "a Read returned only part of it; seen only as 167 Grep lines (27 before the build); seen only through a shell command: $cases (before the build), $scratch (before the build), git diff, git diff (before the build); 1197 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 8143,
+     "hunks": []
+    }
+   ],
+   "notes": []
+  }
+ }
+}
