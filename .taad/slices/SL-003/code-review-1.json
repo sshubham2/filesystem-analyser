@@ -1,0 +1,765 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-003",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-11-17T20:07:28.383Z",
+ "head": "5e510e16c6d6c2ffc017351bd2c8206710243cd8",
+ "run_id": 11258,
+ "summary": "I read every WindowCases.ps1 hunk in full and the rest of the slice through its diffs or whole files. For most of what the design asked, the build delivers it, and what I ran passed:\n- the 46 W001Proof, W001Oracle and WindowCasesHelper tests;\n- Fitness op=check (all rules hold; the docs/proof-runs rule is awaiting its file, as designed);\n- tests/bugs/SL-107-RecordPathRule.Tests.ps1 (all checks held);\n- tests/window/SL-003-W001OnASubstDrive.Tests.ps1 end to end on a SUBST letter over a 30,302-folder temp tree. The finished run held. The stopped run stopped at 17,602 folders with sized '-' and held. Nothing was left under .taad, and the SUBST letter, the deny ACEs and the record were all removed afterwards.\n\nI could not re-run the rules harness: no interpreter with the yaml package was found for the engine checkout.\n\nThe defects are in the error paths that turn a run's ending into a verdict, where the code departs from the design's contracts. I reproduced each one by calling the script's own functions with stubbed launches:\n1. W-003 real mode, Stop pressed but the app reaches no ending within 600 s: the record says 'inconclusive' and the case exits 0 PASSED. The contract says FAILED.\n2. W-003 real mode, the hook refuses the marker: the case exits 0 PASSED, not INCONCLUSIVE as O-003 decided.\n3. W-001 -Stopped, a stop attempt that times out after the hook acted: it is retried, and the stopped part can end 'held'. The contract says failed.\n4. W-001 -Stopped still runs the stopped scan after a finished run that did not end Completed. The design says no stopped part then.\n5. W-002 on a scan that is not Completed: the case FAILS while its record and decision n1 say INCONCLUSIVE.\n\nW-002 and W-003 on their rigs remain unrun, as does the maintainer's whole-C:\\ run.\n\nSecond reader, for inputs: Inputs pass over SL-003's new readers, classifiers and record helpers in tests/window/WindowCases.ps1. Every finding below was run, not reasoned.\n\n1. Major. W-001 -Stopped retries an attempt that ended TIMEOUT, crashed or left no report as if it were only \"not partial\". Only the last attempt's exit code is checked, so a Stop that hung the app for 3600 s still ends 'held' when the retry at half the folders comes back clean. The design says a stopped run that timed out is FAILED. A stubbed run reproduced it: attempts=2, verdict=held, failures=0.\n\n2. Minor. Get-W001RootShape classifies the root as typed, not as the app normalises it:\n   - 'C:/', 'C:\\\\' and 'C:\\.' come out 'folder', and '\\\\?\\C:\\' comes out 'unc';\n   - the app scans each of them as the whole C:\\;\n   - so a whole-C:\\ run skips the coverage and reason checks and writes its record to artifacts instead of docs/proof-runs.\n\n3. Minor. Seam.ListFiles has the same gap: a root with '/' separators or a trailing '\\.' lists 0 files, so W-002 judges the scan against an empty listing.\n\n4. Minor. Test-W003Real waits with [Console]::In.ReadLineAsync(). That call blocks until a line arrives (measured: it returned after 3.8 s), so the seconds-since-launch counter O-003 promised never shows.\n\n5. Noted, not sent back. The refused-another-code class also counts network and device errors, which come before any access check, so a share that drops after the scan fails W-001 on a network root.\n\nAll three repros were compiled and run with eng/dotnet.ps1 test and failed for the stated reason. Their files were then removed, and the tree is back to the engine's own files.\n\nChecked and found sound:\n- Read-ActedLine on both line forms, including a path in current= that holds ' folders=' or ' ms=';\n- the hook's real armed and refusal line texts (StartupHook.cs:595, :611, :739);\n- RowsMode's 'rows read' line;\n- Read-RowsDump on zero rows (an empty array, not @($null));\n- UnreadableRows.Reason, which is one line per code and never depends on the kind, so Get-ReasonCodeMismatches does not fire falsely;\n- every ScanStatus and outcome value, all in the writer's allowed set;\n- the record's depth against -Depth 6;\n- Get-CountsOnly on ConvertFrom-Json objects;\n- CfProvider's 'CB FETCH_DATA pid=' format;\n- the guard runner's YAML reader against the engine-appended plain scalars.\n\nReading pass: I read every range the engine listed, and nothing in them needs a new finding.\n- `eng/rules-harness/harness.py`, lines 590-607: the `load_awaiting` docstring now names the SL-003 rule and `docs/proof-runs/w001-c-drive.json`. That matches the `awaiting_file` key and value in `plants.json`. The code in the function did not change.\n- `tests/bugs/SL-107-RecordPathRuleCorpus.json`, lines 1-10: the `rule` field now carries the new rule name word for word, the same name as in `.taad/fitness.yaml` and in the runner's `$RuleName`. The runner passed when I ran it earlier.\n- `.taad/fitness.yaml`, lines 1469-1504: these are the three entries the engine appended, and the builder left them unchanged. In the proof-run record rule, `/` and `\\\\(?![\"u])|\\\\u00(?:5[cC]|2[fF])` are plain YAML scalars, which YAML reads exactly as written. That makes them the same regexes as SL-107's single-quoted ones. Fitness op=check passed, with this rule waiting for its file as designed.\n- `eng/rules-harness/plants.json`, lines 1-8 and 243-259: S91-S94 and P41 re-plant the SL-107 texts unchanged at `docs/proof-runs/w001-c-drive.json`, under the new rule name. S95 and P42 anchor on a line that exists in `WindowCases.ps1` (`$script:Failures = ...`, line 179), and their texts can fire, or stay quiet under, `\\.taad[\\\\/]+slices`.\n\nThe only thing that reads oddly is in the `_note`: its \"156 rows\" count and its mention of P36 among the quiet rows are out of date. The count was already wrong before this slice (162 rows before, 164 now), and the note itself says S91-S94 and P41 replace the old rows. So it is not new here.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "I read every WindowCases.ps1 hunk in full and the rest of the slice through its diffs or whole files. For most of what the design asked, the build delivers it, and what I ran passed:\n- the 46 W001Proof, W001Oracle and WindowCasesHelper tests;\n- Fitness op=check (all rules hold; the docs/proof-runs rule is awaiting its file, as designed);\n- tests/bugs/SL-107-RecordPathRule.Tests.ps1 (all checks held);\n- tests/window/SL-003-W001OnASubstDrive.Tests.ps1 end to end on a SUBST letter over a 30,302-folder temp tree. The finished run held. The stopped run stopped at 17,602 folders with sized '-' and held. Nothing was left under .taad, and the SUBST letter, the deny ACEs and the record were all removed afterwards.\n\nI could not re-run the rules harness: no interpreter with the yaml package was found for the engine checkout.\n\nThe defects are in the error paths that turn a run's ending into a verdict, where the code departs from the design's contracts. I reproduced each one by calling the script's own functions with stubbed launches:\n1. W-003 real mode, Stop pressed but the app reaches no ending within 600 s: the record says 'inconclusive' and the case exits 0 PASSED. The contract says FAILED.\n2. W-003 real mode, the hook refuses the marker: the case exits 0 PASSED, not INCONCLUSIVE as O-003 decided.\n3. W-001 -Stopped, a stop attempt that times out after the hook acted: it is retried, and the stopped part can end 'held'. The contract says failed.\n4. W-001 -Stopped still runs the stopped scan after a finished run that did not end Completed. The design says no stopped part then.\n5. W-002 on a scan that is not Completed: the case FAILS while its record and decision n1 say INCONCLUSIVE.\n\nW-002 and W-003 on their rigs remain unrun, as does the maintainer's whole-C:\\ run.\n\nSecond reader, for inputs: Inputs pass over SL-003's new readers, classifiers and record helpers in tests/window/WindowCases.ps1. Every finding below was run, not reasoned.\n\n1. Major. W-001 -Stopped retries an attempt that ended TIMEOUT, crashed or left no report as if it were only \"not partial\". Only the last attempt's exit code is checked, so a Stop that hung the app for 3600 s still ends 'held' when the retry at half the folders comes back clean. The design says a stopped run that timed out is FAILED. A stubbed run reproduced it: attempts=2, verdict=held, failures=0.\n\n2. Minor. Get-W001RootShape classifies the root as typed, not as the app normalises it:\n   - 'C:/', 'C:\\\\' and 'C:\\.' come out 'folder', and '\\\\?\\C:\\' comes out 'unc';\n   - the app scans each of them as the whole C:\\;\n   - so a whole-C:\\ run skips the coverage and reason checks and writes its record to artifacts instead of docs/proof-runs.\n\n3. Minor. Seam.ListFiles has the same gap: a root with '/' separators or a trailing '\\.' lists 0 files, so W-002 judges the scan against an empty listing.\n\n4. Minor. Test-W003Real waits with [Console]::In.ReadLineAsync(). That call blocks until a line arrives (measured: it returned after 3.8 s), so the seconds-since-launch counter O-003 promised never shows.\n\n5. Noted, not sent back. The refused-another-code class also counts network and device errors, which come before any access check, so a share that drops after the scan fails W-001 on a network root.\n\nAll three repros were compiled and run with eng/dotnet.ps1 test and failed for the stated reason. Their files were then removed, and the tree is back to the engine's own files.\n\nChecked and found sound:\n- Read-ActedLine on both line forms, including a path in current= that holds ' folders=' or ' ms=';\n- the hook's real armed and refusal line texts (StartupHook.cs:595, :611, :739);\n- RowsMode's 'rows read' line;\n- Read-RowsDump on zero rows (an empty array, not @($null));\n- UnreadableRows.Reason, which is one line per code and never depends on the kind, so Get-ReasonCodeMismatches does not fire falsely;\n- every ScanStatus and outcome value, all in the writer's allowed set;\n- the record's depth against -Depth 6;\n- Get-CountsOnly on ConvertFrom-Json objects;\n- CfProvider's 'CB FETCH_DATA pid=' format;\n- the guard runner's YAML reader against the engine-appended plain scalars.\n\nReading pass: I read every range the engine listed, and nothing in them needs a new finding.\n- `eng/rules-harness/harness.py`, lines 590-607: the `load_awaiting` docstring now names the SL-003 rule and `docs/proof-runs/w001-c-drive.json`. That matches the `awaiting_file` key and value in `plants.json`. The code in the function did not change.\n- `tests/bugs/SL-107-RecordPathRuleCorpus.json`, lines 1-10: the `rule` field now carries the new rule name word for word, the same name as in `.taad/fitness.yaml` and in the runner's `$RuleName`. The runner passed when I ran it earlier.\n- `.taad/fitness.yaml`, lines 1469-1504: these are the three entries the engine appended, and the builder left them unchanged. In the proof-run record rule, `/` and `\\\\(?![\"u])|\\\\u00(?:5[cC]|2[fF])` are plain YAML scalars, which YAML reads exactly as written. That makes them the same regexes as SL-107's single-quoted ones. Fitness op=check passed, with this rule waiting for its file as designed.\n- `eng/rules-harness/plants.json`, lines 1-8 and 243-259: S91-S94 and P41 re-plant the SL-107 texts unchanged at `docs/proof-runs/w001-c-drive.json`, under the new rule name. S95 and P42 anchor on a line that exists in `WindowCases.ps1` (`$script:Failures = ...`, line 179), and their texts can fire, or stay quiet under, `\\.taad[\\\\/]+slices`.\n\nThe only thing that reads oddly is in the `_note`: its \"156 rows\" count and its mention of P36 among the quiet rows are out of date. The count was already wrong before this slice (162 rows before, 164 now), and the note itself says S91-S94 and P41 replace the old rows. So it is not new here.",
+  "matches_design": false,
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "error-paths",
+    "nature": "defect",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 7158,
+    "end_line": 7175,
+    "claim": "W-003 on a real share mishandles the very ending it exists to catch. When the hook pressed Stop and the app then reached no stopped ending, Wait-App 600 s kills it, so there is no report. $judged then needs `$null -ne $scan`, so it is false. Get-ShareVerdict returns 'inconclusive' at `if (-not $judged)` before it ever reaches its TIMEOUT -> 'failed' branch. No Check and no Inconclusive() is called on that path, so the case ends 'PASSED: W-003', exit 0, with a record verdict of 'inconclusive'. The contract's FAILED list says 'the app timed out'. Reproduced with Test-W003Real under a stubbed Invoke-WithHook (acted armed line, Exit TIMEOUT, answer 'cut'): it printed verdict=inconclusive with 0 failures.",
+    "evidence": "Contract 'WindowCases.ps1 -Case W-003 ...': 'FAILED: cutFolderRows is above 0; no timing could be read; a mapping is left; the app timed out.' Get-ShareVerdict (line 7035) checks `-not $judged` before `$exit -ceq 'TIMEOUT'` (7036), and in real mode judged is false whenever the killed app left no report. The main loop (8065-8078) exits 0 when neither Failures nor Inconclusive grew.",
+    "fix": "In Test-W003Real, after reading $acted and $scan: when the marker was not refused, $acted is not null and $scan is null (or $exit is 'TIMEOUT'), call `Check $false 'Stop was pressed and the app reached no stopped ending within 600 s'`. The failure count then makes Get-ShareVerdict return 'failed' and the case exit 1.",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 7158,
+     "text": "        $judged = -not $refused -and $run.Result.Answer -ceq 'cut' -and $null -ne $acted -and $null -ne $scan"
+    },
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/W003RealStopNoEndingReproTests.cs",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~W003RealStopNoEndingReproTests",
+     "body": "namespace FsAnalyser.Core.Tests;\n\n/// <summary>\n/// Review repro (SL-003): W-003 on a real share where the hook pressed Stop and the app reached no stopped ending before\n/// the 600 s wait killed it. The contract says FAILED when the app timed out, so the record's verdict is 'failed' and the\n/// case records a failure. Test-W003Real is loaded from the script's parse; the launch is stubbed.\n/// </summary>\npublic class W003RealStopNoEndingReproTests\n{\n    [Fact]\n    public async Task ARealShareRunWhoseStopReachesNoEndingIsFailed()\n    {\n        string[] functions = [\"Test-W003Real\", \"Read-ActedLine\", \"Get-StopToEndingMs\", \"Get-CutFolderRows\", \"Get-ShareVerdict\", \"New-ShareRecord\", \"Get-RecordString\", \"Get-RecordByCode\", \"Get-ProofRecordPath\", \"Show\", \"Check\", \"CheckEqual\", \"Inconclusive\"];\n        string output = await WindowCasesHelperTests.Pwsh(WindowCasesHelperTests.ParseScript() + string.Concat(functions.Select(WindowCasesHelperTests.Load)) + \"\"\"\n            $script:Failures = [System.Collections.Generic.List[string]]::new()\n            $script:Inconclusive = [System.Collections.Generic.List[string]]::new()\n            $Repo = Join-Path ([System.IO.Path]::GetTempPath()) ('w003-real-' + [guid]::NewGuid().ToString('N'))\n            [void][System.IO.Directory]::CreateDirectory($Repo)\n            $Root = $Repo\n            $Network = 'home'\n            $Link = 'wifi-off'\n            $HookDll = 'unused.dll'\n            $global:saved = $null\n            function Read-Host { '' }\n            function New-CaseFolder { $f = Join-Path $Repo ('case-' + [guid]::NewGuid().ToString('N')); [void][System.IO.Directory]::CreateDirectory($f); $f }\n            function Remove-CaseFolder($folder) { }\n            function Read-RowsDump($log) { [pscustomobject]@{ Rows = @(); NotScanned = @(); Closing = $null } }\n            function Save-ProofRecord($file, $record, $reasons) { $global:saved = $record }\n            function Invoke-WithHook($mode, $hookDll, $action, $armed) { [pscustomobject]@{ Result = [pscustomobject]@{ Exit = 'TIMEOUT'; Answer = 'cut' }; Log = @('loaded mode=stop pid=1', 'armed ms=30000', 'acted mode=stop enabled=True visible=True ms=32000 sincearmed=2000') } }\n            try { [void](Test-W003Real) } catch { 'threw: ' + $_.Exception.Message }\n            Remove-Item -LiteralPath $Repo -Recurse -Force\n            \"result verdict=$($global:saved.verdict) failed=$($script:Failures.Count -gt 0)\"\n            \"\"\");\n\n        Assert.Contains(\"result verdict=failed failed=True\", output);\n    }\n}\n"
+    }
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "error-paths",
+    "nature": "defect",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 6650,
+    "end_line": 6664,
+    "claim": "In W-001 -Stopped, a stop attempt that ended abnormally is treated as 'not partial' and retried at half the count. This covers an attempt where the hook pressed Stop during the listing but the app was killed at 3600 s (TIMEOUT), or crashed and left no report. The exit and report checks after the loop look only at the LAST attempt. So Stop hanging a whole-C:\\ scan for an hour, followed by a clean partial retry, writes stopped.verdict 'held' and the case passes. The timeout is visible only as attempts=2 and a console line. The contract says a stopped run that timed out is FAILED. Reproduced with Invoke-W001StoppedRun under a stubbed Invoke-HookedRun (attempt 1: acted line with sized '-', Exit TIMEOUT, no report; attempt 2: Cancelled and partial): it printed stopped verdict=held with 0 failures.",
+    "evidence": "Contract 'WindowCases.ps1 -Case W-001': 'FAILED (exit 1): ... the stopped run is aborted, or notInFinished or codeChanged is above 0, or it timed out or threw: stopped.verdict 'failed', written in a finally.' The retry rule in the design is for a run that ended normally but was not partial (Completed, or stopped while sizing). The function's own header says 'with verdict 'failed' when the run threw or timed out'.",
+    "fix": "Inside the attempt loop, right after Invoke-HookedRun, `if ($run.Exit -cne '0' -or $null -eq $run.Report) { break }`. Only a run that ended with a report and exit 0 but was not partial is retried. The CheckEqual and Check after the loop then fail on the abnormal attempt, and the stopped verdict is 'failed'.",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 6657,
+     "text": "            $status = if ($null -ne $run.Report) { [string]$run.Report.core.status } else { $null }\n            $partial = Test-StoppedPartial $status $acted"
+    },
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/W001StoppedTimeoutReproTests.cs",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~W001StoppedTimeoutReproTests",
+     "body": "namespace FsAnalyser.Core.Tests;\n\n/// <summary>\n/// Review repro (SL-003): a W-001 -Stopped attempt where the hook pressed Stop while folders were being listed and the app\n/// then timed out (killed, no report) must make the stopped part 'failed', not be retried into a 'held' one. The\n/// launch is stubbed; Invoke-W001StoppedRun is loaded from the script's parse.\n/// </summary>\npublic class W001StoppedTimeoutReproTests\n{\n    [Fact]\n    public async Task AStoppedAttemptThatTimedOutAfterStopFailsTheStoppedPart()\n    {\n        string[] functions = [\"Invoke-W001StoppedRun\", \"Read-ActedLine\", \"Test-StoppedPartial\", \"Compare-StoppedRows\", \"Get-StoppedVerdict\", \"New-StoppedPart\", \"Get-RecordString\", \"Show\", \"Check\", \"CheckEqual\", \"Inconclusive\"];\n        string output = await WindowCasesHelperTests.Pwsh(WindowCasesHelperTests.ParseScript() + string.Concat(functions.Select(WindowCasesHelperTests.Load)) + \"\"\"\n            $script:Failures = [System.Collections.Generic.List[string]]::new()\n            $script:Inconclusive = [System.Collections.Generic.List[string]]::new()\n            $Root = 'X:\\'\n            $global:calls = 0\n            function Invoke-HookedRun($mode, $root, $report, $variables, $timeoutSec) {\n                $global:calls++\n                if ($global:calls -eq 1) { return [pscustomobject]@{ Exit = 'TIMEOUT'; Report = $null; Text = $null; Log = @('acted mode=stop atfolders=100 folders=120 sized=- current=X:\\a ms=900 utc=2026-11-17T19:05:45Z') } }\n                [pscustomobject]@{ Exit = '0'; Report = [pscustomobject]@{ core = [pscustomobject]@{ status = 'Cancelled'; folders = 80; unreadable = 0 }; outcome = 'cancelled' }; Text = '{}'; Log = @('acted mode=stop atfolders=50 folders=60 sized=- current=X:\\a ms=900 utc=2026-11-17T19:05:45Z') }\n            }\n            function Read-RowsDump($log) { [pscustomobject]@{ Rows = @(); NotScanned = @(); Closing = [pscustomobject]@{ count = 0; elevated = $false } } }\n            function CheckPanelAgrees { }\n            function Save-ProofRecord($file, $record, $reasons) { }\n            $record = [ordered]@{}\n            $finished = [pscustomobject]@{ Report = [pscustomobject]@{ core = [pscustomobject]@{ folders = 200 } } }\n            try { [void](Invoke-W001StoppedRun ([System.IO.Path]::GetTempPath()) $finished @() ([DateTime]::UtcNow) $record 'unused.json' @()) } catch { 'threw: ' + $_.Exception.Message }\n            \"result stopped verdict=$($record['stopped'].verdict)\"\n            \"\"\");\n\n        Assert.Contains(\"result stopped verdict=failed\", output);\n    }\n}\n"
+    }
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 7152,
+    "claim": "In W-003 real mode, a marker the hook refused (its fixed 60 s deadline was missed) is only echoed with Write-Output. Neither Inconclusive() nor Check is called, and with $refused true the other two Inconclusive branches are skipped. So the case ends 'PASSED: W-003', exit 0, for a run where nothing was pressed. Only the record says 'inconclusive'. O-003 decided this ending is INCONCLUSIVE, even when Wait-App later reports TIMEOUT. Reproduced: with a refused line in the hook log and Exit TIMEOUT, it printed failures=0 inconclusive=False.",
+    "evidence": "O-003 (discharged): 'If the hook log has its marker refusal line, the verdict is INCONCLUSIVE, even when Wait-App later reports TIMEOUT.' Contract: 'INCONCLUSIVE: ... an answer other than 'cut', or the marker refused after the hook's 60 s deadline'. Main loop: exit 3 only when $script:Inconclusive grew.",
+    "fix": "Replace the Write-Output at line 7152 with `Inconclusive 'W-003: the hook''s 60 s marker deadline was missed ...'`, keeping the same wording.",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 7152,
+     "text": "        if ($refused) { Write-Output '        The hook''s 60 s marker deadline was missed: the cut and the typed cut did not both land within 60 s of the launch. Nothing was pressed.' }"
+    },
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/W003MarkerRefusedReproTests.cs",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~W003MarkerRefusedReproTests",
+     "body": "namespace FsAnalyser.Core.Tests;\n\n/// <summary>\n/// Review repro (SL-003, O-003): W-003 on a real share whose marker the hook refused after its 60 s deadline is\n/// INCONCLUSIVE, even when the wait then timed out: the case reports it as inconclusive and records no failure.\n/// </summary>\npublic class W003MarkerRefusedReproTests\n{\n    [Fact]\n    public async Task ARefusedMarkerEndsTheRealShareRunInconclusive()\n    {\n        string[] functions = [\"Test-W003Real\", \"Read-ActedLine\", \"Get-StopToEndingMs\", \"Get-CutFolderRows\", \"Get-ShareVerdict\", \"New-ShareRecord\", \"Get-RecordString\", \"Get-RecordByCode\", \"Get-ProofRecordPath\", \"Show\", \"Check\", \"CheckEqual\", \"Inconclusive\"];\n        string output = await WindowCasesHelperTests.Pwsh(WindowCasesHelperTests.ParseScript() + string.Concat(functions.Select(WindowCasesHelperTests.Load)) + \"\"\"\n            $script:Failures = [System.Collections.Generic.List[string]]::new()\n            $script:Inconclusive = [System.Collections.Generic.List[string]]::new()\n            $Repo = Join-Path ([System.IO.Path]::GetTempPath()) ('w003-refused-' + [guid]::NewGuid().ToString('N'))\n            [void][System.IO.Directory]::CreateDirectory($Repo)\n            $Root = $Repo\n            $Network = 'home'\n            $Link = 'wifi-off'\n            $HookDll = 'unused.dll'\n            $global:saved = $null\n            function Read-Host { '' }\n            function New-CaseFolder { $f = Join-Path $Repo ('case-' + [guid]::NewGuid().ToString('N')); [void][System.IO.Directory]::CreateDirectory($f); $f }\n            function Remove-CaseFolder($folder) { }\n            function Read-RowsDump($log) { [pscustomobject]@{ Rows = @(); NotScanned = @(); Closing = $null } }\n            function Save-ProofRecord($file, $record, $reasons) { $global:saved = $record }\n            function Invoke-WithHook($mode, $hookDll, $action, $armed) { [pscustomobject]@{ Result = [pscustomobject]@{ Exit = 'TIMEOUT'; Answer = 'cut' }; Log = @('loaded mode=stop pid=1', \"refused mode=stop reason=the rig's marker C:\\case\\cut.armed did not appear within 60 s, so the stall never armed\") } }\n            try { [void](Test-W003Real) } catch { 'threw: ' + $_.Exception.Message }\n            Remove-Item -LiteralPath $Repo -Recurse -Force\n            \"result verdict=$($global:saved.verdict) failures=$($script:Failures.Count) inconclusive=$($script:Inconclusive.Count -gt 0)\"\n            \"\"\");\n\n        Assert.Contains(\"result verdict=inconclusive failures=0 inconclusive=True\", output);\n    }\n}\n"
+    }
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "drift-from-design",
+    "nature": "defect",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 6852,
+    "claim": "Test-W001 starts the -Stopped run whenever the finished run wrote a report, whatever its status. A finished run that ended RootUnreadable, Refused or Cancelled therefore still costs the maintainer a second whole-C:\\ scan, with kernel pool possibly held until a restart. It also writes a 'stopped' part compared against a tab that was never a finished one. The design says the stopped run happens only after a Completed finished run, and that otherwise no stopped part is written. Reproduced: with a finished report of status RootUnreadable and -Stopped, Invoke-W001StoppedRun was called.",
+    "evidence": "Design component 'W-001 -Stopped': 'This runs only after the finished run has a report with status Completed. Otherwise the case is already FAILED, and no stopped part is written.' Line 6770 only CheckEquals the status and carries on.",
+    "fix": "`if ($Stopped -and [string]$run.Report.core.status -ceq 'Completed') { Invoke-W001StoppedRun ... } elseif ($Stopped) { Write-Output '        no stopped run: the finished run did not end Completed' }`.",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 6852,
+     "text": "        if ($Stopped) { Invoke-W001StoppedRun $case $run $rows $scanStart $record $file $reasons }"
+    },
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/W001StoppedAfterIncompleteReproTests.cs",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~W001StoppedAfterIncompleteReproTests",
+     "body": "namespace FsAnalyser.Core.Tests;\n\n/// <summary>\n/// Review repro (SL-003): W-001 -Stopped makes its stopped run only after a finished run that ended Completed; a finished\n/// run that ended RootUnreadable starts no second scan. Test-W001 is loaded from the script's parse, the launch stubbed.\n/// </summary>\npublic class W001StoppedAfterIncompleteReproTests\n{\n    [Fact]\n    public async Task NoStoppedRunFollowsAFinishedRunThatDidNotComplete()\n    {\n        string[] functions = [\"Test-W001\", \"Initialize-SeamWin32\", \"Get-W001RootShape\", \"Get-ProofRecordPath\", \"Test-KeptStoppedPart\", \"Get-WholeDriveReportGaps\", \"Get-LeakCount\", \"Get-ReasonCodeMismatches\", \"Get-W001Verdict\", \"Get-RecordString\", \"Get-HeaderCount\", \"Get-RecordByCode\", \"Get-CoverageRecord\", \"Get-CountsOnly\", \"Test-CountsOnlyKept\", \"Get-RoundedOrNull\", \"Show\", \"Check\", \"CheckEqual\", \"Inconclusive\"];\n        string output = await WindowCasesHelperTests.Pwsh(WindowCasesHelperTests.ParseScript() + string.Concat(functions.Select(WindowCasesHelperTests.Load)) + \"\"\"\n            $script:Failures = [System.Collections.Generic.List[string]]::new()\n            $script:Inconclusive = [System.Collections.Generic.List[string]]::new()\n            $Repo = Join-Path ([System.IO.Path]::GetTempPath()) ('w001-incomplete-' + [guid]::NewGuid().ToString('N'))\n            [void][System.IO.Directory]::CreateDirectory($Repo)\n            $Root = $Repo\n            $Stopped = $true\n            $Force = $false\n            $global:stoppedStarted = $false\n            function Test-Elevated { $false }\n            function New-CaseFolder { $f = Join-Path $Repo ('case-' + [guid]::NewGuid().ToString('N')); [void][System.IO.Directory]::CreateDirectory($f); $f }\n            function Remove-CaseFolder($folder) { }\n            function Get-CheckerControls($case) { [pscustomobject]@{ Openable = $true; Denied = $true; RefusedThenListed = $true; Folders = @() } }\n            function Invoke-HookedRun($mode, $root, $report, $variables, $timeoutSec) {\n                [pscustomobject]@{ Exit = '0'; Report = [pscustomobject]@{ core = [pscustomobject]@{ status = 'RootUnreadable'; folders = 0; files = 0; unreadable = 0; elapsedMs = 5 }; outcome = 'root-unreadable'; workarounds = @(); window = [pscustomobject]@{} }; Text = '{}'; Log = @() }\n            }\n            function Read-RowsDump($log) { [pscustomobject]@{ Rows = @(); NotScanned = @(); Closing = [pscustomobject]@{ count = 0; elevated = $false } } }\n            function CheckPanelAgrees { }\n            function Save-ProofRecord($file, $record, $reasons) { }\n            function Invoke-W001StoppedRun { $global:stoppedStarted = $true }\n            try { [void](Test-W001) } catch { 'threw: ' + $_.Exception.Message }\n            Remove-Item -LiteralPath $Repo -Recurse -Force\n            \"result stopped run started=$global:stoppedStarted\"\n            \"\"\");\n\n        Assert.Contains(\"result stopped run started=False\", output);\n    }\n}\n"
+    }
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 6979,
+    "claim": "Test-W002 runs `CheckEqual 'Completed' $scan.core.status` unconditionally. A scan that ended Refused, RootUnreadable or Cancelled is therefore a FAILURE (exit 1), while Get-HydrationVerdict writes 'inconclusive' into the record and Inconclusive() is also called. The console and the committed record disagree, and the case's ending contradicts decision n1 ('INCONCLUSIVE when core.status is not Completed'). Reproduced: with -Root on a temp folder and a stubbed app that wrote status Refused, it printed failures=1, verdict=inconclusive.",
+    "evidence": "Decision n1 (accepted, O-039): 'the builder makes W-002 FAILED on a non-zero exit or a missing report, and INCONCLUSIVE when core.status is not 'Completed''. The contract's W-002 FAILED list does not include a status that is not Completed.",
+    "fix": "Delete the CheckEqual on line 6979. Get-HydrationVerdict's 'inconclusive' and the Inconclusive line at 6983 already report that status, and exit and report presence keep their Checks at 6977-6978.",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 6979,
+     "text": "        if ($null -ne $scan) { CheckEqual 'Completed' $scan.core.status 'core.status' }"
+    },
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/W002NotCompletedReproTests.cs",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~W002NotCompletedReproTests",
+     "body": "namespace FsAnalyser.Core.Tests;\n\n/// <summary>\n/// Review repro (SL-003, decision n1): W-002 on a scan that did not end Completed (here Refused) is INCONCLUSIVE, not a\n/// failure: it read nothing, so nothing is shown either way. Test-W002 is loaded from the script's parse; the app is stubbed\n/// and the root is a plain temp folder, so no sync root is registered.\n/// </summary>\npublic class W002NotCompletedReproTests\n{\n    [Fact]\n    public async Task AScanThatWasRefusedEndsW002InconclusiveNotFailed()\n    {\n        string[] functions = [\"Test-W002\", \"Initialize-SeamWin32\", \"Get-HydrationTally\", \"Get-HydrationVerdict\", \"New-HydrationRecord\", \"Get-DataFetches\", \"Get-RecordString\", \"Get-ProofRecordPath\", \"Show\", \"Check\", \"CheckEqual\", \"Inconclusive\"];\n        string output = await WindowCasesHelperTests.Pwsh(WindowCasesHelperTests.ParseScript() + string.Concat(functions.Select(WindowCasesHelperTests.Load)) + \"\"\"\n            $script:Failures = [System.Collections.Generic.List[string]]::new()\n            $script:Inconclusive = [System.Collections.Generic.List[string]]::new()\n            $Repo = Join-Path ([System.IO.Path]::GetTempPath()) ('w002-refused-' + [guid]::NewGuid().ToString('N'))\n            $Root = Join-Path $Repo 'root'\n            [void][System.IO.Directory]::CreateDirectory($Root)\n            [System.IO.File]::WriteAllText((Join-Path $Root 'a.txt'), 'x')\n            $global:saved = $null\n            function Read-Host { '' }\n            function New-CaseFolder { $global:caseFolder = Join-Path $Repo ('case-' + [guid]::NewGuid().ToString('N')); [void][System.IO.Directory]::CreateDirectory($global:caseFolder); $global:caseFolder }\n            function Remove-CaseFolder($folder) { }\n            function Format-AppArgument($value) { [string]$value }\n            function Start-App($arguments) {\n                [System.IO.File]::WriteAllText((Join-Path $global:caseFolder 'report.json'), '{\"core\":{\"status\":\"Refused\",\"unreadable\":0},\"outcome\":\"refused\"}')\n                [pscustomobject]@{ Id = 4242 }\n            }\n            function Wait-App($process, $timeoutSec) { '0' }\n            function Save-ProofRecord($file, $record, $reasons) { $global:saved = $record }\n            try { [void](Test-W002) } catch { 'threw: ' + $_.Exception.Message }\n            Remove-Item -LiteralPath $Repo -Recurse -Force\n            \"result verdict=$($global:saved.verdict) failures=$($script:Failures.Count) inconclusive=$($script:Inconclusive.Count -gt 0)\"\n            \"\"\");\n\n        Assert.Contains(\"result verdict=inconclusive failures=0 inconclusive=True\", output);\n    }\n}\n"
+    }
+   },
+   {
+    "id": "IN-M1",
+    "severity": "major",
+    "dimension": "error-paths",
+    "nature": "defect",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 6650,
+    "end_line": 6664,
+    "claim": "Invoke-W001StoppedRun retries any attempt that is not partial, including one that ended TIMEOUT (the hook pressed Stop and the app never reached its ending within 3600 s), one that exited non-zero, and one that left no report. Only the last attempt's $run.Exit and $run.Report are checked (CheckEqual '0' $run.Exit). So a Stop that hung the app on the maintainer's whole-C:\\ run is retried at half the folder count, and if that retry is clean the stopped part is written with verdict 'held'. The design's error_cases say the stopped run 'timed out or threw: stopped.verdict failed'. Reproduced with Invoke-HookedRun stubbed: attempt 1 returned TIMEOUT with no report after an 'acted mode=stop ... sized=-' line, attempt 2 was a clean Cancelled run, and the result was attempts=2, verdict=held, failures=0. The console only says 'stopped run 1 was not partial (status , sized <null>)'.",
+    "evidence": "tests/window/WindowCases.ps1:6650-6664. The loop condition is '-not $partial' only. Test-StoppedPartial is false for a null status, so a TIMEOUT attempt is halved and retried. CheckEqual '0' $run.Exit at 6664 sees only the final attempt. Design contract 'WindowCases.ps1 -Case W-001 ... -Stopped': FAILED when 'the stopped run is aborted, ... or it timed out or threw'.",
+    "fix": "Stop retrying, and fail, when an attempt ends with Exit other than '0' or with no report. Retry only when the app exited 0 with a report and the run was not partial (Completed, sized not '-', or no acted line). For example, inside the loop: if ($run.Exit -cne '0' -or $null -eq $run.Report) { Check $false \"stopped run ${attempt}: the app ended $($run.Exit) with no stopped ending\"; break }. The existing failure mark then makes the verdict 'failed'.",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 6650,
+     "text": "for ($attempt = 1; $attempt -le 3 -and -not $partial; $attempt++) {"
+    },
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/W001StoppedRetryTests.cs",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~W001StoppedRetryTests",
+     "body": "namespace FsAnalyser.Core.Tests;\n\n/// <summary>\n/// W-001 -Stopped's attempts: an attempt whose app never reached an ending (TIMEOUT after Stop was pressed) is a Stop that\n/// hung, which the design fails; a later partial attempt must not turn the run into 'held'.\n/// </summary>\npublic class W001StoppedRetryTests\n{\n    [Fact]\n    public async Task AStoppedAttemptThatTimedOutIsNotLaunderedByALaterAttempt()\n    {\n        string loaded = string.Concat(new[] { \"Invoke-W001StoppedRun\", \"Read-ActedLine\", \"Test-StoppedPartial\", \"Compare-StoppedRows\", \"Get-StoppedVerdict\",\n            \"New-StoppedPart\", \"Get-RecordString\", \"Read-RowsDump\", \"Read-HookJson\", \"Check\", \"CheckEqual\", \"Show\", \"Inconclusive\", \"Save-ProofRecord\",\n            \"Write-W001Record\" }.Select(WindowCasesHelperTests.Load));\n        string output = await WindowCasesHelperTests.Pwsh(WindowCasesHelperTests.ParseScript() + loaded + \"\"\"\n            $script:Failures = [System.Collections.Generic.List[string]]::new()\n            $script:Inconclusive = [System.Collections.Generic.List[string]]::new()\n            $Root = 'X:\\'\n            $script:calls = 0\n            function Invoke-HookedRun($mode, $root, $report, $variables, $timeoutSec) {\n                $script:calls++\n                if ($script:calls -eq 1) {\n                    return [pscustomobject]@{ Exit = 'TIMEOUT'; Report = $null; Text = $null; Log = @('acted mode=stop atfolders=50 folders=60 sized=- current=X:\\b ms=900 utc=2026-11-18T00:00:00Z') }\n                }\n                $scan = [pscustomobject]@{ core = [pscustomobject]@{ status = 'Cancelled'; folders = 30; unreadable = 0 }; outcome = 'cancelled' }\n                [pscustomobject]@{ Exit = '0'; Report = $scan; Text = '{}'; Log = @('acted mode=stop atfolders=25 folders=30 sized=- current=X:\\c ms=800 utc=2026-11-18T00:00:01Z', '{\"event\":\"rows\",\"count\":0,\"elevated\":false,\"stopUtc\":\"2026-11-18T00:00:01Z\"}') }\n            }\n            function CheckPanelAgrees { }\n            $finished = [pscustomobject]@{ Report = [pscustomobject]@{ core = [pscustomobject]@{ folders = 100 } } }\n            $record = [ordered]@{ verdict = 'held' }\n            $file = Join-Path ([IO.Path]::GetTempPath()) ('w001-stopped-' + [guid]::NewGuid().ToString('N') + '.json')\n            try { Invoke-W001StoppedRun 'unused-case' $finished @() ([DateTime]::UtcNow.AddHours(-1)) $record $file @() } catch { \"threw: $($_.Exception.Message)\" }\n            \"result verdict=$($record['stopped'].verdict)\"\n            if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file }\n            \"\"\");\n\n        Assert.Contains(\"result verdict=failed\", output);\n    }\n}\n"
+    }
+   },
+   {
+    "id": "IN-m1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 6409,
+    "end_line": 6416,
+    "claim": "Get-W001RootShape classes -Root by its text, and the app classes it after LongPath.NormalizeRoot. 'C:/', 'C:\\\\' and 'C:\\.' are classed 'folder' and '\\\\?\\C:\\' is classed 'unc', yet the app scans every one of them as the whole C:\\ (GetFullPath folds the first three to 'C:\\', and the extended prefix is stripped). On such a root, W-001 runs an hour-long whole-C:\\ scan and then silently skips the local-letter-only checks: outcome completed, coverage present, panel on screen, and reason/code mismatches. It writes the record to artifacts/w001-run.json, not docs/proof-runs/w001-c-drive.json, and the -Force/stopped-part guard looks at the wrong file. For 'C:/' and 'C:\\.', $wholeDrive is false as well, so the wcifs-layer-store precaution check is also skipped. Get-ProofRecordPath takes the letter from $root.Substring(0,1), which is '\\' for '\\\\?\\C:\\'. Measured with the real functions: 'C:/' gives folder and artifacts\\w001-run.json, 'C:\\\\' gives folder, 'C:\\.' gives folder, '\\\\?\\C:\\' gives unc.",
+    "evidence": "tests/window/WindowCases.ps1:6410 '^[A-Za-z]:\\\\?$' is the only letter test, and 6414 treats any '^\\\\\\\\' root whose GetPathRoot is itself as 'unc'. src/FsAnalyser.Core/Native/LongPath.cs:27-41: an extended root is stripped to its display form, and any other root goes through Path.GetFullPath. Lesson #13 asks for an enumeration of root spellings.",
+    "fix": "Normalise the root before classifying it. In Get-W001RootShape (and for the letter in Get-ProofRecordPath), strip a leading '\\\\?\\' or '\\\\.\\' when it is followed by a drive letter, run a non-UNC rooted path through [System.IO.Path]::GetFullPath, and match the letter regex on the result. Alternatively, refuse any spelling that is not 'X:' or 'X:\\' with a throw before scanning. Test-W001 should also pass the same normalised root to $wholeDrive and Get-ProofRecordPath.",
+    "class_of": "root spellings the proof cases take as typed rather than as the app normalises them",
+    "threat": "accident",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 6410,
+     "text": "if ($root -cmatch '^[A-Za-z]:\\\\?$') {"
+    },
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/W001RootSpellingTests.cs",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~W001RootSpellingTests",
+     "body": "namespace FsAnalyser.Core.Tests;\n\n/// <summary>\n/// W-001's root classifier against other spellings of a whole local drive that the app itself scans as that whole drive\n/// (LongPath.NormalizeRoot: GetFullPath folds 'C:/', 'C:\\\\' and 'C:\\.' to 'C:\\', and '\\\\?\\C:\\' is C:\\ in extended form).\n/// Each must be the local letter, kept as docs/proof-runs/w001-c-drive.json, or be refused; never a folder or a UNC root.\n/// </summary>\npublic class W001RootSpellingTests\n{\n    [Fact]\n    public async Task AWholeLocalDriveSpelledAnotherWayIsStillTheLocalLetter()\n    {\n        string loaded = WindowCasesHelperTests.Load(\"Get-W001RootShape\") + WindowCasesHelperTests.Load(\"Get-ProofRecordPath\");\n        string output = await WindowCasesHelperTests.Pwsh(WindowCasesHelperTests.ParseScript() + loaded + \"\"\"\n            $fixed = { param($letter) 'Fixed' }\n            foreach ($root in 'C:/', 'C:\\\\', 'C:\\.', '\\\\?\\C:\\') {\n                try {\n                    $shape = Get-W001RootShape $root $fixed\n                    $file = Get-ProofRecordPath 'R' 'W-001' $shape $root\n                    \"root [$root] $shape $file\"\n                }\n                catch { \"root [$root] refused\" }\n            }\n            \"\"\");\n\n        string[] lines = [.. output.Split('\\n').Select(l => l.Trim()).Where(l => l.StartsWith(\"root [\", StringComparison.Ordinal))];\n        Assert.Equal(4, lines.Length);\n        foreach (string line in lines)\n            Assert.True(line.EndsWith(@\" local-letter R\\docs\\proof-runs\\w001-c-drive.json\", StringComparison.Ordinal) || line.EndsWith(\" refused\", StringComparison.Ordinal), line);\n    }\n}\n"
+    }
+   },
+   {
+    "id": "IN-m2",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 5538,
+    "end_line": 5549,
+    "claim": "Seam.ListFiles builds its search path as Extended(root.TrimEnd('\\\\')) + \"\\\\*\", which puts a \\\\?\\ prefix on the root as typed, and \\\\?\\ paths are not normalised. For a root with forward slashes, or one ending '\\.', the first FindFirstFileExW fails and the listing comes back empty, yet the app scans that folder normally (GetFullPath). W-002 then reports 0 files before and after and ends INCONCLUSIVE ('0 files online-only before') after the scan, with nothing saying the lister read nothing. On the maintainer's OneDrive that is a wasted proof run. Measured: on one temp tree, plain root 2 files, '/' root 0, trailing '\\.' 0.",
+    "evidence": "tests/window/WindowCases.ps1:5542 pending.Push(root.TrimEnd('\\\\')) and 5547 FindFirstFileEx(Extended(folder) + \"\\\\*\", ...). Test-W002 passes $Root straight through, at 6956 ($sync = $Root) and 6960. Same family as m1.",
+    "fix": "In ListFiles, unless the root already starts with \\\\?\\, normalise it with Path.GetFullPath before Extended (for example root = root.StartsWith(@\"\\\\?\\\") ? root : Path.GetFullPath(root)). Or have Test-W002 pass [System.IO.Path]::GetFullPath($Root) to both the lister and the app.",
+    "class_of": "root spellings the proof cases take as typed rather than as the app normalises them",
+    "threat": "accident",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 5542,
+     "text": "pending.Push(root.TrimEnd('\\\\'));"
+    },
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/W002ListingRootSpellingTests.cs",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~W002ListingRootSpellingTests",
+     "body": "namespace FsAnalyser.Core.Tests;\n\n/// <summary>\n/// W-002's lister against spellings of a root that the app scans as that same folder (LongPath.NormalizeRoot folds '/' and a\n/// trailing '\\.' through GetFullPath): it must list the same files, or W-002 judges a scan against an empty listing.\n/// </summary>\npublic class W002ListingRootSpellingTests\n{\n    [Fact]\n    public async Task ARootSpelledWithForwardSlashesOrATrailingDotListsTheSameFiles()\n    {\n        string output = await WindowCasesHelperTests.Pwsh(WindowCasesHelperTests.ParseScript() + WindowCasesHelperTests.Load(\"Initialize-SeamWin32\") + \"\"\"\n            Initialize-SeamWin32\n            $t = Join-Path ([IO.Path]::GetTempPath()) ('w002-list-' + [guid]::NewGuid().ToString('N'))\n            [void][IO.Directory]::CreateDirectory(\"$t\\a\\b\")\n            [IO.File]::WriteAllText(\"$t\\a\\b\\f.txt\", 'x')\n            [IO.File]::WriteAllText(\"$t\\g.txt\", 'x')\n            try {\n                \"listed plain=$(([FsaWindowCases.Seam]::ListFiles($t)).Count) slashes=$(([FsaWindowCases.Seam]::ListFiles(($t -replace '\\\\', '/'))).Count) dot=$(([FsaWindowCases.Seam]::ListFiles(\"$t\\.\")).Count)\"\n            }\n            finally { Remove-Item -LiteralPath $t -Recurse -Force }\n            \"\"\");\n\n        Assert.Contains(\"listed plain=2 slashes=2 dot=2\", output);\n    }\n}\n"
+    }
+   },
+   {
+    "id": "IN-m3",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "nature": "defect",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 7139,
+    "end_line": 7145,
+    "claim": "Test-W003Real waits for the typed 'cut' with $typed = [Console]::In.ReadLineAsync() and then loops while -not $typed.IsCompleted, printing seconds since launch. Console.In is a synchronized TextReader, and its ReadLineAsync runs ReadLine synchronously, so the call does not return until a line arrives. Measured in a child pwsh with stdin held open: the call returned after 3825 ms, with IsCompleted already True. As a result the seconds-since-launch counter never shows while the person makes the cut. O-003's decided step 2 is that the console 'shows the seconds elapsed since launch', against the hook's fixed 60 s MarkerDeadline. The -not $process.HasExited exit from the wait is dead too, so a scan that ends first still waits for Enter.",
+    "evidence": "tests/window/WindowCases.ps1:7139-7145. Measured with ProcessStartInfo('pwsh', '-Command $t=[Console]::In.ReadLineAsync(); ...'), writing a line after 4 s: 'returned after 3825 ms, IsCompleted=True, result=cut'. O-003 discharge text, item 2.",
+    "fix": "Poll for input instead of calling ReadLineAsync: loop on [Console]::KeyAvailable (an interactive console) and read with [Console]::ReadKey, building up the line, while printing the counter and checking $process.HasExited. Or run the ReadLine on a separate runspace or thread job, so that the loop really runs while the read is pending.",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 7139,
+     "text": "$typed = [Console]::In.ReadLineAsync()"
+    }
+   },
+   {
+    "id": "IN-m4",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "extra",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 6346,
+    "end_line": 6350,
+    "claim": "Get-OracleRow classes a code-5 row whose plain open now fails with any error other than 0, 2, 3 or 5 as 'refused-another-code', which fails W-001 through Get-LeakCount. The class's own rationale is that access is checked before sharing, so a 32 means the ACL let the plain open through. That rationale does not hold for errors that arise before any access check: network errors (53, 59, 64, 67, 121, 1231) from a share whose server dropped after the scan, and device errors (21, 1167). For those, the attribute-only Times open fails as well, so the changed-since-scan exemption cannot apply. A W-001 on a network letter or UNC root (Z:\\ here is intermittently down, per lesson #878) then reports a false C4 failure: 'its code would be another call's'.",
+    "evidence": "tests/window/WindowCases.ps1:6346-6350. `if ($probe.Error -ne 0) { $times = ...Times(...); if ($times.TimesRead -and ...) { return 'changed-since-scan' }; return 'refused-another-code' }`. Get-LeakCount at 6384 adds the class to the leaks, and it applies to every root shape (declared deviation).",
+    "fix": "Return 'refused-another-code' only for errors that come after the access check (32, 33, and any others shown to come after it). Class network and device errors, for example the UnreadableRows.PlainPhrase network family together with 21 and 1167, as 'other-code' or 'gone-since-scan', which are tallied and never failed."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "VOID, replaced by design 210. The precondition is held in code by Test-StoppedPartial (WindowCases.ps1:6575-6577: Cancelled with sized '-'). The SUBST run I made was partial at 17,602 of 30,302 folders."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "VOID; the spike settled it. Invoke-W001StoppedRun (6654) uses stop mode with FSA_HOOK_AT_FOLDERS and FSA_HOOK_ROWS=1. The hook is unchanged, and my SUBST run logged a rows dump on the stopped ending."
+   },
+   {
+    "key": "O-003",
+    "discharged": "no",
+    "evidence": "Built: Test-W003Real (7118-7182) prompts and waits for Enter before launch, then counts seconds. Not built as decided: a refused marker is only Write-Output (7152). Inconclusive() is never called, so the case exits 0 PASSED instead of INCONCLUSIVE. Finding m1."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "Get-W001RootShape and Get-ProofRecordPath (6409-6432). I ran tests/window/SL-003-W001OnASubstDrive.Tests.ps1: record at docs/proof-runs/w001-x-drive.json, all checks held, then removed. The retired scripts are absent from tests/bugs."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "Get-CoverageRecord (6494-6509), with panelTop, textsHeight and textsOffset. ACoverageRecordHoldsNoStringAndIsWritten passed, and in my SUBST run the record carried coverage and panelTop."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "Get-WholeDriveReportGaps (6719-6725) is used at 6771-6774 for a local letter. AWholeDriveReportMustBeCompletedAndShowItsCoveragePanel passed."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "RootsAreClassedAndKeptWhereTheirShapeSays passed. Variants are checked against ^[a-z]+(-[a-z]+)*$ at 6428."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "Invoke-W001StoppedRun (6638-6692). My SUBST run stopped at 17,602 folders with sized '-' and held. M2 covers a separate gap: a timed-out attempt is retried."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "AStoppedRowIsPutInOneOfTheSixClasses feeds every class. TheActedLineIsReadInBothFormsAndPartialMeansStoppedWhileListing covers a Completed run and a stop during sizing. Both passed."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "Get-ReasonCodeMismatches (6390-6402) is required for a local letter at 6804. AReasonThatDoesNotBelongToItsCodeIsCounted passed."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "Get-OracleRow (6346-6350) gives 'refused-another-code'. Corpus row F17 (held plant) passed in W001OracleTests."
+   },
+   {
+    "key": "O-012",
+    "discharged": "cannot-tell",
+    "evidence": "Test-W002 rig mode (6932-7003) and SL-003-W002OnTheCloudRig.Tests.ps1 are in the tree, but neither has been run: both register a cldflt sync root."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "Get-HydrationTally, Get-HydrationVerdict and Get-DataFetches. AScanIsJudgedAgainstTheOnlineOnlyFilesBeforeAndAfter passed."
+   },
+   {
+    "key": "O-014",
+    "discharged": "cannot-tell",
+    "evidence": "Test-W003Rig (7062-7110) and SL-003-W003OnTheStallRig.Tests.ps1 are built and have never been run: they map a loopback share."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "Get-StopToEndingMs (7010-7018) returns null on a missing line, a reversed time or a duplicate. TheStopToEndingTimeAndTheCutFoldersAreRead and AShareRunsVerdictPutsAMissedMarkerDeadlineFirst passed. The pure verdict is right; Test-W003Real's inputs to it are not (M1, m1)."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "I ran tests/bugs/SL-107-RecordPathRule.Tests.ps1: all checks held. It reads the engine-appended plain scalars."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "Compare-StoppedRows (6601-6623) with Get-FolderTimes and Seam.Times (FILE_READ_ATTRIBUTES, ChangeTime). A row whose times cannot be read counts as OtherCodeDiffers. The test passed."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "Get-LeakCount (6384) feeds Get-W001Verdict (6810). The oracle reads Times before giving the class (6347-6349). F17 and F18 passed."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "Get-RecordByCode nulls a reason holding a separator, and Get-RecordString and Get-CountsOnly are in place. EveryStringACaseWouldPutInARecordIsWritten passed over the 25-row corpus."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "The finished part is written first (6849), and the stopped part in a finally (6688-6691) through New-StoppedPart, which writes null status when there is no report. The -Force guard is at 6751. Caveat: a timeout on an earlier attempt can still end 'held' (M2)."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "Read-ActedLine (6559-6570) and Test-StoppedPartial; the acted-line test passed with the spike's exact line."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "WindowCases.ps1 contains no 'taad' (TheWindowHarnessKeepsItsRecordsUnderDocsProofRuns passed). My SUBST run's .taad status check held."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "Waived, but built anyway: Get-CoverageRecord records panelTop, textsHeight and textsOffset (6505-6507)."
+   },
+   {
+    "key": "O-024",
+    "discharged": "yes",
+    "evidence": "Ran SL-003-W001OnASubstDrive.Tests.ps1: record at docs/proof-runs/w001-x-drive.json, all checks held."
+   },
+   {
+    "key": "O-025",
+    "discharged": "yes",
+    "evidence": "Same run: whole local letter, outcome completed, the coverage panel figures and panelTop in the record."
+   },
+   {
+    "key": "O-026",
+    "discharged": "yes",
+    "evidence": "Same run: Cancelled with sized '-' at 17,602 folders; stopped verdict held, none cut short."
+   },
+   {
+    "key": "O-027",
+    "discharged": "yes",
+    "evidence": "AStoppedRowIsPutInOneOfTheSixClasses and AStoppedRunsVerdictFollowsTheClasses passed."
+   },
+   {
+    "key": "O-028",
+    "discharged": "yes",
+    "evidence": "TheActedLineIsReadInBothFormsAndPartialMeansStoppedWhileListing passed."
+   },
+   {
+    "key": "O-029",
+    "discharged": "yes",
+    "evidence": "W001OracleTests with corpus row F17 passed."
+   },
+   {
+    "key": "O-030",
+    "discharged": "yes",
+    "evidence": "AReasonThatDoesNotBelongToItsCodeIsCounted passed."
+   },
+   {
+    "key": "O-031",
+    "discharged": "yes",
+    "evidence": "Corpus row R01 (the 995 reason) and C01 (coverage with remainder.text) are written; tests passed."
+   },
+   {
+    "key": "O-032",
+    "discharged": "yes",
+    "evidence": "EveryNetworkAndLinkValueIsAcceptedByTheWriter and ProofCasesAreNeverRunByCaseAll passed. $ProofCases is filtered at 8024, before the Include filters."
+   },
+   {
+    "key": "O-033",
+    "discharged": "yes",
+    "evidence": "Get-W001RootShape takes $driveTypeOf (6409); the test stubs Network."
+   },
+   {
+    "key": "O-034",
+    "discharged": "cannot-tell",
+    "evidence": "Same as O-012: built, never run."
+   },
+   {
+    "key": "O-035",
+    "discharged": "yes",
+    "evidence": "AScanIsJudgedAgainstTheOnlineOnlyFilesBeforeAndAfter passed."
+   },
+   {
+    "key": "O-036",
+    "discharged": "cannot-tell",
+    "evidence": "Test-W003Rig counts every s, t or u row plus every 995 row (Get-CutFolderRows, 7023-7027), with an expected count of 2 at 7090. Never run on the rig."
+   },
+   {
+    "key": "O-037",
+    "discharged": "yes",
+    "evidence": "plants.json rows S91-S94 and P41 plant the five texts at docs/proof-runs/w001-c-drive.json, and awaiting_file is re-keyed. The SL-107 runner passed. I could not re-run harness.py: no interpreter with yaml for the engine checkout."
+   },
+   {
+    "key": "O-038",
+    "discharged": "cannot-tell",
+    "evidence": "Owed to validate-slice. In code, Compare-StoppedRows already makes non-5 and unreadable-time differences inconclusive."
+   },
+   {
+    "key": "O-039",
+    "discharged": "no",
+    "evidence": "Get-HydrationVerdict orders things as decided, but Test-W002 line 6979 CheckEquals 'Completed', so a scan that is not Completed makes the case FAILED, not INCONCLUSIVE. Finding m3."
+   },
+   {
+    "key": "O-040",
+    "discharged": "yes",
+    "evidence": "Get-CutFolderRows counts s, t and u whatever the time, plus 995; CheckPanelAgrees expects 2 at 7090."
+   },
+   {
+    "key": "O-041",
+    "discharged": "yes",
+    "evidence": "rootShape is recorded at 6815; 'unc' is in the allowed set at 6516; the corpus shape rows passed."
+   },
+   {
+    "key": "O-042",
+    "discharged": "yes",
+    "evidence": "No re-tier was asked for; nothing to build."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "The named E003-1 script is not in the tree. The builder's tests/window/SL-003-W001OnASubstDrive.Tests.ps1 feeds the shape: a SUBST letter over a %TEMP% tree with refused folders. I ran it and it held: record at docs/proof-runs/w001-x-drive.json, no 'taad' in WindowCases.ps1, nothing new under .taad."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "The same run is a whole local letter whose ending shows the panel. The record carried coverage with panelTop, and outcome was completed."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "The same run's tree: 0-deny-a and z-deny-z sort first, then 300x100 folders. The stop landed at 17,602 of 30,302 with sized '-', and the stopped tab was a subset of the finished one."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "W001ProofTests.AStoppedRowIsPutInOneOfTheSixClasses feeds 995, a code-5 row absent with old times, one created after, one changed after, a non-5 row absent, a non-5 code differing (32->5 and 5->59) and a kind change. The counts asserted match."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "TheActedLineIsReadInBothFormsAndPartialMeansStoppedWhileListing feeds the spike's progress line, sized 1200, a Completed run, the armed line with sincearmed=, and a path holding ' folders=' and ' ms='."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "W001OracleTests corpus row F17 is a real folder held through TestNative.HoldFolderSharingNoRead, so the plain open gets 32, and it expects refused-another-code."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "AReasonThatDoesNotBelongToItsCodeIsCounted feeds '(Windows error 363)' on a code-5 row, two different reasons for code 5, and a 32 row ending '(Windows error 5)'."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "Corpus row R01 is the 995 message with 'I/O', put through Get-RecordByCode and the writer. ACoverageRecordHoldsNoStringAndIsWritten feeds remainder.text holding a backslash and checks the written file holds no 'text' key and no separator."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "The -Network and -Link ValidateSet values are read from the AST and written, and the label rows of the strings corpus are written. ProofCasesAreNeverRunByCaseAll evaluates the script's own $cases statement for All, and the Include switches only remove cases after it (8026-8033)."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "RootsAreClassedAndKeptWhereTheirShapeSays feeds 'C:\\', 'C:', 'y:', 'Z:\\' with a stubbed Network drive type, '\\\\srv\\share\\', a UNC folder and plain folders."
+   },
+   {
+    "key": "C-011",
+    "exercised": "cannot-tell",
+    "evidence": "E003-4 is absent. SL-003-W002OnTheCloudRig.Tests.ps1 would feed the CfProvider 'tree' rig root, but nobody has run it (it registers a cldflt sync root)."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "AScanIsJudgedAgainstTheOnlineOnlyFilesBeforeAndAfter feeds files still online-only, hydrated and gone, and a root with nothing online-only."
+   },
+   {
+    "key": "C-013",
+    "exercised": "cannot-tell",
+    "evidence": "E003-5 is absent. SL-003-W003OnTheStallRig.Tests.ps1 runs the stall rig and has never been run. The pure Get-CutFolderRows test feeds s, t and u rows without timing. Real mode's endings (no ending after Stop, a refused marker) were never tested through Test-W003Real (M1, m1)."
+   },
+   {
+    "key": "C-014",
+    "exercised": "yes",
+    "evidence": "plants.json rows S91-S94 (UNC, single backslash, forward slash, a 'path' key) and P41 (a whole valid record) are new-file plants at docs/proof-runs/w001-c-drive.json. The SL-107 runner passed here. The harness run is the builder's; I could not repeat it."
+   }
+  ],
+  "drift": [],
+  "unreviewed": [
+   "tests/bugs/SL-107-RecordPathRule.Tests.ps1 -- read through its diff hunks and its run (all checks held), not as a whole file",
+   "tests/FsAnalyser.Core.Tests/W001OracleTests.cs -- read through its diff (the held and held-acl-reset plants and the handle lifetime), not lines outside the changed test",
+   "eng/rules-harness/plants.json -- read only the changed _note, awaiting_file and rows S91-S95/P41-P42; I could not run harness.py, because no Python with the yaml package was found for the engine checkout",
+   ".taad/fitness.yaml -- read only the deleted SL-107 entry and the three appended SL-003 entries; Fitness op=check reported every rule holds"
+  ],
+  "second_round": {
+   "run_id": 11259,
+   "filed": 5,
+   "reader": "inputs"
+  },
+  "reading_pass": {
+   "state": "landed",
+   "why": [
+    "unseen changed hunks"
+   ],
+   "lens": "contracts",
+   "cut_off": false,
+   "cut_runs": {
+    "line": false,
+    "inputs": false,
+    "any": false
+   },
+   "run_id": 11260,
+   "session": "316d45b4-5c34-4c63-8bda-3eefd0b23047",
+   "resumed": true,
+   "asked": [
+    {
+     "path": "eng/rules-harness/harness.py",
+     "kind": "src",
+     "state": "partly-opened",
+     "why": "unseen changed hunks",
+     "hunks": [
+      [
+       593,
+       595
+      ]
+     ],
+     "scopes": [
+      {
+       "line": 590,
+       "header": "def load_awaiting(path: str) -> dict:"
+      }
+     ],
+     "read": [
+      590,
+      607
+     ],
+     "header": "def load_awaiting(path: str) -> dict:",
+     "line": 590,
+     "whole_file": false
+    },
+    {
+     "path": "tests/bugs/SL-107-RecordPathRuleCorpus.json",
+     "kind": "tests",
+     "state": "partly-opened",
+     "why": "unseen changed hunks",
+     "hunks": [
+      [
+       2,
+       2
+      ],
+      [
+       5,
+       5
+      ]
+     ],
+     "scopes": [
+      {
+       "line": null,
+       "header": null
+      },
+      {
+       "line": null,
+       "header": null
+      }
+     ],
+     "read": [
+      1,
+      10
+     ],
+     "header": null,
+     "line": null,
+     "whole_file": false
+    },
+    {
+     "path": ".taad/fitness.yaml",
+     "kind": "config",
+     "state": "partly-opened",
+     "why": "unseen changed hunks",
+     "hunks": [
+      [
+       1474,
+       1504
+      ]
+     ],
+     "scopes": [
+      {
+       "line": null,
+       "header": null
+      }
+     ],
+     "read": [
+      1469,
+      1504
+     ],
+     "header": null,
+     "line": null,
+     "whole_file": false
+    },
+    {
+     "path": "eng/rules-harness/plants.json",
+     "kind": "config",
+     "state": "partly-opened",
+     "why": "unseen changed hunks",
+     "hunks": [
+      [
+       2,
+       3
+      ]
+     ],
+     "scopes": [
+      {
+       "line": null,
+       "header": null
+      }
+     ],
+     "read": [
+      1,
+      8
+     ],
+     "header": null,
+     "line": null,
+     "whole_file": false
+    },
+    {
+     "path": "eng/rules-harness/plants.json",
+     "kind": "config",
+     "state": "partly-opened",
+     "why": "unseen changed hunks",
+     "hunks": [
+      [
+       248,
+       254
+      ]
+     ],
+     "scopes": [
+      {
+       "line": null,
+       "header": null
+      }
+     ],
+     "read": [
+      243,
+      259
+     ],
+     "header": null,
+     "line": null,
+     "whole_file": false
+    }
+   ],
+   "asked_hunks": 6,
+   "named": [],
+   "before": {
+    "read_whole": 6,
+    "changed": 13,
+    "listed": 7
+   },
+   "filed": 0,
+   "read_after": 6,
+   "still_unread": []
+  },
+  "unread_measured": {
+   "measured": true,
+   "why": "",
+   "changed": 13,
+   "read_whole": 6,
+   "deleted": [
+    "tests/bugs/O-030-ledger-discharge.Tests.ps1",
+    "tests/bugs/SL-062-LedgerCases.ps1",
+    "tests/bugs/SL-068-DecisionCases.ps1",
+    "tests/bugs/SL-107-HandOffCases.ps1",
+    "tests/bugs/SL-107-HarnessPlantsOverRecord.Tests.py"
+   ],
+   "runs": [
+    11258,
+    11259,
+    11260
+   ],
+   "range": {
+    "base": "a9d394cb6cde4e10c544f02b5232f537a2c4bd43",
+    "head": "5e510e16c6d6c2ffc017351bd2c8206710243cd8",
+    "source": "commits",
+    "hunk_base": "a9d394cb6cde4e10c544f02b5232f537a2c4bd43",
+    "hunk_base_from": "the merge base with the integration branch"
+   },
+   "items": [
+    {
+     "path": ".taad/fitness.yaml",
+     "state": "partly-opened",
+     "section": "lines 1-1468 of 1504",
+     "reason": "a Read returned only part of it; seen only as 30 Grep lines; seen only through a shell command: git diff",
+     "size_lines": 1504,
+     "hunks": []
+    },
+    {
+     "path": "eng/rules-harness/harness.py",
+     "state": "partly-opened",
+     "section": "lines 1-589, 608-784 of 784",
+     "reason": "a Read returned only part of it; seen only as 27 Grep lines; seen only through a shell command: $env:taad3_home, git diff",
+     "size_lines": 784,
+     "hunks": []
+    },
+    {
+     "path": "eng/rules-harness/plants.json",
+     "state": "partly-opened",
+     "section": "lines 9-242, 260-264 of 264",
+     "reason": "a Read returned only part of it; seen only as 9 Grep lines (long lines elided); seen only through a shell command: $now, git diff",
+     "size_lines": 264,
+     "hunks": []
+    },
+    {
+     "path": "tests/bugs/SL-107-RecordPathRuleCorpus.json",
+     "state": "partly-opened",
+     "section": "lines 11-52 of 52",
+     "reason": "a Read returned only part of it; seen only through a shell command: git diff",
+     "size_lines": 52,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/W001OracleTests.cs",
+     "state": "partly-opened",
+     "section": "lines 1-182 of 182",
+     "reason": "seen only through a shell command: git diff",
+     "size_lines": 182,
+     "hunks": []
+    },
+    {
+     "path": "tests/window/W001OracleCorpus.json",
+     "state": "partly-opened",
+     "section": "lines 1-23 of 23",
+     "reason": "seen only through a shell command: git diff",
+     "size_lines": 23,
+     "hunks": []
+    },
+    {
+     "path": "tests/window/WindowCases.ps1",
+     "state": "partly-opened",
+     "section": "lines 1-99, 190-194, 225-479, 580-5354, 5595-5602, 5673-5730, 5836-6289, 7199-8019 of 8078",
+     "reason": "a Read returned only part of it; seen only as 134 Grep lines; seen only through a shell command: $ast, $cases, $env:taad3_home, $scratch, git diff; 1 returned line differ from the reviewed file (read before it changed)",
+     "size_lines": 8078,
+     "hunks": []
+    }
+   ],
+   "notes": []
+  }
+ }
+}

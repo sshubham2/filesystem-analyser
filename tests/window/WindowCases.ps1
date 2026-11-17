@@ -5530,16 +5530,36 @@ namespace FsaWindowCases
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool FindClose(IntPtr handle);
 
+        // The root as the app reads it, by the steps of src/FsAnalyser.Core/Native/LongPath.cs NormalizeRoot (copied, not read from
+        // it, as this file copies the scanner's opens): \\?\UNC\ and \\?\ lose their prefix and are taken as they are; a bare 'C:'
+        // is the drive; any other root must be absolute, as the app refuses one that is not, and goes through GetFullPath.
+        public static string AppRoot(string root)
+        {
+            if (string.IsNullOrWhiteSpace(root))
+                throw new ArgumentException("A root folder is required.");
+            if (root.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+                return @"\\" + root.Substring(8);
+            if (root.StartsWith(@"\\?\", StringComparison.Ordinal))
+                return root.Substring(4);
+            if (root.Length == 2 && char.IsLetter(root[0]) && root[1] == ':')
+                root += '\\';
+            if (!System.IO.Path.IsPathFullyQualified(root))
+                throw new ArgumentException("'" + root + "' is not an absolute path, which the app refuses as a root too.");
+            return System.IO.Path.GetFullPath(root);
+        }
+
         // Every file under root and its attributes (W-002, SL-003), read from directory listings alone: FindFirstFileExW with
         // the basic info level and a large fetch, on \\?\ paths. No file is ever opened, so no listing can hydrate one. It
         // descends into plain directories and into directories whose reparse tag is a cloud tag, (tag & 0xFFFF0FFF) ==
         // 0x9000001A (IO_REPARSE_TAG_CLOUD and CLOUD_1 to CLOUD_F differ in bits 12 to 15 only), and into no other reparse
-        // point. A folder that cannot be listed is skipped. Paths stay in this process's memory.
+        // point. A folder that cannot be listed is skipped. Paths stay in this process's memory. The root is read as the app
+        // reads it (AppRoot), so that 'C:/x', 'C:\x\.' and '\\?\C:\x' list the folder the app scans, not nothing (SL-003 review
+        // IN-m2; tests/window/W001RootSpellingsCorpus.json).
         public static Dictionary<string, uint> ListFiles(string root)
         {
             var files = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
             var pending = new Stack<string>();
-            pending.Push(root.TrimEnd('\\'));
+            pending.Push(AppRoot(root).TrimEnd('\\'));
             while (pending.Count > 0)
             {
                 string folder = pending.Pop();
@@ -6404,14 +6424,33 @@ function Get-ReasonCodeMismatches($rows) {
 # ---- Proof-run records (SL-003): counts, codes and reasons, written where they are kept ----
 
 # W-001's root as one of four shapes: a local drive letter, a network drive letter (DriveType Network, read with no open of
-# the drive), a UNC share root, or a folder. 'C:' and 'C:\' are both the letter. Only the two letter shapes are kept under
-# docs/proof-runs, and coverage is required of a local letter only (Q-003: a mapped letter's panel is not decided).
+# the drive), a UNC share root, or a folder. Only the two letter shapes are kept under docs/proof-runs, and coverage is required
+# of a local letter only (Q-003: a mapped letter's panel is not decided).
+#
+# The root is classed by what the app scans it as, never by its text as typed (SL-003 review IN-m1): the same steps as
+# LongPath.NormalizeRoot, whose display form is the root the app shows. 'C:' is the drive, not the current folder on it; the
+# \\?\ and \\?\UNC\ forms lose their prefix and are taken as they are; any other root must be absolute (the app refuses one that
+# is not, so this throws before an hour-long scan rather than after it) and goes through GetFullPath, which folds 'C:/', 'C:\\',
+# 'C:\.' and 'C:\Windows\..' to 'C:\'; and a drive or share root keeps its one trailing separator, any other folder loses it.
+# The corpus tests/window/W001RootSpellingsCorpus.json is the class, checked against LongPath.NormalizeRoot by
+# W001RootSpellingCorpusTests. Self-contained: a test loads this function alone from the script's parse.
 function Get-W001RootShape([string] $root, [scriptblock] $driveTypeOf = { param($letter) [System.IO.DriveInfo]::new($letter).DriveType }) {
-    if ($root -cmatch '^[A-Za-z]:\\?$') {
-        if ([string](& $driveTypeOf $root.Substring(0, 1)) -ceq 'Network') { return 'network-letter' }
+    $full = $root
+    if ($full.StartsWith('\\?\UNC\', [System.StringComparison]::OrdinalIgnoreCase)) { $full = '\\' + $full.Substring(8) }
+    elseif ($full.StartsWith('\\?\', [System.StringComparison]::Ordinal)) { $full = $full.Substring(4) }
+    else {
+        if ($full -cmatch '^[A-Za-z]:$') { $full += '\' }
+        if (-not [System.IO.Path]::IsPathFullyQualified($full)) { throw "W-001: '$root' is not an absolute path, which the app refuses as a root too: give a drive such as C:\ or a full folder path" }
+        $full = [System.IO.Path]::GetFullPath($full)
+    }
+    $pathRoot = ([string][System.IO.Path]::GetPathRoot($full)).TrimEnd('\', '/')
+    $trimmed = $full.TrimEnd('\', '/')
+    $display = if ($trimmed.Length -le $pathRoot.Length) { $pathRoot + '\' } else { $trimmed }
+    if ($display -cmatch '^[A-Za-z]:\\$') {
+        if ([string](& $driveTypeOf $display.Substring(0, 1)) -ceq 'Network') { return 'network-letter' }
         return 'local-letter'
     }
-    if ($root -cmatch '^\\\\' -and [System.IO.Path]::GetPathRoot($root).TrimEnd('\') -ieq $root.TrimEnd('\')) { return 'unc' }
+    if ($display.StartsWith('\\', [System.StringComparison]::Ordinal) -and ([string][System.IO.Path]::GetPathRoot($display)).TrimEnd('\') -ieq $display.TrimEnd('\')) { return 'unc' }
     'folder'
 }
 
@@ -6421,7 +6460,12 @@ function Get-W001RootShape([string] $root, [scriptblock] $driveTypeOf = { param(
 function Get-ProofRecordPath([string] $repo, [string] $case, [string] $shape, [string] $root, [string] $variant = '') {
     $runs = [System.IO.Path]::Combine($repo, 'docs\proof-runs')
     if ($case -ceq 'W-001') {
-        if ($shape -ceq 'local-letter' -or $shape -ceq 'network-letter') { return [System.IO.Path]::Combine($runs, ('w001-{0}-drive.json' -f $root.Substring(0, 1).ToLowerInvariant())) }
+        if ($shape -ceq 'local-letter' -or $shape -ceq 'network-letter') {
+            # The letter is the root's own, however Get-W001RootShape found it spelled ('c:/', 'C:\.', '\\?\C:\'); a root that
+            # does not begin with one is no letter shape, and no letter is guessed from its first character.
+            if ($root -cnotmatch '^(?:\\\\\?\\)?([A-Za-z]):') { throw "a drive-letter record needs a root that begins with its drive letter, not '$root'" }
+            return [System.IO.Path]::Combine($runs, ('w001-{0}-drive.json' -f $Matches[1].ToLowerInvariant()))
+        }
         return [System.IO.Path]::Combine($repo, 'artifacts\w001-run.json')
     }
     if ($case -ceq 'W-002' -or $case -ceq 'W-003') {
@@ -6633,8 +6677,9 @@ function Get-StoppedVerdict($comparison, [bool] $partial) {
 
 # The second run of W-001 -Stopped. Stop is asked for at half the folders the finished run counted, by the hook's progress
 # trigger, with the rows dump on; a run that was not partial (the trigger met while sizing, or never) is repeated at half that
-# count, three runs in all, and then ends inconclusive. The comparison, and the stopped part of the record, are written
-# whatever happens: in a finally, with verdict 'failed' when the run threw or timed out.
+# count, three runs in all, and then ends inconclusive; a run that ended with no report or a non-zero exit (a Stop that hung and was
+# killed at the wait's limit, a crash) is no run to repeat: it is a failure at once. The comparison, and the stopped part of the
+# record, are written whatever happens: in a finally, with verdict 'failed' when the run threw or timed out.
 function Invoke-W001StoppedRun([string] $case, $finished, $finishedRows, [DateTime] $finishedStartUtc, $record, [string] $file, [string[]] $reasons) {
     $at = [Math]::Max(1L, [long][Math]::Floor([long]$finished.Report.core.folders / 2))
     $mark = $script:Failures.Count
@@ -6645,6 +6690,7 @@ function Invoke-W001StoppedRun([string] $case, $finished, $finishedRows, [DateTi
     $used = $at
     $attempts = 0
     $partial = $false
+    $abnormal = $false
     $verdict = 'failed'
     try {
         for ($attempt = 1; $attempt -le 3 -and -not $partial; $attempt++) {
@@ -6654,15 +6700,21 @@ function Invoke-W001StoppedRun([string] $case, $finished, $finishedRows, [DateTi
             $run = Invoke-HookedRun 'stop' $Root (Join-Path $case "stopped-$attempt.json") @{ FSA_HOOK_ROWS = '1'; FSA_HOOK_AT_FOLDERS = [string]$at } 3600
             foreach ($line in @($run.Log | Where-Object { $_ -and -not $_.StartsWith('{') })) { Write-Output "        hook: $line" }
             $acted = Read-ActedLine $run.Log
-            $status = if ($null -ne $run.Report) { [string]$run.Report.core.status } else { $null }
+            # An attempt whose app never reached a stopped ending (killed at the wait's limit, a non-zero exit, no report) is a Stop
+            # that hung or a crash, never a run to repeat at half the count: a clean retry after it would write 'held' over it
+            # (SL-003 review M2, IN-M1). Only a run that ended with exit 0 and a report and was not partial is tried again.
+            if ($run.Exit -cne '0' -or $null -eq $run.Report) {
+                $abnormal = $true
+                Check $false "stopped run ${attempt}: the app ended $(Show $run.Exit) with no stopped ending and no report (a Stop that hung, or a crash)"
+                break
+            }
+            $status = [string]$run.Report.core.status
             $partial = Test-StoppedPartial $status $acted
             if (-not $partial) {
                 Write-Output "        stopped run ${attempt} was not partial (status $status, sized $(if ($null -ne $acted) { Show $acted.Sized } else { 'no acted line' })): Stop at half as many folders"
                 $at = [Math]::Max(1L, [long][Math]::Floor($at / 2))
             }
         }
-        CheckEqual '0' $run.Exit 'stopped run: exit code'
-        Check ($null -ne $run.Report) 'stopped run: a report was written'
         if ($partial) {
             $dump = Read-RowsDump $run.Log
             CheckPanelAgrees $run.Report $dump 'W-001 stopped'
@@ -6675,7 +6727,7 @@ function Invoke-W001StoppedRun([string] $case, $finished, $finishedRows, [DateTi
             if ($comparison.OtherCodeDiffers -gt 0) { Inconclusive "W-001 -Stopped: $($comparison.OtherCodeDiffers) rows differ from the finished run's in a way the machine can explain, so the subset is not decided" }
             $verdict = Get-StoppedVerdict $comparison $true
         }
-        else {
+        elseif (-not $abnormal) {
             Inconclusive "W-001 -Stopped: none of $attempts stopped runs was partial, so no folder was cut short and nothing is shown"
             $verdict = 'inconclusive'
         }
@@ -6745,8 +6797,10 @@ function Test-W001 {
         Inconclusive 'W-001 refuses to run elevated: an elevated token opens folders an ordinary user cannot'
         return
     }
+    # The shape, whether this is a whole drive and the record's place all come from the root as the app reads it (Get-W001RootShape):
+    # a drive or share root is whole whatever its spelling, and a root spelled 'C:/' or '\\?\C:\' is the local letter C.
     $shape = Get-W001RootShape $Root
-    $wholeDrive = [System.IO.Path]::GetPathRoot($Root).TrimEnd('\') -ieq $Root.TrimEnd('\')
+    $wholeDrive = $shape -cne 'folder'
     $file = Get-ProofRecordPath $Repo 'W-001' $shape $Root
     if (($shape -ceq 'local-letter' -or $shape -ceq 'network-letter') -and -not $Stopped -and -not $Force -and (Test-KeptStoppedPart $file)) {
         throw "W-001: $file holds a stopped part that this run, without -Stopped, would write over; pass -Stopped to make both runs again, or -Force to write over it"
@@ -6849,7 +6903,10 @@ function Test-W001 {
         Save-ProofRecord $file $record $reasons
         ($record | ConvertTo-Json -Depth 6) -split "`r?`n" | ForEach-Object { "        $_" }
         if ($verdict -ceq 'inconclusive') { Inconclusive 'W-001: the checker''s controls did not all behave, so a run with no leak says nothing (review M9)' }
-        if ($Stopped) { Invoke-W001StoppedRun $case $run $rows $scanStart $record $file $reasons }
+        # The second whole-drive scan is made only against a finished run that ended Completed: a finished run that was refused,
+        # could not read its root or was cancelled is no tab to compare with, and costs no second scan (SL-003 review m2).
+        if ($Stopped -and [string]$run.Report.core.status -ceq 'Completed') { Invoke-W001StoppedRun $case $run $rows $scanStart $record $file $reasons }
+        elseif ($Stopped) { Write-Output '        no stopped run: the finished run did not end Completed' }
     }
     finally {
         if ($null -ne $controls) { foreach ($folder in $controls.Folders) { Set-DenyRule $folder 'ListDirectory' $false; Set-DenyRule $folder 'WriteAttributes' $false } }
@@ -6976,7 +7033,8 @@ function Test-W002 {
         Write-Output "        files: $($listBefore.Count) before, $($listAfter.Count) after; online-only $($tally.OnlineOnlyBefore) before, $($tally.OnlineOnlyAfter) after; hydrated $($tally.Hydrated), gone $($tally.GoneSinceBefore); data fetches by the app: $(if ($null -eq $fetches) { 'not read (a real sync root)' } else { $fetches })"
         CheckEqual '0' $exit 'exit code'
         Check ($null -ne $scan) 'a report was written'
-        if ($null -ne $scan) { CheckEqual 'Completed' $scan.core.status 'core.status' }
+        # No check of core.status here: a scan that did not end Completed read nothing, so it is INCONCLUSIVE (Get-HydrationVerdict
+        # and the Inconclusive line below), never a failure (SL-003 review m3, decision n1).
         Check ($tally.Hydrated -eq 0) "no file that was online-only before the scan is hydrated after it ($($tally.Hydrated) are)"
         if ($rig) { Check ($fetches -eq 0) "the provider logged no data fetch from the app ($fetches)" }
         $verdict = Get-HydrationVerdict $tally $fetches $exit $scan $rig
@@ -7114,7 +7172,8 @@ function Test-W003Rig {
 # before the app starts, so that it is prepared; then the app scans the share under the hook's armed stop mode, 2 s after a marker
 # the case writes when the person types 'cut'. The hook waits 60 s from launch for that marker and no longer, and the case says
 # so and counts the seconds. A scan that ended before Stop, a marker the hook refused, or any answer other than 'cut' is
-# inconclusive, a refusal first, even when the wait for the app then timed out; the record is written whatever the ending.
+# inconclusive, a refusal first, even when the wait for the app then timed out; but a Stop the hook pressed that the app never
+# reached an ending after (killed at the 600 s wait, or no report) is FAILED. The record is written whatever the ending.
 function Test-W003Real {
     if (-not [System.IO.Directory]::Exists($Root)) { throw "W-003: $Root is not a folder" }
     $case = New-CaseFolder
@@ -7125,6 +7184,7 @@ function Test-W003Real {
     $cut = 0
     $refused = $false
     $judged = $false
+    $final = $null
     try {
         $marker = Join-Path $case 'cut.armed'
         $report = Join-Path $case 'report.json'
@@ -7149,7 +7209,7 @@ function Test-W003Real {
         } $variables
         foreach ($line in @($run.Log | Where-Object { $_ -and -not $_.StartsWith('{') })) { Write-Output "        hook: $line" }
         $refused = @($run.Log | Where-Object { $_ -is [string] -and $_.StartsWith("refused mode=stop reason=the rig's marker") }).Count -gt 0
-        if ($refused) { Write-Output '        The hook''s 60 s marker deadline was missed: the cut and the typed cut did not both land within 60 s of the launch. Nothing was pressed.' }
+        if ($refused) { Inconclusive 'W-003: the hook''s 60 s marker deadline was missed: the cut and the typed cut did not both land within 60 s of the launch. Nothing was pressed.' }
         $text = if (Test-Path -LiteralPath $report -PathType Leaf) { Get-Content -LiteralPath $report -Raw } else { $null }
         $scan = if ($null -eq $text) { $null } else { $text | ConvertFrom-Json }
         $dump = Read-RowsDump $run.Log
@@ -7158,6 +7218,11 @@ function Test-W003Real {
         $judged = -not $refused -and $run.Result.Answer -ceq 'cut' -and $null -ne $acted -and $null -ne $scan
         if (-not $refused -and $run.Result.Answer -cne 'cut') { Inconclusive "W-003: the answer was not 'cut', so no cut was made" }
         if (-not $refused -and $null -eq $acted) { Inconclusive 'W-003: the hook never pressed Stop (the scan ended first, or the app did not answer)' }
+        # The hook pressed Stop and the app then reached no stopped ending (killed at the wait's limit, or no report): the very
+        # ending this case exists to catch, a failure and never an inconclusive run (SL-003 review M1; the contract's FAILED list).
+        if (-not $refused -and $null -ne $acted -and ($null -eq $scan -or $exit -ceq 'TIMEOUT')) {
+            Check $false "Stop was pressed and the app reached no stopped ending within 600 s (exit $(Show $exit), $(if ($null -eq $scan) { 'no report' } else { 'a report' }))"
+        }
         if ($judged) {
             CheckEqual '0' $exit 'exit code'
             CheckEqual 'Cancelled' $scan.core.status 'core.status'
