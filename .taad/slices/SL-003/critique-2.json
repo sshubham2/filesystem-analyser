@@ -1,0 +1,110 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-003",
+ "stage": "critique",
+ "attempt": 2,
+ "at": "2026-11-17T19:21:28.118Z",
+ "head": "a9d394cb6cde4e10c544f02b5232f537a2c4bd43",
+ "run_id": 11253,
+ "summary": "Attempt 2 answers all seven earlier findings:\n- M1: Compare-StoppedRows has six classes. Rows that are new since the finished run are tallied, non-5 differences are inconclusive, and the invariant is now must-verify.\n- M2: refused-another-code is counted with the leaks, so the verdict fails.\n- m1: Get-RecordByCode writes a null reason wherever the reason holds a separator, and Get-CountsOnly drops strings.\n- m2: the finished part is written as soon as that run is judged, the stopped part in a finally, with the -Force guard.\n- m3: Read-ActedLine parses with a leading space, and a run is partial only when Cancelled with sized '-'.\n- m4: Q-010's check is adopted.\n- m5: panelTop, textsHeight and textsOffset are recorded.\n\nThe new seams check out against the tree:\n- WindowCases.ps1 has exactly 2 lines containing 'taad', and both change, so Q-010's git grep can print nothing.\n- harness.py's Planting._create creates missing parent folders (makedirs, created_dirs), so the re-planted rows can create docs/proof-runs.\n- plants.json already uses insert-after, so the WindowCases.ps1 plants need no harness change.\n- WindowReport says 'measured' holds at most the 'mft' entry, so dropping its id loses nothing.\n- N-005's rule for t and u is at 5726-5734.\n\nFour minors, all new or reintroduced by the rework:\n1. W-002's verdict no longer looks at the report's status. A scan that was refused, could not read its root or wrote no report would end 'held' as proof that nothing was hydrated. Attempt 1 failed that case.\n2. W-003's rig rule for the cut folder drops N-005's 'or never' branch.\n3. Get-W001RootShape can return 'unc', which the writer's allowed set does not hold.\n4. The re-tier to medium contradicts the constraint that every slice but the 'Stop cut short' one keeps the minimal defaults.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "Attempt 2 answers all seven earlier findings:\n- M1: Compare-StoppedRows has six classes. Rows that are new since the finished run are tallied, non-5 differences are inconclusive, and the invariant is now must-verify.\n- M2: refused-another-code is counted with the leaks, so the verdict fails.\n- m1: Get-RecordByCode writes a null reason wherever the reason holds a separator, and Get-CountsOnly drops strings.\n- m2: the finished part is written as soon as that run is judged, the stopped part in a finally, with the -Force guard.\n- m3: Read-ActedLine parses with a leading space, and a run is partial only when Cancelled with sized '-'.\n- m4: Q-010's check is adopted.\n- m5: panelTop, textsHeight and textsOffset are recorded.\n\nThe new seams check out against the tree:\n- WindowCases.ps1 has exactly 2 lines containing 'taad', and both change, so Q-010's git grep can print nothing.\n- harness.py's Planting._create creates missing parent folders (makedirs, created_dirs), so the re-planted rows can create docs/proof-runs.\n- plants.json already uses insert-after, so the WindowCases.ps1 plants need no harness change.\n- WindowReport says 'measured' holds at most the 'mft' entry, so dropping its id loses nothing.\n- N-005's rule for t and u is at 5726-5734.\n\nFour minors, all new or reintroduced by the rework:\n1. W-002's verdict no longer looks at the report's status. A scan that was refused, could not read its root or wrote no report would end 'held' as proof that nothing was hydrated. Attempt 1 failed that case.\n2. W-003's rig rule for the cut folder drops N-005's 'or never' branch.\n3. Get-W001RootShape can return 'unc', which the writer's allowed set does not hold.\n4. The re-tier to medium contradicts the constraint that every slice but the 'Stop cut short' one keeps the minimal defaults.",
+  "findings": [
+   {
+    "id": "n1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "file": "tests/window/WindowCases.ps1",
+    "claim": "W-002's verdict is now 'failed when hydrated or dataFetches is above 0; inconclusive when onlineOnlyBefore is 0', and its contract's FAILED list is hydrated, dataFetches, a rig root left, or a timeout. Nothing looks at the report's status. A scan that ends Refused or RootUnreadable, or an app that exits early with no report, reads none of the files. Its before and after listings agree, hydrated is 0 and dataFetches is 0, so the case ends 'held'. On the maintainer's OneDrive that is a committed no-hydration proof of C8 from a scan that never read the folder. Attempt 1 failed 'on a report not Completed'; the rework dropped it.",
+    "evidence": "Design, W-002 component: 'Verdicts: failed when hydrated or dataFetches is above 0; inconclusive when onlineOnlyBefore is 0.' Contract W-002 error_cases: no status branch.",
+    "fix": "Make W-002 FAILED when there is no report or a non-zero exit, and INCONCLUSIVE when core.status is not 'Completed'. Check this before judging hydrated. Add both to the Get-HydrationTally/verdict Fact."
+   },
+   {
+    "id": "n2",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 5729,
+    "claim": "W-003's rig rule says cutFolderRows counts 'rows for t or u whose first rig open came after the closing line's stopUtc. That is N-005's rule.' N-005 exempts t or u only when the rig first saw it BEFORE the Stop. A row for a leaf the rig never saw also fails there ('first opened after the Stop or never ... is no row'). Such a row is a client-side failure after the rig was killed, recorded with a network code: the regression where a folder read after Stop becomes a row. W-003's wording does not count it.",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 5729,
+     "text": "if ($null -ne $seen -and $seen -lt $stopUtc) {"
+    },
+    "fix": "Count rows for t or u unless the rig first opened that leaf before stopUtc, which includes a leaf it never opened. Simplest: call CheckSeamMain's t/u loop or mirror it. Add the 'never seen' case to the W-003 Fact."
+   },
+   {
+    "id": "n3",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 6251,
+    "claim": "Get-W001RootShape returns local-letter, network-letter, unc or folder. The allowed set adds local-letter and network-letter, which implies the shape is recorded, but it does not add 'unc'. 'folder' is already allowed. If the record carries the shape (in scope or a new key), a W-001 run on a UNC share root throws at the write after its scan, which is the family m1 closed. The design does not say which key holds the shape, so the planned 'every fixed label' Fact catches this only if it enumerates Get-W001RootShape's outputs.",
+    "class_of": "strings the record writer refuses only after the run",
+    "threat": "accident",
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 6251,
+     "text": "$allowed = @('held', 'failed', 'inconclusive', 'whole-drive', 'folder', 'Completed', 'Cancelled', 'RootUnreadable', 'Refused')"
+    },
+    "fix": "Name the key that carries the shape. Add 'unc' to the allowed set, or record the shape only for the two letter shapes. Have the label Fact enumerate Get-W001RootShape's outputs, not a hand list."
+   },
+   {
+    "id": "n4",
+    "severity": "minor",
+    "dimension": "drift-from-design",
+    "nature": "defect",
+    "claim": "The design asks to re-tier the slice ('retier': tier medium) because it edits fitness.yaml and plants.json. The project constraint is decided: 'The slice for \"A folder Stop cut short counts as not reached, not unreadable\" is cut at high risk ... The rest of the project keeps the minimal defaults.' Attempt 1 itself said 'No re-tier is asked' for that reason. The privacy-guard concern is real, but the design already answers it through the re-planted fire and quiet rows and the Fitness and harness runs it requires before review.",
+    "evidence": "Design 'retier': {tier: medium, why: '... A wrong glob or a mis-keyed awaiting_file would silently remove the privacy guard'}. Constraints: '(process) ... The rest of the project keeps the minimal defaults.'",
+    "fix": "Drop the re-tier. If the designer believes the guard move warrants more process, put that to the person as a question instead of re-tiering against a decided constraint."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "Earlier M1 is answered: the unlistable-set invariant is now must-verify, and non-5 differences are inconclusive. Earlier M2 is answered on the repo's own evidence (HeldFolderReasonTests:43).\n\nChecked against the tree:\n- 'measured' holds only an 'mft' entry or none (WindowReport.cs:84-86), so Get-CountsOnly dropping its id leaves the Q-001 figure readable.\n- WindowCases.ps1 has 2 lines matching -i 'taad' (6272, 6367), both changing.\n- The armed and progress acted lines match the design's ' ms=(\\d+) (?:utc|sincearmed)=' (StartupHook.cs:611, 739)."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "n1: W-002 ignores the report's status, so a scan that read nothing holds. A last-write time after the finished run's start also tallies a folder that changed ACL and gained children as newSinceFinished. This loosens the check, but a folder Stop cut short still shows as 995 (FAILED), so that is accepted."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "none: each m1/m3 family is now closed at a seam (Get-RecordByCode, Get-CountsOnly, Read-ActedLine), not by caller discipline."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none of substance. The design itself calls -Force and the six-class split optional, and both are cheap."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "n2: W-003's cut-folder rule drops N-005's 'or never' branch (WindowCases.ps1:5726-5734).\n\nThe -Force guard throws when a SUBST letter's record already holds a 'stopped' part. Whether the engine-planted E003 lines clean up between runs cannot be checked: they are not in the tree, since no tests/window/E00* file exists. Attempt 1 said they restore docs/proof-runs. Noted, not filed."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "The earlier m1 and m2 are answered: the finished part is written early, the stopped part and W-003's record in a finally, and byCode reasons are nulled where they hold a separator. Nothing new, apart from n3's 'unc' label."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "n4: the re-tier contradicts the minimal-defaults constraint.\n\nRe-planting the five rows at docs/proof-runs is consistent with 'only the plant rows that point at .taad/slices are removed'. Q-010 is adopted, and the engine-appended SL-003 entries (fitness.yaml:1495-1524) are taken word for word, with the SL-107 entry deleted."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "n3: 'unc' is missing from the writer's allowed set.\n\nPlants: insert-after is an existing op (plants.json), and Planting._create makes parent folders and records created_dirs (harness.py:422-424), so new-file rows at docs/proof-runs/w001-c-drive.json are plantable and restorable.\n\nNone of the three rules has an xUnit twin, being below the first '# settled by' marker."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "The Facts now cover the six stopped classes, both acted-line forms, the partial rule, a 995 byCode row through the writer, Get-CountsOnly, the root shapes, the labels and the All filter. n1 and n2's branches need adding to the W-002 and W-003 Facts."
+   },
+   {
+    "dimension": "security",
+    "result": "none: records carry no path. Strings are dropped or limited to a fixed set, and reasons holding a separator are nulled. The hook's current= and the provider's path= stay in logs and the console. File names come from a letter and fixed labels only, and fitness rule 1 fences docs/proof-runs/*.json."
+   }
+  ]
+ }
+}

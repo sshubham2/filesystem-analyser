@@ -107,22 +107,36 @@
 # provider holds a folder's read, each beside control runs that press nothing, so that a folder's absence from the panel
 # counts only where a control put it there; -Control runs the controls alone. T-009 is a held folder's reason. W-001
 # (-Root) is a scan's whole panel against the engine's record and an independent open of each row; criterion 3 is W-001
-# on C:\, which a person runs. A case that cannot judge says INCONCLUSIVE and the run exits 3, never 0.
+# on C:\, which a person runs; its record is kept under docs/proof-runs, and with -Stopped a second run, stopped partway, is compared
+# with it (SL-003). W-002 (-IncludeCloud) is a scan that must hydrate no online-only file, on a sync root of its own served by
+# tests/CfProvider or, with -Root, on the maintainer's OneDrive; W-003 (-IncludeNetwork) times Stop to the stopped ending on a share
+# that stopped answering, on the loopback rig or, with -Root -Network -Link, on a real share the maintainer cuts. W-001 to W-003 are
+# proof runs: each writes a counts-only record under docs/proof-runs, and -Case All never runs them. A case that cannot judge says
+# INCONCLUSIVE and the run exits 3, never 0.
 
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('All', 'C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016',
         'L-001', 'L-002', 'L-003', 'L-004', 'M-001', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'N-001', 'N-002', 'N-003', 'N-004',
         'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012', 'T-013', 'T-014', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'R-004',
-        'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-001', 'X-002', 'X-003', 'X-004', 'X-005', 'X-006', 'N-005', 'N-006', 'W-001')]
+        'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-001', 'X-002', 'X-003', 'X-004', 'X-005', 'X-006', 'N-005', 'N-006', 'W-001', 'W-002', 'W-003')]
     [string] $Case,
     [switch] $IncludeNetwork,
     # N-006 registers a cloud sync root (SL-089): like the network cases, it runs only when this is passed.
     [switch] $IncludeCloud,
     # N-005 and N-006 run their control alone, with no Stop (SL-089).
     [switch] $Control,
-    # W-001's root: the drive or folder it scans (SL-089).
+    # The root of W-001, W-002 and W-003: the drive or folder W-001 scans (SL-089), the sync root W-002 scans, the share W-003 stops on.
     [string] $Root,
+    # W-001 only (SL-003): after the finished run, a second run stopped partway, compared with it; and -Force writes a drive
+    # letter's record over one that holds a stopped part.
+    [switch] $Stopped,
+    [switch] $Force,
+    # W-003 on a real share only (SL-003): where the share is, and how the maintainer cuts it. They name the record's file.
+    [ValidateSet('home', 'tailscale')]
+    [string] $Network,
+    [ValidateSet('wifi-off', 'tunnel-down', 'server-asleep')]
+    [string] $Link,
     # R-002's steps to run, of a to g, comma-separated (all of them when left out).
     [ValidatePattern('^[a-g](,[a-g])*$')]
     [string] $Step
@@ -131,7 +145,11 @@ param(
 $ErrorActionPreference = 'Stop'
 if ($Step -and $Case -ne 'R-002') { throw '-Step names steps of R-002 and is for -Case R-002 only' }
 if ($Control -and $Case -notin 'N-005', 'N-006') { throw '-Control is for -Case N-005 or N-006 only' }
-if ($Root -and $Case -ne 'W-001') { throw '-Root is for -Case W-001 only' }
+if ($Root -and $Case -notin 'W-001', 'W-002', 'W-003') { throw '-Root is for -Case W-001, W-002 and W-003 only' }
+if (($Stopped -or $Force) -and $Case -ne 'W-001') { throw '-Stopped and -Force are for -Case W-001 only' }
+if (($Network -or $Link) -and $Case -ne 'W-003') { throw '-Network and -Link are for -Case W-003 only' }
+if ($Case -eq 'W-003' -and ($Network -or $Link) -and -not $Root) { throw '-Network and -Link are for a real share, with -Root' }
+if ($Case -eq 'W-003' -and $Root -and -not ($Network -and $Link)) { throw 'W-003 on a real share needs -Network (home or tailscale) and -Link (wifi-off, tunnel-down or server-asleep)' }
 $R002Steps = if ($Step) { $Step -split ',' } else { @() }
 
 $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -149,9 +167,12 @@ $HookVariables = 'DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG', 'FSA_H
     'FSA_HOOK_EXPLORER_VIEW', 'FSA_HOOK_TREE_STOP', 'FSA_HOOK_CAN_REVEAL', 'FSA_HOOK_VIEWS'
 $HookedCases = 'C-002', 'C-006', 'C-012', 'C-013', 'O-016', 'L-001', 'L-002', 'L-004', 'M-001', 'B-003', 'B-005', 'B-006', 'B-007', 'B-008', 'N-001', 'N-002',
     'T-001', 'T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012', 'T-013', 'T-014', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'R-004',
-    'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005', 'N-005', 'N-006', 'W-001'
-$NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004', 'N-005'
-$CloudCases = 'N-006'
+    'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005', 'N-005', 'N-006', 'W-001', 'W-003'
+$NetworkCases = 'N-001', 'N-002', 'N-003', 'N-004', 'N-005', 'W-003'
+$CloudCases = 'N-006', 'W-002'
+# W-001, W-002 and W-003 (SL-003) are proof runs: each writes a record under docs/proof-runs, and W-002 registers a sync root.
+# A person names them; -Case All never runs them, with -IncludeCloud and -IncludeNetwork or without.
+$ProofCases = 'W-001', 'W-002', 'W-003'
 $CfProviderDll = Join-Path $Repo 'artifacts\cf-provider\CfProvider.dll'
 $RigOnlyCases = 'N-003', 'N-004'
 $KiB64 = 64KB
@@ -5340,6 +5361,7 @@ function Initialize-SeamWin32 {
     if ('FsaWindowCases.Seam' -as [type]) { return }
     Add-Type -TypeDefinition @'
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
@@ -5351,6 +5373,7 @@ namespace FsaWindowCases
         public int Error;
         public bool TimesRead;
         public DateTime CreationUtc;
+        public DateTime LastWriteUtc;
         public DateTime ChangeUtc;
     }
 
@@ -5447,6 +5470,107 @@ namespace FsaWindowCases
                 probe.ChangeUtc = DateTime.FromFileTimeUtc(info.ChangeTime);
             }
             return probe;
+        }
+
+        private static DateTime Utc(long fileTime)
+        {
+            return fileTime <= 0 ? DateTime.MinValue : DateTime.FromFileTimeUtc(fileTime);
+        }
+
+        // A folder's creation, last-write and change times through one open that asks to read attributes only, whatever a
+        // listing of it would be told (SL-003): TimesRead is false, with Error, when that open fails. Opening for attributes
+        // takes no share mode into account, so a folder held without read sharing still answers.
+        public static FolderProbe Times(string folder)
+        {
+            var probe = new FolderProbe();
+            using (SafeFileHandle opened = CreateFile(Extended(folder), ReadAttributes, ShareAll, IntPtr.Zero, OpenExisting, BackupSemantics, IntPtr.Zero))
+            {
+                FileBasicInfo info;
+                if (opened.IsInvalid)
+                {
+                    probe.Error = Marshal.GetLastWin32Error();
+                    return probe;
+                }
+                if (!GetFileInformationByHandleEx(opened, 0, out info, (uint)Marshal.SizeOf(typeof(FileBasicInfo))))
+                {
+                    probe.Error = Marshal.GetLastWin32Error();
+                    return probe;
+                }
+                probe.TimesRead = true;
+                probe.CreationUtc = Utc(info.CreationTime);
+                probe.LastWriteUtc = Utc(info.LastWriteTime);
+                probe.ChangeUtc = Utc(info.ChangeTime);
+            }
+            return probe;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct FindData
+        {
+            public uint FileAttributes;
+            public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+            public uint FileSizeHigh;
+            public uint FileSizeLow;
+            public uint Reserved0;
+            public uint Reserved1;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string FileName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 14)]
+            public string AlternateFileName;
+        }
+
+        [DllImport("kernel32.dll", EntryPoint = "FindFirstFileExW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr FindFirstFileEx(string name, int infoLevel, out FindData data, int searchOp, IntPtr filter, int flags);
+
+        [DllImport("kernel32.dll", EntryPoint = "FindNextFileW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool FindNextFile(IntPtr handle, out FindData data);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool FindClose(IntPtr handle);
+
+        // Every file under root and its attributes (W-002, SL-003), read from directory listings alone: FindFirstFileExW with
+        // the basic info level and a large fetch, on \\?\ paths. No file is ever opened, so no listing can hydrate one. It
+        // descends into plain directories and into directories whose reparse tag is a cloud tag, (tag & 0xFFFF0FFF) ==
+        // 0x9000001A (IO_REPARSE_TAG_CLOUD and CLOUD_1 to CLOUD_F differ in bits 12 to 15 only), and into no other reparse
+        // point. A folder that cannot be listed is skipped. Paths stay in this process's memory.
+        public static Dictionary<string, uint> ListFiles(string root)
+        {
+            var files = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+            var pending = new Stack<string>();
+            pending.Push(root.TrimEnd('\\'));
+            while (pending.Count > 0)
+            {
+                string folder = pending.Pop();
+                FindData data;
+                IntPtr handle = FindFirstFileEx(Extended(folder) + "\\*", 1, out data, 0, IntPtr.Zero, 2);
+                if (handle == new IntPtr(-1))
+                    continue;
+                try
+                {
+                    do
+                    {
+                        string name = data.FileName;
+                        if (name == "." || name == "..")
+                            continue;
+                        string full = folder + "\\" + name;
+                        if ((data.FileAttributes & 0x10) == 0)
+                        {
+                            files[full] = data.FileAttributes;
+                            continue;
+                        }
+                        if ((data.FileAttributes & 0x400) == 0 || (data.Reserved0 & 0xFFFF0FFF) == 0x9000001A)
+                            pending.Push(full);
+                    }
+                    while (FindNextFile(handle, out data));
+                }
+                finally
+                {
+                    FindClose(handle);
+                }
+            }
+            return files;
         }
 
         // The kernel's paged and nonpaged pool in bytes, the whole machine's (GetPerformanceInfo).
@@ -6200,9 +6324,14 @@ function Test-T009 {
 # 3 expects; any other code (32 or 33 from a holder, 2 or 3 from a folder that went, a network code) is a cause that may
 # have ended since the scan, which an open now could not tell from a leak. A code-5 row's folder that is a reparse point
 # is the rig's leftover again. Otherwise it is opened once with the scanner's plain mask, never listed (an open moves no
-# last-access time): gone since is tallied; still refused is what the engine said; opened is a leak, unless the folder
+# last-access time): gone since is tallied; still refused (5) is what the engine said; opened is a leak, unless the folder
 # was made or changed after the scan began (recreated, or its ACL reset, as a concurrent case's cleanup does), which the
-# folder the engine recorded cannot have been. Corpus: tests/window/W001OracleCorpus.json (W001OracleTests).
+# folder the engine recorded cannot have been. Any other refusal is 'refused-another-code' (SL-003 review M2, C4): a folder
+# that still denied the plain open answers 5, because access is checked before sharing (HeldFolderReasonTests), so a code-5
+# row whose plain open now fails with 32 or another code had an ACL that let that open through, the shape of a row whose
+# code came from another call than the plain open. The folder's times are read first through an open that asks for
+# attributes only, whatever the plain open said, so a folder changed after the scan began is 'changed-since-scan' and
+# never a failure. Corpus: tests/window/W001OracleCorpus.json (W001OracleTests).
 function Get-OracleRow($row, [DateTime] $scanStartUtc) {
     if ($row.kind -ceq 'ListedPartway') { return 'partway' }
     if ($row.kind -ceq 'OpenedNothingListed') { return 'opened-nothing-listed' }
@@ -6213,7 +6342,12 @@ function Get-OracleRow($row, [DateTime] $scanStartUtc) {
     if ($attributes -ne -1 -and ($attributes -band 0x400) -ne 0) { return 'leftover-reparse' }
     $probe = [FsaWindowCases.Seam]::Probe([string]$row.path)
     if ($probe.Error -in 2, 3) { return 'gone-since-scan' }
-    if ($probe.Error -ne 0) { return 'refused' }
+    if ($probe.Error -eq 5) { return 'refused' }
+    if ($probe.Error -ne 0) {
+        $times = [FsaWindowCases.Seam]::Times([string]$row.path)
+        if ($times.TimesRead -and ($times.CreationUtc -gt $scanStartUtc -or $times.ChangeUtc -gt $scanStartUtc)) { return 'changed-since-scan' }
+        return 'refused-another-code'
+    }
     if ($probe.TimesRead -and ($probe.CreationUtc -gt $scanStartUtc -or $probe.ChangeUtc -gt $scanStartUtc)) { return 'changed-since-scan' }
     'leak'
 }
@@ -6245,10 +6379,142 @@ function Get-W001Verdict($controls, [int] $leaks, [int] $failures) {
     'held'
 }
 
-# Writes W-001's record as JSON: integers, booleans, fixed names, the commit, and reasons from the panel's own table.
-# Any other string is a writer bug, and the write is refused: a path must never reach a committed file (Q-016).
+# What fails W-001's verdict among the oracle's classes, as the leak argument of Get-W001Verdict: a code-5 row that opens,
+# and a code-5 row whose plain open now fails with another code (SL-003 review M2). Never 'held' while either is above 0.
+function Get-LeakCount($classes) { [int]$classes['leak'] + [int]$classes['refused-another-code'] }
+
+# How many rows have a reason that does not belong to their code (SL-003, C4): a row whose reason differs from that of the
+# first row with the same code (the reason is a function of the code alone), and a row whose reason ends '(Windows error N)'
+# with an N that is not its own code. Both words and codes come from the one record, so this sees a mixed-up row and never
+# a code taken from the wrong call: Get-OracleRow's 'refused-another-code' is the check that can.
+function Get-ReasonCodeMismatches($rows) {
+    $first = @{}
+    $count = 0
+    foreach ($row in @($rows)) {
+        $code = [int]$row.code
+        $reason = [string]$row.reason
+        if (-not $first.ContainsKey($code)) { $first[$code] = $reason }
+        $other = $reason -cne $first[$code]
+        $named = $reason -cmatch '\(Windows error (\d+)\)$' -and [long]$Matches[1] -ne $code
+        if ($other -or $named) { $count++ }
+    }
+    $count
+}
+
+# ---- Proof-run records (SL-003): counts, codes and reasons, written where they are kept ----
+
+# W-001's root as one of four shapes: a local drive letter, a network drive letter (DriveType Network, read with no open of
+# the drive), a UNC share root, or a folder. 'C:' and 'C:\' are both the letter. Only the two letter shapes are kept under
+# docs/proof-runs, and coverage is required of a local letter only (Q-003: a mapped letter's panel is not decided).
+function Get-W001RootShape([string] $root, [scriptblock] $driveTypeOf = { param($letter) [System.IO.DriveInfo]::new($letter).DriveType }) {
+    if ($root -cmatch '^[A-Za-z]:\\?$') {
+        if ([string](& $driveTypeOf $root.Substring(0, 1)) -ceq 'Network') { return 'network-letter' }
+        return 'local-letter'
+    }
+    if ($root -cmatch '^\\\\' -and [System.IO.Path]::GetPathRoot($root).TrimEnd('\') -ieq $root.TrimEnd('\')) { return 'unc' }
+    'folder'
+}
+
+# Where a proof run's record is kept: docs/proof-runs/w001-<letter>-drive.json for a letter root, artifacts/w001-run.json for
+# a UNC root or a folder, and docs/proof-runs/w002-<variant>.json or w003-<variant>.json for the other two cases, the variant a
+# fixed label the case builds (never a root's text). Nothing a person typed becomes a file name.
+function Get-ProofRecordPath([string] $repo, [string] $case, [string] $shape, [string] $root, [string] $variant = '') {
+    $runs = [System.IO.Path]::Combine($repo, 'docs\proof-runs')
+    if ($case -ceq 'W-001') {
+        if ($shape -ceq 'local-letter' -or $shape -ceq 'network-letter') { return [System.IO.Path]::Combine($runs, ('w001-{0}-drive.json' -f $root.Substring(0, 1).ToLowerInvariant())) }
+        return [System.IO.Path]::Combine($repo, 'artifacts\w001-run.json')
+    }
+    if ($case -ceq 'W-002' -or $case -ceq 'W-003') {
+        if ($variant -cnotmatch '^[a-z]+(-[a-z]+)*$') { throw "a proof record's variant is a fixed lower-case label, not '$variant'" }
+        return [System.IO.Path]::Combine($runs, ('{0}-{1}.json' -f $case.ToLowerInvariant().Replace('-', ''), $variant))
+    }
+    throw "no proof record is kept for $case"
+}
+
+# One string a case puts in a record: null for anything missing or empty, so that a run with no report writes a null where
+# [string]$null would write '', which Write-W001Record refuses (SL-003 review m1).
+function Get-RecordString($value) {
+    if ($null -eq $value -or [string]::IsNullOrWhiteSpace([string]$value)) { return $null }
+    [string]$value
+}
+
+# A rounded whole number, or null.
+function Get-RoundedOrNull($value) {
+    if ($null -eq $value) { return $null }
+    [long][Math]::Round([double]$value)
+}
+
+# byCode: each code once with how many rows have it and, for the first row, its reason, but only when that reason holds no
+# slash or backslash (Windows' own message for 995, 'The I/O operation ...', does, and 995 is the very row Stop's check hunts):
+# a reason the writer would refuse is written as null, so the writer never refuses what a run found (SL-003 review m1).
+function Get-RecordByCode($rows) {
+    $byCode = @(@($rows) | Group-Object -Property code | Sort-Object { [int]$_.Name } | ForEach-Object {
+            $reason = [string]$_.Group[0].reason
+            [ordered]@{ code = [int]$_.Name; count = $_.Count; reason = $(if ([string]::IsNullOrWhiteSpace($reason) -or $reason -match '[\\/]') { $null } else { $reason }) }
+        })
+    , $byCode # an array whatever the count: one code alone must not be written as an object
+}
+
+# What is kept of a value at any depth: every number, boolean and null, and no string (so no panel text, which is wording,
+# and nothing that could be a name). A dictionary or object keeps the entries that are kept; a list keeps the items that are.
+function Test-CountsOnlyKept($value) {
+    if ($null -eq $value -or $value -is [bool]) { return $true }
+    if ($value -is [byte] -or $value -is [sbyte] -or $value -is [int16] -or $value -is [uint16] -or $value -is [int] -or $value -is [uint32] -or $value -is [long] -or $value -is [uint64] -or $value -is [double] -or $value -is [single] -or $value -is [decimal]) { return $true }
+    if ($value -is [string] -or $value -is [char] -or $value -is [DateTime]) { return $false }
+    $value -is [System.Collections.IDictionary] -or $value -is [System.Management.Automation.PSCustomObject] -or $value -is [System.Collections.IEnumerable]
+}
+
+function Get-CountsOnly($value) {
+    if (-not (Test-CountsOnlyKept $value)) { return $null }
+    if ($value -is [System.Management.Automation.PSCustomObject]) {
+        $entries = [ordered]@{}
+        foreach ($property in $value.PSObject.Properties) { $entries[$property.Name] = $property.Value }
+        $value = $entries
+    }
+    if ($value -is [System.Collections.IDictionary]) {
+        $kept = [ordered]@{}
+        foreach ($key in @($value.Keys)) {
+            if (Test-CountsOnlyKept $value[$key]) { $kept[[string]$key] = Get-CountsOnly $value[$key] }
+        }
+        return $kept
+    }
+    if ($value -is [System.Collections.IEnumerable]) {
+        $items = [System.Collections.Generic.List[object]]::new()
+        foreach ($item in $value) {
+            if (Test-CountsOnlyKept $item) { $items.Add((Get-CountsOnly $item)) }
+        }
+        return , $items.ToArray()
+    }
+    $value
+}
+
+# The coverage panel's figures as the record keeps them (Q-001, Q-002): the report's coverage with no string in it, its folders
+# as two counts (their only data is their kind, a word), and where the panel stands inside the outcome's texts as whole
+# numbers, with no check on them. Null when the report shows no panel.
+function Get-CoverageRecord($report) {
+    $cover = $report.coverage
+    if ($null -eq $cover) { return $null }
+    $record = Get-CountsOnly $cover
+    $unreadable = 0
+    $notScanned = 0
+    foreach ($folder in @($cover.folders)) {
+        if ($folder.kind -ceq 'unreadable') { $unreadable++ }
+        elseif ($folder.kind -ceq 'not-scanned') { $notScanned++ }
+    }
+    $record['folders'] = [ordered]@{ unreadable = $unreadable; notScanned = $notScanned }
+    $record['panelTop'] = Get-RoundedOrNull $report.window.CoveragePanel.top
+    $record['textsHeight'] = Get-RoundedOrNull $report.window.OutcomeTexts.actualHeight
+    $record['textsOffset'] = Get-RoundedOrNull $report.window.OutcomeTexts.verticalOffset
+    $record
+}
+
+# Writes a proof record as JSON: integers, booleans, fixed names, the commit, and reasons from the panel's own table.
+# Any other string is a writer bug, and the write is refused: a path must never reach a committed file (Q-016). The callers
+# pass it only what it accepts (Get-RecordByCode, Get-CountsOnly, Get-RecordString), so a refusal is never a result of a run.
 function Write-W001Record([string] $file, $record, [string[]] $reasons) {
-    $allowed = @('held', 'failed', 'inconclusive', 'whole-drive', 'folder', 'Completed', 'Cancelled', 'RootUnreadable', 'Refused')
+    $allowed = @('held', 'failed', 'inconclusive', 'whole-drive', 'folder', 'Completed', 'Cancelled', 'RootUnreadable', 'Refused',
+        'completed', 'cancelled', 'root-unreadable', 'refused', 'local-letter', 'network-letter', 'unc', 'rig', 'sync-root',
+        'home', 'tailscale', 'stall', 'wifi-off', 'tunnel-down', 'server-asleep')
     $strays = [System.Collections.Generic.List[string]]::new()
     $walk = {
         param($value)
@@ -6259,20 +6525,218 @@ function Write-W001Record([string] $file, $record, [string[]] $reasons) {
         elseif ($value -is [System.Collections.IEnumerable]) { foreach ($v in $value) { & $walk $v } }
     }
     & $walk $record
-    if ($strays.Count -gt 0) { throw "W-001's record holds $($strays.Count) strings that are not counts, codes or reasons; nothing was written" }
+    if ($strays.Count -gt 0) { throw "the record holds $($strays.Count) strings that are not counts, codes or reasons; nothing was written" }
     [void][System.IO.Directory]::CreateDirectory((Split-Path -Parent $file))
     [System.IO.File]::WriteAllText($file, ($record | ConvertTo-Json -Depth 6) + "`n")
 }
 
-# W-001 (-Root, SL-089 criterion 3): the panel of a scan of -Root against the engine's record, as an ordinary user, with
-# no hook pressing anything (rows mode) and no deadline but the 1,200 s the wait allows. The dump's rows, the header's N
-# and core.unreadable are one number, with no folder twice and no row without a reason; every NothingListed row with
-# code 5 is put to the oracle (Get-OracleRow), with the checker's own controls beside it, and none may open. The kernel's
-# pool is read before and after, the record is printed, and for a whole drive it is written to
-# .taad/slices/SL-089/c-drive-run.json (counts, codes and reasons only), else to artifacts/w001-run.json. Criterion 3 is a
-# whole C:\ scan: a person runs it (review M8), since a cold scan of C: has measured about 537 MB of kernel pool, past the
-# engine's 0.5 GB per-run guard, even with the container layer store left out (SL-095). Refuses to run elevated, and for a
-# whole drive requires the wcifs-layer-store precaution on.
+# Write-W001Record as a case calls it after a run that took minutes or an hour: a refusal is reported as the writer bug it is,
+# beside what the run found, and never replaces it (SL-003 review m2).
+function Save-ProofRecord([string] $file, $record, [string[]] $reasons) {
+    try {
+        Write-W001Record $file $record $reasons
+        Write-Host "        record: $file"
+    }
+    catch {
+        Check $false "the record writer refused the record, which is a writer bug and no result of the run: $($_.Exception.Message)"
+    }
+}
+
+# A record file that already holds a 'stopped' part, which a run without -Stopped would write over (SL-003 review m2).
+function Test-KeptStoppedPart([string] $file) {
+    if (-not [System.IO.File]::Exists($file)) { return $false }
+    try { $kept = [System.IO.File]::ReadAllText($file) | ConvertFrom-Json } catch { return $false }
+    $null -ne $kept.PSObject.Properties['stopped']
+}
+
+# ---- W-001 -Stopped: a run stopped partway against the finished one (SL-003, criterion 5) ----
+
+# The hook's 'acted mode=stop' line, in both of its forms: the progress trigger's, 'acted mode=stop atfolders=N folders=M
+# sized=S current=<path> ms=n utc=<time>', and the armed form's, 'acted mode=stop enabled=b visible=b ms=n sincearmed=n'.
+# Folders is the count the scan had reached (' folders=', whose leading space keeps 'atfolders=' from being read as it),
+# Sized the number of files sized or null for '-' (the trigger came while folders were still being listed), and Ms the hook's
+# clock, read from the end of the line so that a path in current= cannot supply it. Null when there is no such line.
+function Read-ActedLine($log) {
+    $line = @(@($log) | Where-Object { $_ -is [string] -and $_.StartsWith('acted mode=stop ') })[0]
+    if ($null -eq $line) { return $null }
+    $folders = if ($line -cmatch ' folders=(\d+) ') { [long]$Matches[1] } else { $null }
+    $sized = if ($line -cmatch ' sized=(\S+) ') { $Matches[1] } else { $null }
+    $ms = if ($line -cmatch ' ms=(\d+) (?:utc=\S+|sincearmed=\d+)\s*$') { [long]$Matches[1] } else { $null }
+    [pscustomobject]@{
+        Folders = $folders
+        Sized   = $(if ($null -eq $sized -or $sized -ceq '-') { $null } elseif ($sized -cmatch '^\d+$') { [long]$sized } else { [long]-1 })
+        Ms      = $ms
+    }
+}
+
+# A stopped run is partial only when Stop came while folders were still being listed: it ended Cancelled, and the hook's line
+# gives a folder count with sized '-'. A trigger met in the sizing pass cut no folder short, and a scan that ended first had
+# no Stop at all, so neither can show what Stop does to a folder.
+function Test-StoppedPartial([string] $status, $acted) {
+    $status -ceq 'Cancelled' -and $null -ne $acted -and $null -ne $acted.Folders -and $null -eq $acted.Sized
+}
+
+# A folder's creation, last-write and change times, read through an open that asks for attributes only (NTFS grants it on a
+# folder whose parent lists, even when the folder itself does not): Read is false when nothing could be read. When that open
+# fails the creation and last-write times come from the folder's own information, with no change time.
+function Get-FolderTimes([string] $path) {
+    $t = [FsaWindowCases.Seam]::Times($path)
+    if ($t.TimesRead) { return [pscustomobject]@{ Read = $true; CreationUtc = $t.CreationUtc; LastWriteUtc = $t.LastWriteUtc; ChangeUtc = $t.ChangeUtc } }
+    $info = [System.IO.DirectoryInfo]::new('\\?\' + $path)
+    if ($info.Exists) { return [pscustomobject]@{ Read = $true; CreationUtc = $info.CreationTimeUtc; LastWriteUtc = $info.LastWriteTimeUtc; ChangeUtc = $null } }
+    [pscustomobject]@{ Read = $false }
+}
+
+# Each row of a stopped run against the finished run's rows, by path (case ignored), in one of these classes:
+#   Matched          the same path with the same kind and code
+#   Aborted          code 995: a folder Stop cut short, which must never be recorded (Scanner.FolderDone)
+#   NewSinceFinished a path the finished run lacks, whose folder was created or written or changed after the finished run began
+#   NotInFinished    a code-5 path the finished run lacks, for a folder that was there before it: the finished walk reached it
+#   CodeChanged      the same path, both code 5, another kind
+#   OtherCodeDiffers a difference that a change in the machine can explain: a path the finished run lacks with a code other than
+#                    5, the same path with a code other than 5 on either side or another kind, and a path whose times could not
+#                    be read at all (the folder is gone, or refuses even that)
+# $timesOf is the folder's times (Get-FolderTimes); a test gives it a stub. SL-003 review M1: only the first three kinds of
+# difference fail a run, because a provider's errors on the CrossDevice or OneDrive roots can come and go in the hour between.
+function Compare-StoppedRows($finished, $stopped, [DateTime] $finishedStartUtc, [scriptblock] $timesOf = { param($path) Get-FolderTimes $path }) {
+    $known = @{}
+    foreach ($row in @($finished)) { $known[[string]$row.path] = $row }
+    $result = [ordered]@{ Aborted = 0; NotInFinished = 0; NewSinceFinished = 0; OtherCodeDiffers = 0; CodeChanged = 0; Matched = 0; Offenders = [System.Collections.Generic.List[string]]::new() }
+    foreach ($row in @($stopped)) {
+        $path = [string]$row.path
+        $code = [int]$row.code
+        if ($code -eq 995) { $result.Aborted++; $result.Offenders.Add("aborted: $path"); continue }
+        if ($known.ContainsKey($path)) {
+            $was = $known[$path]
+            if ($row.kind -ceq $was.kind -and $code -eq [int]$was.code) { $result.Matched++; continue }
+            if ($code -ne 5 -or [int]$was.code -ne 5) { $result.OtherCodeDiffers++; $result.Offenders.Add("code or kind differs ($($was.kind) $($was.code) then $($row.kind) $code): $path") }
+            else { $result.CodeChanged++; $result.Offenders.Add("kind changed ($($was.kind) then $($row.kind)): $path") }
+            continue
+        }
+        $times = & $timesOf $path
+        if (-not $times.Read) { $result.OtherCodeDiffers++; $result.Offenders.Add("not in the finished run, and its times cannot be read: $path"); continue }
+        if ($times.CreationUtc -gt $finishedStartUtc -or $times.LastWriteUtc -gt $finishedStartUtc -or ($null -ne $times.ChangeUtc -and $times.ChangeUtc -gt $finishedStartUtc)) { $result.NewSinceFinished++; continue }
+        if ($code -eq 5) { $result.NotInFinished++; $result.Offenders.Add("code 5, not in the finished run: $path") }
+        else { $result.OtherCodeDiffers++; $result.Offenders.Add("code $code, not in the finished run: $path") }
+    }
+    [pscustomobject]$result
+}
+
+# The stopped run's verdict: failed on a folder Stop cut short, a code-5 folder the finished run lacks, or a code-5 folder of
+# another kind; inconclusive on a difference the machine can explain, and when no run was partial (nothing was cut, so
+# nothing is shown); otherwise held. A folder new since the finished run is tallied and never decides.
+function Get-StoppedVerdict($comparison, [bool] $partial) {
+    if ($comparison.Aborted -gt 0 -or $comparison.NotInFinished -gt 0 -or $comparison.CodeChanged -gt 0) { return 'failed' }
+    if ($comparison.OtherCodeDiffers -gt 0 -or -not $partial) { return 'inconclusive' }
+    'held'
+}
+
+# The second run of W-001 -Stopped. Stop is asked for at half the folders the finished run counted, by the hook's progress
+# trigger, with the rows dump on; a run that was not partial (the trigger met while sizing, or never) is repeated at half that
+# count, three runs in all, and then ends inconclusive. The comparison, and the stopped part of the record, are written
+# whatever happens: in a finally, with verdict 'failed' when the run threw or timed out.
+function Invoke-W001StoppedRun([string] $case, $finished, $finishedRows, [DateTime] $finishedStartUtc, $record, [string] $file, [string[]] $reasons) {
+    $at = [Math]::Max(1L, [long][Math]::Floor([long]$finished.Report.core.folders / 2))
+    $mark = $script:Failures.Count
+    $run = $null
+    $acted = $null
+    $dump = $null
+    $comparison = $null
+    $used = $at
+    $attempts = 0
+    $partial = $false
+    $verdict = 'failed'
+    try {
+        for ($attempt = 1; $attempt -le 3 -and -not $partial; $attempt++) {
+            $attempts = $attempt
+            $used = $at
+            Write-Output "        stopped run ${attempt}: Stop at $at folders"
+            $run = Invoke-HookedRun 'stop' $Root (Join-Path $case "stopped-$attempt.json") @{ FSA_HOOK_ROWS = '1'; FSA_HOOK_AT_FOLDERS = [string]$at } 3600
+            foreach ($line in @($run.Log | Where-Object { $_ -and -not $_.StartsWith('{') })) { Write-Output "        hook: $line" }
+            $acted = Read-ActedLine $run.Log
+            $status = if ($null -ne $run.Report) { [string]$run.Report.core.status } else { $null }
+            $partial = Test-StoppedPartial $status $acted
+            if (-not $partial) {
+                Write-Output "        stopped run ${attempt} was not partial (status $status, sized $(if ($null -ne $acted) { Show $acted.Sized } else { 'no acted line' })): Stop at half as many folders"
+                $at = [Math]::Max(1L, [long][Math]::Floor($at / 2))
+            }
+        }
+        CheckEqual '0' $run.Exit 'stopped run: exit code'
+        Check ($null -ne $run.Report) 'stopped run: a report was written'
+        if ($partial) {
+            $dump = Read-RowsDump $run.Log
+            CheckPanelAgrees $run.Report $dump 'W-001 stopped'
+            $comparison = Compare-StoppedRows $finishedRows $dump.Rows $finishedStartUtc
+            Write-Output "        stopped run: $($dump.Rows.Count) rows against the finished run's $(@($finishedRows).Count): $($comparison.Matched) the same, $($comparison.NewSinceFinished) new since it began, $($comparison.NotInFinished) code 5 and not in it, $($comparison.CodeChanged) of another kind, $($comparison.Aborted) cut short (995), $($comparison.OtherCodeDiffers) another difference"
+            foreach ($line in $comparison.Offenders) { Write-Output "        stopped run: $line" }
+            Check ($comparison.Aborted -eq 0) "no row of the stopped run is a folder Stop cut short, which is code 995 ($($comparison.Aborted) are)"
+            Check ($comparison.NotInFinished -eq 0) "every code-5 folder of the stopped run's tab that existed before the finished run began is in the finished run's tab ($($comparison.NotInFinished) are not)"
+            Check ($comparison.CodeChanged -eq 0) "no folder of the stopped run's tab is code 5 in both runs with another kind ($($comparison.CodeChanged) are)"
+            if ($comparison.OtherCodeDiffers -gt 0) { Inconclusive "W-001 -Stopped: $($comparison.OtherCodeDiffers) rows differ from the finished run's in a way the machine can explain, so the subset is not decided" }
+            $verdict = Get-StoppedVerdict $comparison $true
+        }
+        else {
+            Inconclusive "W-001 -Stopped: none of $attempts stopped runs was partial, so no folder was cut short and nothing is shown"
+            $verdict = 'inconclusive'
+        }
+        if ($script:Failures.Count -gt $mark) { $verdict = 'failed' }
+    }
+    catch {
+        $verdict = 'failed'
+        throw
+    }
+    finally {
+        $record['stopped'] = New-StoppedPart $run $acted $dump $comparison $used $attempts $verdict
+        Save-ProofRecord $file $record $reasons
+    }
+}
+
+# The 'stopped' part of W-001's record, from whatever the stopped run left: a run that timed out or threw has no report, no
+# acted line, no rows and no comparison, and its status and outcome are then null (never ''), its counts null, its verdict as
+# given ('failed'), so that the part is always one the writer accepts (SL-003 review m2).
+function New-StoppedPart($run, $acted, $dump, $comparison, [long] $atFolders, [int] $attempts, [string] $verdict) {
+    $reported = $null -ne $run -and $null -ne $run.Report
+    [ordered]@{
+        status           = Get-RecordString $(if ($reported) { $run.Report.core.status })
+        outcome          = Get-RecordString $(if ($reported) { $run.Report.outcome })
+        atFolders        = $atFolders
+        foldersAtStop    = $(if ($null -ne $acted) { $acted.Folders } else { $null })
+        sizedAtStop      = $(if ($null -ne $acted) { $acted.Sized } else { $null })
+        attempts         = $attempts
+        folders          = $(if ($reported) { [long]$run.Report.core.folders } else { $null })
+        rows             = $(if ($null -ne $dump) { @($dump.Rows).Count } else { $null })
+        notInFinished    = $(if ($null -ne $comparison) { $comparison.NotInFinished } else { $null })
+        newSinceFinished = $(if ($null -ne $comparison) { $comparison.NewSinceFinished } else { $null })
+        otherCodeDiffers = $(if ($null -ne $comparison) { $comparison.OtherCodeDiffers } else { $null })
+        codeChanged      = $(if ($null -ne $comparison) { $comparison.CodeChanged } else { $null })
+        aborted          = $(if ($null -ne $comparison) { $comparison.Aborted } else { $null })
+        verdict          = $verdict
+    }
+}
+
+# What a whole local drive's report must show at its ending (SL-003, criterion 1): the outcome 'completed', the coverage figures,
+# and the coverage panel on screen. Each that is missing is one gap, named; none is the report's "held".
+function Get-WholeDriveReportGaps($report) {
+    $gaps = [System.Collections.Generic.List[string]]::new()
+    if ([string]$report.outcome -cne 'completed') { $gaps.Add("the outcome is $(Show $report.outcome), not 'completed'") }
+    if ($null -eq $report.coverage) { $gaps.Add('the report carries no coverage') }
+    if ($report.window.CoveragePanel.visible -ne $true) { $gaps.Add('the coverage panel is not on screen') }
+    $gaps.ToArray() # callers wrap it in @(): no gap is an empty array, not one element
+}
+
+# W-001 (-Root, SL-089 criterion 3, SL-003): the panel of a scan of -Root against the engine's record, as an ordinary user, with
+# no hook pressing anything (rows mode) and no deadline but the 3,600 s the wait allows (a cold whole-C: scan has taken 1,299 s
+# before the per-file size pass existed, and a timeout writes no report). The dump's rows, the header's N and core.unreadable are
+# one number, with no folder twice and no row without a reason; every NothingListed row with code 5 is put to the oracle
+# (Get-OracleRow), with the checker's own controls beside it, and none may open or fail the plain open with another code. On a
+# local drive letter the scan must end 'completed' with the coverage panel on screen, and every row's reason must belong to its
+# code. The kernel's pool is read before and after, the record is printed, and it is written as soon as this run is judged:
+# for a drive letter to docs/proof-runs/w001-<letter>-drive.json, else to artifacts/w001-run.json (counts, codes and reasons
+# only). With -Stopped a second run follows: Stop at half the folders, its tab compared with this run's (Invoke-W001StoppedRun),
+# its part written to the same file. A letter run without -Stopped refuses, before scanning, to write over a record that holds
+# a stopped part, unless -Force is given. Criterion 3 is a whole C:\ scan: a person runs it (review M8), since a cold scan of C:
+# has measured about 537 MB of kernel pool, past the engine's 0.5 GB per-run guard, even with the container layer store left out
+# (SL-095). Refuses to run elevated, and for a whole drive requires the wcifs-layer-store precaution on.
 function Test-W001 {
     if (-not $Root) { throw 'W-001 needs -Root, the drive or folder it scans: C:\ for criterion 3, a whole-drive scan a person runs' }
     if (-not [System.IO.Directory]::Exists($Root)) { throw "W-001: $Root is not a folder" }
@@ -6281,7 +6745,12 @@ function Test-W001 {
         Inconclusive 'W-001 refuses to run elevated: an elevated token opens folders an ordinary user cannot'
         return
     }
+    $shape = Get-W001RootShape $Root
     $wholeDrive = [System.IO.Path]::GetPathRoot($Root).TrimEnd('\') -ieq $Root.TrimEnd('\')
+    $file = Get-ProofRecordPath $Repo 'W-001' $shape $Root
+    if (($shape -ceq 'local-letter' -or $shape -ceq 'network-letter') -and -not $Stopped -and -not $Force -and (Test-KeptStoppedPart $file)) {
+        throw "W-001: $file holds a stopped part that this run, without -Stopped, would write over; pass -Stopped to make both runs again, or -Force to write over it"
+    }
     $case = New-CaseFolder
     $controls = $null
     $before = $script:Failures.Count
@@ -6291,7 +6760,7 @@ function Test-W001 {
         $poolBefore = [FsaWindowCases.Seam]::KernelPool()
         $scanStart = [DateTime]::UtcNow
         $report = Join-Path $case 'report.json'
-        $run = Invoke-HookedRun 'rows' $Root $report @{ FSA_HOOK_ROWS = '1' } 1200
+        $run = Invoke-HookedRun 'rows' $Root $report @{ FSA_HOOK_ROWS = '1' } 3600
         $poolAfter = [FsaWindowCases.Seam]::KernelPool()
         foreach ($line in @($run.Log | Where-Object { $_ -and -not $_.StartsWith('{') })) { Write-Output "        hook: $line" }
         Write-Output ('        kernel pool: paged {0:N0} -> {1:N0} MB, nonpaged {2:N0} -> {3:N0} MB' -f ($poolBefore[0] / 1MB), ($poolAfter[0] / 1MB), ($poolBefore[1] / 1MB), ($poolAfter[1] / 1MB))
@@ -6299,6 +6768,10 @@ function Test-W001 {
         Check ($null -ne $run.Report) 'a report was written'
         if ($null -eq $run.Report) { return }
         CheckEqual 'Completed' $run.Report.core.status 'core.status'
+        if ($shape -ceq 'local-letter') {
+            $gaps = @(Get-WholeDriveReportGaps $run.Report)
+            Check ($gaps.Count -eq 0) "a whole local drive ends completed with the coverage panel on screen and its figures in the report ($($gaps -join '; '))"
+        }
         if ($wholeDrive) {
             $guard = @($run.Report.workarounds | Where-Object id -ceq 'wcifs-layer-store')
             Check ($guard.Count -eq 1 -and $guard[0].on -eq $true) 'the wcifs-layer-store precaution was on: a whole drive is scanned only with the container layer store left out (review M8)'
@@ -6316,29 +6789,34 @@ function Test-W001 {
             $class = Get-OracleRow $row $scanStart
             $classes[$class] = 1 + [int]$classes[$class]
             if ($class -ceq 'leak') { Write-Output "        LEAK: a row with code 5 that opens: $($row.path)" }
+            if ($class -ceq 'refused-another-code') { Write-Output "        ANOTHER CODE: a row with code 5 whose folder now fails the plain open with another code: $($row.path)" }
         }
-        $opened = [int]$classes['refused'] + [int]$classes['leak'] + [int]$classes['changed-since-scan'] + [int]$classes['gone-since-scan']
+        $another = [int]$classes['refused-another-code']
+        $opened = [int]$classes['refused'] + [int]$classes['leak'] + [int]$classes['changed-since-scan'] + [int]$classes['gone-since-scan'] + $another
         $tallied = [int]$classes['leftover-363'] + [int]$classes['leftover-reparse'] + [int]$classes['other-code']
         CheckEqual $nothing.Count ($opened + $tallied) 'every NothingListed row was opened by the oracle or tallied by code, none skipped (review M2)'
         $codeFive = @($nothing | Where-Object { [int]$_.code -eq 5 }).Count
         CheckEqual $codeFive ($opened + [int]$classes['leftover-reparse']) 'the oracle took every code-5 row it was given'
-        $leaks = [int]$classes['leak']
-        Check ($leaks -eq 0) "no row is a folder that opens: none was listed in full ($leaks open)"
+        $leaks = Get-LeakCount $classes
+        Check ([int]$classes['leak'] -eq 0) "no row is a folder that opens: none was listed in full ($([int]$classes['leak']) open)"
+        Check ($another -eq 0) "no code-5 row is a folder whose plain open now fails with another code: its code would be another call's (C4) ($another do)"
+        $mismatches = Get-ReasonCodeMismatches $rows
+        if ($shape -ceq 'local-letter') { Check ($mismatches -eq 0) "every row's reason belongs to its code ($mismatches do not)" }
+        else { Write-Output "        rows whose reason does not belong to their code: $mismatches (recorded, not required of this root)" }
 
-        $byCode = @($rows | Group-Object -Property code | Sort-Object { [int]$_.Name } | ForEach-Object {
-                [ordered]@{ code = [int]$_.Name; count = $_.Count; reason = [string]$_.Group[0].reason }
-            })
         $other = @($nothing | Where-Object { [int]$_.code -notin 5, 363 } | Group-Object -Property code | Sort-Object { [int]$_.Name } | ForEach-Object {
                 [ordered]@{ code = [int]$_.Name; count = $_.Count }
             })
         $verdict = Get-W001Verdict $controls $leaks ($script:Failures.Count - $before)
         $commit = (& git -C $Repo rev-parse HEAD 2>$null | Select-Object -First 1)
         $record = [ordered]@{
-            commit                 = [string]$commit
+            commit                 = Get-RecordString $commit
             scope                  = if ($wholeDrive) { 'whole-drive' } else { 'folder' }
+            rootShape              = $shape
             elevated               = [bool]$dump.Closing.elevated
             checkerElevated        = [bool](Test-Elevated)
-            status                 = [string]$run.Report.core.status
+            status                 = Get-RecordString $run.Report.core.status
+            outcome                = Get-RecordString $run.Report.outcome
             elapsedMs              = [long]$run.Report.core.elapsedMs
             folders                = [long]$run.Report.core.folders
             files                  = [long]$run.Report.core.files
@@ -6349,12 +6827,15 @@ function Test-W001 {
             notScanned             = $dump.NotScanned.Count
             duplicates             = @($rows | Group-Object -Property path -CaseSensitive | Where-Object Count -gt 1).Count
             emptyReasons           = @($rows | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.reason) }).Count
+            reasonCodeMismatches   = $mismatches
             byKind                 = [ordered]@{ nothingListed = $nothing.Count; openedNothingListed = $openedFailed.Count; listedPartway = $partway.Count }
-            byCode                 = $byCode
+            byCode                 = Get-RecordByCode $rows
+            coverage               = Get-CoverageRecord $run.Report
             oracle                 = [ordered]@{
                 opened                  = $opened
                 stillRefused            = [int]$classes['refused']
-                openRefusedButOpenable  = $leaks
+                openRefusedButOpenable  = [int]$classes['leak']
+                refusedAnotherCode      = $another
                 changedSinceScanStart   = [int]$classes['changed-since-scan']
                 goneSinceScanStart      = [int]$classes['gone-since-scan']
                 leftoverRows            = [ordered]@{ code363 = [int]$classes['leftover-363']; reparse = [int]$classes['leftover-reparse'] }
@@ -6364,16 +6845,344 @@ function Test-W001 {
             kernelPoolBytes        = [ordered]@{ pagedBefore = $poolBefore[0]; pagedAfter = $poolAfter[0]; nonpagedBefore = $poolBefore[1]; nonpagedAfter = $poolAfter[1] }
             verdict                = $verdict
         }
-        $file = if ($wholeDrive -and $Root.StartsWith('C:', [System.StringComparison]::OrdinalIgnoreCase)) { Join-Path $Repo '.taad\slices\SL-089\c-drive-run.json' } else { Join-Path $Repo 'artifacts\w001-run.json' }
-        Write-W001Record $file $record @($rows | ForEach-Object { [string]$_.reason } | Sort-Object -Unique)
-        Write-Output "        record: $file"
+        $reasons = @($rows | ForEach-Object { [string]$_.reason } | Sort-Object -Unique)
+        Save-ProofRecord $file $record $reasons
         ($record | ConvertTo-Json -Depth 6) -split "`r?`n" | ForEach-Object { "        $_" }
         if ($verdict -ceq 'inconclusive') { Inconclusive 'W-001: the checker''s controls did not all behave, so a run with no leak says nothing (review M9)' }
+        if ($Stopped) { Invoke-W001StoppedRun $case $run $rows $scanStart $record $file $reasons }
     }
     finally {
         if ($null -ne $controls) { foreach ($folder in $controls.Folders) { Set-DenyRule $folder 'ListDirectory' $false; Set-DenyRule $folder 'WriteAttributes' $false } }
         Remove-CaseFolder $case
     }
+}
+
+# ---- W-002: a scan hydrates no online-only file (SL-003, criterion 8) ----
+
+# The files that were online-only before a scan and what is true of them after: the listings are path to attributes
+# (FsaWindowCases.Seam.ListFiles, which only lists), a file is online-only when FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+# (0x400000) is set, as CloudPlaceholderTests reads it. Hydrated is a file that was online-only, is there after and is no
+# longer online-only; a file that is gone after is kept apart, since a deletion is no hydration.
+function Get-HydrationTally($before, $after) {
+    $recall = 0x400000
+    $onlineBefore = 0
+    $onlineAfter = 0
+    $hydrated = 0
+    $gone = 0
+    foreach ($path in @($before.Keys)) {
+        if (([uint32]$before[$path] -band $recall) -eq 0) { continue }
+        $onlineBefore++
+        if (-not $after.ContainsKey($path)) { $gone++; continue }
+        if (([uint32]$after[$path] -band $recall) -eq 0) { $hydrated++ }
+    }
+    foreach ($path in @($after.Keys)) {
+        if (([uint32]$after[$path] -band $recall) -ne 0) { $onlineAfter++ }
+    }
+    [pscustomobject]@{ OnlineOnlyBefore = $onlineBefore; OnlineOnlyAfter = $onlineAfter; Hydrated = $hydrated; GoneSinceBefore = $gone }
+}
+
+# W-002's verdict, in this order (SL-003 review n1): failed when the app left no report or exited non-zero; inconclusive when
+# the scan did not end Completed (it read nothing, so nothing is shown); failed on a hydration or on a data fetch the provider
+# logged from the app; inconclusive when no file was online-only before, when the scan left folders unreadable (it did not read
+# the files it was to be shown not to fetch), and on the rig when a file went. $dataFetches is null on a real sync root.
+function Get-HydrationVerdict($tally, $dataFetches, [string] $exit, $report, [bool] $rig) {
+    if ($exit -cne '0' -or $null -eq $report) { return 'failed' }
+    if ([string]$report.core.status -cne 'Completed') { return 'inconclusive' }
+    if ($tally.Hydrated -gt 0 -or ($null -ne $dataFetches -and $dataFetches -gt 0)) { return 'failed' }
+    if ($tally.OnlineOnlyBefore -eq 0) { return 'inconclusive' }
+    if ([int]$report.core.unreadable -gt 0) { return 'inconclusive' }
+    if ($rig -and $tally.GoneSinceBefore -gt 0) { return 'inconclusive' }
+    'held'
+}
+
+# W-002's record: counts, the fixed labels 'rig' or 'sync-root', and a status and outcome that are null when the app left no
+# report (never ''), so that a run that ended with none still writes (SL-003 review n1). Exactly one key names the files
+# online-only before, one those after, and 'hydrated' is the only key that names a hydration.
+function New-HydrationRecord([string] $commit, [bool] $rig, $scan, [string] $exit, [int] $filesBefore, [int] $filesAfter, $tally, $dataFetches, [string] $verdict) {
+    $exitCode = 0
+    [ordered]@{
+        commit           = Get-RecordString $commit
+        source           = if ($rig) { 'rig' } else { 'sync-root' }
+        status           = Get-RecordString $(if ($null -ne $scan) { $scan.core.status })
+        outcome          = Get-RecordString $(if ($null -ne $scan) { $scan.outcome })
+        exit             = $(if ([int]::TryParse($exit, [ref]$exitCode)) { $exitCode } else { $null })
+        filesBefore      = $filesBefore
+        filesAfter       = $filesAfter
+        onlineOnlyBefore = $tally.OnlineOnlyBefore
+        onlineOnlyAfter  = $tally.OnlineOnlyAfter
+        hydrated         = $tally.Hydrated
+        goneSinceBefore  = $tally.GoneSinceBefore
+        unreadable       = $(if ($null -ne $scan) { [int]$scan.core.unreadable } else { $null })
+        dataFetches      = $dataFetches
+        verdict          = $verdict
+    }
+}
+
+# The data fetches the provider logged from one process: its 'CB FETCH_DATA pid=<n> path=...' lines (tests/CfProvider).
+function Get-DataFetches($lines, [int] $appPid) {
+    @(@($lines) | Where-Object { $_ -is [string] -and $_ -cmatch ('^CB FETCH_DATA pid={0} ' -f $appPid) }).Count
+}
+
+# W-002 (-IncludeCloud, SL-003 criterion 8): the files a scan of a sync root left online-only. Without -Root it runs on a sync
+# root of its own, served by CfProvider's 'tree' scenario (dehydrated placeholders under cloud-tagged folders, one with a second
+# hard-link name): list it, scan it with the app in report mode, list it again, and count the provider's FETCH_DATA callbacks
+# from the app's own process. With -Root, the maintainer's own sync root (a real OneDrive), the same listing, scan and listing;
+# a hydration there would change OneDrive's copy of their files, which is why only they run it, with OneDrive idle. The record
+# is docs/proof-runs/w002-rig.json or w002-onedrive.json, counts only.
+function Test-W002 {
+    Initialize-SeamWin32
+    $rig = -not $Root
+    if ($rig) { Clear-StaleCloudRoots }
+    elseif (-not [System.IO.Directory]::Exists($Root)) { throw "W-002: $Root is not a folder" }
+    $case = New-CaseFolder
+    $provider = $null
+    $sync = $null
+    try {
+        if ($rig) {
+            $sync = Join-Path (Get-CloudCaseBase) ('fsa-cf-{0}' -f [guid]::NewGuid().ToString('N'))
+            [void][System.IO.Directory]::CreateDirectory($sync)
+            $provider = Start-CfProvider 'tree' $sync
+            $clock = [System.Diagnostics.Stopwatch]::StartNew()
+            while ($clock.Elapsed.TotalSeconds -lt 30 -and -not $provider.Ended -and -not ($provider.Lines -contains 'READY') -and @($provider.Lines | Where-Object { $_.StartsWith('ERR ') }).Count -eq 0) {
+                Receive-Provider $provider
+                Start-Sleep -Milliseconds 25
+            }
+            if (-not ($provider.Lines -contains 'READY')) {
+                Inconclusive "W-002: the provider was not ready ($(($provider.Lines | Select-Object -Last 3) -join ' | '))"
+                return
+            }
+        }
+        else {
+            $sync = $Root
+            Write-Output "        W-002 on a real sync root: no file is opened or read by the lister, and the app only lists, but a hydration would change this root's online copy. Have OneDrive idle (paused or finished syncing)."
+            [void](Read-Host 'Press Enter to list the root, scan it and list it again')
+        }
+        $listBefore = [FsaWindowCases.Seam]::ListFiles($sync)
+        $report = Join-Path $case 'report.json'
+        $process = Start-App "$(Format-AppArgument $sync) --report $(Format-AppArgument $report)"
+        $appPid = $process.Id
+        $exit = Wait-App $process $(if ($rig) { 120 } else { 1800 })
+        $listAfter = [FsaWindowCases.Seam]::ListFiles($sync)
+        $scan = if (Test-Path -LiteralPath $report -PathType Leaf) { Get-Content -LiteralPath $report -Raw | ConvertFrom-Json } else { $null }
+        $tally = Get-HydrationTally $listBefore $listAfter
+        $fetches = $null
+        if ($rig) {
+            try { $provider.Process.StandardInput.Close() } catch { }
+            if (-not $provider.Process.WaitForExit(5000)) { $provider.Process.Kill(); $provider.Process.WaitForExit() }
+            Receive-Provider $provider
+            $fetches = Get-DataFetches $provider.Lines $appPid
+            foreach ($line in @($provider.Lines | Where-Object { $_ -cmatch '^(CB FETCH_DATA |ERR )' })) { Write-Host "        provider: $line" }
+        }
+        Write-Output "        files: $($listBefore.Count) before, $($listAfter.Count) after; online-only $($tally.OnlineOnlyBefore) before, $($tally.OnlineOnlyAfter) after; hydrated $($tally.Hydrated), gone $($tally.GoneSinceBefore); data fetches by the app: $(if ($null -eq $fetches) { 'not read (a real sync root)' } else { $fetches })"
+        CheckEqual '0' $exit 'exit code'
+        Check ($null -ne $scan) 'a report was written'
+        if ($null -ne $scan) { CheckEqual 'Completed' $scan.core.status 'core.status' }
+        Check ($tally.Hydrated -eq 0) "no file that was online-only before the scan is hydrated after it ($($tally.Hydrated) are)"
+        if ($rig) { Check ($fetches -eq 0) "the provider logged no data fetch from the app ($fetches)" }
+        $verdict = Get-HydrationVerdict $tally $fetches $exit $scan $rig
+        if ($verdict -ceq 'inconclusive') { Inconclusive "W-002: nothing is shown either way (status $(if ($null -ne $scan) { $scan.core.status } else { 'no report' }), $($tally.OnlineOnlyBefore) files online-only before, $(if ($null -ne $scan) { [int]$scan.core.unreadable } else { 0 }) unreadable folders, $($tally.GoneSinceBefore) gone)" }
+        $commit = (& git -C $Repo rev-parse HEAD 2>$null | Select-Object -First 1)
+        $record = New-HydrationRecord $commit $rig $scan $exit $listBefore.Count $listAfter.Count $tally $fetches $verdict
+        $variant = if ($rig) { 'rig' } else { 'onedrive' }
+        Save-ProofRecord (Get-ProofRecordPath $Repo 'W-002' 'folder' $sync $variant) $record @()
+    }
+    finally {
+        if ($null -ne $provider) {
+            if (-not $provider.Process.HasExited) {
+                try { $provider.Process.StandardInput.Close() } catch { }
+                if (-not $provider.Process.WaitForExit(5000)) { $provider.Process.Kill(); $provider.Process.WaitForExit() }
+            }
+        }
+        if ($rig -and $null -ne $sync) {
+            $gone = Remove-CloudRoot $sync
+            Check (-not $gone.Registered) 'W-002: the rig sync root is no longer registered (Q-176)'
+            Check (-not $gone.Left) 'W-002: the rig sync root folder is gone (Q-176)'
+        }
+        Remove-CaseFolder $case
+    }
+}
+
+# ---- W-003: Stop on a share that stopped answering, timed (SL-003, criterion 9) ----
+
+# Milliseconds from the hook pressing Stop to the stopped ending being read, both on the hook's one clock
+# (StartupHook.Clock: the acted line's ms and the 'rows read ... ms=' line RowsMode writes at the ending). Null when either line
+# is missing or the difference is not above 0: a missing line is a failure to time, never a zero.
+function Get-StopToEndingMs($log) {
+    $acted = Read-ActedLine $log
+    $read = @(@($log) | Where-Object { $_ -is [string] -and $_ -cmatch '^rows read count=\d+ .* ms=(\d+)\s*$' })
+    if ($null -eq $acted -or $null -eq $acted.Ms -or $read.Count -ne 1) { return $null }
+    [void]($read[0] -cmatch '^rows read count=\d+ .* ms=(\d+)\s*$')
+    $ms = [long]$Matches[1] - $acted.Ms
+    if ($ms -le 0) { return $null }
+    $ms
+}
+
+# The rows of a stopped share run that are a folder Stop cut short: every row with code 995, and on the rig every row for s,
+# the folder whose listing was held, and for t and u, whatever the time (CheckSeamMain's rule: a readable folder opened before the
+# Stop is no row, and one opened after it, or never, is no row either).
+function Get-CutFolderRows($rows, [bool] $rig) {
+    @(@($rows) | Where-Object {
+            [int]$_.code -eq 995 -or ($rig -and [System.IO.Path]::GetFileName(([string]$_.path).TrimEnd('\')) -cin 's', 't', 'u')
+        }).Count
+}
+
+# W-003's verdict: inconclusive when the hook's marker deadline was missed (the person did not cut and type 'cut' in time, which
+# even a TIMEOUT cannot turn into a failure); failed on a cut folder in the tab or a failed check; inconclusive when a precondition
+# of the run was not met ($judged); failed when the app timed out or no time could be read; otherwise held.
+function Get-ShareVerdict([bool] $markerRefused, [bool] $judged, $stopToEndingMs, [int] $cutFolderRows, [string] $exit, [int] $failures) {
+    if ($markerRefused) { return 'inconclusive' }
+    if ($cutFolderRows -gt 0 -or $failures -gt 0) { return 'failed' }
+    if (-not $judged) { return 'inconclusive' }
+    if ($exit -ceq 'TIMEOUT' -or $null -eq $stopToEndingMs -or $stopToEndingMs -le 0) { return 'failed' }
+    'held'
+}
+
+# The share record's keys, labels from fixed sets only. Written in a finally by both modes of W-003.
+function New-ShareRecord([string] $network, [string] $link, $report, $dump, $stopToEndingMs, [int] $cutFolderRows, [string] $verdict) {
+    $commit = (& git -C $Repo rev-parse HEAD 2>$null | Select-Object -First 1)
+    $rows = if ($null -ne $dump) { @($dump.Rows) } else { @() }
+    [ordered]@{
+        commit         = Get-RecordString $commit
+        network        = $network
+        link           = $link
+        status         = Get-RecordString $(if ($null -ne $report) { $report.core.status })
+        outcome        = Get-RecordString $(if ($null -ne $report) { $report.outcome })
+        stopToEndingMs = $stopToEndingMs
+        rows           = $rows.Count
+        byCode         = Get-RecordByCode $rows
+        cutFolderRows  = $cutFolderRows
+        verdict        = $verdict
+    }
+}
+
+# W-003 on the loopback stall rig (-IncludeNetwork, no -Root): one stopped run exactly as N-005's main run (the share's server
+# holds s's listing, Stop is pressed 2 s after, the rig is killed 8 s after), with the time from Stop to the stopped ending read
+# off the hook's clock, and the cut folder judged by CheckSeamMain's rule: no row for s, t or u and none with code 995, with a and b
+# once each. Inconclusive when the rig never served or the hold, a's refusal or b's failure came after the Stop.
+function Test-W003Rig {
+    $case = New-CaseFolder
+    $mark = $script:Failures.Count
+    $main = $null
+    $judged = $false
+    $ms = $null
+    $cut = 0
+    try {
+        $main = Invoke-SmbSeamRun $case $true
+        $left = @(Get-RigMappings)
+        Check ($left.Count -eq 0) "no SMB mapping to 127.0.0.1 is left after the run (Q-176) ($(Show ($left -join ', ')))"
+        if ($null -eq $main) { Inconclusive 'W-003: the rig never served its share'; return }
+        CheckActed ([pscustomobject]@{ Log = @($main.Log | Where-Object { $_ -and -not $_.StartsWith('{') }) }) 'stop'
+        CheckEqual '0' $main.Exit 'exit code'
+        Check ($null -ne $main.Report) 'the app reached an ending and wrote its report'
+        $closing = $main.Dump.Closing
+        $stopUtc = if ($null -ne $closing -and $closing.stopUtc) { ConvertFrom-Utc $closing.stopUtc } else { $null }
+        Check ($null -ne $stopUtc) 'the hook recorded when it pressed Stop'
+        $judged = $null -ne $main.Report -and $null -ne $stopUtc
+        if ($judged) {
+            CheckEqual 'Cancelled' $main.Report.core.status 'core.status'
+            $refused = @($main.Opens | Where-Object { $_.Name -ceq 'a' -and $_.Status -ceq 'STATUS_ACCESS_DENIED' })[0]
+            if ($null -eq $refused -or $refused.Utc -ge $stopUtc) { Inconclusive "W-003: the server did not refuse a's open before the Stop"; $judged = $false }
+            if ($null -eq $main.Hold -or $main.Hold.Utc -ge $stopUtc) { Inconclusive "W-003: the server did not hold s's listing before the Stop"; $judged = $false }
+            $log = @($main.Log)
+            $fired = [array]::IndexOf($log, 'fail-listing fired b page 3')
+            $acted = [array]::IndexOf($log, @($log | Where-Object { $_.StartsWith('acted mode=stop ') })[0])
+            if ($fired -lt 0 -or $fired -gt $acted) { Inconclusive "W-003: b's listing did not fail before the Stop"; $judged = $false }
+            CheckPanelAgrees $main.Report $main.Dump 'W-003' 2
+            $byLeaf = Get-RowsByLeaf $main.Dump
+            CheckSeamRow $byLeaf 'a' 'NothingListed' 5 'access denied' 'W-003'
+            CheckSeamRow $byLeaf 'b' 'ListedPartway' 59 'network or share error' 'W-003'
+            $cut = Get-CutFolderRows $main.Dump.Rows $true
+            Check ($cut -eq 0) "no row is a folder Stop cut short: s, t, u or code 995 ($cut are)"
+            $ms = Get-StopToEndingMs $main.Log
+            if ($judged) { Check ($null -ne $ms) 'the time from Stop to the stopped ending could be read from the hook''s clock (a missing line is no time)' }
+            Write-Output "        stop to the stopped ending: $(if ($null -eq $ms) { 'not read' } else { "$ms ms" })"
+        }
+    }
+    finally {
+        Remove-RigMappingsLeft
+        $verdict = Get-ShareVerdict $false $judged $ms $cut ([string]$(if ($null -ne $main) { $main.Exit } else { '' })) ($script:Failures.Count - $mark)
+        if ($null -ne $main) {
+            $record = New-ShareRecord 'rig' 'stall' $main.Report $main.Dump $ms $cut $verdict
+            Save-ProofRecord (Get-ProofRecordPath $Repo 'W-003' 'folder' '' 'rig') $record @($main.Dump.Rows | ForEach-Object { [string]$_.reason } | Sort-Object -Unique)
+        }
+        Remove-CaseFolder $case
+    }
+}
+
+# W-003 on a real share (-IncludeNetwork -Root <share> -Network home|tailscale -Link wifi-off|tunnel-down|server-asleep), the
+# maintainer's run: they make the cut, and the case times Stop to a usable window. The console names the cut and waits for Enter
+# before the app starts, so that it is prepared; then the app scans the share under the hook's armed stop mode, 2 s after a marker
+# the case writes when the person types 'cut'. The hook waits 60 s from launch for that marker and no longer, and the case says
+# so and counts the seconds. A scan that ended before Stop, a marker the hook refused, or any answer other than 'cut' is
+# inconclusive, a refusal first, even when the wait for the app then timed out; the record is written whatever the ending.
+function Test-W003Real {
+    if (-not [System.IO.Directory]::Exists($Root)) { throw "W-003: $Root is not a folder" }
+    $case = New-CaseFolder
+    $mark = $script:Failures.Count
+    $run = $null
+    $dump = $null
+    $ms = $null
+    $cut = 0
+    $refused = $false
+    $judged = $false
+    try {
+        $marker = Join-Path $case 'cut.armed'
+        $report = Join-Path $case 'report.json'
+        Write-Output "        W-003 on a real share ($Network, the cut: $Link)."
+        Write-Output "        Have the cut fully prepared before you go on: $(switch ($Link) { 'wifi-off' { 'the Wi-Fi control open, ready to turn Wi-Fi off' } 'tunnel-down' { 'the Tailscale menu open or tailscale down typed, ready to take the tunnel down' } 'server-asleep' { 'the server within reach, or its sleep command typed in a shell on it, ready to send it to sleep' } })."
+        [void](Read-Host 'Press Enter to start the app')
+        $variables = @{ FSA_HOOK_ROWS = '1'; FSA_HOOK_ARMED = $marker; FSA_HOOK_CANCEL_DELAY_MS = '2000' }
+        $run = Invoke-WithHook 'stop' $HookDll {
+            $process = Start-App "$(Format-AppArgument $Root) --report $(Format-AppArgument $report)"
+            $clock = [System.Diagnostics.Stopwatch]::StartNew()
+            Write-Host '        The app is running. Make the cut, then type cut and press Enter. Both must land within 60 s of the launch: the hook gives up then.'
+            $typed = [Console]::In.ReadLineAsync()
+            while (-not $typed.IsCompleted -and -not $process.HasExited) {
+                Write-Host -NoNewline ("`r        {0:N0} s since launch (60 s at most)   " -f $clock.Elapsed.TotalSeconds)
+                Start-Sleep -Milliseconds 500
+            }
+            Write-Host ''
+            $answer = if ($typed.IsCompleted) { [string]$typed.Result } else { $null }
+            if ($answer -ceq 'cut') { [System.IO.File]::WriteAllText($marker, '') }
+            Write-Host ("        {0:N1} s since launch: {1}" -f $clock.Elapsed.TotalSeconds, $(if ($answer -ceq 'cut') { 'cut typed' } else { 'no cut typed' }))
+            [pscustomobject]@{ Exit = (Wait-App $process 600); Answer = $answer }
+        } $variables
+        foreach ($line in @($run.Log | Where-Object { $_ -and -not $_.StartsWith('{') })) { Write-Output "        hook: $line" }
+        $refused = @($run.Log | Where-Object { $_ -is [string] -and $_.StartsWith("refused mode=stop reason=the rig's marker") }).Count -gt 0
+        if ($refused) { Write-Output '        The hook''s 60 s marker deadline was missed: the cut and the typed cut did not both land within 60 s of the launch. Nothing was pressed.' }
+        $text = if (Test-Path -LiteralPath $report -PathType Leaf) { Get-Content -LiteralPath $report -Raw } else { $null }
+        $scan = if ($null -eq $text) { $null } else { $text | ConvertFrom-Json }
+        $dump = Read-RowsDump $run.Log
+        $exit = [string]$run.Result.Exit
+        $acted = Read-ActedLine $run.Log
+        $judged = -not $refused -and $run.Result.Answer -ceq 'cut' -and $null -ne $acted -and $null -ne $scan
+        if (-not $refused -and $run.Result.Answer -cne 'cut') { Inconclusive "W-003: the answer was not 'cut', so no cut was made" }
+        if (-not $refused -and $null -eq $acted) { Inconclusive 'W-003: the hook never pressed Stop (the scan ended first, or the app did not answer)' }
+        if ($judged) {
+            CheckEqual '0' $exit 'exit code'
+            CheckEqual 'Cancelled' $scan.core.status 'core.status'
+            CheckPanelAgrees $scan $dump 'W-003'
+            $cut = Get-CutFolderRows $dump.Rows $false
+            Check ($cut -eq 0) "no row is a folder Stop cut short, which is code 995 ($cut are)"
+            $ms = Get-StopToEndingMs $run.Log
+            Check ($null -ne $ms) 'the time from Stop to the stopped ending could be read from the hook''s clock (a missing line is no time)'
+            Write-Output "        stop to the stopped ending: $(if ($null -eq $ms) { 'not read' } else { "$ms ms" })"
+        }
+        $final = $scan
+    }
+    finally {
+        $exit = if ($null -ne $run) { [string]$run.Result.Exit } else { '' }
+        $verdict = Get-ShareVerdict $refused $judged $ms $cut $exit ($script:Failures.Count - $mark)
+        if ($null -ne $run) {
+            $record = New-ShareRecord $Network $Link $final $dump $ms $cut $verdict
+            Save-ProofRecord (Get-ProofRecordPath $Repo 'W-003' 'folder' '' "$Network-$Link") $record @($dump.Rows | ForEach-Object { [string]$_.reason } | Sort-Object -Unique)
+        }
+        Remove-CaseFolder $case
+    }
+}
+
+function Test-W003 {
+    if ($Root) { Test-W003Real } else { Test-W003Rig }
 }
 
 # ---- The stopped tree (SL-110) ----
@@ -7212,7 +8021,7 @@ function Test-R004 {
 
 # ---- Run ----
 
-$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'L-004', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012', 'T-013', 'T-014', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'R-004', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005') + $NetworkCases + $CloudCases } else { @($Case) }
+$cases = if ($Case -eq 'All') { @('C-001', 'C-002', 'C-003', 'C-004', 'C-005', 'C-006', 'C-007', 'C-008', 'C-009', 'C-010', 'C-011', 'C-012', 'C-013', 'C-014', 'O-016', 'L-001', 'L-002', 'L-003', 'L-004', 'B-001', 'B-002', 'B-003', 'B-004', 'B-005', 'B-006', 'B-007', 'B-008', 'V-001', 'P-001', 'T-001', 'T-002', 'T-003', 'T-004', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011', 'T-012', 'T-013', 'T-014', 'K-001', 'K-002', 'K-003', 'R-001', 'R-002', 'R-003', 'R-004', 'S-001', 'S-002', 'S-003', 'S-004', 'S-005', 'S-006', 'S-007', 'S-008', 'S-009', 'X-003', 'X-005') + $NetworkCases + $CloudCases | Where-Object { $_ -notin $ProofCases } } else { @($Case) }
 $notRun = @()
 if (-not $IncludeNetwork) {
     $notRun = @($cases | Where-Object { $_ -in $NetworkCases })
@@ -7251,7 +8060,7 @@ foreach ($key in $cases) {
 }
 
 if ($notRun.Count -gt 0) {
-    Write-Output "NOT RUN: $($notRun -join ', ') (the network cases change this machine's SMB mappings, pass -IncludeNetwork to run them; N-006 registers a cloud sync root, pass -IncludeCloud)"
+    Write-Output "NOT RUN: $($notRun -join ', ') (the network cases change this machine's SMB mappings, pass -IncludeNetwork to run them; N-006 and W-002 register a cloud sync root, pass -IncludeCloud)"
 }
 if ($failed.Count -gt 0) {
     Write-Output "FAILED: $($failed -join ', ')"

@@ -1293,26 +1293,6 @@ rules:
     except_files:
     - src/FsAnalyser.App/UnreadableRows.cs
 
-  # settled by SL-107
-  - name: the committed whole-C:\ record carries counts, codes and reasons, never a path
-    files: .taad/slices/SL-089/c-drive-run.json
-    must_not_match:
-    - '/'
-    - '\\(?!["u])|\\u00(?:5[cC]|2[fF])'
-    - '"path"\s*:'
-    because: This file is the one record of a scan of the person's whole drive that is committed
-      to git. A path in it, or a dumped row with a 'path' key, publishes the person's folder
-      names (Q-016). Write-W001Record refuses a string with a slash or a backslash only at write
-      time, so a hand edit before the commit, or a later writer reusing this path, would otherwise
-      pass every gate. The patterns state the writer's own test over the file text, as a closed
-      grammar. A valid record holds no '/', and its only backslashes are the JSON escapes for a
-      quote and for a non-separator code unit (\" and \uXXXX); any other backslash is a path
-      separator in some spelling (an escaped pair, a UNC or extended-length prefix, or a single
-      backslash typed by hand that JSON reads as \t or \n), and so is the code-unit escape of either separator (a backslash, then u005c or u002f). Corpus
-      tests/bugs/SL-107-RecordPathRuleCorpus.json, run by tests/bugs/SL-107-RecordPathRule.Tests.ps1.
-      The rule matches no file until the person commits the record, which Fitness takes as a
-      pass (Q-012); eng/rules-harness/plants.json lists it under awaiting_file for that reason.
-
   # settled by SL-109
   - name: no code outside the store spells the not-listed bit as an entry flag
     files: src/**/*.cs
@@ -1491,3 +1471,34 @@ rules:
       that keeps DriveType Network when its server is down, where a root call blocks for minutes
       (lesson #878, spike 1). The existing StoppingWait.cs rule forbids DriveInfo for the same
       reason.'
+
+  # settled by SL-003
+  - name: a committed proof-run record carries counts, codes and reasons, never a path
+    files: docs/proof-runs/*.json
+    must_not_match:
+    - /
+    - \\(?!["u])|\\u00(?:5[cC]|2[fF])
+    - '"path"\s*:'
+    because: 'These files are committed records of scans of the maintainer''s own C:\, OneDrive
+      and shares. A path in one, or a dumped row with a ''path'' key, publishes their folder
+      names (Q-016). Write-W001Record refuses a slash or backslash only at write time, so without
+      this a hand edit before the commit, or a later writer, would pass every gate. The patterns
+      are SL-107''s, unchanged: a valid record''s only backslashes are the JSON escapes for
+      a quote and for a non-separator code unit.'
+  - name: the rules harness plants nothing into, and waits on nothing under, .taad/slices
+    files: eng/rules-harness/plants.json
+    must_not_match:
+    - '"file"\s*:\s*"\.taad/slices/'
+    - '"awaiting_file"\s*:.*\.taad/slices/'
+    because: .taad/slices holds the engine's own slice records, which it prunes and rewrites
+      at merges (21632dc removed 771 files there). A plant row there collides with an engine
+      record. An awaited file there waits on a record no proof run writes any more, so the clean
+      baseline would accept the guard as unmatched for ever (SC-005).
+  - name: the window harness neither reads nor writes TAAD's slice records
+    files: tests/window/WindowCases.ps1
+    must_not_match:
+    - \.taad[\\/]+slices
+    because: 'W-001 wrote its whole-C:\ record into .taad/slices/SL-089, which the engine owns
+      and pruned, so the record owed since SL-107 was never kept. Window cases give no signal
+      without an interactive desktop (lesson #261), so only a text rule catches a case pointed
+      back there at gate time.'

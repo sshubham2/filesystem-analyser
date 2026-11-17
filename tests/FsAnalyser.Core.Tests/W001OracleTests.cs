@@ -1,6 +1,7 @@
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text.Json;
+using Microsoft.Win32.SafeHandles;
 
 namespace FsAnalyser.Core.Tests;
 
@@ -39,70 +40,94 @@ public class W001OracleTests
         var resets = new List<string>();
         var recreate = new List<string>();
         var delete = new List<string>();
-        foreach (CorpusRow row in rows)
+        var heldAfterReset = new List<string>();
+        var holds = new List<SafeFileHandle>();
+        try
         {
-            string path = tree.PathOf(row.Id);
-            switch (row.Plant)
+            foreach (CorpusRow row in rows)
             {
-                case "denied":
-                    tree.Folder(row.Id);
-                    tree.Deny(path, FileListDirectory);
-                    break;
-                case "listable":
-                    tree.Folder(row.Id);
-                    break;
-                case "acl-reset":
-                    tree.Folder(row.Id);
-                    SetListDeny(path, add: true);
-                    resets.Add(path);
-                    break;
-                case "recreated":
-                    tree.Folder(row.Id);
-                    recreate.Add(path);
-                    break;
-                case "gone":
-                    tree.Folder(row.Id);
-                    delete.Add(path);
-                    break;
-                case "junction":
-                    tree.Junction(row.Id, target);
-                    break;
-                default:
-                    Assert.Fail($"{row.Id}: no plant named '{row.Plant}'");
-                    break;
+                string path = tree.PathOf(row.Id);
+                switch (row.Plant)
+                {
+                    case "held":
+                        tree.Folder(row.Id);
+                        holds.Add(TestNative.HoldFolderSharingNoRead(path));
+                        break;
+                    case "held-acl-reset":
+                        tree.Folder(row.Id);
+                        SetListDeny(path, add: true);
+                        heldAfterReset.Add(path);
+                        break;
+                    case "denied":
+                        tree.Folder(row.Id);
+                        tree.Deny(path, FileListDirectory);
+                        break;
+                    case "listable":
+                        tree.Folder(row.Id);
+                        break;
+                    case "acl-reset":
+                        tree.Folder(row.Id);
+                        SetListDeny(path, add: true);
+                        resets.Add(path);
+                        break;
+                    case "recreated":
+                        tree.Folder(row.Id);
+                        recreate.Add(path);
+                        break;
+                    case "gone":
+                        tree.Folder(row.Id);
+                        delete.Add(path);
+                        break;
+                    case "junction":
+                        tree.Junction(row.Id, target);
+                        break;
+                    default:
+                        Assert.Fail($"{row.Id}: no plant named '{row.Plant}'");
+                        break;
+                }
+                paths[row.Id] = path;
             }
-            paths[row.Id] = path;
-        }
-        Assert.Equal(5, TestNative.FolderOpenError(paths[rows.First(r => r.Plant == "denied").Id], FileListDirectory));
+            Assert.Equal(5, TestNative.FolderOpenError(paths[rows.First(r => r.Plant == "denied").Id], FileListDirectory));
 
-        // Every folder above was made before this moment, which the oracle is told is when the scan started; everything
-        // below changes after it.
-        Thread.Sleep(50);
-        DateTime scanStart = DateTime.UtcNow;
-        Thread.Sleep(50);
-        foreach (string path in resets)
-            SetListDeny(path, add: false);
-        foreach (string path in recreate)
+            // Every folder above was made before this moment, which the oracle is told is when the scan started; everything
+            // below changes after it.
+            Thread.Sleep(50);
+            DateTime scanStart = DateTime.UtcNow;
+            Thread.Sleep(50);
+            foreach (string path in resets)
+                SetListDeny(path, add: false);
+            foreach (string path in recreate)
+            {
+                Directory.Delete(path);
+                Directory.CreateDirectory(path);
+            }
+            foreach (string path in delete)
+                Directory.Delete(path);
+            foreach (string path in heldAfterReset)
+            {
+                SetListDeny(path, add: false);
+                holds.Add(TestNative.HoldFolderSharingNoRead(path));
+            }
+
+            string input = Path.Combine(tree.Root, "rows.json");
+            File.WriteAllText(input, JsonSerializer.Serialize(rows.Select(r => new { id = r.Id, path = paths[r.Id], kind = r.Kind, code = r.Code })));
+            string output = await WindowCasesHelperTests.Pwsh(
+                WindowCasesHelperTests.ParseScript() + Load("Initialize-SeamWin32") + Load("Get-OracleRow") +
+                "Initialize-SeamWin32; " +
+                $"$start = [DateTime]::Parse('{scanStart:O}', [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime(); " +
+                $"foreach ($row in (Get-Content -LiteralPath '{input.Replace("'", "''")}' -Raw | ConvertFrom-Json)) {{ 'class ' + $row.id + ' ' + (Get-OracleRow $row $start) }}");
+
+            Dictionary<string, string> classes = output.Split('\n').Select(l => l.Trim()).Where(l => l.StartsWith("class ", StringComparison.Ordinal))
+                .Select(l => l.Split(' ')).ToDictionary(p => p[1], p => p[2]);
+            string[] wrong = [.. rows.Where(r => !classes.TryGetValue(r.Id, out string? got) || got != r.Expect)
+                .Select(r => $"{r.Id} ({r.Producer}): expected {r.Expect}, got {(classes.TryGetValue(r.Id, out string? got) ? got : "nothing")}")];
+            Assert.True(wrong.Length == 0, "The oracle misread rows of its corpus:\n" + string.Join("\n", wrong) + "\n" + output);
+        }
+        finally
         {
-            Directory.Delete(path);
-            Directory.CreateDirectory(path);
+            foreach (SafeFileHandle held in holds)
+                held.Dispose();
         }
-        foreach (string path in delete)
-            Directory.Delete(path);
-
-        string input = Path.Combine(tree.Root, "rows.json");
-        File.WriteAllText(input, JsonSerializer.Serialize(rows.Select(r => new { id = r.Id, path = paths[r.Id], kind = r.Kind, code = r.Code })));
-        string output = await WindowCasesHelperTests.Pwsh(
-            WindowCasesHelperTests.ParseScript() + Load("Initialize-SeamWin32") + Load("Get-OracleRow") +
-            "Initialize-SeamWin32; " +
-            $"$start = [DateTime]::Parse('{scanStart:O}', [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime(); " +
-            $"foreach ($row in (Get-Content -LiteralPath '{input.Replace("'", "''")}' -Raw | ConvertFrom-Json)) {{ 'class ' + $row.id + ' ' + (Get-OracleRow $row $start) }}");
-
-        Dictionary<string, string> classes = output.Split('\n').Select(l => l.Trim()).Where(l => l.StartsWith("class ", StringComparison.Ordinal))
-            .Select(l => l.Split(' ')).ToDictionary(p => p[1], p => p[2]);
-        string[] wrong = [.. rows.Where(r => !classes.TryGetValue(r.Id, out string? got) || got != r.Expect)
-            .Select(r => $"{r.Id} ({r.Producer}): expected {r.Expect}, got {(classes.TryGetValue(r.Id, out string? got) ? got : "nothing")}")];
-        Assert.True(wrong.Length == 0, "The oracle misread rows of its corpus:\n" + string.Join("\n", wrong) + "\n" + output);
     }
 
     [Fact]
