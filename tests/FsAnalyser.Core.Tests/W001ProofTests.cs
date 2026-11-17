@@ -93,9 +93,10 @@ public class W001ProofTests
 
     /// <summary>
     /// The hook's acted line in both of its forms (the progress trigger's, whose 'atfolders=' comes before 'folders=', and the
-    /// armed form's, whose ms is followed by sincearmed=), read with a leading space so that the trigger is not taken for the
-    /// count, and from the end of the line for the time, so that a path in current= cannot supply either (design review m3).
-    /// A run is partial only when it ended Cancelled with sized '-'.
+    /// armed form's, whose ms is followed by sincearmed=): the count is read with a leading space so that the trigger is not
+    /// taken for it (and is the first ' folders=', which comes before current=), and the time from the end of the line, so that
+    /// a path in current= cannot supply it (design review m3). A run is partial only when it ended Cancelled with a folder count
+    /// and sized '-'.
     /// </summary>
     [Fact]
     public async Task TheActedLineIsReadInBothFormsAndPartialMeansStoppedWhileListing()
@@ -125,8 +126,9 @@ public class W001ProofTests
     // ---- Get-ReasonCodeMismatches ----
 
     /// <summary>
-    /// C4: a row whose reason ends '(Windows error N)' with an N that is not its own code, and two rows with one code and
-    /// different reasons, are counted; rows whose reasons belong to their codes are not.
+    /// C4: a row whose reason ends '(Windows error N)' with an N that is not its own code, and a row whose reason differs from
+    /// that of the first row with its code (of two such rows, the later one), are counted once each; rows whose reasons belong
+    /// to their codes are not.
     /// </summary>
     [Fact]
     public async Task AReasonThatDoesNotBelongToItsCodeIsCounted()
@@ -489,9 +491,9 @@ public class W001ProofTests
     }
 
     /// <summary>
-    /// W-001, W-002 and W-003 write under docs/proof-runs, and W-002 registers a sync root: -Case All, with -IncludeCloud and
-    /// -IncludeNetwork or without, never runs them. They are in the network and cloud lists all the same, so that their own
-    /// switches gate them when they are named.
+    /// W-001 (for a drive letter), W-002 and W-003 write under docs/proof-runs, and W-002 registers a sync root: -Case All, with
+    /// -IncludeCloud and -IncludeNetwork or without, never runs them. W-003 is in the network list and W-002 in the cloud list
+    /// all the same, so that their own switches gate them when they are named.
     /// </summary>
     [Fact]
     public async Task ProofCasesAreNeverRunByCaseAll()
@@ -530,9 +532,9 @@ public class W001ProofTests
     /// <summary>
     /// The tally of a scan that must hydrate nothing: a file still online-only; one hydrated; one gone since the first listing,
     /// which is no hydration; and a root with no online-only file at all, which proves nothing. The verdict, in the order of
-    /// design review n1: no report or a non-zero exit fails; a scan not Completed, a root with nothing online-only, a scan that
-    /// left folders unreadable and (on the rig) a file gone are inconclusive; a hydration or a provider fetch from the app fails.
-    /// Data fetches are the provider's FETCH_DATA lines from the app's own pid.
+    /// design review n1: no report or a non-zero exit fails; a scan not Completed is inconclusive; a hydration or a provider
+    /// fetch from the app fails; and only then a root with nothing online-only, a scan that left folders unreadable and (on the
+    /// rig) a file gone are inconclusive. Data fetches are the provider's FETCH_DATA lines from the app's own pid.
     /// </summary>
     [Fact]
     public async Task AScanIsJudgedAgainstTheOnlineOnlyFilesBeforeAndAfter()
@@ -584,10 +586,9 @@ public class W001ProofTests
     // ---- W-003 ----
 
     /// <summary>
-    /// The time from Stop to the stopped ending is the 'rows read ms' minus the acted line's ms, one clock; a missing line, or a
-    /// difference that is not above 0, is no time (never 0 or a negative one). The cut folders are every 995 row and, on the rig,
-    /// every row for s, t or u whatever the time (design review n2). The verdict puts a missed marker deadline first, even when the
-    /// app then timed out.
+    /// The time from Stop to the stopped ending is the 'rows read ms' minus the acted line's ms, one clock; a missing acted line,
+    /// a missing or repeated 'rows read' line, or a difference that is not above 0, is no time (never 0 or a negative one). The
+    /// cut folders are every 995 row and, on the rig, every row for s, t or u whatever the time (design review n2).
     /// </summary>
     [Fact]
     public async Task TheStopToEndingTimeAndTheCutFoldersAreRead()
@@ -628,6 +629,7 @@ public class W001ProofTests
         Assert.Contains("case rig=0", output); // 'S' is not s: leaf names are matched exactly
     }
 
+    /// <summary>The share run's verdict puts a missed marker deadline first, even when the app then timed out.</summary>
     [Theory]
     [InlineData("$true", "$true", "500", 0, "TIMEOUT", 0, "inconclusive")]
     [InlineData("$false", "$true", "500", 1, "0", 0, "failed")]

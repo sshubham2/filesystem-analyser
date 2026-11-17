@@ -594,7 +594,8 @@ def load_awaiting(path: str) -> dict:
     records, docs/proof-runs/*.json, awaited as docs/proof-runs/w001-c-drive.json) matches nothing until that file is
     committed, and Fitness takes that for a pass. It is listed under 'awaiting_file' in plants.json, and is allowed to match no file only while
     its file is absent from the scratch copy: once the file exists, the rule must match it like any other. The
-    rows that plant that file (op new-file) plant over it when it exists, and put its bytes back (Planting._create).
+    rows that plant that file (op new-file) plant over it when it exists, and its bytes are put back (Planting._create
+    saves them, Planting.restore writes them back).
     """
     try:
         with open(path, encoding="utf-8") as handle:
