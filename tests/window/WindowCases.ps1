@@ -1995,6 +1995,27 @@ function CheckDrives($log, [int] $extra) {
     $drives = @($log | Where-Object { $_.StartsWith('drives in ') })
     $line = if ($drives.Count -eq 1) { $drives[0] } else { '' }
     Check ($drives.Count -eq 1 -and (Field $line 'added') -eq "$extra" -and [int](Field $line 'buttons') -ge $extra) "the report waited for the drive buttons and $extra more were added ($(Show ($drives -join ' | ')))"
+    # SC-050 (SL-002): every ready drive's label is a TextBlock the app drew (never a string, which the button's presenter reads
+    # for access keys: a '_' in WD_BLACK drew as nothing and made Alt+B start a scan), and its Foreground follows the
+    # ContentPresenter's, which the template greys while a scan runs (review M1). Today's string content reads labels=0/3.
+    $labels = @("$(Field $line 'labels')" -split '/')
+    Check ($labels.Count -eq 2 -and $labels[1] -match '^[1-9]\d*$' -and $labels[0] -eq $labels[1]) "every ready drive's label is drawn as a TextBlock, as written, with no access key ($(Field $line 'labels'))"
+    $ink = @("$(Field $line 'ink')" -split '/')
+    Check ($ink.Count -eq 2 -and $ink[1] -match '^[1-9]\d*$' -and $ink[0] -eq $ink[1] -and $ink[1] -eq $labels[1]) "and each label takes its colour from the button's own presenter, so it greys with the button ($(Field $line 'ink'))"
+    # How many real buttons were in when the hold released, as the line counts them twice: B-007 judges that every hooked run saw the same number (review m1).
+    $script:DriveCensus += "$([int](Field $line 'buttons') - $extra) of $($labels[-1])"
+}
+
+# The hold releases once every ready drive's button is in. A release a button short in some runs and not in others shows as runs
+# that disagree, here, over every hooked run since $script:DriveCensus was last emptied: on a PC whose drives all answer within
+# the picker's 2 s, the real buttons counted after the hook's extras (buttons - added) and the ones its census counted before
+# them are one number in every run. A release short by the same count in every run cannot be caught here (the dispatcher also
+# delivers the answers at Normal priority, ahead of the hook's Render-priority check).
+$script:DriveCensus = @()
+function CheckDriveCensus {
+    $values = @($script:DriveCensus | Sort-Object -Unique)
+    Write-Output "        real drive buttons when the hold released, over $(@($script:DriveCensus).Count) hooked runs: $($values -join '; ')"
+    Check (@($script:DriveCensus).Count -ge 2 -and $values.Count -eq 1 -and $values[0] -match '^(\d+) of \1$') "the hold released with the same real drive buttons in every hooked run, by both counts"
 }
 
 # The hook put the reveal status line on screen as the drive buttons came in (FSA_HOOK_STATUS, SL-047 B3-4), ahead of
@@ -2181,6 +2202,7 @@ function Test-B007 {
     $case = New-CaseFolder
     $denied = @()
     $pickers = @()
+    $script:DriveCensus = @()
     try {
         $root = Join-Path $case 'tree'
         $denied = New-TopsTree $root
@@ -2258,6 +2280,7 @@ function Test-B007 {
         Write-Output "  Cancelled, the unreadable folders opened, at minimum size with reveal status visible"
         Invoke-StoppedEnding $case $root $true $true $ExtraDrives $statusMsg
         CheckPickers $pickers
+        CheckDriveCensus
     }
     finally {
         foreach ($folder in $denied) { Undo-DenyListing $folder }

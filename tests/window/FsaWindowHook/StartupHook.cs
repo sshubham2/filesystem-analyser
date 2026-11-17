@@ -129,8 +129,9 @@ using System.Windows.Threading;
 /// Both then hold the report, once the ending is on screen, until the drive buttons are in. FSA_HOOK_DRIVES=n
 /// (SL-040, O-028) does the same hold, at any size, and then adds n drive buttons shaped like the app's own
 /// beside the real ones, so a case can show the pickers take the same room however many drives are ready.
-/// The hold logs "drives in ms=n held=n added=n buttons=n windowWidth=px windowHeight=px state=WindowState" (the size
-/// the ending was laid out at, SL-065). FSA_HOOK_STATUS=text (SL-047) also puts that text in the
+/// The hold logs "drives in ms=n held=n added=n buttons=n labels=a/b ink=c/d windowWidth=px windowHeight=px state=WindowState"
+/// (the size the ending was laid out at, SL-065). labels and ink (SL-002) count the app's own b drive buttons, before the extra
+/// ones are added: a have a TextBlock with text as their Content, and c draw it in the disabled colour of the button's template when the button is disabled (the hook disables each for the reading). FSA_HOOK_STATUS=text (SL-047) also puts that text in the
 /// window's reveal status line as the drives come in, ahead of the report, and adds "status=b statusHeight=px" to
 /// that line: whether the line is visible and how tall it was laid out; and "statusTextWidth=px statusWidth=px
 /// statusFits=n statusChars=n" (SL-091): the text's untrimmed width against the line's, and how many of its characters
@@ -853,11 +854,13 @@ internal class StartupHook
     }
 
     // As HoldUntilEnded: an item of Render priority kept queued holds the report, at Loaded, while the drives'
-    // continuation, at Normal, and the layout, at Render, still run.
+    // continuation, at the priority of the Loaded handler LoadDrives runs on (Send in a probe; see DriveReads), and the
+    // layout, at Render, still run.
     private static void HoldForDrives(Application app, string mode, TextBlock status, string loading, Panel drives, int extra, Stopwatch since)
     {
         if (status.Text != loading)
         {
+            string census = LabelCensus(drives);
             AddDrives(drives, extra);
             string? hookStatus = Environment.GetEnvironmentVariable("FSA_HOOK_STATUS");
             string statusInfo = "";
@@ -873,7 +876,7 @@ internal class StartupHook
             Window window = app.MainWindow!;
             string laidOut = string.Create(CultureInfo.InvariantCulture,
                 $"windowWidth={window.ActualWidth:F0} windowHeight={window.ActualHeight:F0} state={window.WindowState}");
-            Log($"drives in ms={Clock.ElapsedMilliseconds} held={since.ElapsedMilliseconds} added={extra} buttons={drives.Children.Count} {laidOut}{statusInfo}");
+            Log($"drives in ms={Clock.ElapsedMilliseconds} held={since.ElapsedMilliseconds} added={extra} buttons={drives.Children.Count}{census} {laidOut}{statusInfo}");
             return;
         }
         if (since.Elapsed > Deadline)
@@ -885,7 +888,49 @@ internal class StartupHook
         app.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() => HoldForDrives(app, mode, status, loading, drives, extra, since)));
     }
 
-    // Drive buttons shaped like the app's own (LoadDrives): the first real one's padding, margin and alignment,
+    // What the app's own drive buttons hold, counted before any extra is added (SC-050, review M1): " labels=a/b ink=c/d", over b
+    // real buttons, a of which have a TextBlock with text as their Content (a string would be read for access keys by the
+    // button's presenter: '_' in a volume label drew as nothing and made a key), and c of which draw that label in the colour the
+    // template gives a disabled button, as they are for the whole of a scan. For that each button is disabled for the reading
+    // and put back: the label's Foreground must then be its ContentPresenter's TextElement.Foreground, and not what it was while
+    // enabled. A label with a Foreground of its own, or one bound to an ancestor that is not its presenter, stays black on a greyed
+    // button and reads as not c. The one layout pass puts each label in its presenter, as the report's own would a moment later.
+    private static string LabelCensus(Panel drives)
+    {
+        drives.UpdateLayout();
+        int real = 0, labels = 0, ink = 0;
+        foreach (Button button in drives.Children.OfType<Button>())
+        {
+            real++;
+            if (button.Content is not TextBlock { Text.Length: > 0 } label)
+                continue;
+            labels++;
+            if (GreysWithItsButton(button, label))
+                ink++;
+        }
+        return $" labels={labels}/{real} ink={ink}/{real}";
+    }
+
+    private static bool GreysWithItsButton(Button button, TextBlock label)
+    {
+        bool wasEnabled = button.IsEnabled;
+        Brush? enabledInk = label.Foreground;
+        try
+        {
+            button.IsEnabled = false;
+            button.UpdateLayout();
+            return VisualTreeHelper.GetParent(label) is ContentPresenter presenter
+                && label.Foreground is SolidColorBrush disabledInk
+                && System.Windows.Documents.TextElement.GetForeground(presenter) is SolidColorBrush templateInk
+                && disabledInk.Color == templateInk.Color
+                && !(wasEnabled && enabledInk is SolidColorBrush before && before.Color == disabledInk.Color);
+        }
+        finally
+        {
+            button.IsEnabled = wasEnabled;
+        }
+    }
+    // Drive buttons shaped like the app's own (DriveButton, which LoadDrives fills the panel with): the first real one's padding, margin and alignment,
     // and the same two lines of text. They are never clicked; they only take the room a ready drive would.
     private static void AddDrives(Panel drives, int extra)
     {
@@ -894,7 +939,7 @@ internal class StartupHook
         {
             drives.Children.Add(new Button
             {
-                Content = $"X{i}:  Extra drive (NTFS)\n1.0 GB free of 2.0 GB",
+                Content = new TextBlock { Text = $"X{i}:  Extra drive (NTFS)\n1.0 GB free of 2.0 GB" },
                 Padding = model?.Padding ?? new Thickness(12, 6, 12, 6),
                 Margin = model?.Margin ?? new Thickness(0, 0, 8, 0),
                 HorizontalContentAlignment = model?.HorizontalContentAlignment ?? HorizontalAlignment.Left,

@@ -2,14 +2,22 @@
 # trace (tests/window/WindowCases.ps1 with FSA_T005_TRACE) and that run's summary line (FSA_T005_SUMMARY), and names
 # the call the UI thread was in or blocked under for the longest wait of the scan and of the rescan.
 #
-#   pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/StallStacks.ps1 -Trace <run.nettrace> -Summary <runs.jsonl> -Run <n> [-Out <file>]
+#   pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/StallStacks.ps1 -Trace <run.nettrace> -Summary <runs.jsonl> [-Run <n>] [-Out <file>]
 #   pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/StallStacks.ps1 -SelfTest [-Only <fixture>]
 #
 # It writes one JSON object: {run, uiThread, runtime, traceStartUtc, offsetMs, sampleMs, idleLeaf, idleShare,
 # stretches:[{matchedPhase, waitMs, windowStartMs, windowEndMs, startMs, durMs, busyInWindowMs, sinceStartScanMs,
 # samples, blockedUnder, chain, under, topLeaves, renderShare, unreadableShare, verdict, reason}], verdict, reason,
-# blockedUnder, chain}. The top-level verdict is the primary phase's (the summary's primaryPhase: the larger of the
+# blockedUnder, chain, stalled}. The top-level verdict is the primary phase's (the summary's primaryPhase: the larger of the
 # two waits, the one figure T005Batch.ps1 decides on).
+#
+# -Run picks the summary line whose run field is n (T005Batch.ps1 tags every run with one). Left out, it reads the summary's
+# last line: a plain T-005 run's line has no run field, and the last one is the run just made (SL-002).
+#
+# stalled (SL-002) says whether a phase stalled at all, which none of the verdicts does: true when the scan or the rescan
+# was reached and its longest wait was $StallLine ms or more, false when it was reached and waited less, and, on a stretch,
+# null when the phase was never reached. At the top level it is true when any phase's is. It comes from the summary's own
+# figures, so it is there however the trace reads.
 #
 # How it reads a trace, fixed before any trace was read:
 #   - The trace goes to Speedscope through dotnet-trace, pinned below and installed by eng/dotnet.ps1 into the
@@ -78,6 +86,8 @@ $Boundary = @(
 # WPF's synchronous render: the UI thread waiting on the render thread.
 $RenderSync = 'MediaContext\.CompleteRender\(|Channel\.SyncFlush\(|MilCompositionEngine|MilConnection_.*SyncFlush|MILConnection'
 $StartScan = 'MainWindow\.StartScan\('
+# A wait this long, in ms, is a stall. T005Batch.ps1's $Stall is the same figure, the line its batches decide on; the two are kept equal by hand.
+$StallLine = 250.0
 
 # An ISO time as UTC, to the tick. Summary lines are read with -DateKind String, because ConvertFrom-Json's own
 # DateTime came back without its milliseconds once cast back to text (SL-080's first traced run: offset -225 ms, not +204).
@@ -241,6 +251,23 @@ function Read-Stretch($samples, $kinds, $names, [double] $sampleMs) {
 
 # ---- One run ----
 
+# Whether one summary phase stalled: null when it was never reached, else whether its longest wait reached $StallLine.
+function Get-PhaseStalled($phase) {
+    if (-not $phase.reached) { return $null }
+    [double]$phase.longestWaitMs -ge $StallLine
+}
+
+# Whether the scan or the rescan of a summary line stalled, from the line's own figures: it is there whatever the trace gives.
+function Get-Stalled($line) {
+    @($line.phases | Where-Object { $_.name -in 'scan', 'rescan' -and (Get-PhaseStalled $_) -eq $true }).Count -gt 0
+}
+
+# The summary line to read: run $run's, or the last one when $run is under 0 (a plain T-005 summary has no run field). Null when none.
+function Select-SummaryLine($lines, [int] $run) {
+    if ($run -lt 0) { return @($lines) | Select-Object -Last 1 }
+    @($lines | Where-Object { $_.run -eq $run }) | Select-Object -Last 1
+}
+
 function Read-Run($speedscope, $line, [DateTime] $traceStartUtc, [double] $sampleMs) {
     $names = @($speedscope.shared.frames | ForEach-Object { [string]$_.name })
     $kinds = [pscustomobject]@{
@@ -259,7 +286,7 @@ function Read-Run($speedscope, $line, [DateTime] $traceStartUtc, [double] $sampl
         $kinds.Render[$f] = $names[$f] -match $RenderSync
         $kinds.StartScan[$f] = $names[$f] -match $StartScan
     }
-    $more = [ordered]@{ run = $line.run; uiThread = $line.uiThread; runtime = $line.runtime; sampleMs = $sampleMs }
+    $more = [ordered]@{ run = $line.run; uiThread = $line.uiThread; runtime = $line.runtime; sampleMs = $sampleMs; stalled = (Get-Stalled $line) }
     # One id per method: the converter names a module "PresentationCore.il" in one frame and "presentationcore.il" in
     # another (SL-080's first traced run), which would split one method's samples in two.
     $canon = [int[]]::new($names.Count)
@@ -332,7 +359,7 @@ function Read-Run($speedscope, $line, [DateTime] $traceStartUtc, [double] $sampl
         })
 
     $read = foreach ($phase in @($line.phases | Where-Object { $_.name -in 'scan', 'rescan' })) {
-        $entry = [ordered]@{ matchedPhase = $phase.name; waitMs = $phase.longestWaitMs }
+        $entry = [ordered]@{ matchedPhase = $phase.name; waitMs = $phase.longestWaitMs; stalled = (Get-PhaseStalled $phase) }
         if (-not $phase.reached -or $null -eq $offset) {
             $entry.verdict = 'CANNOT-READ'
             $entry.reason = if ($null -eq $offset) { 'the summary has no clock origin to put the wait on the trace' } else { 'the hook never sampled this phase' }
@@ -380,23 +407,24 @@ function Read-Run($speedscope, $line, [DateTime] $traceStartUtc, [double] $sampl
 }
 
 function Invoke-Read([string] $trace, [string] $summaryPath, [int] $run) {
-    $line = @(Get-Content -LiteralPath $summaryPath | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json -DateKind String } | Where-Object { $_.run -eq $run }) | Select-Object -Last 1
-    if ($null -eq $line) { return New-Result 'CANNOT-READ' "no summary line for run $run in $summaryPath" }
+    $line = Select-SummaryLine @(Get-Content -LiteralPath $summaryPath | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json -DateKind String }) $run
+    if ($null -eq $line) { return New-Result 'CANNOT-READ' "no summary line $(if ($run -lt 0) { 'in' } else { "for run $run in" }) $summaryPath" }
+    $run = $line.run
     if (-not $trace -or -not (Test-Path -LiteralPath $trace -PathType Leaf) -or (Get-Item -LiteralPath $trace).Length -eq 0) {
-        return New-Result 'CANNOT-READ' 'no trace written' @{ run = $run }
+        return New-Result 'CANNOT-READ' 'no trace written' @{ run = $run; stalled = (Get-Stalled $line) }
     }
     try {
         $header = Read-NettraceHeader $trace
         $file = Convert-ToSpeedscope $trace
     }
     catch {
-        return New-Result 'CANNOT-READ' $_.Exception.Message @{ run = $run }
+        return New-Result 'CANNOT-READ' $_.Exception.Message @{ run = $run; stalled = (Get-Stalled $line) }
     }
     # A converted file that does not parse (a conversion cut short) is removed, so the next reading converts again.
     try { $speedscope = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json -Depth 64 }
     catch {
         Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
-        return New-Result 'CANNOT-READ' "$file could not be read, and was removed so the next reading converts the trace again: $($_.Exception.Message)" @{ run = $run }
+        return New-Result 'CANNOT-READ' "$file could not be read, and was removed so the next reading converts the trace again: $($_.Exception.Message)" @{ run = $run; stalled = (Get-Stalled $line) }
     }
     $result = Read-Run $speedscope $line $header.StartUtc ($header.SamplingNs / 1e6)
     $result.samplingNs = $header.SamplingNs
@@ -461,6 +489,23 @@ function Invoke-SelfTest([string] $only) {
     if ($only) { $files = @($files | Where-Object { $_.BaseName -eq $only }) }
     if ($files.Count -eq 0) { Write-Output "FAILED: no fixture$(if ($only) { " named $only" }) in $FixtureDir"; $script:SelfTestFailed = $true; return }
     $failed = 0
+    # Which summary line a run reads (SL-002): a plain T-005 summary has no run field and -Run left out reads its last line;
+    # tagged lines (T005Batch.ps1) are found by their run, and a run with no line is no line, never the last one.
+    $plain = @([pscustomobject]@{ id = 'first' }, [pscustomobject]@{ id = 'last' })
+    $tagged = @([pscustomobject]@{ run = 0; id = 'zero' }, [pscustomobject]@{ run = 1; id = 'one' })
+    $selection = [ordered]@{
+        'no run field, -Run left out: the last line'  = (Select-SummaryLine $plain -1).id -ceq 'last'
+        'tagged, -Run 1: the line of run 1'           = (Select-SummaryLine $tagged 1).id -ceq 'one'
+        'tagged, -Run 0: the line of run 0'           = (Select-SummaryLine $tagged 0).id -ceq 'zero'
+        'tagged, -Run left out: the last line'        = (Select-SummaryLine $tagged -1).id -ceq 'one'
+        'tagged, -Run 2: no line'                     = $null -eq (Select-SummaryLine $tagged 2)
+        'no run field, -Run 0: no line'               = $null -eq (Select-SummaryLine $plain 0)
+        'no lines at all, -Run left out: no line'     = $null -eq (Select-SummaryLine @() -1)
+    }
+    foreach ($name in $selection.Keys) {
+        if ($selection[$name]) { Write-Output "  ok    summary line: $name" }
+        else { $failed++; Write-Output "  FAIL  summary line: $name" }
+    }
     foreach ($file in $files) {
         $fixture = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 64 -DateKind String
         $speedscope = ConvertTo-FixtureSpeedscope $fixture
@@ -469,11 +514,14 @@ function Invoke-SelfTest([string] $only) {
             if ($result.verdict -cne $fixture.expect.verdict) { "verdict $($result.verdict), expected $($fixture.expect.verdict)" }
             if ($fixture.expect.PSObject.Properties.Name -contains 'blockedUnder' -and $result.blockedUnder -cne $fixture.expect.blockedUnder) { "blockedUnder $($result.blockedUnder), expected $($fixture.expect.blockedUnder)" }
             if ($fixture.expect.reason -and $result.reason -notmatch $fixture.expect.reason) { "reason '$($result.reason)' does not match '$($fixture.expect.reason)'" }
+            if ($fixture.expect.PSObject.Properties.Name -contains 'stalled' -and $result.stalled -isnot [bool]) { "stalled $($result.stalled), expected a bool" }
+            if ($fixture.expect.PSObject.Properties.Name -contains 'stalled' -and $result.stalled -ne $fixture.expect.stalled) { "stalled $($result.stalled), expected $($fixture.expect.stalled)" }
             foreach ($p in @($fixture.expect.stretches)) {
                 if ($null -eq $p) { continue }
                 $s = @($result.stretches | Where-Object matchedPhase -eq $p.matchedPhase) | Select-Object -First 1
                 if ($null -eq $s) { "no $($p.matchedPhase) stretch"; continue }
                 if ($s.verdict -cne $p.verdict) { "$($p.matchedPhase): verdict $($s.verdict), expected $($p.verdict)" }
+                if ($p.PSObject.Properties.Name -contains 'stalled' -and $s.stalled -ne $p.stalled) { "$($p.matchedPhase): stalled $($s.stalled), expected $($p.stalled)" }
                 if ($p.PSObject.Properties.Name -contains 'blockedUnder' -and $s.blockedUnder -cne $p.blockedUnder) { "$($p.matchedPhase): blockedUnder $($s.blockedUnder), expected $($p.blockedUnder)" }
             }
         )
@@ -493,7 +541,7 @@ if ($SelfTest) {
     Invoke-SelfTest $Only
     exit $(if ($script:SelfTestFailed) { 1 } else { 0 })
 }
-if (-not $Summary -or $Run -lt 0) { throw 'StallStacks.ps1 -Trace <run.nettrace> -Summary <runs.jsonl> -Run <n>, or -SelfTest' }
+if (-not $Summary) { throw 'StallStacks.ps1 -Trace <run.nettrace> -Summary <runs.jsonl> [-Run <n>], or -SelfTest' }
 $result = Invoke-Read $Trace $Summary $Run
 $json = $result | ConvertTo-Json -Depth 8
 if ($Out) { Set-Content -LiteralPath $Out -Value $json -Encoding utf8NoBOM }

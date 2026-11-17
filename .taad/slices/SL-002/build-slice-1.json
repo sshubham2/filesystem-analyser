@@ -1,0 +1,332 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-002",
+ "stage": "build-slice",
+ "attempt": 1,
+ "at": "2026-11-17T14:40:20.609Z",
+ "head": "10b354ea76c345ece99ed228ea774626cbeb7e59",
+ "run_id": 11181,
+ "summary": "SC-052 and SC-050 are built. LoadDrives now reads each drive on its own background thread through the new pure DriveReads.cs, adds each button in drive-letter order as it answers, and moves DriveStatus off 'Looking for drives...' once every read is back or after 2 s. Drive labels are TextBlock content with AutomationProperties.Name, so '_' draws as written. The hook's 'drives in' line gains labels= and ink= censuses, CheckDrives and B-007 assert on them, and StallStacks gains an optional -Run, Select-SummaryLine and a stalled key. The full suite passes (1214), the window cases that read the drive hold pass, and B-007 reads labels=3/3 ink=3/3 with 3 real buttons in all 9 hooked runs. The new startup stall check is built but fails on this machine today, because the SL-080 stall is present at HEAD itself (see reason).",
+ "payload": {
+  "status": "partial",
+  "reason": "The built parts all hold, but the slice's headline criterion ('no stall at startup in the existing stall analysis') does not, and nothing in this slice's scope can change that. The design and the build check both rest on 'the SL-080 stall is absent at HEAD' (T-005 0 of 4 stalled). It is present now. I measured HEAD's own code, extracted with git archive into a scratch copy and run at the same time as my tree: at the default height its rescan waited 391 and 369 ms, and at 644 px its scan waited 329 and 325 ms and its rescan 388 and 385 ms. My tree gave the same: scan 325-336 ms at 644 px in 3 of 3 runs, rescan 383-405 ms in every run. StallStacks reads that run as RENDER-PATH at 95-96% in SyncFlush, which is exactly SL-080's reading. No src change in this slice touches render, and the A/B shows no difference between HEAD and this tree. So SL-002-StartupStallStacks.Tests.ps1 fails (exit 1, stalled=true) on this machine today, through no fault of the code under test. The stage to send this back to is design-slice, with build-check re-run first: its measured-absent premise is contradicted by a measurement taken hours later on the same PC, and the design chose to change no render code on the strength of it. Someone has to decide whether this slice should now fix SL-080's stall (T005Batch.ps1 -Plan Render is the tool the reading points to) or drop that criterion. The two merged fixes, SC-050 and SC-052, are built and verified.",
+  "summary": "SC-052 and SC-050 are built. LoadDrives now reads each drive on its own background thread through the new pure DriveReads.cs, adds each button in drive-letter order as it answers, and moves DriveStatus off 'Looking for drives...' once every read is back or after 2 s. Drive labels are TextBlock content with AutomationProperties.Name, so '_' draws as written. The hook's 'drives in' line gains labels= and ink= censuses, CheckDrives and B-007 assert on them, and StallStacks gains an optional -Run, Select-SummaryLine and a stalled key. The full suite passes (1214), the window cases that read the drive hold pass, and B-007 reads labels=3/3 ink=3/3 with 3 real buttons in all 9 hooked runs. The new startup stall check is built but fails on this machine today, because the SL-080 stall is present at HEAD itself (see reason).",
+  "files": [
+   {
+    "path": "src/FsAnalyser.App/DriveReads.cs",
+    "change": "added",
+    "why": "Pure scheduler: one background thread per read, outcomes and the settle posted to the caller's context in order, late exceptions rethrown on the context, Place keeps letter order. No DriveInfo, no Task.WhenAny."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "change": "modified",
+    "why": "LoadDrives rebuilt on DriveReads with DriveStatusWait = 2 s; ReadDrives replaced by ReadDrive(DriveInfo); DriveButton builds a TextBlock-content button (SC-050) with AutomationProperties.Name."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/DriveReadsTests.cs",
+    "change": "added",
+    "why": "10 default-suite tests on a private FIFO pump context: blocked read among answering ones, ordering, late arrival, all blocked, null, empty, Place order, throw before and after the settle, no-context refusal on a raw thread."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+    "change": "modified",
+    "why": "Links DriveReads.cs beside WorkAreaFit.cs."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/StartupHook.cs",
+    "change": "modified",
+    "why": "HoldForDrives logs labels=a/b ink=c/d from a census taken before AddDrives (each real button is disabled for the reading and restored); AddDrives' extras take TextBlock content; the doc comment of the line is updated."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "change": "modified",
+    "why": "CheckDrives asserts labels and ink and records the real-button count of each hooked run; new CheckDriveCensus, called at the end of B-007, asserts every hooked run saw the same number."
+   },
+   {
+    "path": "tests/window/StallStacks.ps1",
+    "change": "modified",
+    "why": "-Run optional (Select-SummaryLine, last line when omitted), $StallLine = 250, a stalled key at the top level and per stretch (set before any CANNOT-READ return, and carried by Invoke-Read's early failures), self-test checks of line selection and expect.stalled."
+   },
+   {
+    "path": "tests/window/fixtures/StallStacks/named.json",
+    "change": "modified",
+    "why": "expect.stalled true at the top level, with the scan stretch true and the 5 ms rescan stretch false."
+   },
+   {
+    "path": "tests/window/fixtures/StallStacks/no-stall.json",
+    "change": "added",
+    "why": "A scan wait of 85 ms (NAMED, stalled false) and an unreached rescan (CANNOT-READ, stalled null)."
+   },
+   {
+    "path": "tests/window/SL-002-StartupStallStacks.Tests.ps1",
+    "change": "added",
+    "why": "Warm-up T-005 plus a traced T-005 at 644 px read by StallStacks with no -Run: requires a closed run, a reached scan, a trace that was really read, stalled false at the top level and on the scan, and no stalled stretch reading RENDER-PATH."
+   },
+   {
+    "path": "tests/window/AppArgumentCorpus.json",
+    "change": "modified",
+    "why": "Lists the new script as not-a-launcher (lesson #876)."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "change": "modified",
+    "why": "Already modified when the build began: the engine's two appended rules for this slice. Kept as is; they match the design and neither fires on the new code."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "done": true,
+    "how": "DriveReadsTests.A_read_that_does_not_answer_holds_no_other_drive: three reads meeting at a Barrier(3), the middle blocked on an event; reads 0 and 2 arrive and Start settles at the 300 ms bound (250 ms to 10 s). Passed."
+   },
+   {
+    "key": "O-002",
+    "done": true,
+    "how": "DriveReadsTests.The_wait_ends_only_after_every_answer_has_been_delivered: four immediate reads, 60 s bound, FIFO pump; every arrival ran on the pump before the await resumed, in under 5 s. Passed."
+   },
+   {
+    "key": "O-003",
+    "done": true,
+    "how": "DriveReadsTests.A_drive_that_answers_after_the_wait_arrives_on_the_pump: the blocked read is released after the settle and arrives within 5 s, on the pump thread and not the read's thread. Passed."
+   },
+   {
+    "key": "O-004",
+    "done": true,
+    "how": "DriveReadsTests.When_no_drive_answers_in_time_the_wait_still_ends_with_nothing: two blocked reads, 300 ms bound; settles with zero arrivals. Passed. The two-line LoadDrives branch (no-drives sentence, flipped to 'Drives' on a later arrival) is checked by reading, as the case says."
+   },
+   {
+    "key": "O-005",
+    "done": true,
+    "how": "DriveReadsTests.A_drive_that_is_not_ready_arrives_nowhere_and_still_counts_as_back: a null read never reaches arrived and the wait ends in under 5 s of a 60 s bound. Passed."
+   },
+   {
+    "key": "O-006",
+    "done": true,
+    "how": "DriveReadsTests.A_PC_with_no_drive_to_read_is_done_at_once: empty list, 60 s bound, completes in under 1 s. Passed."
+   },
+   {
+    "key": "O-007",
+    "done": true,
+    "how": "DriveReadsTests.Buttons_keep_the_order_of_the_drive_list_whatever_order_the_answers_come_in: arrivals 2,0,3,1 give positions 0,0,2,1 and shown [0,1,2,3]. Passed."
+   },
+   {
+    "key": "O-008",
+    "done": true,
+    "how": "DriveReadsTests.An_unexpected_failure_while_reading_faults_the_wait: awaiting Start throws the InvalidOperationException and nothing is raised a second time on the pump. Passed."
+   },
+   {
+    "key": "O-009",
+    "done": true,
+    "how": "DriveReadsTests.An_unexpected_failure_from_a_drive_that_answered_late_is_raised_on_the_pump: after the settle the exception arrives as a fault on the pump, and Start's task stays completed, not faulted. Passed."
+   },
+   {
+    "key": "O-010",
+    "done": true,
+    "how": "WindowCases.ps1 -Case B-007 (CheckDrives): the real exe on this PC's three real drives logs labels=3/3 in all 9 hooked runs, and the check requires equal and non-zero. The original code reads labels=0/3. B-007 passes: exit 0, 419 ok, 0 FAIL on the final sources."
+   },
+   {
+    "key": "O-011",
+    "done": true,
+    "how": "StallStacks.ps1 -SelfTest: seven Select-SummaryLine checks (no run field with -Run omitted gives the last line; tagged runs 1 and 0 give their lines; -Run 2 and a plain summary with -Run 0 give none; no lines gives none). PASSED: 14 fixtures."
+   },
+   {
+    "key": "O-012",
+    "done": true,
+    "how": "StallStacks.ps1 -SelfTest: named.json gives stalled true (scan 300 ms) and false (rescan 5 ms); the new no-stall.json gives false (scan 85 ms) and null (unreached rescan). stalled is set when $more and each stretch entry are created, before any CANNOT-READ return."
+   },
+   {
+    "key": "O-013",
+    "done": false,
+    "how": "The check is built (tests/window/SL-002-StartupStallStacks.Tests.ps1: warm-up, then a traced T-005 at 644 px, read by StallStacks with no -Run) and it runs end to end: no-run-field summary line read, trace converted, scan wait placed on the trace's clock. But it FAILS on this machine today (exit 1, two runs): stalled=true, scan 325-336 ms and rescan 383-401 ms, RENDER-PATH 95-96%. HEAD's own code, run beside my tree, stalls the same way (scan 329 and 325 ms at 644 px, rescan 388 and 385 ms; at default height rescan 391 and 369 ms), so this is not caused by the slice. The design's premise that the stall is absent at HEAD no longer holds. Back to design-slice (re-run build-check first)."
+   },
+   {
+    "key": "O-015",
+    "done": true,
+    "how": "Settled by measurement, not as prescribed. I built the prescribed FindAncestor ContentPresenter binding. A debug census in the real app showed it resolved to DriveScroller's ScrollContentPresenter (ink=0/3, label foreground black), the exact failure the critic predicted, so it would have broken the grey. An off-screen rig in the app's order (button made, then added to a live ScrollViewer/StackPanel) measured the plain unbound TextBlock label at #FF838383 in both start states, created disabled and enabled then disabled. So the binding is dropped and the label has no Foreground of its own. The ink census is now outcome-based: the hook disables each real button, reads the label's Foreground against its ContentPresenter's TextElement.Foreground (it must be equal, and different from the enabled colour), and restores the button. CheckDrives asserts ink equals labels. B-007 reads ink=3/3 in all 9 hooked runs; a local black Foreground gives ink=0/3 and fails it."
+   },
+   {
+    "key": "O-016",
+    "done": true,
+    "how": "Built the critic's alternative: CheckDrives records buttons-minus-added and the labels denominator of every hooked run, and CheckDriveCensus (end of B-007) requires one value across all runs ('3 of 3' over 9 runs). The DriveReads remarks state the priority protection (arrivals at Normal run before the hook's Render check) and that a release short by the same count in every run cannot be caught by a loop check."
+   },
+   {
+    "key": "O-017",
+    "done": true,
+    "how": "The startup script scopes the RENDER-PATH clause to stretches whose stalled is true, and also requires that StallStacks read the trace: a scan stretch with windowStartMs set. A scan verdict of CANNOT-READ for 'no busy stretch covers the wait' stays allowed. The script was run twice; it failed on the stalled clauses only (see O-013), and the trace-read clause passed."
+   },
+   {
+    "key": "O-018",
+    "done": true,
+    "how": "The no-context case runs on a raw thread that catches everything into a local, joins with a 10 s timeout, then asserts IsType<InvalidOperationException> and that no read started. Every other body runs as a callback on the pump, which asserts Current is itself, records escaped exceptions, rethrows a body's failure to the test thread and bounds the wait at 30 s."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "test_name": "FsAnalyser.Core.Tests.DriveReadsTests.A_read_that_does_not_answer_holds_no_other_drive",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.DriveReadsTests.A_read_that_does_not_answer_holds_no_other_drive"
+   },
+   {
+    "key": "C-002",
+    "test_name": "FsAnalyser.Core.Tests.DriveReadsTests.The_wait_ends_only_after_every_answer_has_been_delivered",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.DriveReadsTests.The_wait_ends_only_after_every_answer_has_been_delivered"
+   },
+   {
+    "key": "C-003",
+    "test_name": "FsAnalyser.Core.Tests.DriveReadsTests.A_drive_that_answers_after_the_wait_arrives_on_the_pump",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.DriveReadsTests.A_drive_that_answers_after_the_wait_arrives_on_the_pump"
+   },
+   {
+    "key": "C-004",
+    "test_name": "FsAnalyser.Core.Tests.DriveReadsTests.When_no_drive_answers_in_time_the_wait_still_ends_with_nothing",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.DriveReadsTests.When_no_drive_answers_in_time_the_wait_still_ends_with_nothing"
+   },
+   {
+    "key": "C-005",
+    "test_name": "FsAnalyser.Core.Tests.DriveReadsTests.A_drive_that_is_not_ready_arrives_nowhere_and_still_counts_as_back",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.DriveReadsTests.A_drive_that_is_not_ready_arrives_nowhere_and_still_counts_as_back"
+   },
+   {
+    "key": "C-006",
+    "test_name": "FsAnalyser.Core.Tests.DriveReadsTests.A_PC_with_no_drive_to_read_is_done_at_once",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.DriveReadsTests.A_PC_with_no_drive_to_read_is_done_at_once"
+   },
+   {
+    "key": "C-007",
+    "test_name": "FsAnalyser.Core.Tests.DriveReadsTests.Buttons_keep_the_order_of_the_drive_list_whatever_order_the_answers_come_in",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.DriveReadsTests.Buttons_keep_the_order_of_the_drive_list_whatever_order_the_answers_come_in"
+   },
+   {
+    "key": "C-008",
+    "test_name": "FsAnalyser.Core.Tests.DriveReadsTests.An_unexpected_failure_while_reading_faults_the_wait",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.DriveReadsTests.An_unexpected_failure_while_reading_faults_the_wait"
+   },
+   {
+    "key": "C-009",
+    "test_name": "FsAnalyser.Core.Tests.DriveReadsTests.An_unexpected_failure_from_a_drive_that_answered_late_is_raised_on_the_pump",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.DriveReadsTests.An_unexpected_failure_from_a_drive_that_answered_late_is_raised_on_the_pump"
+   },
+   {
+    "key": "C-010",
+    "test_name": "tests/window/WindowCases.ps1 -Case B-007 (CheckDrives: labels and ink)",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case B-007"
+   },
+   {
+    "key": "C-012",
+    "test_name": "tests/window/StallStacks.ps1 -SelfTest (summary line selection)",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/StallStacks.ps1 -SelfTest"
+   },
+   {
+    "key": "C-013",
+    "test_name": "tests/window/StallStacks.ps1 -SelfTest (named.json and no-stall.json: stalled true, false, null)",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/StallStacks.ps1 -SelfTest"
+   },
+   {
+    "key": "C-014",
+    "test_name": "tests/window/SL-002-StartupStallStacks.Tests.ps1",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/SL-002-StartupStallStacks.Tests.ps1"
+   }
+  ],
+  "deviations": [
+   "M1 (O-015): the prescribed Foreground binding to the ancestor ContentPresenter was built and then removed. In the real app it resolved to DriveScroller's ScrollContentPresenter (ink=0/3), the failure the critic predicted, so it would have kept disabled labels black. A rig in the app's order measured the unbound TextBlock label already at the disabled grey #FF838383 in both start states, which refutes the finding's premise. The design's original 'no local Foreground' stands, and the ink census reads the real disabled colour instead of the binding.",
+   "The hook census does more than the design said ('reads Content only, forces no layout'): it calls UpdateLayout so each label has its presenter as its visual parent, and it disables each real button for the reading and restores it. This is test-side only.",
+   "The startup script's RENDER-PATH clause is scoped to stretches with stalled=true and the script also requires the trace to have been read (a scan stretch with windowStartMs), as the critic's amendment to m2 says. The warm-up run writes no summary and no trace, so the summary has exactly one line, which -Run left out reads.",
+   "The twin check between StallStacks' $StallLine and T005Batch.ps1's $Stall (m5) was not built: O-019 was waived. The twinning is a comment.",
+   "Beyond the design, the stalled key is also carried by Invoke-Read's other early CANNOT-READ results (trace conversion failed, converted file unreadable), not only 'no trace written'."
+  ],
+  "not_built": [
+   "No end-to-end show of an underscore label (WD_BLACK, USB_DISK): no volume on this PC has one and relabelling changes the system. Settled by the survey's TextBlock measurement plus B-007's labels=3/3 on the app's own buttons (case C-011, material: false).",
+   "DriveStatus on a no-path launch was not read: the only tool that reads it from outside the process is UI Automation, which the engine's guard refused. A plain no-path launch of the published exe stayed up for 6 s with no early exit. The hooked launches (B-007 and the other cases) run the same LoadDrives on this PC's real drives, and only the missing StartScan differs.",
+   "A real unresponsive share (a sleeping or offline mapped drive) was not made: person-run by project rule. SC-052's isolation is proven with blocked delegates in DriveReadsTests, and the spike measured C:\\ answering in 0 ms while a dead letter's root call blocked."
+  ],
+  "follow_ups": [
+   "Decide what to do about the SL-080 stall now that it is present at HEAD: T-005 stalls again (scan 325-336 ms at 644 px, rescan 369-405 ms at any height, RENDER-PATH 95-96% in SyncFlush) after reading 82-87 ms hours earlier on the same PC. Either fix it in this slice (T005Batch.ps1 -Plan Render is what the reading points to) or drop that criterion. What changed on the machine between the two measurements is unknown (display, GPU power state and OneDrive's heavy CPU use are candidates).",
+   "O-014, owed to validate-slice: time the process exit while a drive-read thread is stuck in a dead share's root call, in the spike's Sandbox set-up. Not done here.",
+   "The person-run sleeping-share check from the design is still owed: C:\\ and D:\\ buttons at once, 'Looking for drives...' turning to 'Drives' within about 2 s, Z:\\ joining in letter order, and the process exiting promptly on close. It also makes the C:\\, OneDrive and network proof runs stale (src/FsAnalyser.App and the hook changed)."
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build FsAnalyser.slnx -c Release",
+    "outcome": "passed",
+    "note": "Before any edit: the tree as found (only .taad/fitness.yaml modified) built clean."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~DriveReadsTests",
+    "outcome": "passed",
+    "note": "10 passed, 0 failed."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx",
+    "outcome": "passed",
+    "note": "1214 passed, 0 failed, 0 skipped on the final sources (1204 before, plus 10 new). Includes ArchitectureRulesTests, the rules-parity twin, AppArgumentTests with the new corpus row, and MainWindowNameClashTests."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/StallStacks.ps1 -SelfTest",
+    "outcome": "passed",
+    "note": "PASSED: 14 fixtures, plus 7 summary-line selection checks."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case B-007",
+    "outcome": "passed",
+    "note": "Final sources, republished: exit 0, 419 ok, 0 FAIL. 'drives in ... buttons=29 labels=3/3 ink=3/3' in the hooked runs, and 'real drive buttons when the hold released, over 9 hooked runs: 3 of 3'."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case C-001 | C-002 | B-008 | S-001 | S-003 | S-008 | K-002 | T-001 (one run each)",
+    "outcome": "passed",
+    "note": "All exit 0, 0 FAIL: 17, 28, 140, 36, 26, 177, 13 and 82 ok. These are the report-mode and hooked cases that read the drive hold (B-008, S-001, S-003, S-008 and K-002 call CheckDrives)."
+   },
+   {
+    "command": "Mutation for O-015: Foreground = Brushes.Black added to the label in DriveButton, then WindowCases.ps1 -Case B-007",
+    "outcome": "failed",
+    "note": "Failed as it must: exit 1, 'ink=0/3', every drives-in check FAIL. Reverted afterwards."
+   },
+   {
+    "command": "Mutation for O-018: the no-context refusal in DriveReads.Start replaced by a default context, then the single no-context test",
+    "outcome": "failed",
+    "note": "Failed as it must: 'Assert.IsType() Failure: Value is null', without taking the test host down. Reverted afterwards."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/SL-002-StartupStallStacks.Tests.ps1",
+    "outcome": "failed",
+    "note": "Run twice, exit 1 both times. The T-005 runs themselves pass. StallStacks reads RENDER-PATH 95-96%, stalled=true: scan 325-336 ms, rescan 383-401 ms. The trace-read and exitReason clauses pass. HEAD's own code stalls the same way (next two rows)."
+   },
+   {
+    "command": "A/B: WindowCases.ps1 -Case T-005 at the default height, HEAD's code (git archive copy) and this tree alternating, 2 pairs",
+    "outcome": "passed",
+    "note": "HEAD scan 73 and 148 ms, rescan 391 and 369 ms. This tree scan 198 and 150 ms, rescan 405 and 389 ms. No difference attributable to the slice; the rescan stalls at HEAD."
+   },
+   {
+    "command": "WindowCases.ps1 -Case T-005 with FSA_T005_HEIGHT=644 on HEAD's code (git archive copy), 2 runs",
+    "outcome": "passed",
+    "note": "HEAD at 644 px: scan 329 and 325 ms, rescan 388 and 385 ms, i.e. the same stall the startup check sees on this tree."
+   },
+   {
+    "command": "Off-screen WPF rig (pwsh -STA), Button with TextBlock content inside a live ScrollViewer/StackPanel, created disabled and enabled-then-disabled; string, plain TextBlock and bound TextBlock",
+    "outcome": "passed",
+    "note": "The plain TextBlock label reads #FF838383 in both start states, the same as string content. The bound variant also reads #FF838383 there, but in the real app the same binding resolved to ScrollContentPresenter (see O-015)."
+   },
+   {
+    "command": "Start-Process artifacts/publish/FsAnalyser.App.exe (no argument), wait 6 s, check, Stop-Process",
+    "outcome": "passed",
+    "note": "The published exe stayed up for 6 s with no early exit or crash, then I stopped it. DriveStatus itself was not read (UI Automation refused by the engine's guard)."
+   },
+   {
+    "command": "python -I scratch fit.py (approximate .taad/fitness.yaml check of the 11 changed files against all 107 rules)",
+    "outcome": "passed",
+    "note": "No hit from the two new rules or the WhenAny rule. One hit: an 'at least' in a pre-existing MainWindow.xaml.cs comment that my raw-text check cannot tell from code; not in my diff."
+   }
+  ],
+  "screens": [
+   {
+    "name": "the drive picker in the main window",
+    "open": "Filesystem Analyser",
+    "steps": []
+   }
+  ],
+  "app": {
+   "command": "artifacts/publish/FsAnalyser.App.exe",
+   "url": ""
+  },
+  "architecture": []
+ }
+}

@@ -1,0 +1,391 @@
+{
+ "schema": "slice-record@1",
+ "slice": "SL-002",
+ "title": "Window responds from launch with no startup stall",
+ "status": "active",
+ "branch": "slice/SL-002",
+ "opened_at": "2026-11-17T11:05:02.777Z",
+ "merge_commit": null,
+ "how_to_read": "Each attempt is one line and a `details` filename in this same directory. Open a detail file ONLY when this index points you at one -- the summaries are here so you do not have to. `caused_by` is what sent the stage back; `changed` is what the attempt then touched, counted by kind. Several attempts in a row that were caused by the same stage and changed no `src` is a loop, not progress.",
+ "open": [
+  {
+   "stage": "build-check",
+   "issue": "The existing stall analysis (tests/window/StallStacks.ps1) shows no stall at startup: partial"
+  },
+  {
+   "stage": "build-check",
+   "issue": "SC-050: a drive label with '_' (WD_BLACK, USB_DISK) is drawn as written and gives the window no access key: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "SC-052: the ready drives' buttons appear without waiting on a drive that does not answer (a mapped share whose server is asleep or offline): missing"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Whether the scheduling deserves its own generic file (DriveReads.cs) or should be inlined in LoadDrives. The practice designer flagged its own helper as over-built. It is kept only because it is the one way to prove SC-052 in the default suite without a device."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The 2 s DriveStatus bound: anything between about 0.5 s and 10 s keeps both the hook's 20 s Deadline and the 'never earlier than today' property on this PC. 2 s is a judgement."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Whether Start should refuse to run without a SynchronizationContext, as chosen, or fall back to calling back inline on the read threads, as the proposal did. Refusing makes all state UI-thread-only and the ordering testable on a pump. It also makes every test install a context."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The name-specific pattern of the label rule (`Content = x.Label`): a renamed member evades it. A broader pattern fired on correct code (`Content = panel;` in SettingsWindow.cs)."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "No end-to-end show of an underscore label (WD_BLACK, USB_DISK): no volume on this PC has one and relabelling changes the system. Settled by the survey's TextBlock measurement plus B-007's labels=3/3 on the app's own buttons (case C-011, material: false)."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "DriveStatus on a no-path launch was not read: the only tool that reads it from outside the process is UI Automation, which the engine's guard refused. A plain no-path launch of the published exe stayed up for 6 s with no early exit. The hooked launches (B-007 and the other cases) run the same LoadDrives on this PC's real drives, and only the missing StartScan differs."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "A real unresponsive share (a sleeping or offline mapped drive) was not made: person-run by project rule. SC-052's isolation is proven with blocked delegates in DriveReadsTests, and the spike measured C:\\ answering in 0 ms while a dead letter's root call blocked."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "Decide what to do about the SL-080 stall now that it is present at HEAD: T-005 stalls again (scan 325-336 ms at 644 px, rescan 369-405 ms at any height, RENDER-PATH 95-96% in SyncFlush) after reading 82-87 ms hours earlier on the same PC. Either fix it in this slice (T005Batch.ps1 -Plan Render is what the reading points to) or drop that criterion. What changed on the machine between the two measurements is unknown (display, GPU power state and OneDrive's heavy CPU use are candidates)."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "O-014, owed to validate-slice: time the process exit while a drive-read thread is stuck in a dead share's root call, in the spike's Sandbox set-up. Not done here."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "The person-run sleeping-share check from the design is still owed: C:\\ and D:\\ buttons at once, 'Looking for drives...' turning to 'Drives' within about 2 s, Z:\\ joining in letter order, and the process exiting promptly on close. It also makes the C:\\, OneDrive and network proof runs stale (src/FsAnalyser.App and the hook changed)."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: M1 (O-015): the prescribed Foreground binding to the ancestor ContentPresenter was built and then removed. In the real app it resolved to DriveScroller's ScrollContentPresenter (ink=0/3), the failure the critic predicted, so it would have kept disabled labels black. A rig in the app's order measured the unbound TextBlock label already at the disabled grey #FF838383 in both start states, which refutes the finding's premise. The design's original 'no local Foreground' stands, and the ink census reads the real disabled colour instead of the binding."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: The hook census does more than the design said ('reads Content only, forces no layout'): it calls UpdateLayout so each label has its presenter as its visual parent, and it disables each real button for the reading and restores it. This is test-side only."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: The startup script's RENDER-PATH clause is scoped to stretches with stalled=true and the script also requires the trace to have been read (a scan stretch with windowStartMs), as the critic's amendment to m2 says. The warm-up run writes no summary and no trace, so the summary has exactly one line, which -Run left out reads."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: The twin check between StallStacks' $StallLine and T005Batch.ps1's $Stall (m5) was not built: O-019 was waived. The twinning is a comment."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "deviation: Beyond the design, the stalled key is also carried by Invoke-Read's other early CANNOT-READ results (trace conversion failed, converted file unreadable), not only 'no trace written'."
+  },
+  {
+   "stage": "build-slice",
+   "issue": "O-013 not done: The check is built (tests/window/SL-002-StartupStallStacks.Tests.ps1: warm-up, then a traced T-005 at 644 px, read by StallStacks with no -Run) and it runs end to end: no-run-field summary line read, trace converted, scan wait placed on the trace's clock. But it FAILS on this machine today (exit 1, two runs): stalled=true, scan 325-336 ms and rescan 383-401 ms, RENDER-PATH 95-96%. HEAD's own code, run beside my tree, stalls the same way (scan 329 and 325 ms at 644 px, rescan 388 and 385 ms; at default height rescan 391 and 369 ms), so this is not caused by the slice. The design's premise that the stall is absent at HEAD no longer holds. Back to design-slice (re-run build-check first)."
+  },
+  {
+   "stage": "code-review",
+   "issue": "drift: tests/window/SL-002-StartupStallStacks.Tests.ps1:55 adds a check the design did not list and the build did not declare: the summary line must have no run field. The script does not clear FSA_T005_TAG, so an FSA_T005_TAG left in the caller's environment fails the startup check without any stall."
+  },
+  {
+   "stage": "code-review",
+   "issue": "not read (measured): .taad/fitness.yaml (not seen: lines 1-1493 of 1493) -- partly-opened: seen only through a shell command: git diff (measured by the engine from the review's own tool record)"
+  },
+  {
+   "stage": "code-review",
+   "issue": "not read (measured): src/FsAnalyser.App/MainWindow.xaml.cs (not seen: lines 301-1097 of 1097) -- partly-opened: a Read returned only part of it; seen only as 26 Grep lines; seen only through a shell command: get-item, git diff (measured by the engine from the review's own tool record)"
+  },
+  {
+   "stage": "code-review",
+   "issue": "not read (measured): tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj (not seen: lines 1-81 of 81) -- partly-opened: seen only through a shell command: $env:taad3_home, git diff (measured by the engine from the review's own tool record)"
+  },
+  {
+   "stage": "code-review",
+   "issue": "not read (measured): tests/window/AppArgumentCorpus.json (not seen: lines 1-35 of 35) -- partly-opened: seen only through a shell command: git diff (measured by the engine from the review's own tool record)"
+  },
+  {
+   "stage": "code-review",
+   "issue": "not read (measured): tests/window/fixtures/StallStacks/named.json (not seen: lines 1-124 of 124) -- partly-opened: seen only through a shell command: git diff (measured by the engine from the review's own tool record)"
+  },
+  {
+   "stage": "code-review",
+   "issue": "not read (measured): tests/window/FsaWindowHook/StartupHook.cs (not seen: lines 1-789, 960-1605 of 1605) -- partly-opened: a Read returned only part of it; seen only as 1 Grep line; seen only through a shell command: get-item, git diff (measured by the engine from the review's own tool record)"
+  },
+  {
+   "stage": "code-review",
+   "issue": "not read (measured): tests/window/StallStacks.ps1 (not seen: lines 1-254 of 548) -- partly-opened: a Read returned only part of it; seen only as 22 Grep lines; seen only through a shell command: $d, $dir, $env:taad3_home, git diff; 1 returned line differ from the reviewed file (read before it changed) (measured by the engine from the review's own tool record)"
+  },
+  {
+   "stage": "code-review",
+   "issue": "not read (measured): tests/window/WindowCases.ps1 (not seen: lines 1-2903, 2944-3019, 3045-7269 of 7269) -- partly-opened: a Read returned only part of it; seen only as 61 Grep lines; seen only through a shell command: $env:taad3_home, git diff (measured by the engine from the review's own tool record)"
+  },
+  {
+   "stage": "code-review",
+   "issue": "not reviewed: tests/window/WindowCases.ps1 -- read only through the diff hunks (1995-2019, 2202-2206, 2280-2284) and Grep of the CheckDrives call sites. The rest of the ~5000-line harness was not opened, and I relied on the B-007 run for its behaviour."
+  },
+  {
+   "stage": "code-review",
+   "issue": "not reviewed: tests/window/fixtures/StallStacks/no-stall.json -- read only its expect and summary keys by Grep (lines 2-38), not its timeline. The self-test run covers it."
+  },
+  {
+   "stage": "code-review",
+   "issue": "not reviewed: tests/window/StallStacks.ps1:1-254 -- seen through the diff (header comment, $StallLine) only, not read whole."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: DriveStatus text on a no-path launch: UI Automation found no window in the Sandbox (session 0, window not visible) and is refused on the host. The DriveStatus change was observed only through the hook's 'drives in' line on launches with a path."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Whether a dead-share process left after WM_CLOSE eventually exits once the redirector gives up. Observation was capped at 150 s, so its user impact (a leftover process for minutes) is unmeasured."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Why report-mode Shutdown exits promptly with a stuck read while WM_CLOSE does not. The kernel wait state of the remaining thread was not inspected."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: A late-answering drive's button appearing in the real app after 'Drives' (criterion 3): the silenced Y: never answered within any run."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: The drawn WD_BLACK / USB__DISK button and the absence of the Alt+B scan, on a visible desktop. No volume on this PC has an underscore, and the Sandbox has no visible window."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Other outage forms: a real sleeping NAS, an offline Tailscale peer such as this PC's Z:\\, and a server address that fails the TCP connect slowly (spike N-014). Only an accepted-but-silent loopback SMB endpoint was reproduced."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "not reached: Windows builds other than 26100.9974 (Sandbox) and 26300 (this PC)."
+  },
+  {
+   "stage": "validate-slice",
+   "issue": "criterion not met: 14. show no stall at startup in the existing stall analysis"
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The design's decision 1 (change no render code) and its startup check rest on 'the SL-080 stall is absent at HEAD', measured once by build-check (T-005 x4 at the default height, no-path rig x4). The critique did not ask whether that holds across time, or at the height the new check runs (FSA_T005_HEIGHT=644). A check would be 'run the guard 3 times at its own height before accepting the design'. HEAD's own code then read scan 325-336 ms at 644 px and rescan 369-405 ms at default height, so criterion 14 failed."
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: M1's premise (an unbound TextBlock Content stays black when the button is disabled) was taken from community answers about StackPanel content and never rig-run, although the survey's accesskey.ps1 rig was available. It measured false: the unbound label draws #FF838383 in both start states. Its prescribed FindAncestor(ContentPresenter) binding resolved to DriveScroller's ScrollContentPresenter in the live app (ink=0/3), which is the defect it claimed to prevent. The critic's own 'hole' note predicted that resolution and the fix was still accepted as written."
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The m1 fix told the builder to state in the DriveReads comment that arrivals run at Normal priority, ahead of the hook's Render check. WPF's flowed context carries the Loaded handler's priority, which a probe measured as Send. The builder followed the wording, so DriveReads.cs:27-28 shipped a wrong comment. The conclusion (posts outrank Render) still holds."
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The startup stall check was designed as 'sets FSA_T005_SUMMARY, FSA_T005_TRACE and FSA_T005_HEIGHT'. The critique did not ask what else T-005 reads from the inherited environment: FSA_T005_RENDER (WindowCases.ps1:3029), FSA_T005_SAMPLE_MS (:2938) and FSA_T005_TAG (:3030). A shell left over from a T005Batch -Plan Render run changes what 'no stall at startup' measures, and a stray TAG fails the script's own 'no run field' check with no stall."
+  },
+  {
+   "stage": "reflect",
+   "issue": "critique missed: The StallStacks CLI contract made -Run optional ('-Run omitted means the last non-empty line') but did not say what `run` the result reports for a line with no run field. Invoke-Read declares `[int] $run` and writes `$line.run` into it, so null becomes 0 (StallStacks.ps1:409-414). 0 is T005Batch's first run id, so the early CANNOT-READ results mislabel a plain run while Read-Run reports null."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: What changed on this PC between build-check's clean T-005 readings (scan 82-87 ms) and the stalled ones hours later (scan 325-336 ms at 644 px, rescan 369-405 ms at any height)? Candidates are display or GPU power state and OneDrive's CPU use; none was logged. A render fix cannot be priced before this is known."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Why does WM_CLOSE leave the process alive for minutes while report-mode Shutdown exits in 12-34 ms with the same read stuck? The kernel wait state of the one remaining thread was not inspected. Would CancelSynchronousIo on the drive-read threads at close release it, as the project already does for Core scanning?"
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Does a share that wakes up after 'Drives' is shown get its button in the real app, in letter order? The silenced Y: never answered in any validation run, so this is proven only by DriveReadsTests with blocked delegates."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Is a mapped letter whose server fails the TCP connect slowly (about 21 s measured) read the same as an accepted-but-silent endpoint? Only the silent loopback SMB endpoint was reproduced, on Windows build 26100.9974 in the Sandbox and 26300 on this PC."
+  },
+  {
+   "stage": "reflect",
+   "issue": "still unknown: Can DriveStatus on a no-path launch be read from outside the process without UI Automation, which the engine's guard refuses and which found no window in the Sandbox, or does it need a hook mode?"
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The slice's own headline criterion 14 (no startup stall in StallStacks) is unmet. The design cut render work on one session's measurement (T-005 4/4 and no-path rig 4/4 clean). The same code then stalled on this PC (scan 325-336 ms at 644 px, rescan 369-405 ms, RENDER-PATH 95-96%). SL-002-StartupStallStacks.Tests.ps1 is committed and exits 1 here. PS-031's done condition is not met by this merge."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: The critique let two things through together: a 'stall absent' premise built on a single morning, and a check height (644 px) that differs from the height of the evidence (default). It judged 644 'valid' without comparing the two. The one real chance to challenge the premise was critique m3, which was overridden."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: M1 (major) was refuted by measurement after the build. The critic's premise (TextBlock labels stay black when disabled) came from StackPanel-content Q&A, not a rig. Its prescribed ancestor binding resolved to DriveScroller's ScrollContentPresenter (ink=0/3) and had to be built, shown failing and removed. critique-review was sized out for this medium slice, so nothing challenged the finding before build."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Three stages (build-slice, code-review, validate-slice) each halted on the same known red criterion before the engine waived it, so three stage runs went on a result nothing in the slice could change."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Four review findings were waived as notes and ship: run reported as 0 for a plain summary, FSA_T005_RENDER/SAMPLE_MS/TAG inherited by the startup check, the $StallLine/$Stall twin held by a comment, and the DriveReads priority comment saying Normal where a probe measured Send. The comment was fixed by the comment fixer in 6939a9b60; the other three remain."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Code review did not read 8 of 12 changed files whole. MainWindow.xaml.cs lines 301-1097, StartupHook.cs lines 1-789 and 960-1605, and nearly all of the 7,269-line WindowCases.ps1 were seen only through diff hunks and Grep, and it leaned on a B-007 run. Nothing later found a defect in the unread parts, so this is a coverage gap, not a recorded miss."
+  },
+  {
+   "stage": "reflect",
+   "issue": "went wrong: Validation could not reach several things: DriveStatus on a no-path launch, a late-answering drive's button in the real app (the silenced Y: never answered in any run), an underscore label drawn on a visible desktop, and any slow-fail outage (the spike measured a 21 s TCP connect failure, but no mapped letter could be made from it)."
+  }
+ ],
+ "stages": [
+  {
+   "stage": "repro",
+   "title": "Repro",
+   "order": 1,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "build-check",
+   "title": "Build check",
+   "order": 2,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "risk-spike",
+   "title": "Risk spike",
+   "order": 3,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "design-slice",
+   "title": "Design",
+   "order": 4,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-11-17T14:02:33.611Z",
+     "head": "3ab847cb921227980cc33ed8adb0220de15c5e62",
+     "summary": "There was one proposal, from `practice`, and it is the core of this design.",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique",
+   "title": "Critique",
+   "order": 5,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-11-17T14:22:36.427Z",
+     "head": "3ab847cb921227980cc33ed8adb0220de15c5e62",
+     "summary": "The core of SC-052 holds up against the tree.",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique-review",
+   "title": "Critique review",
+   "order": 6,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-11-17T14:36:07.186Z",
+     "head": "3ab847cb921227980cc33ed8adb0220de15c5e62",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-review-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "build-slice",
+   "title": "Build",
+   "order": 7,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-11-17T14:40:20.609Z",
+     "head": "10b354ea76c345ece99ed228ea774626cbeb7e59",
+     "summary": "SC-052 and SC-050 are built.",
+     "caused_by": null,
+     "changed": {
+      "src": 2,
+      "tests": 9,
+      "config": 1,
+      "listed": 12,
+      "measured_by_git": 16
+     },
+     "details": "build-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "code-review",
+   "title": "Code review",
+   "order": 8,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-11-17T15:26:47.720Z",
+     "head": "10b354ea76c345ece99ed228ea774626cbeb7e59",
+     "summary": "SL-002 builds SC-052 and SC-050 as designed.",
+     "caused_by": null,
+     "changed": {},
+     "details": "code-review-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "validate-slice",
+   "title": "Validate",
+   "order": 9,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-11-17T15:43:52.216Z",
+     "head": "6939a9b603e15701834b8c3fcaa16e8283390921",
+     "summary": "The slice's SC-052 and SC-050 work holds in a real environment.",
+     "caused_by": null,
+     "changed": {},
+     "details": "validate-slice-1.json"
+    }
+   ]
+  },
+  {
+   "stage": "reflect",
+   "title": "Reflect",
+   "order": 10,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-11-17T16:31:34.621Z",
+     "head": "6939a9b603e15701834b8c3fcaa16e8283390921",
+     "summary": "SL-002 was opened as \"no startup stall, picker shows\" with SC-050 and SC-052 merged in.",
+     "caused_by": null,
+     "changed": {},
+     "details": "reflect-1.json"
+    }
+   ]
+  }
+ ]
+}
