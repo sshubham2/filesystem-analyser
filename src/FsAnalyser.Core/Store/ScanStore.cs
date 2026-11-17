@@ -81,7 +81,8 @@ public sealed partial class ScanStore
     /// <summary>
     /// For a scan of a whole drive (<c>C:\</c>), the bytes the volume reports in use, read once as the scan
     /// starts: what the tree is set against to show how much of the drive the scan could not see. Null for a
-    /// scan of a folder or a share, and when the volume did not answer within the read's bound (SL-043).
+    /// scan of a folder, a share or a drive on a network file system (SL-001), when the root could not be opened to be asked,
+    /// and when the volume did not answer within the read's bound (SL-043).
     /// </summary>
     /// <remarks>
     /// Never null itself, completed at most once and never faulted. Readable while the scan runs and after it
@@ -101,7 +102,8 @@ public sealed partial class ScanStore
     /// The size of the volume's $MFT, its valid data length (U-001), read by the same thread as <see cref="VolumeUsed"/> in
     /// the same breath, so the window can set the one measured part of the space the scan did not see apart from the rest
     /// (SL-001). Null when the volume is not NTFS, its $MFT could not be read, the root is not a whole local drive, or the
-    /// read's bound passed; always null when <see cref="VolumeUsed"/> is.
+    /// read's bound passed: so null whenever <see cref="VolumeUsed"/> is null, except when the read lands just as its bound
+    /// passes, when the size can stand beside a null figure. Complete whenever <see cref="VolumeUsed"/> has completed with a number.
     /// </summary>
     /// <remarks>
     /// Never null itself, completed at most once and never faulted, and nothing in Core waits for it. It is answered strictly

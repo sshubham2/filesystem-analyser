@@ -3,13 +3,13 @@ using System.Linq;
 
 /// <summary>
 /// How the hook reads the scanning panel's counters line (CountersText), with no WPF in it, so that Core.Tests compiles this file
-/// as source and a test settles what the stop trigger reads (SL-044, SL-001).
+/// as source and a test settles what the stop trigger reads (SC-044, SL-001).
 /// </summary>
 /// <remarks>
 /// The line is "1,234 files, 5,678 folders, 3.2 GB (3.2 GB on disk), 2 folders unreadable", and with a count of one
 /// "1 file, 1 folder, ..., 1 folder unreadable": FigureText.Counters writes each count through FigureText.Count. The folder
-/// count is the one after the first ', ' that ends a ' folder', which is always the counters' own: whatever 'N folders
-/// unreadable' follows comes after it.
+/// count is the number between the last ', ' before the first ' folder' and that ' folder', which is always the counters' own:
+/// whatever 'N folders unreadable' follows comes after it.
 /// </remarks>
 internal static class CountersReading
 {

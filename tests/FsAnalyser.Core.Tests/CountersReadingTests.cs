@@ -3,7 +3,7 @@ using FsAnalyser.App;
 namespace FsAnalyser.Core.Tests;
 
 /// <summary>
-/// The scanning panel's counters line (SL-044) and the window hook's reading of its folder count (SL-001). A count of one is written
+/// The scanning panel's counters line and the window hook's reading of its folder count (SC-044, SL-001). A count of one is written
 /// in the singular ('1 file', '1 folder', '1 folder unreadable') as everywhere else, and the hook, which stops a scan at a folder
 /// count, must still read it. The hook's FoldersIn is compiled here as source, with no WPF in it.
 /// </summary>

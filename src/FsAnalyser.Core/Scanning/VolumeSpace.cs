@@ -41,8 +41,9 @@ internal static class VolumeSpace
     /// <param name="bound">How long the figure waits; <see cref="ScanOptions.VolumeReadBound"/> owns the default.</param>
     /// <param name="anyRoot">Tests only: read whatever the root is, so that a folder scan can be shown to
     /// complete while the read is still stalled.</param>
-    /// <param name="mft">Answered with the $MFT's size, strictly before <paramref name="figure"/> is, or with null at the
-    /// same moments <paramref name="figure"/> is (null when not wanted).</param>
+    /// <param name="mft">Answered with the $MFT's size, strictly before <paramref name="figure"/> is, or with null when
+    /// <paramref name="figure"/> is answered null (so it is never pending once the figure has landed). When the read lands just
+    /// as <paramref name="bound"/> passes, the size can stand beside a null figure. Null when not wanted.</param>
     /// <param name="mftReader">The $MFT read, given the root as <paramref name="reader"/> is; <see cref="ReadMft"/> when
     /// null and no <paramref name="reader"/> was substituted, and none (null) when one was, so a test that substitutes
     /// the used read never reads the real disk's $MFT. Called only after the used read returned a figure.</param>
