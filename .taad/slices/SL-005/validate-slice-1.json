@@ -1,0 +1,248 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-005",
+ "stage": "validate-slice",
+ "attempt": 1,
+ "at": "2026-11-18T05:05:47.260Z",
+ "head": "5809f30c77db2e6e74ab8378ac98573e2f859aee",
+ "run_id": 11381,
+ "summary": "SL-005 works on every system I could reach. A folder deleted during a scan is counted as deleted, not as unreadable. When the path above a folder stops resolving, the folder still stays unreadable. Two builds were compared in fresh Windows Sandboxes, running as administrator (SYSTEM): the fix at HEAD 5809f30, and a second scan program built from the pre-slice code (uat 28d72d8). Both used the real Scanner.Scan.\n\n**Deleting folders mid-scan, fix against pre-slice:** a root child is deleted after the root is listed, so its open fails with 2. A folder under a deleted parent fails with 3. I ran this on local NTFS, a ReFS volume, a loopback SMB share (\\\\127.0.0.1) and a drive letter mapped to that share:\n- Pre-slice: both folders are recorded unreadable (Unreadable 2, codes 2 and 3, NothingListed).\n- Fix: FoldersVanished 2, Unreadable 0, VanishedBeforeProbe 1. Each deleted subtree is counted once.\n\n**Losing the path above the folder mid-scan:** the queued folders stay unreadable with FoldersVanished 0 in every case:\n- Mapped letter removed (`net use /delete`): their opens fail with 3. The root check catches it.\n- ReFS volume detached: same, opens fail with 3 and the root check catches it.\n- Share removed: opens fail with 67, which is not a deleted-folder code.\n\n**Live Sandbox C:\\, 157,428 folders, with 5 root-level folders deleted 2 s in plus Windows' own activity:**\n- The scan program at HEAD: Completed, FoldersVanished 8, Unreadable 0.\n- The app published from HEAD, in report mode (`--report`): exit 0, core.foldersVanished 8, core.unreadable 0.\n  - The note reads \"8 folders were deleted while the scan ran, before they could be read; they are counted as empty folders.\"\n  - The Unreadable tab is hidden, neither caption says 'missing', and the report has no non-ASCII characters.\n  - The note is the 4th of 4 lines in a box 76 px tall with 160.96 px of content, so it may need scrolling. The build already filed this layout.\n\n**Report exit codes:** a missing --report value gives 2, an unwritable report path gives 3, and a plain run gives 0 with foldersVanished 0 and no note.\n\n**On this PC:** the whole suite passes (1346/1346) and Fitness says all 111 rules hold.\n\n**Unrelated failure, also in the pre-slice build:** the scanner cannot open an exFAT or FAT32 root at all, even the volume root (RootUnreadable 87). So the FAT part of O-002 cannot be reached, and the app probably cannot scan exFAT or FAT USB sticks. That belongs on the backlog.\n\nNot run: throw mode (exit 70), the window script on this PC's desktop, DFS, minifilters, a remote SMB server over a real network, and the person's own C:\\, OneDrive and network proof runs.\n\nThe slice had one build attempt and one code review, so it is not looping. The bug report was only a title. The criteria I graded are the design's 14 cases.",
+ "payload": {
+  "status": "complete",
+  "verdict": "passes",
+  "contact": "real",
+  "summary": "SL-005 works on every system I could reach. A folder deleted during a scan is counted as deleted, not as unreadable. When the path above a folder stops resolving, the folder still stays unreadable. Two builds were compared in fresh Windows Sandboxes, running as administrator (SYSTEM): the fix at HEAD 5809f30, and a second scan program built from the pre-slice code (uat 28d72d8). Both used the real Scanner.Scan.\n\n**Deleting folders mid-scan, fix against pre-slice:** a root child is deleted after the root is listed, so its open fails with 2. A folder under a deleted parent fails with 3. I ran this on local NTFS, a ReFS volume, a loopback SMB share (\\\\127.0.0.1) and a drive letter mapped to that share:\n- Pre-slice: both folders are recorded unreadable (Unreadable 2, codes 2 and 3, NothingListed).\n- Fix: FoldersVanished 2, Unreadable 0, VanishedBeforeProbe 1. Each deleted subtree is counted once.\n\n**Losing the path above the folder mid-scan:** the queued folders stay unreadable with FoldersVanished 0 in every case:\n- Mapped letter removed (`net use /delete`): their opens fail with 3. The root check catches it.\n- ReFS volume detached: same, opens fail with 3 and the root check catches it.\n- Share removed: opens fail with 67, which is not a deleted-folder code.\n\n**Live Sandbox C:\\, 157,428 folders, with 5 root-level folders deleted 2 s in plus Windows' own activity:**\n- The scan program at HEAD: Completed, FoldersVanished 8, Unreadable 0.\n- The app published from HEAD, in report mode (`--report`): exit 0, core.foldersVanished 8, core.unreadable 0.\n  - The note reads \"8 folders were deleted while the scan ran, before they could be read; they are counted as empty folders.\"\n  - The Unreadable tab is hidden, neither caption says 'missing', and the report has no non-ASCII characters.\n  - The note is the 4th of 4 lines in a box 76 px tall with 160.96 px of content, so it may need scrolling. The build already filed this layout.\n\n**Report exit codes:** a missing --report value gives 2, an unwritable report path gives 3, and a plain run gives 0 with foldersVanished 0 and no note.\n\n**On this PC:** the whole suite passes (1346/1346) and Fitness says all 111 rules hold.\n\n**Unrelated failure, also in the pre-slice build:** the scanner cannot open an exFAT or FAT32 root at all, even the volume root (RootUnreadable 87). So the FAT part of O-002 cannot be reached, and the app probably cannot scan exFAT or FAT USB sticks. That belongs on the backlog.\n\nNot run: throw mode (exit 70), the window script on this PC's desktop, DFS, minifilters, a remote SMB server over a real network, and the person's own C:\\, OneDrive and network proof runs.\n\nThe slice had one build attempt and one code review, so it is not looping. The bug report was only a title. The criteria I graded are the design's 14 cases.",
+  "checks": [
+   {
+    "what": "Whole suite at HEAD 5809f30",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx -- xUnit.MaxParallelThreads=2 (TAAD3_HOME = new empty temp folder)",
+    "outcome": "passed",
+    "evidence": "Passed! - Failed: 0, Passed: 1346, Skipped: 0, Total: 1346, Duration: 1 m 33 s; exit 0 in 97 s"
+   },
+   {
+    "what": "Architecture rules",
+    "command": "Fitness op=check",
+    "outcome": "passed",
+    "evidence": "111 rules checked against 214 parsed files: every declared rule holds (the proof-run rule matches no files, as docs/proof-runs is still empty)"
+   },
+   {
+    "what": "First publish attempt of the scan program and the app",
+    "command": "eng/dotnet.ps1 publish ... -nodeReuse:false",
+    "outcome": "not-run",
+    "evidence": "My command was malformed: PowerShell split -nodeReuse:false and MSBuild stopped with MSB1041. Nothing was built. Re-run below without the switch."
+   },
+   {
+    "what": "Publish the scan program (real Scanner.Scan with ScanOptions.AfterFolder) and the app from HEAD, plus the same program against the pre-slice Core (git archive 28d72d853)",
+    "command": "eng/dotnet.ps1 publish %TEMP%\\sl005-val-src\\Probe.csproj -c Release -o .taad-scratch/sl005-val/probe; same for src/FsAnalyser.App -o .taad-scratch/sl005-val/app and probe-base",
+    "outcome": "passed",
+    "evidence": "probe exit 0, app exit 0, base probe exit 0; FsAnalyser.App.exe 139,997,336 B built 10:39:57"
+   },
+   {
+    "what": "Sandbox, local NTFS: z deleted while queued (open 2), y deleted after its own listing so y\\w opens with 3; fix against pre-slice",
+    "command": "Sandbox: probe C:\\work\\nt\\t 1:del:..\\z 1:open:..\\z 3:del:..\\y 3:open:..\\y\\w",
+    "outcome": "passed",
+    "evidence": "Raw opens: z -> 2, y\\w -> 3. Fix: Completed folders=4 foldersVanished=2 vanishedBeforeProbe=1 unreadable=0. Pre-slice: unreadable=2 (z error 2 NothingListed, y\\w error 3 NothingListed). Same result in both Sandbox runs."
+   },
+   {
+    "what": "Sandbox, ReFS volume (50 GB vdisk, format /FS:ReFS): same deletions, fix against pre-slice",
+    "command": "Sandbox: probe R:\\t with the same hooks, fix and base",
+    "outcome": "passed",
+    "evidence": "Raw opens: z -> 2, y\\w -> 3. Fix: foldersVanished=2 unreadable=0. Pre-slice: unreadable=2 (codes 2 and 3)."
+   },
+   {
+    "what": "Sandbox, SMB loopback share \\\\127.0.0.1\\sl5a, folders deleted on the server side mid-scan; fix against pre-slice",
+    "command": "Sandbox (network on): probe \\\\127.0.0.1\\sl5a\\t 1:del:C:\\work\\smb\\sl5a\\t\\z ... 3:del:...\\y",
+    "outcome": "passed",
+    "evidence": "Over SMB the opens return 2 (z) and 3 (y\\w). Fix: Completed foldersVanished=2 unreadable=0. Pre-slice: unreadable=2 with codes 2 and 3."
+   },
+   {
+    "what": "Sandbox, drive letter Y: mapped to the share, same deletions; fix against pre-slice",
+    "command": "Sandbox: net use Y: \\\\127.0.0.1\\sl5d; probe Y:\\t with hooks",
+    "outcome": "passed",
+    "evidence": "Opens: Y:\\t\\z -> 2, Y:\\t\\y\\w -> 3. Fix: foldersVanished=2 unreadable=0. Pre-slice: unreadable=2."
+   },
+   {
+    "what": "Sandbox, share removed mid-scan (net share sl5b /delete /y at folder 1)",
+    "command": "Sandbox: probe \\\\127.0.0.1\\sl5b\\t 1:exec:net share sl5b /delete /y",
+    "outcome": "passed",
+    "evidence": "Opens after removal return 67 (ERROR_BAD_NET_NAME). Fix: Completed foldersVanished=0 unreadable=4, all 67 NothingListed, so they are not counted as deleted."
+   },
+   {
+    "what": "Sandbox, mapped letter removed mid-scan (net use X: /delete /y at folder 1), the M1 case",
+    "command": "Sandbox: probe X:\\t 1:exec:net use X: /delete /y",
+    "outcome": "passed",
+    "evidence": "The queued folders' opens and the root's open both return 3. Fix: foldersVanished=0 unreadable=4 (3x4 NothingListed). The root check kept them unreadable."
+   },
+   {
+    "what": "Sandbox, ReFS volume detached mid-scan (diskpart detach vdisk at folder 1, like pulling a USB disk)",
+    "command": "Sandbox: probe R:\\u 1:exec:diskpart /s detach.txt",
+    "outcome": "passed",
+    "evidence": "Detach succeeded. Opens of R:\\u\\b and R:\\u return 3. Fix: foldersVanished=0 unreadable=4 (3x4). The root check kept them unreadable."
+   },
+   {
+    "what": "Sandbox, exFAT (P:) and FAT32 (Q:) volumes, same deletion test",
+    "command": "Sandbox: probe P:\\t, Q:\\t, P:\\, Q:\\ with fix and base",
+    "outcome": "failed",
+    "nature": "pre-existing",
+    "evidence": "fsutil reports exFAT and FAT32, and dir P:\\t shows a, y and z. But every scan ends RootUnreadable rootError=87 with no hook fired, even at the volume root, on BOTH the fix and the pre-slice program built from 28d72d853 in the same Sandbox run. The scanner cannot list exFAT or FAT32 roots at all, which is not caused by SL-005 (ListRoot is not in its diff), and it blocks the FAT part of O-002."
+   },
+   {
+    "what": "Sandbox run 1: SMB loopback with networking off",
+    "command": "Sandbox (network off): Test-Path \\\\127.0.0.1\\sl5a; net use",
+    "outcome": "not-run",
+    "evidence": "Every SMB access failed with 1231 (network location cannot be reached), because the Sandbox was started with networking off. Re-run with network on, above."
+   },
+   {
+    "what": "Sandbox run 1: live C:\\ scan program, 480 s limit",
+    "command": "Sandbox: probe C:\\ with C:\\zz-sl5-1..5 deleted at 2 s",
+    "outcome": "not-run",
+    "evidence": "Killed at 480 s (first scan on a cold cache). My limit was too short and no output survived. Re-run in run 2 with 1,100 s."
+   },
+   {
+    "what": "Sandbox live whole C:\\ with the scan program at HEAD, 5 root folders deleted 2 s in, plus Windows' own deletions",
+    "command": "Sandbox run 2: Start-Process probe C:\\; Remove-Item C:\\zz-sl5-* at 2,053 ms",
+    "outcome": "passed",
+    "evidence": "RESULT status=Completed folders=157428 files=123560 foldersVanished=8 vanishedBeforeProbe=39 probeFailures=2 unreadable=0, 556 s. No unreadable rows of any code; the 3 deleted folders beyond my 5 came from Windows itself."
+   },
+   {
+    "what": "Sandbox live whole C:\\ with the app at HEAD in report mode, same timed deletion",
+    "command": "Sandbox run 1: FsAnalyser.App.exe C:\\ --report C:\\taad\\out\\app-c.json; Remove-Item C:\\zz-sl5-* at 3,867 ms",
+    "outcome": "passed",
+    "evidence": "exit 0 in 390 s. Report fields: schema 1; core {status Completed, folders 157428, unreadable 0, foldersVanished 8}; OutcomeNotes line 4 is '8 folders were deleted while the scan ran, before they could be read; they are counted as empty folders.'; UnreadableTab visible false; LargestFilesCaption 'Top 100 of 123,169 files scanned.' and KindsCaption '123,169 files scanned, sorted by extension.', neither saying 'missing'; 0 non-ASCII characters. OutcomeTexts actualHeight 76 against extentHeight 160.96, so the note may need scrolling; this layout is already filed by the build."
+   },
+   {
+    "what": "Report-mode exit codes of the app at HEAD",
+    "command": "Sandbox: FsAnalyser.App.exe C:\\work\\t --report | ... --report C:\\no\\such\\dir\\r.json | ... --report C:\\taad\\out\\tiny.json",
+    "outcome": "passed",
+    "evidence": "missing value: exit 2 (1,991 ms); unwritable path: exit 3 (121 ms), no file; plain run: exit 0, schema 1, core.foldersVanished 0, unreadable 0, OutcomeNotes visible False"
+   },
+   {
+    "what": "Throw mode (exit 70)",
+    "command": "HookCases.ps1 throw mode with the FsaWindowHook startup hook",
+    "outcome": "not-run",
+    "evidence": "artifacts/window-hook is not built in this tree, and the hook's arming was not set up. The slice's diff does not touch App.xaml.cs's exit path, and O-013 left exit 70 to the existing cases."
+   },
+   {
+    "what": "The slice's window script, Cases A and B, on this PC",
+    "command": "pwsh tests/window/SL-005-VanishedFolders.Tests.ps1 -Case A,B",
+    "outcome": "not-run",
+    "evidence": "It puts the app's window on the person's desktop. The Sandbox report-mode run of the same app on a live C:\\ replaced it."
+   },
+   {
+    "what": "Pre-slice app on a live C:\\ for comparison",
+    "outcome": "not-run",
+    "evidence": "Not repeated in this validation. Q-016's record says the pre-slice Sandbox whole-C:\\ run had 3 unreadable rows with error 2, which matches the 3 folders Windows deleted beyond my 5."
+   },
+   {
+    "what": "Delete-pending folder (open 5) and folder replaced by a file (listing 87) on a real walk",
+    "outcome": "not-run",
+    "evidence": "The design leaves both unreadable on purpose. They are pinned only by the truth-table rows (5,false) and (87,true) in ScannerFailedKindTests, which passed in the suite."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "1. A root child queued by the root's listing and deleted before its open (ERROR_FILE_NOT_FOUND, 2) is not called unreadable",
+    "met": "yes",
+    "how": "Sandbox, fix against pre-slice on NTFS, ReFS, SMB loopback and a mapped letter: the raw open returns 2. The pre-slice build records it (error 2 NothingListed); the fix counts it in FoldersVanished with Unreadable 0. Live Sandbox C:\\ (scan program and app): 8 deleted folders, unreadable 0. The suite (VanishedFolderTests) also passes."
+   },
+   {
+    "criterion": "2. A deeper folder whose parent was deleted too (open 3) is not called unreadable, and its top-level row counts no UnreadableBelow",
+    "met": "yes",
+    "how": "Sandbox: y deleted after its listing makes y\\w open with 3 on NTFS, ReFS, SMB and a mapped letter. The pre-slice build records it; the fix counts it in FoldersVanished with Unreadable 0. That row y's UnreadableBelow is 0 comes from VanishedFolderTests.AFolderUnderADeletedParentIsGoneAndItsRowCountsNoUnreadableBelow passing in the 1346-test suite; my scan program did not print rows."
+   },
+   {
+    "criterion": "3. Refused and partly read folders are still recorded",
+    "met": "yes",
+    "how": "The suite passes, including VanishedFolderTests.RefusedAndPartlyReadFoldersAreStillRecordedBesideADeletedOne (deny ACE 5 and partial listing 995). In the Sandbox, folders cut off by share removal (67), a removed mapped letter (3) and a detached ReFS volume (3) all stayed recorded NothingListed with FoldersVanished 0."
+   },
+   {
+    "criterion": "4. Gone versus unreadable is decided from the open's outcome (truth table)",
+    "met": "yes",
+    "how": "ScannerFailedKindTests.FolderVanishedIsTrueOnlyForARefusedOpenThatFoundNoFolderOrNoPath passes in the suite. Real codes seen in the Sandbox match it: 2 and 3 with nothing opened count as deleted, 67 does not, and 3 with the root failing stays unreadable."
+   },
+   {
+    "criterion": "5. A missing scan root",
+    "met": "yes",
+    "how": "The suite passes (AMissingRootIsRootUnreadableAndCountsNoVanishedFolder, RootTests). In Sandbox run 1 the scan program on an unmapped Y:\\t gave RootUnreadable rootError=3 with foldersVanished=0."
+   },
+   {
+    "criterion": "6. A deleted folder with subfolders the scan never saw is counted once",
+    "met": "yes",
+    "how": "Sandbox on NTFS, ReFS, SMB and a mapped letter: deleting z (with z\\inner\\f.txt) and y (with y\\w\\x) gives folders=4 and FoldersVanished=2. Only z and y\\w are counted; z\\inner and y\\w\\x are not."
+   },
+   {
+    "criterion": "7. A scan stopped after a folder vanished counts it",
+    "met": "yes",
+    "how": "Code only: VanishedFolderTests.AStoppedScanCountsTheFoldersThatVanishedBeforeTheStop passes in the 1346-test suite (Cancelled, FoldersVanished 1, empty Unreadable). Not exercised in the Sandbox."
+   },
+   {
+    "criterion": "8. Folder y deleted after its own listing: its file vanishes before sizing and its queued w opens with 3",
+    "met": "yes",
+    "how": "Sandbox on 4 file systems: vanishedBeforeProbe=1 (y\\g.txt), y\\w raw open 3, FoldersVanished counts it, probeFailures=0, unreadable=0."
+   },
+   {
+    "criterion": "9. Wording of the ending's note for deleted folders (1, 2 and 3, ASCII, no path)",
+    "met": "yes",
+    "how": "CoveragePanelTextTests.TheFoldersVanishedNoteCountsFoldersDeletedWhileTheScanRan passes in the suite. The plural form was seen word for word in the live Sandbox app report: '8 folders were deleted while the scan ran, before they could be read; they are counted as empty folders.' The report has 0 non-ASCII characters and no path. The singular form is checked only by the unit test."
+   },
+   {
+    "criterion": "10. The ending of a scan during which folders were deleted and nothing is unreadable",
+    "met": "yes",
+    "how": "Published app at HEAD on the live Sandbox C:\\, with 8 folders deleted rather than the planned 3: exit 0, core.unreadable 0, foldersVanished 8, the note in OutcomeNotes, UnreadableTab visible false, and the largest-files and kinds captions without 'missing'. The note is the 4th line in a box 76 px tall with 160.96 px of content, so it may need scrolling (already filed by the build)."
+   },
+   {
+    "criterion": "11. Report the scan: the same run plus the throw-mode, missing-value and unwritable-path runs",
+    "met": "yes",
+    "how": "Live Sandbox report: schema 1 with core.foldersVanished present next to every existing core key, and exit 0. Missing value gave exit 2 and unwritable path gave exit 3, measured in the Sandbox. Throw mode (70) was not run by me; O-013, as accepted, left it to the existing cases, and the slice does not change App.xaml.cs's exit path."
+   },
+   {
+    "criterion": "12. A folder whose delete is still pending (open 5) is left unreadable on purpose",
+    "met": "yes",
+    "how": "As the design fixed it: unreadable on purpose, pinned by the (5,false) row of the FolderVanished theory, which passes in the suite. Not exercised on a real delete-pending folder."
+   },
+   {
+    "criterion": "13. A queued folder replaced by a file (listing 87) is left as OpenedNothingListed on purpose",
+    "met": "yes",
+    "how": "As the design fixed it: pinned by the (87,true) row of the theory, which passes in the suite. Not exercised live."
+   },
+   {
+    "criterion": "14. The whole suite still passes",
+    "met": "yes",
+    "how": "eng/dotnet.ps1 test FsAnalyser.slnx at HEAD 5809f30: 1346 passed, 0 failed, 0 skipped. Fitness: all 111 rules hold."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-002",
+    "verified": "cannot-tell",
+    "evidence": "Measured in Windows Sandbox (build 10.0.26100, SYSTEM) with the scan program at HEAD and the same program built from pre-slice Core 28d72d8.\n\nWhere 2 and 3 do mean a deleted folder:\n- SMB loopback share \\\\127.0.0.1 and a drive letter mapped to it: a folder deleted on the server opens with 2, one under a deleted parent with 3. Fix: FoldersVanished 2, Unreadable 0. Pre-slice: both recorded unreadable.\n- ReFS: the same codes and the same result.\n\nWhere the path above stops resolving, nothing is counted as deleted:\n- Removed mapped letter: 3, but the root check keeps them unreadable.\n- Detached ReFS volume: 3, kept unreadable the same way.\n- Removed share: 67, not one of the gone codes.\n\nNot settled:\n- FAT32 and exFAT: the scanner refuses those roots with 87 on both builds, so the deleted-folder path never runs there. Pre-existing.\n- DFS links and folder-hiding minifilters: none available here.\n- A remote SMB server over a real network, and connection loss by network cut rather than share or mapping removal.\n\nThe measurable half holds; the rest stays open."
+   }
+  ],
+  "not_reached": [
+   "The person's own proof runs per Q-016: W-001 on this PC's C:\\, W-002 on OneDrive, W-003 network cuts. Whole-drive scans on this PC were not run; the live C:\\ evidence is from a Windows Sandbox.",
+   "A remote SMB server over a real network, and a share lost through Wi-Fi off, server sleep or a Tailscale tunnel going down. Only loopback SMB in the Sandbox was tested, cut by deleting the share or the mapping.",
+   "DFS links whose target is down: DFS Namespaces is a Windows Server role and no namespace exists here.",
+   "Folder-hiding minifilters: none available to test under.",
+   "FAT32 and exFAT: the scanner refuses their roots with error 87 before and after this slice, so the deleted-folder path cannot be reached on them. This also suggests the app cannot scan exFAT or FAT USB sticks at all, which is worth a backlog item.",
+   "Delete-pending folders (open 5) and folders replaced by a file (listing 87) on a real walk: only the truth-table rows pin them, and the design leaves them unreadable.",
+   "Renamed or moved folders counted as deleted (N-056, waived): of the 8 deleted folders on the Sandbox C:\\, 3 came from Windows itself, and nothing here tells a deleted one from a renamed one.",
+   "Throw-mode exit 70 was not run: the FsaWindowHook startup hook is not built in this tree.",
+   "File-system codes were measured on the Sandbox's build 10.0.26100; this PC runs 26300 (the build's SUBST and NTFS measurements were on this PC).",
+   "The app's window on this PC's desktop at its scaling (window script Cases A and B), including whether the deleted-folders note needs scrolling there. In the Sandbox, as SYSTEM, it measured 76 px against 160.96 px of content."
+  ],
+  "screens": [
+   {
+    "screen": "s1-window-light.png",
+    "looked": "yes",
+    "problems": [
+     {
+      "where": "Under the row of drive buttons (C:, D:, Z:)",
+      "what": "An empty horizontal scrollbar, with a track and arrows but no thumb, is drawn even though all three drive buttons fit. It looks like a stray control and suggests more drives are hidden off to the side. To the eye the grey 'Drives' label above is readable on white, though the engine measured 1.00:1."
+     }
+    ]
+   }
+  ],
+  "planned": [],
+  "elevation": []
+ }
+}

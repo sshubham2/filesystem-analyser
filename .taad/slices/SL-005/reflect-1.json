@@ -1,0 +1,171 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-005",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-11-18T05:47:51.676Z",
+ "head": "5809f30c77db2e6e74ab8378ac98573e2f859aee",
+ "run_id": 11385,
+ "summary": "SL-005 fixed the health-check finding HF-011. A queued folder whose open fails with 2 or 3 is no longer stamped Unreadable. It is counted in a new ScanResult.FoldersVanished, finishes as a listed empty folder, and gets one ending note plus a core.foldersVanished report key. A root-still-opens check, required by critique M1, keeps folders unreadable when the drive letter, mapping or volume is lost. The suite went 1260 to 1346, the repro passes, and Windows Sandbox runs on NTFS, ReFS, loopback SMB and a live C:\\ held. Every gate ran twice, mostly on halts for a decision rather than rework. The rename/move residue and the regex spelling family were waived and filed.",
+ "payload": {
+  "status": "complete",
+  "summary": "SL-005 fixed the health-check finding HF-011. A queued folder whose open fails with 2 or 3 is no longer stamped Unreadable. It is counted in a new ScanResult.FoldersVanished, finishes as a listed empty folder, and gets one ending note plus a core.foldersVanished report key. A root-still-opens check, required by critique M1, keeps folders unreadable when the drive letter, mapping or volume is lost. The suite went 1260 to 1346, the repro passes, and Windows Sandbox runs on NTFS, ReFS, loopback SMB and a live C:\\ held. Every gate ran twice, mostly on halts for a decision rather than rework. The rename/move residue and the regex spelling family were waived and filed.",
+  "learned": [
+   {
+    "kind": "process",
+    "lesson": "The design stage cites engine-planted finish-line tests (E007DeletedFolderRecordTests, E007DeletedFoldersEndingTests, E007DeletedFoldersReportTests, E007StillUnreadableTests) that are not in the tree. This is the third slice to hit it. The lessons that name it (#876, #888, #896) reached the critique and build but not the design. Run `git ls-files tests/**/E0*` before writing case checks, and put the builder's own tests in the cases.",
+    "evidence": "reviews#651 M2: Glob tests/**/E007* returned nothing, and 4 of the design's 14 cases (2, 3, 10, 11) were checked only against those names. The build's deviation list says it wrote VanishedFolderTests and tests/window/SL-005-VanishedFolders.Tests.ps1 instead."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "The 'gone, not unreadable' decision lives in Scanner.Run.FolderDone, in three pieces: FolderVanished(error, opened) (~:102), GoneGivenRootOpen (~:111) and RootOpenError (~:464-470). Any next 'not unreadable' class (delete-pending 5, folder replaced by a file 87) is a clause there. Any handle query it needs must go through SynchronousIoCancel (io.Query). A direct Kernel32.GetFileInformationByHandleEx outside it fails ArchitectureRulesTests.FileSystemCallsGoThroughTheCancelGuard. RtlGetLastNtStatus returns 0xC0000135 on the process's first call unless the import is warmed before the first open.",
+    "evidence": "Spike combined-gone-fixes-leave-only-refused: 1 of 413 filtered tests failed, at DirectoryReader.cs:134, when the FileStandardInfo query was written as a direct Kernel32 call. Spike delete-pending-ntstatus: d read 0xC0000135 unwarmed and 0xC0000056 warmed."
+   },
+   {
+    "kind": "design",
+    "lesson": "Classifying by a Win32 code needs a list of every cause of that code, written before the code is chosen. For 2 and 3 on a queued folder the causes are: deleted, parent deleted, volume, letter or share lost, and renamed or moved (the folder or an ancestor). The critique found the volume case. The rename and move case came from the code review's probe. The root-open check only proves the root resolves, so it does not separate rename from delete.",
+    "evidence": "Code-review probes: Directory.Move(z, moved) at AfterFolder n==1 gave FoldersVanished 1, Unreadable 0, and the 4,096-byte file still on disk. A renamed y gave the same. Sandbox C:\\ had 8 vanished folders, 3 of them from Windows itself, and nothing separates delete from rename. Waived as N-055/N-056."
+   },
+   {
+    "kind": "design",
+    "lesson": "A regex fitness rule against 'a second spelling of the gone codes' does not close as a class. It took three laps: the critique's m1 pattern, the build's 38-row corpus, then the code review's `case 2 or 3:`, `case (2 or 3):` and `2 or 3 =>` / `{ 2 => true, 3 => true }` arms. Keep the text rule for the constant names. For drift inside the deciding predicate, add a behavioural sweep that checks FolderVanished(code, false) == SizeProbe.IsGone(code) for every code 0..2000. The 12-row theory in ScannerFailedKindTests would not catch a third code added to the predicate.",
+    "evidence": "GoneCodeSpellingsCorpus.json has 38 rows, and 23 of 60 combined corpus rows failed on the pre-build patterns. Code review: 3 of 3 combinator rows pass the widened rule. Carried to SC-080 and SC-081."
+   },
+   {
+    "kind": "design",
+    "lesson": "Any new ending note lands in OutcomeTexts, which is capped at 76 px, so on a real C:\\ it can sit below the fold. The vanished-folders note is the 4th note, after the hardlink, probe-failure and files-vanished notes (MainWindow.xaml.cs:659-671). A report-mode check passes on OutcomeNotes.lines even when the note is not visible. Q-002 is already open on this cap. The next slice that adds a note should resolve Q-002 first or add a visibility check.",
+    "evidence": "Build: actualHeight 76 vs extentHeight 97.12 with the notes then showing. Validation on live Sandbox C:\\: note is the 4th of 4 lines, 76 px box, 160.96 px of content."
+   },
+   {
+    "kind": "estimate",
+    "lesson": "A change to FolderDone is not low risk, however small the src diff. This one was opened medium/low and cost 5 gate re-runs, 15 obligations and a Sandbox validation. Open a slice that changes what FolderDone stamps, or which ending claims a scan produces, as medium risk with a measurement step for any 'this code means X' premise.",
+    "evidence": "The build's diff lists 16 files: 5 src, 10 tests and fixtures, and .taad/fitness.yaml. Tests went 1260 to 1346 (+86). It added a 50,201-folder window script and a shared SubstDrive helper. The critique's M1, a major, showed volume loss would have been reported as deletion."
+   },
+   {
+    "kind": "process",
+    "lesson": "The loop halted five times on things that were not rework. Build-check halted because a survey of a bug fix always carries one 'present' regression-guard row and so reads 'partial'. Design halted on its own 'irreversible' label for adding core.foldersVanished to WindowReport schema 1, which is additive and allowed. Critique and code-review halted on findings awaiting disposal. Validate halted on O-002, an unmeasurable precondition that was waived as N-058 right afterwards. File an unmeasurable design precondition as a person check (SC-079) and not as an obligation aimed at validate, and do not label additive schema-1 keys irreversible.",
+    "evidence": "Rework line: build-check 2, design-slice 2, critique 2, code-review 2 and validate-slice 2 runs. Build-check #2 says 'built anyway despite a partial survey'. Validate #1 halted on 'O-002 aimed at this stage is still open'."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "tests/FsAnalyser.Core.Tests/SubstDrive.cs is now the shared SUBST helper, with letter pick and subst.exe call under one static lock. VolumeUsageTests.cs:645 FreeDriveLetter still has its own picker (Z: down, no lock). Whether VolumeUsageTests.cs:10's DisableParallelization collection makes that moot was not checked. New SUBST tests should use SubstDrive.",
+    "evidence": "Code review: the comment fixer left VolumeUsageTests.cs:645 as code, saying it 'can pick the same letter as a concurrently running SubstDrive user (both start at Z:)'. Build deviation: the lock was chosen over a [Collection]."
+   },
+   {
+    "kind": "process",
+    "lesson": "Spike and investigation methods name the main checkout (filesystem-analyser-bf), but the SL-005 repro and the SDK live only in the worktree filesystem-analyser-bf-wt\\SL-005. Three spikes had to deviate. Under eng/dotnet.ps1's SDK 10.0.401, `dotnet restore --source <local> --source https://api.nuget.org/...` fails NU1301, and the local package cache alone works. The whole suite is `eng/dotnet.ps1 test FsAnalyser.slnx -- xUnit.MaxParallelThreads=2`; `-m:2` after the .slnx gives MSB1008.",
+    "evidence": "Spikes 1, 3 and 5 each record a deviation from the main repo path and NU1301; the main repo has no .dotnet and no .taad-scratch. Survey: `test FsAnalyser.slnx -m:2` exited 1 with MSB1008."
+   },
+   {
+    "kind": "risk",
+    "lesson": "SC-079 overstates what is out of reach. Windows Sandbox run as SYSTEM did ReFS (50 GB vdisk, format /FS:ReFS), loopback SMB (\\\\127.0.0.1) and a mapped drive letter, and held for deleted folders. Dropped mapping and detached ReFS volume gave 3 and stayed unreadable. Share removal gave 67. What is still unmeasured: DFS, a real remote SMB server and a cut network, and FAT/exFAT, which the scanner cannot open at all (root error 87).",
+    "evidence": "validations#251: Sandbox build 10.0.26100 on NTFS, ReFS, SMB loopback and the mapped letter; fix gave FoldersVanished 2, Unreadable 0, base gave Unreadable 2. SC-079 was filed from the design, before these runs."
+   }
+  ],
+  "candidates": [
+   {
+    "title": "Scanner refuses FAT32 and exFAT roots with RootUnreadable 87: find the cause and fix it",
+    "urgency": "soon",
+    "why": "Validation (validations#251) formatted exFAT P: and FAT32 Q: from a vdisk in Windows Sandbox (10.0.26100, SYSTEM). The scan program failed both volume roots with RootUnreadable 87 (probes P:\\t, Q:\\t, P:\\, Q:\\). It failed identically on HEAD 5809f30 and on the pre-slice build 28d72d8, so SL-005 did not cause it. The cause is undiagnosed. One hypothesis is the root listing's GetFileInformationByHandleEx class 20 (FileIdExtdDirectoryInfo) in DirectoryReader.List and Scanner.ListRoot (~Scanner.cs:245-300), which FAT may not support. The ending already has a FileIdsAvailable-false hardlink note (MainWindow.xaml.cs:659-671), which suggests volumes without file ids were meant to scan. It was measured only through the scan program on vdisk volumes, not on a real USB stick and not through the app. FAT/exFAT scanning is also what SC-079 and O-002 need before their FAT check can run."
+   },
+   {
+    "title": "Point E-007's finish lines at the tests SL-005 actually wrote",
+    "urgency": "soon",
+    "why": "The design's finish lines name E007DeletedFolderRecordTests, E007DeletedFoldersEndingTests, E007DeletedFoldersReportTests and E007StillUnreadableTests (design cases 1, 2, 3, 10, 11). Glob tests/**/E007* found nothing (reviews#651 M2). The build wrote tests/FsAnalyser.Core.Tests/VanishedFolderTests.cs, VanishedFolderCorpusTests.cs and tests/window/SL-005-VanishedFolders.Tests.ps1 instead. If E-007's epic check or plants.json still reads the E007* names, it cannot pass whatever is built. Q-016 (b) holds the maintainer's E-003 proof runs behind E-007, so that would stall them. SL-003 did the same re-point for S83-S86 and .taad/fitness.yaml:1298 after Q-010. Not checked: whether the epic check reads those names (the ledger was not read). Run `git ls-files tests/**/E007*` first, and drop this if the check already passes."
+   },
+   {
+    "title": "Commit a reusable Scanner probe with timed hooks (delete, replace, exec) for volume and mid-scan cases",
+    "urgency": "soon",
+    "why": "This slice rewrote the same console probe over Scanner.Scan and ScanOptions.AfterFolder at least six times: the investigation's .taad-scratch\\walkprobe, the survey's Probe.csproj, three spikes (each says it wrote its own because walkprobe lacked fields or the main repo has no .taad-scratch), and validation's Probe.csproj. Validation's version took hooks such as `1:del:..\\z`, `1:open:..\\z` and `1:exec:net use X: /delete`, and ran as a published exe in Windows Sandbox. Each copy needs AssemblyName FsAnalyser.Core.Tests to reach Core's internals. None is in the tree: the validation copy sat under %TEMP%\\sl005-val-src and .taad-scratch. Two Sandbox runs were lost to harness slips (network off, a 480 s limit on live C:\\). The same rig fits any slice that needs a mid-scan mutation or a volume type, such as E-005 and E-006."
+   }
+  ],
+  "estimate_error": "Opened medium / low risk. Medium held for the src change, which is 5 files. It was too small for the whole slice: the build's diff lists 16 files (5 src, 10 tests and fixtures, .taad/fitness.yaml), tests went 1260 to 1346, and it added a 50,201-folder window script and a shared SubstDrive helper. Validation needed a Windows Sandbox with ReFS, loopback SMB and a live C:\\ run. Risk 'low' was too low: FolderDone is the path every folder takes, and the critique found a major (a lost drive letter or share would have been reported as deleted folders, with the 'may be missing' captions removed). Every gate ran twice, mostly on halts for a decision, not on defective work.",
+  "unknowns": [
+   "Does the root check stall on a cut network share? Every queued folder that fails with 2 or 3 re-opens the scan root. Q-008 recorded about 21 s for a dead TCP endpoint. Validation cut only loopback shares (67) and a mapped letter (3), so a Wi-Fi-off, server-asleep or tunnel-down cut in W-003 is unmeasured.",
+   "On the person's own C:\\, how many of core.foldersVanished are renames or moves (installers, updaters) and how many are deletions? The Sandbox C:\\ had 8 vanished folders, 3 from Windows itself, and nothing separates them. The answer decides whether N-055/N-056 become work.",
+   "Does W-001 -Stopped now end 'held' on a busy C:\\? Q-016 assumed taking gone folders out of the unreadable record fixes OtherCodeDiffers (Compare-StoppedRows, WindowCases.ps1:6645-6667). Validation did not run W-001, and a stopped run leaves a not-yet-reached folder NotListed while the finished run counts it as a listed empty folder.",
+   "Why does a FAT32 or exFAT root fail with 87, and is it specific to the Sandbox's vdisk volumes? No real removable drive was tried, and plugging one in is a physical act for the person."
+  ],
+  "what_went_wrong": [
+   "Five gates ran twice and none of the second runs was a fix of bad work. Build-check halted on a 'partial' survey whose only 'present' row was the regression guard, then 'built anyway'. Design halted on its own 'irreversible' label for adding the core.foldersVanished key to WindowReport schema 1, which is additive. Critique and code-review halted for findings awaiting disposal. Validate halted on O-002, which could not be measured on this machine and was waived as N-058 right after. That is about five lost laps.",
+   "The design cited four E007* test classes that do not exist in 4 of its 14 cases. This is the third slice with the same gap (lessons #876, #888, #896). Critique M2 caught it, but the design was written without those lessons and the builder replaced the checks.",
+   "The design filed the 2/3-means-gone precondition only as a person check (SMB, DFS, ReFS, FAT). The volume-loss half was measurable here with a SUBST letter, and the critique found it as a major. It grew the slice by a root-open check, a shared SubstDrive helper with a lock, VolumeLossCorpus.json and 15 obligations.",
+   "The regex spelling family was declared closed (O-017, 38-row corpus) and reopened by the code review with `case 2 or 3:`, `case (2 or 3):` and `2 or 3 =>` arms. The two code-review readers filed the same two findings separately (m1/IN-m1, m2/IN-m2). Each pair became its own waived obligation, and SC-080 and SC-081 are duplicates on the backlog.",
+   "Triage marked the 'deleted or moved' wording fix for m2 and IN-m2 accepted-pending, as cheap and required. The obligations then waived O-019 and O-021 as 'a miss nobody required', so the shipped note still says 'deleted'. The ScanResult.FoldersVanished doc ('so it was the folder that was deleted', ScanResult.cs:191-193) is not among the files the comment-fix commit 5809f30c7 touched (Scanner.cs, SubstDrive.cs, the repro test), so it likely still says so.",
+   "The first code-review lap read 10 of 18 changed files only partly or not at all. The repro test was never opened. WindowReport.cs, MainWindow.xaml.cs and ScanResult.cs were read through diff hunks only. Its two real findings came from scratch probes, not from reading the App-side changes.",
+   "Validation could not reach the person's own C:\\, the window script's Cases A and B on this desktop, throw mode (exit 70) or FAT/exFAT. The live-C:\\ evidence is from a Sandbox on build 10.0.26100, and this PC runs 26300.",
+   "The same Scanner.Scan probe was rewritten about six times (investigation, survey, three spikes, validation). Three spikes also deviated from the method's repo path and hit NU1301 on a mixed local-and-URL restore."
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "dimension": "missing-edge-cases",
+    "severity": "major",
+    "what": "The critique found that 2 and 3 can mean the volume, letter or share was lost (M1), but did not ask whether renaming or moving a queued folder, or any folder between it and the root, also gives 2 or 3 while the root still opens. Probe: Directory.Move(z, moved) at AfterFolder n==1 gave FoldersVanished 1, Unreadable 0 and the 4,096-byte file still on disk. The ending says 'deleted' and drops the 'may be missing' captions, which is the harm M1 was rated major for, on a narrower scope. A check: move a queued folder at AfterFolder n==1 and assert it is not counted deleted. Waived as N-055 and N-056.",
+    "caught_by": "code-review (scratch probes by both readers, m2 and IN-m2)",
+    "prescribed_fix": ""
+   },
+   {
+    "gate": "critique",
+    "dimension": "cross-cutting-conformance",
+    "severity": "minor",
+    "what": "The critique's m1 fix (add `error\\s*(?:==|is)\\s*[23]`, widen the case pattern) was followed and still let `case 2 or 3:`, `case (2 or 3):`, `case 3 or 2:` and the `2 or 3 =>` / `{ 2 => true, 3 => true }` switch-arm spellings through. The critic's own check of the fix noticed `error is (2 or 3)` and called such gaps acceptable tripwire gaps. This codebase already writes `is A or B` (SizeProbe.IsGone, Scanner.ListRoot ~:303), so the next spelling was foreseeable. A check: run the rule's patterns over the C# 9 combinator spellings, or sweep FolderVanished over all error codes.",
+    "caught_by": "code-review (second reader's measurement: 3 of 3 combinator rows pass the widened rule)",
+    "prescribed_fix": "m1"
+   },
+   {
+    "gate": "critique",
+    "dimension": "test-coverage",
+    "severity": "minor",
+    "what": "The design checked the new ending note only through report-mode OutcomeNotes.lines and never asked whether the note is visible. OutcomeTexts is capped at 76 px and Q-002 was already open on that cap. The new note is the 4th of 4 on a live C:\\ and the content is 160.96 px high. A check: assert the note's line is inside the visible 76 px, or that Q-002 is settled first.",
+    "caught_by": "build (measured actualHeight 76 vs extentHeight 97.12) and validation (160.96 px on the live Sandbox C:\\)",
+    "prescribed_fix": ""
+   }
+  ],
+  "lessons_judged": [
+   {
+    "id": 464,
+    "verdict": "not relevant",
+    "why": "The brief's Scanner.cs:394 and :404-411 references matched the tree at 28d72d8, and the survey re-read them (393-399, 404-412). Nothing was stale."
+   },
+   {
+    "id": 100,
+    "verdict": "used",
+    "why": "Design key decision 1 ran the always-or-sometimes check by name. The predicate fires only on a refused open with 2 or 3, so NothingListed still arises for 5, 32, 53, 363 and 1920 and no consumer loses a branch."
+   },
+   {
+    "id": 4,
+    "verdict": "used",
+    "why": "The design's first invariant relies on it: EntryClassifier makes name-surrogate reparse points Links before Folders, and FolderDone pushes only EntryKind.Folder, so a dangling-link 3 cannot reach FolderVanished."
+   },
+   {
+    "id": 360,
+    "verdict": "used",
+    "why": "The window script SL-005-VanishedFolders.Tests.ps1 roots its 50,201-folder tree under %LOCALAPPDATA%\\Temp, as critique M2's prescription required."
+   },
+   {
+    "id": 389,
+    "verdict": "used",
+    "why": "The engine had already appended the SL-005 fitness entries. The builder rewrote the two rules to the final design (and widened them) instead of keeping the engine's, and the critique checked they sit under '# settled by SL-005'."
+   },
+   {
+    "id": 889,
+    "verdict": "used",
+    "why": "Validation ran the whole suite (1346/1346) before publishing probes into .taad-scratch\\sl005-val. The new window script was registered as a non-launcher in tests/window/AppArgumentCorpus.json, so AppArgumentTests stayed green."
+   },
+   {
+    "id": 896,
+    "verdict": "used",
+    "why": "Critique M2 cited it (with #876 and #888) to show the E007* tests are absent, and the builder wrote its own material checks. It reached the loop only before build, after the design had already cited the missing tests."
+   }
+  ],
+  "filed": [
+   {
+    "key": "SC-079",
+    "title": "Check by hand: On an SMB share (the loopback rig), a DFS link whose target is down, and a ReFS or FAT/exFAT volume: delete a queued folder mid-scan and check it appears in core.foldersVanished and not core.unreadable. Also check that a folder that still exists but cannot be reached is never counted as vanished.",
+    "urgency": "soon",
+    "source": "design"
+   }
+  ]
+ }
+}

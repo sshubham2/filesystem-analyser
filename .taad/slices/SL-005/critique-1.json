@@ -107,5 +107,84 @@
     "result": "none: the note is ASCII with no path, as Q-016 requires for the report. No new native calls, and nothing outside the cancel guard."
    }
   ]
+ },
+ "prescribed": {
+  "host": 651,
+  "at": "2026-11-18T04:20:59.377Z",
+  "runs": [
+   {
+    "run_id": 11374,
+    "resumed_from": "fabeb5ea-fcd4-4d9e-980b-e3e23347532c",
+    "ending": "completed",
+    "cost_usd": 1.6681617999999996,
+    "lost_resume": false
+   }
+  ],
+  "keys_sent": [
+   {
+    "finding_id": 1874,
+    "key": "M1",
+    "digest": "3da9610dbbc5b63b"
+   },
+   {
+    "finding_id": 1875,
+    "key": "M2",
+    "digest": "6898206a9bd4979a"
+   },
+   {
+    "finding_id": 1876,
+    "key": "m1",
+    "digest": "b650a3b4b6002f83"
+   }
+  ],
+  "verdicts": [
+   {
+    "finding_id": 1874,
+    "key": "M1",
+    "digest": "3da9610dbbc5b63b",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "Read SynchronousIoCancel.cs:248-249 (OpenDirectory is the public open; Open at :491 is private), :422 (Settle: Aborted whenever a cancel was issued) and :426-427 (Enter refuses any call once Cancel was requested). Read DirectoryReader.cs:74-75 (Open wraps io.OpenDirectory and leaves Count and Opened alone) and Scanner.cs:382-424 (FolderDone; SetChildren at :391 runs before any stamp). Grep for DefineDosDevice/subst: the only SUBST user in the default suite is ContainerLayerStoreTests' private SubstDrive (ContainerLayerStoreTests.cs:855-882). It picks a free letter via DriveInfo.GetDrives and then runs subst.exe, which asserts exit 0. No [Collection] covers ContainerLayerStoreTests; Grep [Collection|CollectionDefinition] lists only CriticalErrorMode, MemoryBudget, ResendRace and VolumeFigure.",
+    "why": "1. **A cancelled root check stamps a deleted folder unreadable.** A Stop that lands after the folder's own open has returned 2/3 makes the root check's Enter() fail, or makes CancelSynchronousIo abort a root open blocked on a slow share. Either way the check returns Aborted (995). The prescription treats that as 'it does not open', so the folder is stamped unreadable with its own code 2/3. A Stop then leaves a false row in the stopped record. W-001 -Stopped counts that row as OtherCodeDiffers (WindowCases.ps1:6661) and ends inconclusive, which is the cause Q-016's decision expects E-007 to remove. It also breaks the rule that an aborted call commits nothing. The window is tiny on local NTFS, but it is not zero.\n2. **No method called 'io.Open' can be called here.** The reachable ones are io.OpenDirectory and _reader.Open, which return a handle the prescription never closes. A leaked handle on the root, per vanished folder, would block safe-eject of a USB volume.\n3. **The new SUBST test races the existing one.** A second SubstDrive in another test class runs in parallel with ContainerLayerStoreTests. Both can see the same letter free, and the second subst.exe then fails, so the default suite goes intermittently red.\n4. **Residues the check leaves (not holes in the prescription):**\n- A scan root that is itself deleted mid-scan still stamps truly deleted folders unreadable. That is today's behaviour and the safe side.\n- After the letter is removed, the file-probe pass will count the root's files through SizeProbe.IsGone as VanishedBeforeProbe, so the ending still says files were deleted. The new test must not assert VanishedBeforeProbe == 0.",
+    "instead": "Specify all three:\n- When the root check returns SynchronousIoCancel.Aborted (or io.LastCallAborted), it decides nothing. Do not stamp the folder and do not count it; FolderDone's `return ct.IsCancellationRequested` then ends the scan Cancelled. Pin this with a FolderVanished-style unit case, or a scan whose AfterFolder cancels before z is popped.\n- Make the check `_reader.Open(win32Root, keepLastAccess: false, out var h)` followed by `io.Close(h)` when it opened.\n- Move SubstDrive into a shared test helper, and put ContainerLayerStoreTests and the new VanishedFolderTests SUBST case in one `[Collection]` with DisableParallelization = true (as VolumeUsageTests.cs:10 does). Alternatively, retry the letter pick when subst.exe reports the letter already in use."
+   },
+   {
+    "finding_id": 1875,
+    "key": "M2",
+    "digest": "6898206a9bd4979a",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "Glob/Grep confirmed no E007* test exists. Read AppArgumentCorpus.json:31: the entry form is `{ file, check: \"not-a-launcher\", how }`, so listing the new script is buildable. Read StartupHook.cs:346: the modes are stop, throw, close, watch, measure, rescan, expand, hide, kinds, size, tree, reveal, settings, rows and drives. None deletes anything. StartupHook.cs:514 wires the progress trigger (FSA_HOOK_PAST / _FOLDERS) to stop and close only. Existing exit-code coverage: WindowCases.ps1:1028 (exit 2), HookCases.ps1:20 and WindowMutants.ps1:90 (exit 70). Read the repro and the design's case 3 shape (deny 5/NothingListed AND a 995-failpoint ListedPartway folder).",
+    "why": "1. **Nothing can time the deletion.** The report-mode case must get the published app (which has no test seam) to list z1..z3 and lose them before it opens them. The hook cannot delete, and its progress trigger only presses Stop or closes. That leaves a delete timed by the script, as the health check did (50,000 folders, delete at 1.5 s). Start-up time on this PC varies severalfold (lesson #882). A delete before the root's listing leaves z1..z3 out of the store, and a delete after the walk reaches them changes nothing. Both give foldersVanished 0, a false FAILED, and a spent review or validate lap. The prescription gives no verdict for that precondition missing (lesson #892: defects cluster where an ending is mapped to a verdict).\n2. **Case 3 loses half its control.** Case 3's shape also has a partway-listing control (ListedPartway), and the prescribed control is the Deny folder only. Case 3 would then point at a test that does not cover what it claims.\n3. **Re-checking exit codes 2/3/70 in the new script repeats existing cases.** That is extra work, not a hole.",
+    "instead": "In the SL-005 report-mode script:\n- Build the tree so that z1..z3, each with an inner folder, sort after a large 'a' subtree of at least 24,000 folders (lesson #877), rooted where New-CaseFolder roots (%LOCALAPPDATA%\\Temp, lesson #360).\n- Delete z1..z3 on a timer.\n- Decide the verdict from core.folders against the tree. Exactly base + 3 means the deletion landed and the checks apply. Any other count is INCONCLUSIVE (deletion missed its window), not FAILED.\n- Retry an inconclusive run at most twice, with a longer delay.\n\nIf a deterministic trigger is wanted, add a hook mode instead. It is test-only code, and the hook is already on the network-pass staleness list that this slice's MainWindow change makes stale.\n\nIn VanishedFolderTests, add the partway control beside the Deny one via TopLevelRowTextTests.ScanFailingPartway: still ListedPartway in Unreadable. Leave exit codes 2 and 70 to the existing cases; check only 0 and the schema-1 keys in the new script."
+   },
+   {
+    "finding_id": 1876,
+    "key": "m1",
+    "digest": "b650a3b4b6002f83",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "Grep `error\\s*(?:==|is)\\s*[23]\\b` on src/FsAnalyser.Core/Scanning/Scanner.cs: no matches today, so it is quiet as the prescription says. Tried the second spellings against the pattern:\n- `error == 2 || error == 3` and `error is 2 or 3`: fire.\n- `error is (2 or 3)` (the '(' breaks `\\s*[23]`), `2 == error`, `error switch { 2 or 3 => ... }`, and a parameter named win32Error or code: all pass.\n- `error is 32`: correctly quiet.\n\nRead .taad/fitness.yaml:15-17: settled entries have no xUnit twin, are enforced only by Fitness, and are to be changed 'here only', so editing the SL-005 block is allowed. Read the design: the comment above the stamp must be updated to name the error that is not stamped, and FolderVanished's doc names codes 2 and 3.",
+    "why": "1. **The kept pattern fires on comments too.** The triage dropped `\\bor\\s+[23]\\b` because it fires on comment prose. The pattern it kept also matches comments, and the design itself asks for comments here. A doc line such as 'true when the open's error is 2 or 3' or '...whose error == 3...' fails the Fitness gate. That costs one build retry, and the builder is not warned.\n2. **The likeliest pattern-matching spelling of all, `error is (2 or 3)`, gets past it.** The rest are tripwire gaps, which is acceptable.\n3. **The DirectoryReader rewording is correct.** VanishedFolderTests' FoldersVanished==1 assertion is in the default suite, so a reader that turns code 2 into an empty listing turns it red.",
+    "instead": "Use `\\berror\\s*(?:==|is)\\s*\\(?\\s*[23]\\b` so the parenthesised form fires too. Add to the rule's `because`, and to the builder's instructions, that comments in Scanner.cs name the gone codes as 'SizeProbe.IsGone's codes' or 'not found (2) / path not found (3)', never as 'error is N' or 'error == N'. Keep the DirectoryReader rewording as prescribed."
+   }
+  ],
+  "unmatched": [],
+  "unchecked": [],
+  "moved": [],
+  "annotated": [
+   "finding:1874",
+   "finding:1875",
+   "finding:1876"
+  ],
+  "counts": {
+   "holds": 0,
+   "hole": 3,
+   "unworkable": 0,
+   "no_verdict": 0
+  },
+  "summary": "All three prescriptions can be built as written, but each has a gap worth closing before the build.\n- **M1:** the root check is the right fix, but the prescription doesn't say what happens when that check is cancelled by Stop. An aborted check counts as \"did not open\", so a deleted folder gets stamped unreadable with error 2/3. Its SUBST test would also be a second parallel user of a racy letter picker.\n- **M2:** the app-side report case needs three queued folders deleted mid-scan by the published app. Nothing in the hook can time that, and the prescription gives no verdict for when the deletion misses its window.\n- **m1:** the kept pattern does what it says and matches nothing in Scanner.cs today. But it fires on comment wording such as \"error is 2\", which is the same reason the triage gave for dropping the other pattern, and it misses `error is (2 or 3)`.",
+  "why": "",
+  "round": "landed"
  }
 }
