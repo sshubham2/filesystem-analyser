@@ -1,0 +1,250 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-004",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-11-18T01:16:26.621Z",
+ "head": "ddb3d3ceba50992a9a0378f701258cd15ca36607",
+ "run_id": 11309,
+ "summary": "I read every changed code file. DrivesMode.cs, the Sandbox runner, the verdict, the corpus and the host test were read whole. For StartupHook.cs I read the diff plus lines 188-557 and 780-907 for context. Against them I read the app code they depend on: MainWindow.LoadDrives and ReadDrive, DriveReads.Start and Place, App report mode, and WindowReport.WriteAsync's Loaded-priority yield.\n\nWhat I ran:\n- SL-004-LateShareButton.Tests.ps1 cases A and E: green, 18 corpus rows.\n- Live cases B, C and D on this PC's published exe: green. B logged C:,D:,W:,X:,Z: and the report counted 5. C held 3009 ms and named Y:. All five bad inputs in D were refused and the app still exited 0. SUBST letters were removed afterwards.\n- The hook built in Release with 0 warnings.\n- AppArgumentTests, ArchitectureRulesTests, RuleCopiesAgreeTests, DriveReadsTests and OptInTraitTests: 42/42 pass.\n- Fitness op=check: every rule holds. The new except_files entry is on a settled rule, so it has no xUnit twin to break.\n\nChecking the Sandbox claim:\n- I compared corpus rows R1-R6 with the real capture in .taad-scratch/sandbox/run-20261118-061258/out/late-share.json. Launch times, wake times, observations, report counts and hook-log values all match. The capture stored each log line with Get-Content's provider properties, which the current runner now strips with [string].\n- Tallying every late-share.json confirms the builder's split: 20 s arms held 9/9, 120 s arms 7/9.\n- One run is left out of that tally: run-20261118-061121. All five of its wake arms FAILED because the hook refused FSA_HOOK_WANT_DEADLINE_S '2060' and '12060': the old runner joined the delay as text. The `[int[]] $WakeDelays` at runner line 36 fixes this. Leaving it out is right, but 'across all runs' in the build account silently skips it.\n- The 2/9 product failures (the read thread ends at the wake with no button) are a behaviour the check exposed. They are routed as a follow-up, not a defect in this diff.\n\nDefect found: the verdict's 'silent' check is named 'the answering drives had their buttons'. It only checks that some button was present and Y: was not. So a run where the neighbour Z: arrives after Y: is still called 'held'. In that run appending and inserting give the same C:,Y:,Z:, which the Z: neighbour was added precisely to tell apart. The repro reproduces it, and the fix I tested keeps all 18 corpus rows green.\n\nText issue: DrivesMode's comments say the drive answers arrive at Normal priority. DriveReads.cs and StartupHook's HoldForDrives comment both document the priority of the Loaded handler (Send in a probe). Both are above Render, so behaviour is unaffected.\n\nSecond reader, for inputs: I reviewed the inputs only: every reader, check and boundary this diff adds. I read all of DrivesMode.cs, the StartupHook.cs changes and the Run dispatcher around them, SL-004-LateShareVerdict.ps1, SL-004-LateShareInSandbox.ps1 and SL-004-LateShareButton.Tests.ps1. I also read the app code they depend on (LoadDrives, ReadDrive, DriveButton, DriveReads, and eng/read-window.ps1's output format) and the builder's captured Sandbox outputs under .taad-scratch/sandbox.\n\n**What I ran:**\n- SL-004-LateShareButton.Tests.ps1 -Case A,E: all held, exit 0.\n- The runner's -Wake parsing under Windows PowerShell 5.1 and pwsh 7.\n- ConvertTo-Json depth for the arm-record shape: fine.\n- sc.exe query output against the runner's state parser.\n- The corpus's R1/R5/R6 rows against the captured hook logs: they match.\n\n**The verdict and the hook hold up against the inputs I tried.**\n- DrivesMode.TryParse refuses spaces, empty parts, lower case, duplicates and out-of-range deadlines.\n- Log writes ASCII with line endings removed, and DriveStatus has only three single-line values, so the reader's regexes see every line shape the hook can write.\n- UTC handling agrees across both shells.\n- A share that answered before the wake or before the ending cannot pass both 'late' and 'silent'.\n\n**The defects are in the Sandbox runner's handling of its inputs and of what it records:**\n- A mistyped or empty -Wake gives zero wake arms and exit 0.\n- The service states it logs are always blank. The captured run log shows \"LanmanServer= srv2= srvnet=\".\n- ListenerAccepts adds up across arms (the captured record reads 1, 2, 4, 6, 8), and the listener ignores -Out.\n- After a kill, it waits on the process with no limit and writes late-share.json only at the end.\n\nThe runner refuses to run outside a Sandbox before any of this code runs, so none of these can be reproduced on the host. All are filed as notes, without a repro test.\n\nTwo hardening extras: the Sandbox guard checks only that a folder exists, and cases B to D take in the caller's FSA_HOOK_* variables.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "I read every changed code file. DrivesMode.cs, the Sandbox runner, the verdict, the corpus and the host test were read whole. For StartupHook.cs I read the diff plus lines 188-557 and 780-907 for context. Against them I read the app code they depend on: MainWindow.LoadDrives and ReadDrive, DriveReads.Start and Place, App report mode, and WindowReport.WriteAsync's Loaded-priority yield.\n\nWhat I ran:\n- SL-004-LateShareButton.Tests.ps1 cases A and E: green, 18 corpus rows.\n- Live cases B, C and D on this PC's published exe: green. B logged C:,D:,W:,X:,Z: and the report counted 5. C held 3009 ms and named Y:. All five bad inputs in D were refused and the app still exited 0. SUBST letters were removed afterwards.\n- The hook built in Release with 0 warnings.\n- AppArgumentTests, ArchitectureRulesTests, RuleCopiesAgreeTests, DriveReadsTests and OptInTraitTests: 42/42 pass.\n- Fitness op=check: every rule holds. The new except_files entry is on a settled rule, so it has no xUnit twin to break.\n\nChecking the Sandbox claim:\n- I compared corpus rows R1-R6 with the real capture in .taad-scratch/sandbox/run-20261118-061258/out/late-share.json. Launch times, wake times, observations, report counts and hook-log values all match. The capture stored each log line with Get-Content's provider properties, which the current runner now strips with [string].\n- Tallying every late-share.json confirms the builder's split: 20 s arms held 9/9, 120 s arms 7/9.\n- One run is left out of that tally: run-20261118-061121. All five of its wake arms FAILED because the hook refused FSA_HOOK_WANT_DEADLINE_S '2060' and '12060': the old runner joined the delay as text. The `[int[]] $WakeDelays` at runner line 36 fixes this. Leaving it out is right, but 'across all runs' in the build account silently skips it.\n- The 2/9 product failures (the read thread ends at the wake with no button) are a behaviour the check exposed. They are routed as a follow-up, not a defect in this diff.\n\nDefect found: the verdict's 'silent' check is named 'the answering drives had their buttons'. It only checks that some button was present and Y: was not. So a run where the neighbour Z: arrives after Y: is still called 'held'. In that run appending and inserting give the same C:,Y:,Z:, which the Z: neighbour was added precisely to tell apart. The repro reproduces it, and the fix I tested keeps all 18 corpus rows green.\n\nText issue: DrivesMode's comments say the drive answers arrive at Normal priority. DriveReads.cs and StartupHook's HoldForDrives comment both document the priority of the Loaded handler (Send in a probe). Both are above Render, so behaviour is unaffected.\n\nSecond reader, for inputs: I reviewed the inputs only: every reader, check and boundary this diff adds. I read all of DrivesMode.cs, the StartupHook.cs changes and the Run dispatcher around them, SL-004-LateShareVerdict.ps1, SL-004-LateShareInSandbox.ps1 and SL-004-LateShareButton.Tests.ps1. I also read the app code they depend on (LoadDrives, ReadDrive, DriveButton, DriveReads, and eng/read-window.ps1's output format) and the builder's captured Sandbox outputs under .taad-scratch/sandbox.\n\n**What I ran:**\n- SL-004-LateShareButton.Tests.ps1 -Case A,E: all held, exit 0.\n- The runner's -Wake parsing under Windows PowerShell 5.1 and pwsh 7.\n- ConvertTo-Json depth for the arm-record shape: fine.\n- sc.exe query output against the runner's state parser.\n- The corpus's R1/R5/R6 rows against the captured hook logs: they match.\n\n**The verdict and the hook hold up against the inputs I tried.**\n- DrivesMode.TryParse refuses spaces, empty parts, lower case, duplicates and out-of-range deadlines.\n- Log writes ASCII with line endings removed, and DriveStatus has only three single-line values, so the reader's regexes see every line shape the hook can write.\n- UTC handling agrees across both shells.\n- A share that answered before the wake or before the ending cannot pass both 'late' and 'silent'.\n\n**The defects are in the Sandbox runner's handling of its inputs and of what it records:**\n- A mistyped or empty -Wake gives zero wake arms and exit 0.\n- The service states it logs are always blank. The captured run log shows \"LanmanServer= srv2= srvnet=\".\n- ListenerAccepts adds up across arms (the captured record reads 1, 2, 4, 6, 8), and the listener ignores -Out.\n- After a kill, it waits on the process with no limit and writes late-share.json only at the end.\n\nThe runner refuses to run outside a Sandbox before any of this code runs, so none of these can be reproduced on the host. All are filed as notes, without a repro test.\n\nTwo hardening extras: the Sandbox guard checks only that a folder exists, and cases B to D take in the caller's FSA_HOOK_* variables.",
+  "matches_design": true,
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "file": "tests/window/SL-004-LateShareVerdict.ps1",
+    "line": 94,
+    "claim": "The 'silent' check promises 'when it left, the answering drives had their buttons and the silent share had none', but it only tests $atLeft.Count -gt 0 and that Y: is absent. So a run whose picker settled with only C: passes, even when the later neighbour Z: came in after the wake, after Y:. Every other check then passes too, including 'order': appending and inserting in letter order both give C:,Y:,Z:, and the verdict is 'held'. That is the exact shape the declared deviation added the Z: neighbour to rule out ('without one appending at the end and inserting in letter order give the same result'). The verdict can therefore report letter-order insertion as proven when nothing showed it. The real captures R1-R4 did have C:,Z: at the leave, so the recorded evidence stands. The false pass is in the instrument.",
+    "evidence": "Run in scratch against the tree's verdict: hook log with leave reading 'buttons=C:', then 'C:,Y:' 1.5 s after the wake, then 'C:,Y:,Z:'. Every check printed True (silent: buttons=C:; order: buttons=C:,Y:,Z: at=1) and the verdict was 'held'.",
+    "quote": {
+     "path": "tests/window/SL-004-LateShareVerdict.ps1",
+     "line": 94,
+     "text": "    Add-Check 'silent' ($null -ne $left -and $atLeft.Count -gt 0 -and $atLeft -notcontains $Share) \"when it left, the answering drives had their buttons and the silent share had none ($Share)\" \"buttons=$($atLeft -join ',')\""
+    },
+    "fix": "Make 'silent' also require that the leave reading's buttons are the final buttons less the share: add -and (@($atLeft) -join ',') -ceq (@($final | Where-Object { $_ -cne $Share }) -join ','). That way every answering drive, the later neighbour included, was in place before the share's button came. I tested this on a copy: all 18 corpus rows stay green (A passes) and the repro passes.",
+    "repro": {
+     "path": "tests/window/SL-004-LateShareNeighbourFirst.Tests.ps1",
+     "body": "<#\nSL-004 review m1: the verdict must not call letter order proven when the share's later neighbour (Z:) was not on screen before the share's\nbutton came. In that run appending at the end and inserting in letter order give the same buttons (C:,Y:,Z:). Exit 0 when the verdict\nsays FAILED for such a run, 1 when it says held.\n#>\n. (Join-Path $PSScriptRoot 'SL-004-LateShareVerdict.ps1')\nfunction U([string] $s) { [datetime]::Parse($s, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime() }\n$log = @(\n    'loaded mode=drives pid=1604',\n    'drives-armed want=Y:,Z: deadline=80 ms=278',\n    'drives-seen ms=399 utc=2026-11-18T00:43:19.4313925Z status=Looking for drives... buttons=C:',\n    'drives-seen ms=2337 utc=2026-11-18T00:43:21.3688979Z status=Drives buttons=C:',\n    'drives-seen ms=21699 utc=2026-11-18T00:43:40.7305636Z status=Drives buttons=C:,Y:',\n    'drives-seen ms=21750 utc=2026-11-18T00:43:40.7800000Z status=Drives buttons=C:,Y:,Z:',\n    'drives-done ms=21751 utc=2026-11-18T00:43:40.7900000Z held=21387 found=True status=Drives buttons=C:,Y:,Z:'\n)\n$report = [pscustomobject]@{ window = [pscustomobject]@{ DrivePanel = [pscustomobject]@{ buttons = 3 } } }\n$obs = @(\n    [pscustomobject]@{ Utc = (U '2026-11-18T00:43:19.9917662Z'); Alive = @(1); Named = 9 },\n    [pscustomobject]@{ Utc = (U '2026-11-18T00:43:40.6163974Z'); Alive = @(1); Named = 9 }\n)\n$v = Get-LateShareVerdict -HookLog $log -Report $report -Exit '0' -LaunchUtc (U '2026-11-18T00:43:18.9696293Z') -WakeUtc (U '2026-11-18T00:43:39.1815504Z') `\n    -WakeSeconds 20 -Share 'Y:' -Observations $obs -ShareReadIndex 1\n$v.Checks | ForEach-Object { '{0,-9} {1} ({2})' -f $_.Key, $_.Ok, $_.Detail }\nif ($v.Verdict -cne 'FAILED') {\n    Write-Output \"FAIL: the verdict is $($v.Verdict) for a run whose neighbour Z: was not in place before Y: arrived\"\n    exit 1\n}\nWrite-Output 'ok: letter order is not called proven without the later neighbour in place first'\nexit 0\n",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/SL-004-LateShareNeighbourFirst.Tests.ps1"
+    }
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "nature": "text",
+    "file": "tests/window/FsaWindowHook/DrivesMode.cs",
+    "line": 22,
+    "end_line": 22,
+    "claim": "DrivesMode's remarks say the drives' answers are posted at Normal priority, and the comment above Hold at line 110 repeats it. DriveReads.cs:27-29 says the posts arrive at the priority of the Loaded handler LoadDrives runs on (Send, in an off-screen probe). StartupHook.cs:874-876 (HoldForDrives) says the same. Both are above Render, so the hold works either way. Only the comment contradicts the measured account in the module it depends on.",
+    "evidence": "DriveReads.cs:27-29 'the posts arrive at the priority of the context Start was called on, which for the window's LoadDrives is the Loaded handler's (Send, in an off-screen probe), above the hook's Render-priority check'",
+    "quote": {
+     "path": "tests/window/FsaWindowHook/DrivesMode.cs",
+     "line": 22,
+     "text": "/// line whenever either has changed since the line before. The drives' own answers are posted at Normal priority, above"
+    },
+    "fix": "At lines 22 and 110, say the answers arrive at the priority of the Loaded handler LoadDrives runs on (Send in a probe; see DriveReads), which is above the Render-priority item."
+   },
+   {
+    "id": "IN-m1",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "nature": "defect",
+    "file": "tests/window/SL-004-LateShareInSandbox.ps1",
+    "line": 36,
+    "claim": "A -Wake value that is not a whole number (for example '2O', 'abc' or '20,abc') or an empty one leaves $WakeDelays empty, and the script carries on under ErrorActionPreference Continue. Measured under powershell.exe 5.1 and pwsh: 'after: null=False count=0', then 'reached end'. One bad element empties the whole list, not only that element. The run then makes only the control and silent arms and exits 0 with 'end: 2 of 2 arms held'. The instrument SC-059 rests on reports a pass when no late-share arm ran at all.",
+    "evidence": "tests/window/SL-004-LateShareInSandbox.ps1:36 parses -Wake, :274 loops over $WakeDelays, and :317-320 exit 0 when no arm failed. Probe run under both shells with $Wake=@('2O').",
+    "quote": {
+     "path": "tests/window/SL-004-LateShareInSandbox.ps1",
+     "line": 36,
+     "text": "[int[]] $WakeDelays = @($Wake | ForEach-Object { \"$_\" -split ',' } | Where-Object { $_ } | ForEach-Object { [int]$_ }) # -File hands 20,120 over as one string"
+    },
+    "fix": "Parse each element with [int]::TryParse. If any element fails, is below 1, or the list is empty, log 'SETUP FAILED: -Wake ...' and exit 3 before the set-up."
+   },
+   {
+    "id": "IN-m2",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "file": "tests/window/SL-004-LateShareInSandbox.ps1",
+    "line": 100,
+    "claim": "Get-ServiceStates always records an empty state. sc.exe prints the STATE line with a trailing space ('        STATE              : 4  RUNNING '), so splitting on '\\s+' and taking [-1] gives ''. The run log's 'silenced:' and 'woken:' lines are the only record of whether LanmanServer, srv2 and srvnet actually stopped and restarted, and they read 'LanmanServer= srv2= srvnet=' in every arm.",
+    "evidence": "On this host, sc.exe query LanmanServer | Select-String STATE gave last=[] with the same expression. The captured .taad-scratch/sandbox/run-20261118-061258/out/run-log.txt shows '9.0 silenced: LanmanServer= srv2= srvnet= listen445=0.0.0.0 pid=5016' and '29.6 woken: LanmanServer= srv2= srvnet= ...' in every arm.",
+    "quote": {
+     "path": "tests/window/SL-004-LateShareInSandbox.ps1",
+     "line": 100,
+     "text": "\"$_=\" + $(if ($state) { ($state.ToString() -split '\\s+')[-1] } else { '?' })"
+    },
+    "fix": "Trim before splitting: ($state.ToString().Trim() -split '\\s+')[-1]."
+   },
+   {
+    "id": "IN-m3",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "defect",
+    "file": "tests/window/SL-004-LateShareInSandbox.ps1",
+    "line": 284,
+    "claim": "Each arm's ListenerAccepts in late-share.json, and the 'listener accepts so far' line, counts every accept since the first arm, not this arm's. listener.txt is appended by every listener and never reset. The captured record reads w20=1, w20-2=2, w120=4, w120-2=6, w120-3=8. The listener script also writes to a hard-coded C:\\taad\\out\\listener.txt, while line 284 reads it from $Out, so a run with another -Out always records 0 accepts.",
+    "evidence": "tests/window/SL-004-LateShareInSandbox.ps1:107 and :109 hard-code C:\\taad\\out\\listener.txt. Line 284 counts every 'accept' line in $Out\\listener.txt. Captured: .taad-scratch/sandbox/run-20261118-061258/out/late-share.json, Arms[].ListenerAccepts = 1,2,4,6,8.",
+    "quote": {
+     "path": "tests/window/SL-004-LateShareInSandbox.ps1",
+     "line": 284,
+     "text": "$listenerAccepts = if (Test-Path (Join-Path $Out 'listener.txt')) { @(Get-Content (Join-Path $Out 'listener.txt') | Select-String 'accept').Count } else { 0 }"
+    },
+    "fix": "In Silence, count the accept lines before starting the listener and subtract that count at line 284, or give each arm its own listener file. Pass the log path to listener.ps1 as an argument made from $Out instead of hard-coding C:\\taad\\out."
+   },
+   {
+    "id": "IN-m4",
+    "severity": "minor",
+    "dimension": "error-paths",
+    "nature": "defect",
+    "file": "tests/window/SL-004-LateShareInSandbox.ps1",
+    "line": 207,
+    "end_line": 207,
+    "claim": "After a TIMEOUT, Complete-Run kills the app and waits for it with no limit. Lesson #887 measured that a process with a read stuck on a dead share outlives Stop-Process for more than 30 s, because the redirector's I/O holds its rundown. In the silent arm, and in any arm that times out before its wake, the server is woken only after Complete-Run returns. So WaitForExit() can block until the SMB client gives up, which was not seen within 120 s, or until the Sandbox's cap ends the run. late-share.json is written only once, at line 316, so every arm's record is lost with it.",
+    "evidence": "tests/window/SL-004-LateShareInSandbox.ps1:207 has the unbounded wait. Lines 303 and 313 run Complete-Run before Wake in the silent arm. Line 316 is the only write of late-share.json. Lesson #887: 'with Y: dead the process was alive after 120 s ... Stop-Process unfinished 30 s later'.",
+    "quote": {
+     "path": "tests/window/SL-004-LateShareInSandbox.ps1",
+     "line": 207,
+     "text": "else { $run.Process.Kill(); $run.Process.WaitForExit() }"
+    },
+    "fix": "Use WaitForExit(30000) and record 'TIMEOUT (still alive after kill)'. Rewrite late-share.json after each arm, not only at the end."
+   },
+   {
+    "id": "IN-m5",
+    "severity": "minor",
+    "dimension": "security",
+    "nature": "extra",
+    "file": "tests/window/SL-004-LateShareInSandbox.ps1",
+    "line": 32,
+    "claim": "The fitness exception for `net use` and the runner's safety both rest on one test: whether the folder C:\\Users\\WDAGUtilityAccount exists. A folder's existence is not the same as being in a Sandbox. An administrator can create that folder, and WDAGUtilityAccount is a built-in account on Windows 10/11 hosts. On a host where the folder exists, an elevated run would stop the machine's file server and share C:\\work\\share to Everyone with full access (line 148). It would also map Y: and SUBST Z:, and nothing ever removes them.",
+    "evidence": "tests/window/SL-004-LateShareInSandbox.ps1:32 is the guard. Line 148 runs New-SmbShare -FullAccess Everyone, and no Remove-SmbShare, net use /delete or subst /D exists anywhere in the script. .taad/fitness.yaml's except_files because-text says it 'refuses to run on any machine but a Sandbox'.",
+    "quote": {
+     "path": "tests/window/SL-004-LateShareInSandbox.ps1",
+     "line": 32,
+     "text": "if (-not (Test-Path -LiteralPath 'C:\\Users\\WDAGUtilityAccount')) {"
+    },
+    "fix": "Also require [Environment]::UserName -ceq 'WDAGUtilityAccount'. The Sandbox runs as that account, and no host session does, because the account is disabled there."
+   },
+   {
+    "id": "IN-m6",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "extra",
+    "file": "tests/window/SL-004-LateShareButton.Tests.ps1",
+    "line": 100,
+    "end_line": 106,
+    "claim": "Invoke-DrivesRun sets only DOTNET_STARTUP_HOOKS, FSA_HOOK_MODE, FSA_HOOK_LOG and the case's own variables. Any other FSA_HOOK_* variable already in the caller's environment reaches the app. For example, FSA_HOOK_ARMED makes drives mode refuse ('drives mode is not armed'), so case B fails. FSA_HOOK_ROWS, FSA_HOOK_MINSIZE or FSA_HOOK_DRIVES refuse it the same way. Case D's 'no FSA_HOOK_WANT' row stops testing what it names when the caller has FSA_HOOK_WANT set. These are false failures, not false passes.",
+    "evidence": "tests/window/SL-004-LateShareButton.Tests.ps1:100-106. The refusals are at StartupHook.cs:373-406 and :480-481. Lesson #890 named the same family in this harness ('The startup check inherits FSA_T005_RENDER, FSA_T005_SAMPLE_MS and FSA_T005_TAG from the caller').",
+    "quote": {
+     "path": "tests/window/SL-004-LateShareButton.Tests.ps1",
+     "line": 100,
+     "text": "$names = @('DOTNET_STARTUP_HOOKS', 'FSA_HOOK_MODE', 'FSA_HOOK_LOG') + @($variables.Keys)"
+    },
+    "class_of": "hook variables inherited from the caller",
+    "threat": "accident",
+    "fix": "At the start of Invoke-DrivesRun, save and remove every Env:FSA_HOOK_* not in $variables, and restore them in the finally."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "The SC-059 shape was exercised by tests/window/SL-004-LateShareInSandbox.ps1 in the Sandbox. The late-share.json records in .taad-scratch/sandbox/run-20261118-055448 through 063651 show 20 s arms held 9/9 and 120 s arms 7/9 (060557 w120 and 061258 w120-3 FAILED with cause 'alive, then returned'). The silent negative control read FAILED with cause 'still blocked' every time. Run 061121 is an instrument failure: the hook refused deadline '2060'. It is fixed by [int[]] at runner line 36. Corpus rows R1-R6 match the 061258 capture value for value. Case A passed on this PC (18 rows) and B-D passed live. The design's 'in each run the button must appear' does not hold in 2/9 120 s arms. That is recorded as a product follow-up, which is what the design asked a failing run to record. The verdict has one false-pass shape (m1)."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "no",
+    "evidence": "The named test is tests/window/SL-004-LateShareButton.Tests.ps1, cases A and E. A feeds the hook logs, thread samples and clocks recorded from Sandbox runs (SL-004-LateShareCorpus.json) into Get-LateShareVerdict. E only parses the two scripts. Neither launches the app against a share that answers late, so both stay green whatever the app's picker does today. The real shape (silenced loopback Y:, woken at about 20 s and 120 s, published exe) is exercised only by SL-004-LateShareInSandbox.ps1 through the Sandbox tool. Its outputs are in .taad-scratch/sandbox and back the builder's tally. The builder declared that no shell command can reproduce it. B-D run the live exe, but over SUBST letters that answer at once, so they test the instrument, not a late arrival."
+   }
+  ],
+  "drift": [],
+  "unreviewed": [
+   ".taad/slices/SL-004/critique-1.json, critique-review-1.json, design-slice-1.json, index.json, build-slice-1.json -- engine records of other stages, not code; not opened, as the brief directs",
+   "tests/window/FsaWindowHook/StartupHook.cs:1-187 -- seen only as the diff hunks (header comment lines 18-47); the rest of that header is unchanged and was not read whole"
+  ],
+  "second_round": {
+   "run_id": 11310,
+   "filed": 6,
+   "reader": "inputs"
+  },
+  "reading_pass": {
+   "state": "none",
+   "why": [],
+   "lens": null,
+   "cut_off": false,
+   "cut_runs": {
+    "line": false,
+    "inputs": false,
+    "any": false
+   },
+   "run_id": null,
+   "session": null,
+   "resumed": null,
+   "asked": [],
+   "asked_hunks": 0,
+   "named": [],
+   "before": {
+    "read_whole": 5,
+    "changed": 8,
+    "listed": 3
+   },
+   "filed": 0,
+   "read_after": 0,
+   "still_unread": []
+  },
+  "unread_measured": {
+   "measured": true,
+   "why": "",
+   "changed": 8,
+   "read_whole": 5,
+   "deleted": [],
+   "runs": [
+    11309,
+    11310
+   ],
+   "range": {
+    "base": "a9db79678ef5a7a4c987990e71e0b3c8eceb155d",
+    "head": "ddb3d3ceba50992a9a0378f701258cd15ca36607",
+    "source": "commits",
+    "hunk_base": "a9db79678ef5a7a4c987990e71e0b3c8eceb155d",
+    "hunk_base_from": "the merge base with the integration branch"
+   },
+   "items": [
+    {
+     "path": ".taad/fitness.yaml",
+     "state": "partly-opened",
+     "section": "lines 1-429, 475-1508 of 1508",
+     "reason": "a Read returned only part of it; seen only as 54 Grep lines (long lines elided); seen only through a shell command: git diff",
+     "size_lines": 1508,
+     "hunks": []
+    },
+    {
+     "path": "tests/window/AppArgumentCorpus.json",
+     "state": "partly-opened",
+     "section": "lines 1-37 of 37",
+     "reason": "seen only through a shell command: git diff",
+     "size_lines": 37,
+     "hunks": []
+    },
+    {
+     "path": "tests/window/FsaWindowHook/StartupHook.cs",
+     "state": "partly-opened",
+     "section": "lines 1-185, 606-779, 940-1624 of 1624",
+     "reason": "a Read returned only part of it; seen only as 91 Grep lines; seen only through a shell command: git diff",
+     "size_lines": 1624,
+     "hunks": []
+    }
+   ],
+   "notes": []
+  }
+ }
+}

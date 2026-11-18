@@ -1,0 +1,151 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-004",
+ "stage": "validate-slice",
+ "attempt": 1,
+ "at": "2026-11-18T01:29:39.197Z",
+ "head": "50b716ac12143e6a4f9582783afcd555250c8a9c",
+ "run_id": 11313,
+ "summary": "The check this slice built works. I ran it against the real published exe in a fresh Windows Sandbox (build 26100.9974) with a real loopback SMB share, and the app did what the slice asks in every arm of my run. The app itself does not always do it at the 120 s wake, so the verdict is partial.\n\n**My run (run-20261118-070036):** I rebuilt the hook and republished the exe from HEAD 50b716a, then ran `SL-004-LateShareInSandbox.ps1 -Wake 20,120,120,120`. All 6 arms held, exit 0.\n- **Control:** buttons C:,Y:,Z: and the report counted 3.\n- **Every silenced arm:**\n  - The picker left 'Looking for drives...' 2082–2092 ms after the window loaded, showing C:,Z: and no Y:.\n  - Y:'s button came in 1.5–1.6 s after the wake (21.8 s, 122.6 s, 122.5 s and 122.5 s after launch). It was inserted between C: and Z:, which were already there, so this was a real insert in letter order and not an append.\n  - DriveStatus read 'Drives', and DrivePanel.buttons was 3 in a report read after the wake.\n- **Silent negative control:** read as FAILED, with cause 'still blocked' (the share's read thread was alive at the last sample). The app still exited 0 through its report.\n\n**All captured runs together** (the builder's runs plus mine, leaving out run-061121, whose bad deadline input voided its arms):\n- 20 s wakes: 10 of 10 held.\n- 120 s wakes: 10 of 12 held. The 2 failures are the builder's (run-060557 w120 and run-061258 w120-3). In both, the read thread ended at the wake and no button ever came. This is the app's own behaviour, unchanged by this slice (`git diff a9db796..HEAD -- src` is empty). It answers Q-007: yes at 20 s, not always at 120 s.\n\n**On this PC:**\n- `SL-004-LateShareButton.Tests.ps1` cases A–E all held: 18 corpus rows; live B, C and D on the exe; parse checks under 5.1 and pwsh. The SUBST letters were removed afterwards.\n- Fitness: all 109 rules hold.\n- Whole suite: 1259 of 1260 passed. The one failure was the known flaky UnfinishedTests.StopsInTheSizeChecksMarkWhatAPendingCheckCouldChange, this time with workers: 1. It passed when run alone, and DriveReadsTests passed 10 of 10.\n\n**New gap in the runner (backlog):** it launches the app without first confirming its silent listener is bound to port 445. In 4 of my 5 silenced arms, the runner's own probe saw nothing listening at the moment it launched the app. The arms were still valid, because the SMB client's first connection was accepted about 0.5 s after launch. But nothing in the runner guarantees that.\n\n**Deviation from the design:** the design said DrivePanel.buttons reads 2; a passing run reads 3. That is because of the Z: neighbour, which build-check criterion 3 needed and the builder declared.\n\n**Stale person-run check:** StartupHook.cs changed, so the person's network check (N-001 to N-004 plus StalledShareTests) is stale. It is assigned to SC-006.",
+ "payload": {
+  "status": "complete",
+  "verdict": "partial",
+  "contact": "real",
+  "summary": "The check this slice built works. I ran it against the real published exe in a fresh Windows Sandbox (build 26100.9974) with a real loopback SMB share, and the app did what the slice asks in every arm of my run. The app itself does not always do it at the 120 s wake, so the verdict is partial.\n\n**My run (run-20261118-070036):** I rebuilt the hook and republished the exe from HEAD 50b716a, then ran `SL-004-LateShareInSandbox.ps1 -Wake 20,120,120,120`. All 6 arms held, exit 0.\n- **Control:** buttons C:,Y:,Z: and the report counted 3.\n- **Every silenced arm:**\n  - The picker left 'Looking for drives...' 2082–2092 ms after the window loaded, showing C:,Z: and no Y:.\n  - Y:'s button came in 1.5–1.6 s after the wake (21.8 s, 122.6 s, 122.5 s and 122.5 s after launch). It was inserted between C: and Z:, which were already there, so this was a real insert in letter order and not an append.\n  - DriveStatus read 'Drives', and DrivePanel.buttons was 3 in a report read after the wake.\n- **Silent negative control:** read as FAILED, with cause 'still blocked' (the share's read thread was alive at the last sample). The app still exited 0 through its report.\n\n**All captured runs together** (the builder's runs plus mine, leaving out run-061121, whose bad deadline input voided its arms):\n- 20 s wakes: 10 of 10 held.\n- 120 s wakes: 10 of 12 held. The 2 failures are the builder's (run-060557 w120 and run-061258 w120-3). In both, the read thread ended at the wake and no button ever came. This is the app's own behaviour, unchanged by this slice (`git diff a9db796..HEAD -- src` is empty). It answers Q-007: yes at 20 s, not always at 120 s.\n\n**On this PC:**\n- `SL-004-LateShareButton.Tests.ps1` cases A–E all held: 18 corpus rows; live B, C and D on the exe; parse checks under 5.1 and pwsh. The SUBST letters were removed afterwards.\n- Fitness: all 109 rules hold.\n- Whole suite: 1259 of 1260 passed. The one failure was the known flaky UnfinishedTests.StopsInTheSizeChecksMarkWhatAPendingCheckCouldChange, this time with workers: 1. It passed when run alone, and DriveReadsTests passed 10 of 10.\n\n**New gap in the runner (backlog):** it launches the app without first confirming its silent listener is bound to port 445. In 4 of my 5 silenced arms, the runner's own probe saw nothing listening at the moment it launched the app. The arms were still valid, because the SMB client's first connection was accepted about 0.5 s after launch. But nothing in the runner guarantees that.\n\n**Deviation from the design:** the design said DrivePanel.buttons reads 2; a passing run reads 3. That is because of the Z: neighbour, which build-check criterion 3 needed and the builder declared.\n\n**Stale person-run check:** StartupHook.cs changed, so the person's network check (N-001 to N-004 plus StalledShareTests) is stale. It is assigned to SC-006.",
+  "criteria": [
+   {
+    "criterion": "In a Windows Sandbox, Y: is mapped to a loopback share and its server is silenced: LanmanServer, srv2 and srvnet stopped, and a listener on 445 that accepts and never answers",
+    "met": "yes",
+    "how": "run-20261118-070036 run-log: 'net use Y: exit=0', the picker lists 'C: Fixed, Y: Network, Z: Fixed', and 445 is held by the listener's pid or by nothing until the wake. After the wake it shows ':: pid=4'. listener.txt shows accepts during each silence (1, 2, 2, 2, 1). The service STATE fields log blank, which is waived note N-045, so the stop is shown by the 445 owner, not by sc."
+   },
+   {
+    "criterion": "The published exe shows C:'s button and leaves 'Looking for drives...' within about 2 s",
+    "met": "yes",
+    "how": "Hook log in all 5 silenced arms: status=Drives with buttons=C:,Z:, 2082–2092 ms after drives-armed (window loaded). The verdict's 'settled' and 'silent' checks are ok."
+   },
+   {
+    "criterion": "Woken about 20 s after launch, Y:'s button appears after C:'s",
+    "met": "yes",
+    "how": "My w20 arm: Y: was seen 21.8 s after launch, 1.6 s after the wake began, and the verdict held. The builder's 9 captures held too, so 10 of 10."
+   },
+   {
+    "criterion": "In a second run, woken about 120 s after launch (past the client's ~60 s give-up), Y:'s button appears in each run",
+    "met": "no",
+    "how": "My 3 w120 arms held: Y: was seen 122.5–122.6 s after launch, 1.5–1.6 s after the wake. Across every capture it is 10 of 12. In run-20261118-060557 w120 and run-20261118-061258 w120-3, late-share.json records FAILED, buttons C:,Z:, cause 'ended without a button: the share's read thread was alive, then returned'. The app (src unchanged by this slice) does not always add the button. The check correctly reports those runs as failures."
+   },
+   {
+    "criterion": "Y:'s button sits between its letter neighbours (letter order, not appended)",
+    "met": "yes",
+    "how": "In every arm where Y: arrived, the final buttons were C:,Y:,Z: (at=1). In my run Z: was already on screen (C:,Z:) before Y: came in, so this was an insert, not an append. That rules out the false pass described in waived note N-043 for this evidence."
+   },
+   {
+    "criterion": "DrivePanel.buttons counts the share, from a report whose ending comes after the wake",
+    "met": "yes",
+    "how": "report=3 and hook=3 in every held arm. drives-done came 1.5–1.6 s after the wake began ('afterwake' ok). The design wrote 'reads 2'; it is 3 because of the declared Z: neighbour (build-check criterion 3)."
+   },
+   {
+    "criterion": "A run where Y:'s read ends and no button appears fails the check, and records whether the read returned not-ready or was still blocked",
+    "met": "yes",
+    "how": "Silent arm in my run and in 8 builder runs: FAILED with cause 'still blocked'. In the builder's 2 failed 120 s arms: FAILED with cause 'ended without a button ... returned (not ready, or failed)'. Corpus rows C8–C12 pass in case A. The cause does not separate not-ready from IOException; it reports 'ended'."
+   },
+   {
+    "criterion": "A way exists to read the drive buttons (letters, order) and DriveStatus unattended in the Sandbox after the late arrival (build-check 4)",
+    "met": "yes",
+    "how": "The drives hook mode logged status and buttons in picker order on every change, as SYSTEM in the Sandbox. Cases B–D on this PC also passed. A no-path launch is still unreadable (Q-009's other half); this slice's design did not ask for it."
+   },
+   {
+    "criterion": "On this PC's own SMB client (build 26300), with a real share whose server stops answering, the late button appears in letter order (the slice's 'person-run by project rule' part)",
+    "met": "person-run",
+    "how": "The person maps a letter that has neighbours on both sides (or adds a SUBST letter after it) to a share on their own server. They make the server stop answering (stop its SMB service or unplug its network), then launch artifacts/publish/FsAnalyser.App.exe with no path. Within about 2 s the picker must read 'Drives' with the other letters and no button for the share. They wake the server about 20 s after launch, and in a second launch about 120 s after. In each launch the share's button must appear between its neighbours without a relaunch. A launch where it never appears is the Q-007 'not always' outcome."
+   }
+  ],
+  "planned": [],
+  "obligations": [
+   {
+    "key": "O-001",
+    "verified": "yes",
+    "evidence": "Re-run independently: Sandbox run-20261118-070036 (6/6 arms held on the freshly published exe at HEAD 50b716a). The host test passed A–E (exit 0)."
+   }
+  ],
+  "checks": [
+   {
+    "what": "Rebuild the drives hook and republish the app from HEAD 50b716a so the Sandbox runs current binaries",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build tests/window/FsaWindowHook/FsaWindowHook.csproj -c Release -o artifacts/window-hook; ...publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o artifacts/publish (TAAD3_HOME=scratch)",
+    "outcome": "passed",
+    "evidence": "Hook build: 0 warnings, 0 errors, exit 0. Publish exit 0. FsAnalyser.App.exe written 07:00:27 (139,996,824 B), FsaWindowHook.dll written 07:00:21."
+   },
+   {
+    "what": "Late-share runner in a fresh Windows Sandbox: control, w20, three w120 arms, silent negative control",
+    "command": "Sandbox (network=true, admin/SYSTEM, 1700 s cap): powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\taad\\tree\\tests\\window\\SL-004-LateShareInSandbox.ps1 -Wake 20,120,120,120",
+    "outcome": "passed",
+    "evidence": "Exit 0, 458 s, build 26100.9974, 'end: 6 of 6 arms held'. control: C:,Y:,Z:, report 3. w20: left after 2084 ms with C:,Z:; Y: seen 21.8 s after launch, 1.6 s after the wake; C:,Y:,Z:, report 3. w120, w120-2 and w120-3: left after 2082–2092 ms; Y: seen at 122.6, 122.5 and 122.5 s, 1.5–1.6 s after the wake; all C:,Y:,Z:, report 3. silent: FAILED with cause 'still blocked', exit 0, buttons C:,Z:. Output: .taad-scratch/sandbox/run-20261118-070036/out."
+   },
+   {
+    "what": "Tally of every captured Sandbox arm (builder's runs and mine) against 'in each run Y:'s button appears'",
+    "command": "foreach .taad-scratch/sandbox/*/out/late-share.json: print Arm, Held, Verdict, Buttons, Cause",
+    "outcome": "failed",
+    "nature": "pre-existing",
+    "evidence": "Leaving out run-061121 (all its wake arms were voided by the old runner's text-joined deadline): 20 s arms held 10 of 10, 120 s arms held 10 of 12. FAILED: run-20261118-060557 w120 and run-20261118-061258 w120-3, both with buttons C:,Z: and cause 'ended without a button: the share's read thread was alive, then returned (not ready, or failed)'. The failing code is the app's MainWindow.ReadDrive/LoadDrives, which this slice did not touch (git diff a9db796..HEAD -- src is empty), so the behaviour predates the slice. It is the build's PRODUCT FINDING answering Q-007, and needs a decision (a workaround under the standing rule)."
+   },
+   {
+    "what": "Host test for the instrument: verdict corpus, live drives mode on the published exe, parse under both shells",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/SL-004-LateShareButton.Tests.ps1 -NoBuild",
+    "outcome": "passed",
+    "evidence": "'All checks held.' exit 0. A: 18 rows, including C1 (appended at end → order fails), C2 (wake after report), C3 (not late), C8 to C12 (causes). B: W:,X: gave C:,D:,W:,X:,Z:, report 5. C: Y: never came, held 3009 ms, refused naming Y:, exit 0. D: 5 bad inputs refused, exit 0 each. E: both scripts parse under powershell.exe and pwsh."
+   },
+   {
+    "what": "Case B/C SUBST letters left nothing behind on this PC",
+    "command": "subst (before and after the host test)",
+    "outcome": "passed",
+    "evidence": "Empty before and empty after."
+   },
+   {
+    "what": "Architecture rules",
+    "command": "mcp Fitness op=check",
+    "outcome": "passed",
+    "evidence": "109 rules checked against 227 parsed files; every declared rule holds. One rule, 'a committed proof-run record carries counts...' (docs/proof-runs/*.json), matches no files. That is not this slice's file set."
+   },
+   {
+    "what": "Whole suite",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx (no -n; 5675 MB free; TAAD3_HOME=scratch)",
+    "outcome": "failed",
+    "nature": "pre-existing",
+    "evidence": "Failed 1, Passed 1259 of 1260, 1 m 12 s. The failure is UnfinishedTests.StopsInTheSizeChecksMarkWhatAPendingCheckCouldChange(workers: 1). The build-check's baseline on unchanged src saw the same test fail (workers: 4), as did SL-002's validation. It passes alone (next check)."
+   },
+   {
+    "what": "The flaky test alone, and DriveReadsTests (the blocked-delegate proof of the same isolation)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --no-build --filter \"FullyQualifiedName~UnfinishedTests.StopsInTheSizeChecksMarkWhatAPendingCheckCouldChange|FullyQualifiedName~DriveReadsTests\"",
+    "outcome": "passed",
+    "evidence": "Passed 12 of 12 (10 DriveReadsTests plus 2 Unfinished cases), exit 0."
+   },
+   {
+    "what": "This slice changed no product code",
+    "command": "git diff --stat a9db796..HEAD -- src",
+    "outcome": "passed",
+    "evidence": "Empty. The 12 changed files are tests/window/*, .taad/fitness.yaml, tests/window/AppArgumentCorpus.json and .taad/slices records."
+   },
+   {
+    "what": "The runner makes sure its silent listener holds 445 before it launches the app",
+    "command": "read run-20261118-070036/out/run-log.txt 'silenced:' lines and listener.txt against the hook logs' launch times",
+    "outcome": "failed",
+    "nature": "extra",
+    "evidence": "Silence() sleeps 2 s after starting the listener and never checks that it is bound. In 4 of 5 silenced arms the runner's own probe logged 'listen445=' (empty) just before the launch. In w120 the listener's 'listening' line is 01:31:32.711Z, against an app start of about 01:31:32.36Z (drives-seen ms=593 at 01:31:32.954Z). The SMB client's first connection was accepted at 01:31:32.87Z, so the arms were valid. A connection refused before the bind would reach the verdict as a product failure ('ended without a button') with nothing to tell it apart. Backlog hardening."
+   },
+   {
+    "what": "The runner refuses outside a Sandbox",
+    "outcome": "not-run",
+    "evidence": "Not re-run here. The build and the code review both ran it on this PC (exit 3, nothing touched), and the guard code at runner lines 32-35 is unchanged since then."
+   }
+  ],
+  "not_reached": [
+   "This PC's own SMB client (Windows 10.0.26300): the runner refuses outside a Sandbox, and silencing a share here would change the person's SMB mappings or server. Only build 26100.9974 (the Sandbox) was measured.",
+   "A real remote file server or NAS that stops answering over a real network (a blackholed route, a powered-off box). Only a loopback server whose services were stopped and restarted, with a silent listener on 445, was measured.",
+   "How often the 120 s failure happens: 2 of 12 arms is a small sample, and wake delays between 20 s and 120 s, or beyond 120 s, were not tried.",
+   "Whether a failed 120 s arm read not-ready or hit an IOException: the cause reports only 'ended'.",
+   "A no-path launch's DriveStatus and picker (Q-009's other half): the drives mode needs a root and --report.",
+   "The window-close path with a read still stuck (Q-006): only report-mode endings were exercised.",
+   "The person's network check (N-001 to N-004 plus StalledShareTests), now stale because StartupHook.cs changed. It is person-run and assigned to SC-006."
+  ],
+  "screens": []
+ }
+}

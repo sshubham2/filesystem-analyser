@@ -18,7 +18,7 @@ using System.Windows.Threading;
 /// </summary>
 /// <remarks>
 /// <code>
-///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|watch|measure|rescan|expand|hide|kinds|size|tree|reveal|settings|rows
+///   DOTNET_STARTUP_HOOKS=&lt;absolute path to FsaWindowHook.dll&gt;  FSA_HOOK_MODE=stop|throw|close|watch|measure|rescan|expand|hide|kinds|size|tree|reveal|settings|rows|drives
 ///   [FSA_HOOK_ANSWER=yes|no]  (settings only, SL-095: SettingsMode.cs turns the first precaution off and answers its question)
 ///   FSA_HOOK_LOG=&lt;file&gt;  [FSA_HOOK_ARMED=&lt;marker file&gt;  FSA_HOOK_CANCEL_DELAY_MS=&lt;n&gt;  FSA_HOOK_CLOSE_DELAY_MS=&lt;n&gt;]
 ///   [FSA_HOOK_SLOW_REFRESH_MS=&lt;n&gt;]  [FSA_HOOK_RENAMED=LastRefresh|SkippedRefreshes|SkipsNextRefresh]  (watch and measure only)
@@ -37,11 +37,14 @@ using System.Windows.Threading;
 ///   [FSA_HOOK_EXPLORER_VIEW=&lt;hidden&gt;|&lt;protected&gt;]  (SL-091, any mode: the Explorer view reveals are decided under,
 ///   ANDed with the real one, armed before Main; see ArmExplorerView)
 ///   [FSA_HOOK_ROWS=1]  (SL-089, rows and stop only: the unreadable-folders panel's rows, written at shutdown; RowsMode.cs)
+///   [FSA_HOOK_WANT=&lt;letters, as M:,Z:&gt;  FSA_HOOK_WANT_DEADLINE_S=&lt;n&gt;]  (SL-004, drives only: the report is held until each letter has a button; DrivesMode.cs)
 /// </code>
 /// tree (SL-044) reads and drives the folder tree a completed scan shows, and logs JSON lines; TreeMode.cs has
 /// all of it. It is not armed and takes no FSA_HOOK_SLOW_REFRESH_MS. rows (SL-089) presses nothing and has no deadline:
 /// the scan runs to its own ending, a whole drive's included, with the listing failpoint armed as under any mode, and
-/// with FSA_HOOK_ROWS=1 the panel's rows are written as the app shuts down (RowsMode.cs). It is not armed.
+/// with FSA_HOOK_ROWS=1 the panel's rows are written as the app shuts down (RowsMode.cs). It is not armed. drives (SL-004)
+/// logs the drive buttons' letters, in the panel's order, each time they or DriveStatus change, and holds the report once
+/// the ending is on screen until the letters in FSA_HOOK_WANT each have a button (DrivesMode.cs). It is not armed.
 ///
 /// The runtime calls <see cref="Initialize"/> before the app's Main, in every .NET process that inherits the
 /// variable: pwsh 7, dotnet.exe and MSBuild nodes too. So it does nothing unless FSA_HOOK_MODE is set and the
@@ -340,9 +343,16 @@ internal class StartupHook
         try
         {
             Log($"loaded mode={mode} pid={Environment.ProcessId}");
-            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "hide" or "kinds" or "size" or "tree" or "reveal" or "settings" or "rows"))
+            if (mode is not ("stop" or "throw" or "close" or "watch" or "measure" or "rescan" or "expand" or "hide" or "kinds" or "size" or "tree" or "reveal" or "settings" or "rows" or "drives"))
             {
                 Log($"refused mode={mode} reason=unknown mode");
+                return;
+            }
+            // FSA_HOOK_WANT and FSA_HOOK_WANT_DEADLINE_S (SL-004) are drives mode's alone.
+            if ((!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("FSA_HOOK_WANT"))
+                    || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("FSA_HOOK_WANT_DEADLINE_S"))) && mode != "drives")
+            {
+                Log($"refused mode={mode} reason=FSA_HOOK_WANT and FSA_HOOK_WANT_DEADLINE_S are for drives only");
                 return;
             }
             // FSA_HOOK_TREE_STOP (SL-110) stops the scan at a folder and chooses the stopped tree: tree and reveal modes only.
@@ -463,6 +473,14 @@ internal class StartupHook
             if (Renamed is not null)
             {
                 Log($"refused mode={mode} reason=FSA_HOOK_RENAMED is for watch and measure only");
+                return;
+            }
+            if (mode == "drives")
+            {
+                if (!string.IsNullOrEmpty(marker))
+                    Log("refused mode=drives reason=drives mode is not armed");
+                else
+                    DrivesMode.Drive(Environment.GetEnvironmentVariable("FSA_HOOK_WANT"), Environment.GetEnvironmentVariable("FSA_HOOK_WANT_DEADLINE_S"));
                 return;
             }
             if (mode == "size")
