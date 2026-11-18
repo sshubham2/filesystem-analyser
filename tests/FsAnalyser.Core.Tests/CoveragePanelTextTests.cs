@@ -266,6 +266,26 @@ public class CoveragePanelTextTests
     public void TheVanishedNoteKeepsItsBytesFromTwoAndWritesOneInTheSingular(int files, string expected) =>
         Assert.Equal(expected, CoveragePanelText.VanishedNote(files));
 
+    /// <summary>
+    /// The note for folders deleted while the scan ran (SL-005): the bare count and 'folders' and 'deleted' in it, the singular
+    /// for one, and it goes into the report's OutcomeNotes lines, so ASCII only and never a path or a name (Q-016).
+    /// </summary>
+    [Theory]
+    [InlineData(1, "1 folder was deleted while the scan ran, before it could be read; it is counted as an empty folder.")]
+    [InlineData(2, "2 folders were deleted while the scan ran, before they could be read; they are counted as empty folders.")]
+    [InlineData(3, "3 folders were deleted while the scan ran, before they could be read; they are counted as empty folders.")]
+    [InlineData(1234, "1,234 folders were deleted while the scan ran, before they could be read; they are counted as empty folders.")]
+    public void TheFoldersVanishedNoteCountsFoldersDeletedWhileTheScanRan(int folders, string expected)
+    {
+        string note = CoveragePanelText.FoldersVanishedNote(folders);
+
+        Assert.Equal(expected, note);
+        Assert.All(note, c => Assert.InRange(c, ' ', '~')); // ASCII
+        Assert.DoesNotContain('\\', note);
+        Assert.DoesNotContain("missing", note, StringComparison.OrdinalIgnoreCase); // the 'may be missing' captions are for unreadable folders
+        Assert.DoesNotContain("unreadable", note, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>The wording tests above name 'measured' only through its negation or the $MFT's own line.</summary>
     [Fact]
     public void OnlyTheMftLineSaysMeasuredWithoutNegation()

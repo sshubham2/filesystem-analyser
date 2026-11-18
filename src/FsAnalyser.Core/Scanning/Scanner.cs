@@ -92,6 +92,25 @@ public static class Scanner
         : UnreadableKind.NothingListed;
 
     /// <summary>
+    /// Whether a folder's refused open (SL-005) is one that found no folder: nothing was opened and the open's code is one
+    /// <see cref="SizeProbe.IsGone"/> accepts, the codes the file probe already calls gone. The folder was listed by its
+    /// parent and deleted before the walk came to it, or its parent was. Only the open decides: a folder that opened and
+    /// failed its listing, whatever the code, is a listing failure (<see cref="FailedKind"/>), and the root, whose open
+    /// never reaches the walk's folders, is never one. The open alone cannot tell a deleted folder from a path that stopped
+    /// resolving above it, which fails the same way: <see cref="Run.FolderDone"/> asks the scan root as well.
+    /// </summary>
+    internal static bool FolderVanished(int error, bool opened) => !opened && SizeProbe.IsGone(error);
+
+    /// <summary>
+    /// Whether a folder whose open found nothing was really deleted, given how a second open, of the scan root, went: only
+    /// when the root still opens. A root that does not (its drive letter removed, its share dropped, its volume gone, or
+    /// the root itself deleted) says the path above the folder stopped resolving, so the folder is not known to be gone and
+    /// stays unreadable, as it was before SL-005. (A root open that a Stop aborted decides nothing: FolderDone does not ask
+    /// this of it.)
+    /// </summary>
+    internal static bool GoneGivenRootOpen(int rootOpenError) => rootOpenError == 0;
+
+    /// <summary>
     /// Whether a scan keeps its folders' last-access times, from what the root's volume says it is: only on a local
     /// NTFS volume, the one place the suppression was measured (review M6). A share, ReFS, FAT and exFAT are listed
     /// as before.
@@ -180,7 +199,7 @@ public static class Scanner
         private string? _lastFolder;
         private TimeSpan _listingTime, _sizingTime, _longestProbe;
         private long _files, _folders, _links, _bytes, _bytesOnDisk, _filesWithoutId;
-        private int _probes, _probeFailures, _probeCorrections, _vanished, _foldersListed, _lastAccessAsked, _lastAccessKept;
+        private int _probes, _probeFailures, _probeCorrections, _vanished, _foldersVanished, _foldersListed, _lastAccessAsked, _lastAccessKept;
         // The first entry of the batch a Stop cancelled in the size checks, whose readings were therefore not applied; 0 while
         // no batch has been, and so after a Stop in the listing, which never reached them. Said to the store in Finish.
         private int _uncheckedFrom;
@@ -384,14 +403,31 @@ public static class Scanner
             if (ClassifyReadError(error, ct.IsCancellationRequested) == ReadOutcome.Cancelled)
                 return true;
 
+            // A folder whose open found nothing is deleted, not unreadable (SL-005), once the scan root still opens: the same
+            // refusal comes from a path that stopped resolving above the folder. Asked only here, so a scan in which nothing
+            // vanishes makes no call more. A Stop that lands in this open is a Stop like any other: nothing of the folder is
+            // committed, and the scan ends Cancelled.
+            bool vanished = false;
+            if (FolderVanished(error, opened))
+            {
+                int rootError = RootOpenError();
+                if (io.LastCallAborted)
+                    return true;
+                vanished = GoneGivenRootOpen(rootError);
+            }
+
             int first = _store.Count;
             int count = _reader.Count;
             for (int k = 0; k < count; k++)
                 AddEntry(folder, k);
             _store.SetChildren(folder, first, count);
 
-            // The one stamp: the record below, the top-level row and, through the record, the folder tree read it.
-            UnreadableKind? failed = FailedKind(error, opened, count);
+            // The one stamp: the record below, the top-level row and, through the record, the folder tree read it. A deleted
+            // folder is stamped with nothing and finishes as the empty folder it already is in the store; it is counted
+            // apart (ScanResult.FoldersVanished), not as not scanned, which is a skipped store.
+            UnreadableKind? failed = vanished ? null : FailedKind(error, opened, count);
+            if (vanished)
+                _foldersVanished++;
             if (failed is { } kind)
             {
                 _store.AddFlags(folder, EntryFlags.Unreadable);
@@ -421,6 +457,16 @@ public static class Scanner
             progress.Publish(Totals, _unreadable.Count, folderPath);
             options.AfterFolder?.Invoke(_foldersListed);
             return ct.IsCancellationRequested;
+        }
+
+        // The scan root opened once more, plainly and at once closed again: 0 when it opens, else the Win32 error (the guard
+        // says through LastCallAborted when a Stop ended the call, and then it decided nothing). Only FolderDone asks.
+        private int RootOpenError()
+        {
+            int error = _reader.Open(win32Root, keepLastAccess: false, out SafeFileHandle? handle);
+            if (error == 0)
+                io.Close(handle!);
+            return error;
         }
 
         private void AddEntry(int parent, int index)
@@ -598,6 +644,7 @@ public static class Scanner
                 OpensUnderExcludedStore = _reader.OpensUnderExcludedStore,
                 ProbeFailures = _probeFailures,
                 VanishedBeforeProbe = _vanished,
+                FoldersVanished = _foldersVanished,
                 FileIdsAvailable = status is not (ScanStatus.RootUnreadable or ScanStatus.Refused) && _filesWithoutId == 0,
                 Elapsed = _clock.Elapsed,
                 Probes = _probes,

@@ -188,6 +188,18 @@ public sealed class ScanResult
     public int VanishedBeforeProbe { get; init; }
 
     /// <summary>
+    /// Folders a parent listed that were gone when the walk came to open them (SL-005): the open found no folder, or, with
+    /// its parent gone too, no path, and the scan root still opened, so it was the folder that was deleted and not the
+    /// path above it that stopped resolving. Each stays in the store as a listed folder with no children and is counted in
+    /// <see cref="Totals"/>; none is flagged or recorded in <see cref="Unreadable"/>. Not counted: the folders below one, which
+    /// the scan never saw; a folder whose delete was still pending at the open or that a file replaced, which stay
+    /// unreadable; a folder whose open failed because the scan root no longer opens either (a drive letter removed, a share
+    /// dropped), which stays unreadable as before. Kept apart from <see cref="VanishedBeforeProbe"/> (files) and
+    /// <see cref="ProbeFailures"/>.
+    /// </summary>
+    public int FoldersVanished { get; init; }
+
+    /// <summary>
     /// False when a file was listed without a FileId (<see cref="ScanStore.HasFileId"/>), whatever the listing class,
     /// so the store could not count it once if it has other names; and when the root could not be read.
     /// </summary>

@@ -847,37 +847,4 @@ public class ContainerLayerStoreTests
         Assert.True(process.ExitCode == 0, $"{file} {string.Join(' ', args)} exited {process.ExitCode}: {output} {error}");
         return output;
     }
-
-    /// <summary>
-    /// A subst drive letter for this logon session, mapped to a folder of the tree and removed again: the first letter
-    /// from Z: down that no drive uses.
-    /// </summary>
-    private sealed class SubstDrive : IDisposable
-    {
-        private readonly string _letter;
-
-        public SubstDrive(string target)
-        {
-            HashSet<char> used = DriveInfo.GetDrives().Select(d => char.ToUpperInvariant(d.Name[0])).ToHashSet();
-            char free = Enumerable.Range('M', 'Z' - 'M' + 1).Select(c => (char)c).Reverse().FirstOrDefault(c => !used.Contains(c));
-            Assert.True(free != default, "no drive letter from M: to Z: is free for subst");
-            _letter = free + ":";
-            RunTool("subst.exe", _letter, target);
-            Root = _letter + @"\";
-        }
-
-        public string Root { get; }
-
-        public void Dispose()
-        {
-            try
-            {
-                RunTool("subst.exe", _letter, "/d");
-            }
-            catch (Exception)
-            {
-                // Best effort: a mapping left behind is gone at the next sign-in.
-            }
-        }
-    }
 }
