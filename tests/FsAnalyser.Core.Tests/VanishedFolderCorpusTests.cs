@@ -86,6 +86,24 @@ public class VanishedFolderCorpusTests
     }
 
     /// <summary>
+    /// What no text rule can hold: the walk's own predicate is SizeProbe.IsGone's for every code, so a third code added to one
+    /// and not the other, spelled however it is spelled, fails here. 0 to 2000 covers every Win32 error the open can return
+    /// and the NT-status-mapped codes beside them.
+    /// </summary>
+    [Fact]
+    public void TheWalksPredicateAgreesWithSizeProbeIsGoneForEveryCode()
+    {
+        var disagree = new List<int>();
+        for (int code = 0; code <= 2000; code++)
+        {
+            if (Scanner.FolderVanished(code, opened: false) != SizeProbe.IsGone(code))
+                disagree.Add(code);
+            Assert.False(Scanner.FolderVanished(code, opened: true), $"a folder whose open returned a handle is never gone (code {code})");
+        }
+        Assert.True(disagree.Count == 0, $"Scanner.FolderVanished and SizeProbe.IsGone disagree on codes {string.Join(", ", disagree)}");
+    }
+
+    /// <summary>
     /// The rules are quiet on the files they guard, comments included, which they read too: a doc line that spells a comparison
     /// of an error with 2 or 3 would fail the Fitness gate. Checked here so that it fails in the default suite instead.
     /// </summary>
