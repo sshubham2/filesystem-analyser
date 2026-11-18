@@ -160,7 +160,10 @@ public static class Scanner
     {
         Read,
 
-        /// <summary>Flagged and listed in <see cref="ScanResult.Unreadable"/>, so no folder is dropped silently.</summary>
+        /// <summary>
+        /// Flagged and listed in <see cref="ScanResult.Unreadable"/>, so no folder is dropped silently, unless its open found no
+        /// folder and the scan root still opens: <see cref="Run.FolderDone"/> then counts it deleted (SL-005) instead.
+        /// </summary>
         Unreadable,
 
         /// <summary>Aborted by Cancel: nothing of it is committed, and the scan stops.</summary>

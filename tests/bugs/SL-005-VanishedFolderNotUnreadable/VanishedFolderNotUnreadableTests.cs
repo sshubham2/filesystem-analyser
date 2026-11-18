@@ -14,7 +14,7 @@
 // Actual: the scan completes, but ScanResult.Unreadable holds the deleted folder with Win32Error 2 and
 // Kind NothingListed, and its entry carries EntryFlags.Unreadable.
 //
-// What the test does and what it costs: a scratch tree under %TEMP%\fsa-tests of three folders (a, a\b, z\inner) and one file
+// What the test does and what it costs: a scratch tree under %TEMP%\fsa-tests of four folders (a, a\b, z, z\inner) and one file
 // of 5 bytes, scanned with Scanner.Scan. The scan's own AfterFolder seam deletes z the moment the root has been listed
 // (folder 1), when z is still on the walk's stack behind a, so z's open fails for the reason the bug is about. Nothing leaves
 // the temp tree and it runs in well under a second. The worst case is a handful of tiny folders and one file, removed again

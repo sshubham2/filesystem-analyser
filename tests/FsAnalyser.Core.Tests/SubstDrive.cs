@@ -4,9 +4,10 @@ namespace FsAnalyser.Core.Tests;
 
 /// <summary>
 /// A subst drive letter for this logon session, mapped to a folder of a tree and removed again: the first letter from Z: down
-/// that no drive uses. Shared by every test class that needs one (ContainerLayerStoreTests, VanishedFolderTests): test classes
-/// run in parallel in one process, so choosing a letter and mapping it is one step under a lock, and two classes never see the
-/// same letter free and then fail the second subst.exe (SL-005, review M1).
+/// to M: that no drive uses. Shared by ContainerLayerStoreTests and VanishedFolderTests (VolumeUsageTests picks its own
+/// letters, outside this lock): test classes run in parallel in one process, so choosing a letter and mapping it is one step
+/// under a lock, and two classes that use this one never see the same letter free and then fail the second subst.exe
+/// (SL-005, review M1).
 /// </summary>
 internal sealed class SubstDrive : IDisposable
 {
