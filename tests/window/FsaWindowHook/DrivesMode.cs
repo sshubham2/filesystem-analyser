@@ -19,8 +19,9 @@ using System.Windows.Threading;
 /// Render-priority item queued, as the size mode's drive hold does, so the report, which reads the window at Loaded
 /// priority, waits. Each time the item runs it reads DriveStatus's text and the drive buttons' letters in DrivePanel's
 /// order (the first two characters of each button's label, which the app writes as "X:  label (format)"), and logs a
-/// line whenever either has changed since the line before. The drives' own answers are posted at Normal priority, above
-/// the item, so one that arrives is read at the next turn. The hold ends, and the report is read, when every wanted
+/// line whenever either has changed since the line before. The drives' own answers arrive at the priority of the Loaded
+/// handler LoadDrives runs on (Send, in a probe; see DriveReads), which is above the item, so one that arrives is read at
+/// the next turn. The hold ends, and the report is read, when every wanted
 /// letter has a button, or after FSA_HOOK_WANT_DEADLINE_S (150 s by default, above a share's ~120 s wake).
 ///
 /// It logs "drives-armed want=M:,Z: deadline=n ms=n", "drives-seen ms=n utc=t status=text buttons=C:,M:,Z:" at each change
@@ -107,7 +108,8 @@ internal static class DrivesMode
     }
 
     // One turn of the hold: read, log a change, and either let the report go or queue the next turn. The 1 ms sleep keeps
-    // the queue from spinning a core for minutes; the drives' answers arrive at Normal priority and run before it.
+    // the queue from spinning a core for minutes; the drives' answers arrive at the priority of the Loaded handler LoadDrives
+    // runs on (Send in a probe; see DriveReads), above this Render-priority item, and run before it.
     private static void Hold(Application app, TextBlock status, Panel panel, string[] letters, TimeSpan deadline, Stopwatch since, string? last)
     {
         string buttons = Letters(panel);
