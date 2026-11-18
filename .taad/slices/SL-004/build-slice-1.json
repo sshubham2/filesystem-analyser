@@ -1,0 +1,140 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-004",
+ "stage": "build-slice",
+ "attempt": 1,
+ "at": "2026-11-18T00:18:06.372Z",
+ "head": "ddb3d3ceba50992a9a0378f701258cd15ca36607",
+ "run_id": 11308,
+ "summary": "I built the check and ran it in the Windows Sandbox against the published exe. A new hook mode, `drives` (tests/window/FsaWindowHook/DrivesMode.cs), holds the --report until the wanted letters have buttons and logs the buttons in picker order on every change. A Sandbox runner (tests/window/SL-004-LateShareInSandbox.ps1) maps Y: to a loopback share, adds a SUBST Z: neighbour, silences LanmanServer/srv2/srvnet behind a silent listener on 445, launches the exe and wakes the server at about 20 s and 120 s. A verdict function, a corpus and a host test (tests/window/SL-004-LateShareButton.Tests.ps1) back it. Result: the late button arrived in letter order (C:, Y:, Z:) in all 9 of the 20 s arms. In the 120 s arms it arrived in 7 of 9; in the other 2 the share's read thread ended at the wake and the share never got a button, so Q-007 is \"not always\". The app was not changed, so that outcome is recorded here, not fixed.",
+ "payload": {
+  "status": "complete",
+  "summary": "I built the check and ran it in the Windows Sandbox against the published exe. A new hook mode, `drives` (tests/window/FsaWindowHook/DrivesMode.cs), holds the --report until the wanted letters have buttons and logs the buttons in picker order on every change. A Sandbox runner (tests/window/SL-004-LateShareInSandbox.ps1) maps Y: to a loopback share, adds a SUBST Z: neighbour, silences LanmanServer/srv2/srvnet behind a silent listener on 445, launches the exe and wakes the server at about 20 s and 120 s. A verdict function, a corpus and a host test (tests/window/SL-004-LateShareButton.Tests.ps1) back it. Result: the late button arrived in letter order (C:, Y:, Z:) in all 9 of the 20 s arms. In the 120 s arms it arrived in 7 of 9; in the other 2 the share's read thread ended at the wake and the share never got a button, so Q-007 is \"not always\". The app was not changed, so that outcome is recorded here, not fixed.",
+  "files": [
+   {
+    "path": "tests/window/FsaWindowHook/DrivesMode.cs",
+    "change": "added",
+    "why": "the unattended reading Q-009/U-007 asked for: drives mode logs DriveStatus and the drive buttons' letters in DrivePanel order on each change, and holds the report until FSA_HOOK_WANT's letters each have a button (or FSA_HOOK_WANT_DEADLINE_S). Never ends the process: the app writes its report and shuts down itself."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/StartupHook.cs",
+    "change": "modified",
+    "why": "dispatches the new drives mode, refuses FSA_HOOK_WANT and FSA_HOOK_WANT_DEADLINE_S in any other mode, and documents the mode in the header."
+   },
+   {
+    "path": "tests/window/SL-004-LateShareInSandbox.ps1",
+    "change": "added",
+    "why": "the Sandbox runner. Refuses on any machine without C:\\Users\\WDAGUtilityAccount. Arms: control, w<N> (wake N s after launch, repeatable), and a silent negative control. Reads the app's drive-read thread names from outside to record 'still blocked' vs 'ended'. Writes late-share.json with each arm's inputs."
+   },
+   {
+    "path": "tests/window/SL-004-LateShareVerdict.ps1",
+    "change": "added",
+    "why": "Get-LateShareVerdict and Read-DrivesHookLog: nine keyed checks (exit, hook, settled, silent, late, afterwake, order, status, report) and the cause for a share with no button. Shared by the runner and the host test; works under 5.1 and 7."
+   },
+   {
+    "path": "tests/window/SL-004-LateShareCorpus.json",
+    "change": "added",
+    "why": "18 rows: 6 captured from real Sandbox runs (late buttons at 20 s and 120 s, a read that ended at the wake, a share that never woke) and 12 made from them by one change each. Each row names its exact failed checks and cause."
+   },
+   {
+    "path": "tests/window/SL-004-LateShareButton.Tests.ps1",
+    "change": "added",
+    "why": "the host-runnable test. A: verdict on the corpus. B-D: drives mode on the published exe over SUBST letters (holds, orders, gives up and names the letter, refuses bad input). E: both new scripts parse under 5.1 and pwsh."
+   },
+   {
+    "path": "tests/window/AppArgumentCorpus.json",
+    "change": "modified",
+    "why": "lists the runner (quotes and doubles trailing backslashes) and the test script (hands the exe to read-window.ps1) as producers, as AppArgumentTests requires of every script that names the exe."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "change": "modified",
+    "why": "one except_files entry on 'only the shared rig changes SMB client mappings (PowerShell)' for the Sandbox runner, whose `net use` maps the loopback share inside a disposable Sandbox. Its because-text now says so."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "done": true,
+    "how": "Named test: tests/window/SL-004-LateShareButton.Tests.ps1, cases A and E (command in `cases`). A feeds every shape of a run into the verdict, from real Sandbox captures (late share got its button after 20 s and after 120 s, one whose read ended at the wake with no button, one that never woke) plus rows made from them by one change each: a button appended at the end instead of in letter order, a share that was not late, a report read before the wake, a still-blocked read, an ended read, unreadable thread names, no report, a hook that refused. The real late-arrival runs themselves were made through the Sandbox tool and are not reachable from a shell command. Live cases B-D on the published exe also pass. The mutation below turns A red.",
+    "mutation": {
+     "file": "tests/window/SL-004-LateShareVerdict.ps1",
+     "find": "Add-Check 'late' ($null -ne $first -and $first.Utc -ge $WakeUtc -and $late -ge ($WakeSeconds - 1))",
+     "replace": "Add-Check 'late' ($null -ne $first)",
+     "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/SL-004-LateShareButton.Tests.ps1 -Case A"
+    }
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "test_name": "tests/window/SL-004-LateShareButton.Tests.ps1 cases A and E: Get-LateShareVerdict over tests/window/SL-004-LateShareCorpus.json, real Sandbox captures of a share that answers late at 20 s and 120 s, plus the failed shapes (appended not inserted, not late, report before the wake, read still blocked, read ended without a button)",
+    "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/SL-004-LateShareButton.Tests.ps1 -Case A,E"
+   }
+  ],
+  "mandatory": [],
+  "deviations": [
+   "DrivePanel.buttons reads 3 in a passing run (C:, Y:, Z:), not the design's 2. A SUBST Z: neighbour with a later letter is added, because without one appending at the end and inserting in letter order give the same result (build-check). The check asserts Y: sits between C: and Z: and that the report's count equals the buttons the hook logged.",
+   "The design gave no instrument for reading the buttons unattended. I added the `drives` hook mode (build-check criterion 4, U-007, Q-009 named it). It needs a root and --report, so a no-path launch is still unreadable.",
+   "'Records whether the read returned not-ready or was still blocked' is done from outside the app. The runner reads each thread's OS name (GetThreadDescription) for 'FsAnalyser drive read N'. It could not be done in the hook, because the fitness rule InteropLivesOnlyInNative bars Library/DllImport from tests/**/*.cs outside an allow-list. .NET thread names do reach the OS: verified in the Sandbox, where the share's read thread showed alive for the whole silence.",
+   "The Sandbox runner uses `net use` to map the loopback share, which the fitness rule 'only the shared rig changes SMB client mappings (PowerShell)' forbids in tests/**/*.ps1. I added one except_files entry for that script. It refuses to run unless C:\\Users\\WDAGUtilityAccount exists, so it cannot stop a person's file server (verified: refuses on this PC, runs in the Sandbox).",
+   "The Sandbox bootstrap passed to the Sandbox tool is a one-line call to the in-tree runner, so the engine's task.ps1 never names the exe, which keeps AppArgumentTests green (lesson #889)."
+  ],
+  "not_built": [
+   "No engine-runnable command reproduces the silenced-share arms. They need LanmanServer stopped and an SMB mapping, so they ran through the Sandbox tool, about 10 runs of the runner (the last of which reproduced the 20 s arm and the negative control). The named host test feeds their recorded results into the verdict.",
+   "No product change. Q-007's 'no, not always' (a woken share whose blocked read fails at the wake gets no button until relaunch) is recorded as a finding, not fixed: the design builds the check, and the fix would be a new behaviour that needs a decision.",
+   "A no-path launch's DriveStatus is still unreadable (Q-009's other half). The drives mode holds a report, and a no-path launch has none."
+  ],
+  "follow_ups": [
+   "PRODUCT FINDING (answers Q-007/U-007): in 2 of 9 Sandbox arms woken at about 120 s, the share's blocked IsReady call ended at the wake without finishing. Its read thread went away and no button was ever added, because ReadDrive returns null on not-ready or IOException and nothing re-reads. The 20 s arm held 9 of 9. U-007's expected '~60 s client give-up' did not happen: the SMB client opened a second connection at about +70 s and kept waiting, and the failures came only at the wake. Decide whether to re-read a drive that answers not-ready after the picker settled. That would be a workaround for an outside SMB-client defect, so the standing rule applies: its own checkbox in Settings, on by default, a notice in the app, and an entry in the workaround list.",
+   "Update Q-007 and U-007 in the ledger with the measured split (20 s: 9/9; 120 s: 7/9). The runner's `-Wake 20,20,120,120,120` repeats arms; the failing runs' inputs are rows R5 and R6 of tests/window/SL-004-LateShareCorpus.json.",
+   "StartupHook.cs changed, which is on the network-pass staleness list (docs/design/SL-020-scanner.md:239-249). By the project's own rule the person's network check (N-001 to N-004 plus StalledShareTests) is stale. The design assigned that to SC-006.",
+   "The full suite shows timing flakes under load: UnfinishedTests.StopsInTheSizeChecksMarkWhatAPendingCheckCouldChange (workers: 4), the baseline flake from the build-check, and once DefenderStateRecordTests (a Controlled Folder Access read timed out at 20 s). Both pass alone. A first red run had 3 failures I did not capture by name."
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build tests/window/FsaWindowHook/FsaWindowHook.csproj -c Release -o artifacts/window-hook; ...publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o artifacts/publish",
+    "outcome": "passed",
+    "note": "hook with the drives mode builds; the app publishes."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/SL-004-LateShareButton.Tests.ps1 (cases A to E)",
+    "outcome": "passed",
+    "note": "All checks held. A: 18 corpus rows. B: on SUBST W: and X: the hook logged C:,D:,W:,X:,Z: in order and the report counted 5. C: a letter that never comes gives found=False after 3 s, names the letter, exit 0. D: five bad inputs refused, app still exit 0. E: both scripts parse under 5.1 and pwsh."
+   },
+   {
+    "command": "mutation: remove the 'late' check's wake and delay conditions, then pwsh ... SL-004-LateShareButton.Tests.ps1 -Case A",
+    "outcome": "failed",
+    "note": "Expected red: C2 and C3 fail (exit 1). Restored; A and E pass again."
+   },
+   {
+    "command": "Sandbox (network on, as administrator), tests/window/SL-004-LateShareInSandbox.ps1 default arms, first runs",
+    "outcome": "passed",
+    "note": "On the real published exe in build 26100.9974: control gives C:,Y:,Z:. The picker leaves 'Looking for drives...' about 2.06 s after the window loads with C:,Z: and no Y:. After the wake at 20 s the Y: button came in 1.5-1.6 s later between C: and Z:, the report counted 3, and the app exited 0."
+   },
+   {
+    "command": "Sandbox, runner with -Wake 20,20,120,120,120 (run-20261118-061258)",
+    "outcome": "failed",
+    "note": "5 of the 6 wake arms held. w120-3 FAILED: the read thread ended at the wake and no button came; the verdict said so. Across all runs: 20 s arms 9/9 held; 120 s arms 7/9 held, 2/9 FAILED (the other failure was in run-20261118-060557)."
+   },
+   {
+    "command": "Sandbox, runner with -Wake 20,120,120 (run-20261118-062605), then -Wake 20 after the guard and Named changes (run-20261118-063306 and run-20261118-063651)",
+    "outcome": "passed",
+    "note": "All arms held, negative control included. The silent arm (server never wakes within the hook's 20 s) reads FAILED with cause 'still blocked', and the app still exits 0 with a report."
+   },
+   {
+    "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/window/SL-004-LateShareInSandbox.ps1 -Wake 20 (on this PC)",
+    "outcome": "passed",
+    "note": "Refused with exit 3 before touching anything; no SUBST letters or mappings left."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx",
+    "outcome": "failed",
+    "note": "Two runs were 1260/1260 green. Three later runs each had 1 to 3 timing failures: UnfinishedTests.StopsInTheSizeChecks...(workers: 4) (also in the build-check's baseline), DefenderStateRecordTests once, and one run with 3 failures I did not capture by name. The classes AppArgumentTests, ArchitectureRulesTests, RuleCopiesAgreeTests, DefenderStateRecordTests, DriveReadsTests and WindowCasesHelperTests pass together (100/100), and UnfinishedTests passes alone (6/6)."
+   }
+  ],
+  "architecture": [],
+  "screens": [],
+  "app": null
+ }
+}
