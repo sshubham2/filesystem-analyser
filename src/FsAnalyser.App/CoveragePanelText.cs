@@ -163,4 +163,13 @@ internal static class CoveragePanelText
     internal static string VanishedNote(int files) => files == 1
         ? $"{Count(files, "file")} was deleted before its true size could be read; its listed size was used."
         : $"{Count(files, "file")} were deleted before their true size could be read; their listed size was used.";
+
+    /// <summary>
+    /// The note for folders a parent listed that were deleted before the walk opened them (SL-005): not unreadable, so not in
+    /// the unreadable record and not behind the 'may be missing' captions; counted as empty folders. The count is the scan's
+    /// FoldersVanished. ASCII, and no name or path: the report carries the ending's notes.
+    /// </summary>
+    internal static string FoldersVanishedNote(int folders) => folders == 1
+        ? $"{Count(folders, "folder")} was deleted while the scan ran, before it could be read; it is counted as an empty folder."
+        : $"{Count(folders, "folder")} were deleted while the scan ran, before they could be read; they are counted as empty folders.";
 }

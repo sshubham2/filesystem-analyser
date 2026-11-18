@@ -57,7 +57,7 @@ namespace FsAnalyser.App;
 ///     "largestFilesShown": rows bound to LargestFilesList, "largestFileOnDisk": the first row's on-disk
 ///         bytes or null, "largestFilesMs": how long ranking them took or null (SL-040),
 ///     "core": { "status", "rootError", "files", "folders", "links", "bytes", "bytesOnDisk", "elapsedMs",
-///               "unreadable", "skippedStores", "notScanned", "opensUnderExcludedStore" } or null,
+///               "unreadable", "skippedStores", "notScanned", "opensUnderExcludedStore", "foldersVanished" } or null,
 ///     "outcome": "completed" | "cancelled" | "root-unreadable" | "refused" or null, "refusal": "container-layer-store" or null,
 ///     "workarounds": [ { "id", "on" } ],   (SL-095)
 ///     "coverage": { "volumeInUse", "seenOnDisk", "unseen", "folders": [ { "kind", "size" } ], "measured": [ { "id", "bytes", "text" } ],
@@ -102,6 +102,9 @@ namespace FsAnalyser.App;
 /// or unreadable state, and their bytes, on-disk bytes and files added up, with whether the snapshot they
 /// came from is the scan's final one. It carries no name and no path, so the report stays a matter of
 /// totals and the root (Q-016).
+/// SL-005 added, additive: "core"'s "foldersVanished", how many folders a parent listed were deleted before the walk opened them
+/// (Core's ScanResult.FoldersVanished). They are in "core"'s "folders" as empty folders and in neither "unreadable" nor the
+/// coverage "folders"; the ending says so in window OutcomeNotes' lines. A count only, never a path (Q-016).
 /// Every key under "window" is the x:Name of the control it was read from, and every value is what that
 /// control shows: its Text as displayed, or for a panel whether it is on screen. "inView" says the
 /// control is on screen with some height, and that neither it nor anything around it up to the window
@@ -260,6 +263,7 @@ internal static class WindowReport
                 skippedStores = result.SkippedStores.Count,
                 notScanned = result.SkippedStores.Count,
                 opensUnderExcludedStore = result.OpensUnderExcludedStore,
+                foldersVanished = result.FoldersVanished,
             },
             // SL-095: how the scan ended in one word, and why a refused one was ("container-layer-store"); null with no result.
             ["outcome"] = result?.Status switch

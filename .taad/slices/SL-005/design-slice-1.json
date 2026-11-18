@@ -1,0 +1,600 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-005",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-11-18T03:26:48.713Z",
+ "head": "28d72d85344b12b82f0ec1479df71a6c20681a56",
+ "run_id": 11356,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "Only one proposal came in (practice), so there was nothing to choose between. It was checked against what the survey and the spikes measured, and against the code read for this design. It matches how the code is already built. FolderDone is the single place a folder is stamped unreadable (Scanner.cs:393-399). The record, the top-level row (through FolderExited's failed argument), the live figure (Publish with _unreadable.Count), the Unreadable tab, the captions, the folder tree, the coverage panel and core.unreadable all read that stamp or that record. So withholding the stamp for a folder whose open found nothing fixes every surface at once, and no consumer changes. StoreSkipped (Scanner.cs:348-355) is the precedent for finishing a folder with nothing listed and no unreadable mark. The store already leaves the vanished folder listed and empty, because SetChildren runs before the stamp (survey: notListed=False).\n\nThe spikes settled each contested piece:\n- folderdone-open-2-3-as-gone: go. Unreadable went from 3 to 1, and 413 of 413 filtered tests still pass.\n- pytest-missing-as-empty-in-reader: go on the record, but it leaves nothing to count. Finish lines 2 and 3 need the count 3, so the classification goes in FolderDone and not in the reader.\n- combined-gone-fixes: no-go, because it broke the cancel-guard rule. delete-pending-ntstatus: only conditional, because the first ntdll call has to be warmed up and the result is unmeasured off NTFS. These back the practice designer's over_engineering_flag: the extra clauses for code 5 (delete pending) and 87 (replaced by a file) stay out.\n\nWhat had to be assumed, since the bug report has only its title:\n- The count covers only folders the scan knew of, whose own open failed. Their descendants were never seen and are not counted (finish line 2 expects 3, not 6).\n- A vanished folder stays in the totals as an empty folder.\n- The ending says it in one note, worded like the existing note for files.",
+  "components": [
+   {
+    "name": "Scanner.FolderVanished (new internal static predicate)",
+    "responsibility": "Decides that a folder is gone, not unreadable: `!opened && SizeProbe.IsGone(error)`. It is true only when the open was refused and found no folder (2) or no path (3). The codes are not written a second time: SizeProbe.IsGone stays the one definition, for files and folders alike. FailedKind and ClassifyReadError are unchanged.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "key_interactions": "Only FolderDone calls it. It sits beside FailedKind, and a [Theory] in ScannerFailedKindTests pins it."
+   },
+   {
+    "name": "Scanner.Run.FolderDone (changed stamp)",
+    "responsibility": "After SetChildren, which is unchanged and already leaves the folder listed with 0 children, it computes `bool vanished = FolderVanished(error, opened)`.\n- If vanished: `_foldersVanished++` and `failed = null`.\n- Otherwise: `failed = FailedKind(error, opened, count)`, and today's AddFlags(Unreadable) and _unreadable.Add run when failed is non-null.\n\nPushing, Seed/FolderExited(folder, row, failed, pushed, Totals), _foldersListed++, Publish(Totals, _unreadable.Count, folderPath) and AfterFolder are all unchanged. A vanished folder must NOT pass notScanned: true: it is not a skipped store. The comment above the stamp is updated to name the one non-zero error that is not stamped.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "key_interactions": "With failed: null, TopLevelTracker.FolderExited finishes the folder's own row Done and does not count it in UnreadableBelow. The live figure leaves it out because it is not in _unreadable."
+   },
+   {
+    "name": "Scanner.Run._foldersVanished and Finish",
+    "responsibility": "A new int field beside _vanished. Finish sets `FoldersVanished = _foldersVanished` beside `VanishedBeforeProbe = _vanished`, for every status. It is 0 for RootUnreadable and Refused, because no pending folder reached FolderDone. A Cancelled result counts the folders that vanished before the stop.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/Scanner.cs"
+   },
+   {
+    "name": "ScanResult.FoldersVanished (new public property)",
+    "responsibility": "`public int FoldersVanished { get; init; }`, documented as: folders their parent listed that were gone when the walk opened them. The open found no folder (2) or, with the parent gone too, no path (3). Each stays in the store as a listed folder with no children and is counted in Totals.Folders. None is flagged or recorded unreadable.\n\nNot counted:\n- descendants the scan never saw;\n- a folder whose delete was still pending at the open (5) or that a file replaced (87). Both stay in Unreadable.\n\nIt is kept apart from VanishedBeforeProbe (files) and from Unreadable. It is public because the App reads it, and InternalsVisibleTo goes only to Core.Tests.",
+    "lives_at": "src/FsAnalyser.Core/Scanning/ScanResult.cs"
+   },
+   {
+    "name": "CoveragePanelText.FoldersVanishedNote (new pure wording)",
+    "responsibility": "Built with Count, beside VanishedNote.\n- Singular: '1 folder was deleted while the scan ran, before it could be read; it is counted as an empty folder.'\n- Plural: '{Count(n, \"folder\")} were deleted while the scan ran, before they could be read; they are counted as empty folders.'\n\nASCII only, with no name and no path, because OutcomeNotes.lines goes into the report (Q-016).",
+    "lives_at": "src/FsAnalyser.App/CoveragePanelText.cs",
+    "key_interactions": "The file is already compiled into Core.Tests by link, so the wording is unit-tested without WPF."
+   },
+   {
+    "name": "MainWindow ending notes (one added line)",
+    "responsibility": "Right after the VanishedBeforeProbe note: `if (result.FoldersVanished > 0) notes.Add(CoveragePanelText.FoldersVanishedNote(result.FoldersVanished));`. It shows on finished and stopped endings alike. The captions, the Unreadable tab and the coverage panel are not touched: they stay keyed on result.Unreadable, which no longer holds vanished folders.",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs"
+   },
+   {
+    "name": "WindowReport core.foldersVanished (one added key)",
+    "responsibility": "Adds `foldersVanished = result.FoldersVanished` to the anonymous core object after opensUnderExcludedStore. The header doc comment that lists the core keys and the additive history gains a line for it. Schema stays 1. No key is renamed and no exit code changes.",
+    "lives_at": "src/FsAnalyser.App/WindowReport.cs"
+   },
+   {
+    "name": "Unit and scan tests the builder writes",
+    "responsibility": "- ScannerFailedKindTests: a FolderVanished [Theory] (the truth table in the cases).\n- New tests/FsAnalyser.Core.Tests/VanishedFolderTests.cs: real scans with ScanOptions.AfterFolder and Directory.Delete (the repro's seam). It covers a deleted folder with subfolders (counts 1, listed empty, in Totals.Folders), a stopped scan, a missing root, and files and folders that vanish keeping separate counts.\n- CoveragePanelTextTests: FoldersVanishedNote cases.",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ScannerFailedKindTests.cs",
+    "key_interactions": "Trees come from TempTree, as the planted tests' do. No new trait, so no FsaDefaultTestFilter clause is needed."
+   },
+   {
+    "name": "Planted finish-line tests (engine's, not changed)",
+    "responsibility": "- E007DeletedFolderRecordTests: record, flag, live figure, rows and tree.\n- E007DeletedFoldersEndingTests: the ending note, captions, tab and core.unreadable, through the published app and the hook.\n- E007DeletedFoldersReportTests: core.foldersVanished, the schema-1 fields and exit codes.\n- E007StillUnreadableTests: refused and partway folders are still recorded.\n\nThe helpers they call already exist: TempTree.Deny and WriteFile, Scans.Find and ByPath, TopLevelRowTextTests.ScanFailingPartway, FolderTreeSession.FailedKind, and the hook's FSA_HOOK_PAST stop trigger.",
+    "lives_at": "tests/FsAnalyser.Core.Tests"
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "A folder is gone, not unreadable, only when its open was refused (opened=false, nothing listed) with ERROR_FILE_NOT_FOUND (2) or ERROR_PATH_NOT_FOUND (3). The code set is SizeProbe.IsGone's, reused.",
+    "reversibility": "cheap",
+    "rationale": "Measured on this PC: a removed folder opens with 2 and a child of a removed parent with 3. The spike folderdone-open-2-3-as-gone took Unreadable from 3 to 1 and left 413 of 413 filtered tests unchanged.\n- A dangling-link 3 (lesson #4) cannot reach this check: EntryClassifier makes every name-surrogate reparse point a Link, and FolderDone pushes only EntryKind.Folder.\n- The root cannot reach it either: ListRoot's error ends RootUnreadable, and the root's FolderDone call passes opened: true.\n\nLesson #100's always-or-sometimes check: the predicate fires only on a refused open with 2 or 3. NothingListed still arises for 5, 32, 53, 363 and 1920, so no consumer that reads it loses a branch."
+   },
+   {
+    "decision": "Classify in FolderDone, not in DirectoryReader.Read.",
+    "reversibility": "cheap",
+    "rationale": "The reader-level patch (spike pytest-missing-as-empty-in-reader) cleared the record but made a vanished folder look like any empty folder, leaving nothing to count. Finish lines 2 and 3 need the count 3. FolderDone already holds error and opened, and it is the one place the stamp is made."
+   },
+   {
+    "decision": "Folders whose delete was still pending at the open (5, STATUS_DELETE_PENDING) and folders replaced by a file (opened, listing 87) stay unreadable in this epic. That means no RtlGetLastNtStatus split and no FileStandardInfo handle check, and none is filed for later.",
+    "reversibility": "cheap",
+    "rationale": "Neither is in the finish lines.\n- The delete-pending split is only conditional: the first, unwarmed ntdll call reads 0xC0000135, and the split is unmeasured on ReFS, FAT, SMB and elevated (N-051, N-052).\n- The combined fix was a no-go: its direct Kernel32.GetFileInformationByHandleEx call broke FileSystemCallsGoThroughTheCancelGuard.\n\nAnyone who adds them later adds clauses to FolderVanished and follows the spikes' constraints: warm the import before the first open, read the status as the first statement after the failing CreateFile on the same thread, and route the 87 check through io.Query. Filing them as a slice would hold E-007 open, and Q-016 puts the proof runs after E-007."
+   },
+   {
+    "decision": "The vanished folder stays in the store as a listed, empty folder, counted in Totals.Folders. It gets no new EntryFlags bit and no record entry.",
+    "reversibility": "expensive",
+    "rationale": "SetChildren(folder, first, 0) already runs before the stamp. The patch measured notListed=False, flags None and rows Done, with no change to the store. That matters to ScanStore.NotListedAtOrBelow, Unfinished and AtLeast on stopped scans: a NotListed vanished folder would read as unfinished. Taking it out of the totals would mean adjusting the store's and the top-level tracker's rollups. The note's wording, 'counted as an empty folder', says so."
+   },
+   {
+    "decision": "Expose a count, ScanResult.FoldersVanished (public init int), not a list of vanished entries. It counts only the folders whose own open failed, not their never-seen descendants.",
+    "reversibility": "cheap",
+    "rationale": "The note and the report need only the number, as VanishedBeforeProbe does for files. Finish line 2 expects 3 for z1, z2 and z3, each with an inner folder, so descendants are not counted. A list of entries can be added later, additively, if per-folder marks are wanted."
+   },
+   {
+    "decision": "The report key is core.foldersVanished, added to schema 1 with no bump.",
+    "reversibility": "irreversible",
+    "rationale": "Finish line 3 fixes the name. Schema 1's rule is that keys are added and never renamed, and WindowCases, read-window.ps1 and the engine parse the report."
+   },
+   {
+    "decision": "The note wording lives in CoveragePanelText beside VanishedNote and uses FigureText.Count: '1 folder was deleted while the scan ran, before it could be read; it is counted as an empty folder.' / 'N folders were deleted while the scan ran, before they could be read; they are counted as empty folders.'",
+    "reversibility": "cheap",
+    "rationale": "It meets finish line 2's test: the count 3 on its own, 'folders' and 'deleted'. It is ASCII with no path (Q-016). The file is pure and linked into Core.Tests, and Count keeps number formatting written once."
+   },
+   {
+    "decision": "No live 'deleted' counter and no per-folder 'deleted' mark in the folder tree or the results list. The scanning panel just stops counting vanished folders as unreadable.",
+    "reversibility": "cheap",
+    "rationale": "The epic asks that they are not blamed as unreadable, and its finish lines ask for the ending's count. Publish already reads _unreadable.Count, so leaving them out of _unreadable is the whole live change."
+   },
+   {
+    "decision": "This is a fix, not a workaround setting: no checkbox and no KnownWorkarounds entry.",
+    "reversibility": "cheap",
+    "rationale": "The defect is this project's own classification. Windows answers 2 or 3 correctly for a name that is gone. The setting rule covers only defects outside the project. The delete-pending 5 mapping is an OS behaviour, but this design does not step around it: it leaves it as today."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "Taken whole. Two things were pinned here: the exact note wording, written to pass finish line 2's test, and the explicit rule that a vanished folder passes failed: null WITHOUT notScanned: true. Its over_engineering_flag, which keeps out the delete-pending and replaced-by-file clauses, is honoured and backed by the combined spike's no-go and the conditional NTSTATUS spike."
+   }
+  ],
+  "coherence_check": "One proposal, so there is no composition to check. Nothing in this design has yet held up against a competing proposal, so the reviewer is the first to argue with it.\n\nSeams checked inside the one proposal, and against the spikes and the code:\n- The predicate requires !opened. The root's FolderDone call passes opened: true, and a missing root ends RootUnreadable earlier, so the root never takes the gone path. The spike measured RootError 2 unchanged.\n- failed: null into FolderExited follows StoreSkipped's precedent, but without notScanned: true. Passing it would make the row Not scanned and send the folder toward the skipped-store surfaces. I wrote that down explicitly.\n- The live figure (Publish with _unreadable.Count), the Unreadable tab, the captions (Unreadable.Count > 0), the folder tree (FolderTreeSession over Unreadable), the coverage panel's unreadable rows and core.unreadable all read the one record. No surface counts vanished folders a second way, so the strongly consistent single record holds.\n- The store shape is unchanged, because SetChildren runs before the stamp. So AtLeast, Unfinished and NotListedAtOrBelow see a vanished folder as listed and empty, and stopped scans do not treat it as unfinished.\n- AfterFolder and _foldersListed still fire for a vanished folder, as for an unreadable one today, so the planted test's seam behaves the same.\n- Nothing calls Kernel32 outside the cancel guard. That rule is what turned the combined spike into a no-go.\n\nTwo text rules, in architecture_rules, keep the gone codes in one place and stop the reader from swallowing a gone open. Both match nothing in today's tree. The workaround-setting rule does not apply: the defect is this project's own.",
+  "architecture_rules": [
+   {
+    "name": "the walk calls a folder gone only through SizeProbe.IsGone",
+    "files": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "must_not_match": [
+     "\\bERROR_(?:FILE|PATH)_NOT_FOUND\\b"
+    ],
+    "because": "The walk and the file probe must agree on what 'deleted during the scan' means. A second spelling of the gone codes in the walk can drift from SizeProbe.IsGone. The ending's two notes (files deleted, folders deleted) would then count by different rules, and a code added to one side would be silently missing from the other."
+   },
+   {
+    "name": "the directory reader returns a failed open's code and never turns a gone folder into an empty listing",
+    "files": "src/FsAnalyser.Core/Scanning/DirectoryReader.cs",
+    "must_not_match": [
+     "\\bIsGone\\s*\\(",
+     "\\bERROR_PATH_NOT_FOUND\\b"
+    ],
+    "because": "If the reader answers 0 for an open that found nothing, a vanished folder cannot be told from an empty one. FolderDone then cannot count it, and core.foldersVanished and the ending's note read 0. The spike pytest-missing-as-empty-in-reader cleared the record but left nothing to count, and the finish-line tests that would catch it need the interactive desktop."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "a folder deleted during the scan is not called unreadable",
+    "shape": "a root child queued by the root's listing is deleted before its open, which then fails with ERROR_FILE_NOT_FOUND (2)",
+    "why": "This is the reported bug. FailedKind maps (2, not opened) to NothingListed, and FolderDone flags it, records it, feeds the live count and marks its row Unreadable.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.E007DeletedFolderRecordTests -- RunConfiguration.TreatNoTestsAsError=true ; and pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-005-VanishedFolderNotUnreadable/SL-005-VanishedFolderNotUnreadable.Tests.csproj",
+    "material": true
+   },
+   {
+    "behaviour": "a folder deleted during the scan is not called unreadable",
+    "shape": "a deeper folder whose parent was deleted too, so its open fails with ERROR_PATH_NOT_FOUND (3), and its top-level row must not count it in UnreadableBelow",
+    "why": "It is a different code and a different row path: a non-root folder goes through FolderExited, which increments UnreadableBelow whenever failed is non-null.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.E007DeletedFolderRecordTests -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "refused and partly read folders are still recorded",
+    "shape": "in the same or another scan, a folder refused by a deny ACE (5, NothingListed) and a folder whose listing failed partway (995 failpoint, ListedPartway)",
+    "why": "Turning the predicate the wrong way round, or widening it to every NothingListed, would empty the record. The control proves the record is not simply empty.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.E007StillUnreadableTests -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "decide gone versus unreadable from the open's outcome",
+    "shape": "truth table: (2,false) and (3,false) are gone. (2,true), (3,true), (0,false), (5,false), (32,false), (53,false), (87,true), (363,false), (1920,false) and (995,false) are not",
+    "why": "The predicate branches on opened as well as on the code. An opened folder that later reports 2 or 3 is a listing failure, and 5 is a refusal or a pending delete. Both must keep today's kinds.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~ScannerFailedKindTests.FolderVanishedIsTrueOnlyForARefusedOpenThatFoundNoFolderOrNoPath -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "a missing scan root",
+    "shape": "the root path does not exist (open error 2 at ListRoot)",
+    "why": "The root must stay RootUnreadable with RootError 2 and FoldersVanished 0. If it took the gone path, it would turn into an empty Completed scan.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~VanishedFolderTests.AMissingRootIsRootUnreadableAndCountsNoVanishedFolder|FullyQualifiedName~RootTests\" -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "count the folders deleted during the scan",
+    "shape": "the deleted folder had subfolders (z\\inner\\f.txt) that the scan never saw",
+    "why": "The count covers only the folder whose open failed, so FoldersVanished is 1, not 2. The store entry must read as listed with 0 children and no flags (not NotListed) and stay in Totals.Folders, or stopped-scan AtLeast and Unfinished treat it as unfinished.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~VanishedFolderTests.AFolderDeletedWithItsSubfoldersCountsOnceAndIsAListedEmptyFolder -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "count the folders deleted during the scan",
+    "shape": "the scan is stopped after a folder vanished. AfterFolder deletes z at n==1, then cancels at z's own AfterFolder",
+    "why": "Finish runs for Cancelled too. The stopped ending must still carry FoldersVanished 1 with an empty Unreadable, or a stopped run blames the folder or loses it.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~VanishedFolderTests.AStoppedScanCountsTheFoldersThatVanishedBeforeTheStop -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "count the folders deleted during the scan",
+    "shape": "a folder y is deleted after its own listing, so a file in it vanishes before its size is read and its queued subfolder w opens with 3",
+    "why": "The two counts must stay apart: VanishedBeforeProbe is 1 and FoldersVanished is 1. Neither may be added into the other, or into ProbeFailures or Unreadable.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~VanishedFolderTests.FilesAndFoldersThatVanishKeepTheirOwnCounts -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "word the ending's note for deleted folders",
+    "shape": "counts 1 (singular: 'was', 'it', 'an empty folder'), 2 and 3 (plural with the bare count), each ASCII-only with no path",
+    "why": "The note goes into the report's OutcomeNotes.lines, which must stay ASCII with no path (Q-016). Finish line 2's test needs the count on its own plus 'folders' and 'deleted'.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~CoveragePanelTextTests.TheFoldersVanishedNoteCountsFoldersDeletedWhileTheScanRan -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "show the ending of a scan during which folders were deleted",
+    "shape": "a report-mode run of the published app in which three queued folders are deleted, and nothing in the scan is unreadable",
+    "why": "The note must appear. The Largest files and File kinds captions must not say 'missing', the Unreadable tab must be hidden and core.unreadable must be 0. The captions and the tab read result.Unreadable.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.E007DeletedFoldersEndingTests -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "report the scan",
+    "shape": "the same three-folder run, plus the throw-mode, missing-value and unwritable-path runs",
+    "why": "core.foldersVanished must be 3, every schema-1 top-level, core and window field must still be there, and exit codes 0, 2, 3 and 70 must be unchanged. Other tools parse this contract.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.E007DeletedFoldersReportTests -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "a folder deleted during the scan is not called unreadable",
+    "shape": "the folder's delete is still pending when the walk opens it (the deleting handle is open), so the open fails with 5",
+    "why": "Considered and left unreadable on purpose: Win32 gives the same 5 as a refusal, and telling them apart needs the conditional NTSTATUS route (key decision 3). The (5,false) row of the FolderVanished theory pins the classification. A real delete-pending scan test would need a FileDispositionInfo rig for behaviour this design does not change.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~ScannerFailedKindTests.FolderVanishedIsTrueOnlyForARefusedOpenThatFoundNoFolderOrNoPath -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": false
+   },
+   {
+    "behaviour": "a folder deleted during the scan is not called unreadable",
+    "shape": "a queued folder is replaced by a file of the same name, so the open succeeds and the listing fails with 87",
+    "why": "Considered and left as OpenedNothingListed on purpose (key decision 3). The (87,true) row of the theory pins it. Detecting it needs a handle query through io.Query and is not in the finish lines.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~ScannerFailedKindTests.FolderVanishedIsTrueOnlyForARefusedOpenThatFoundNoFolderOrNoPath -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": false
+   },
+   {
+    "behaviour": "the whole suite still passes",
+    "shape": "every existing scanner, top-level, unreadable, stop, cancel, root, rules-parity and architecture test",
+    "why": "The stamp sits on the path every folder takes. The spike's filtered 413 passed, but no existing test reaches the new branch, so the full default suite is the regression net.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx -- xUnit.MaxParallelThreads=2",
+    "material": true
+   }
+  ],
+  "contracts": [
+   {
+    "name": "Scanner.FolderVanished(int error, bool opened) -> bool",
+    "kind": "function",
+    "notes": "internal static. True only for a refused open (opened false) whose error SizeProbe.IsGone accepts (2, 3). The root never reaches it: ListRoot's open error ends RootUnreadable before FolderDone, and the root's FolderDone call passes opened: true.",
+    "error_cases": "Returns false for 0 (read), 5 (refused or delete pending), 32, 53, 363, 1920, 87 (opened, replaced by a file), 995 (a cancel, handled earlier by ClassifyReadError), and any code with opened true. Each keeps today's FailedKind."
+   },
+   {
+    "name": "ScanResult.FoldersVanished",
+    "kind": "function",
+    "notes": "A public init-only int, added to the documented Core API. Set in Finish for every status. 0 for RootUnreadable, Refused, and any scan where nothing vanished. Never part of Unreadable.Count, ProbeFailures or VanishedBeforeProbe. Vanished folders stay in Totals.Folders as empty folders."
+   },
+   {
+    "name": "Report core.foldersVanished (schema 1, additive)",
+    "kind": "cli",
+    "notes": "An integer equal to ScanResult.FoldersVanished, written after opensUnderExcludedStore. Every existing top-level, core and window key is unchanged, schema stays 1, and exit codes 0/2/3/70 are unchanged.",
+    "error_cases": "core is null when there is no result, as today, so the key is absent with it."
+   },
+   {
+    "name": "Ending note for folders deleted during the scan",
+    "kind": "ui",
+    "notes": "One line in OutcomeNotes, shown only when FoldersVanished > 0, right after the files-vanished note, on finished and stopped endings alike. The exact strings are in key decision 7. ASCII only, no name and no path, because OutcomeNotes.lines goes into the report."
+   }
+  ],
+  "code_claims": [
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "FolderDone",
+    "claim": "FolderDone calls FailedKind(error, opened, count) and, when it is non-null, adds EntryFlags.Unreadable to the folder and appends an UnreadableFolder to _unreadable, with no case for a folder that is gone."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "SetChildren",
+    "claim": "FolderDone calls _store.SetChildren(folder, first, count) before the unreadable stamp, so a folder whose open failed already reads as a listed folder with no children."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "FailedKind",
+    "claim": "FailedKind returns null for error 0, ListedPartway when something was listed, OpenedNothingListed when opened, and NothingListed for any other non-zero error."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "ClassifyReadError",
+    "claim": "ClassifyReadError returns Cancelled only for ERROR_OPERATION_ABORTED with a cancel requested, and Unreadable for every other non-zero error."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "FolderExited",
+    "claim": "For a non-root row FolderDone passes its failed kind to _topLevel.FolderExited(folder, row, failed, pushed, Totals)."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "Publish",
+    "claim": "FolderDone publishes live progress with _unreadable.Count, so the live 'folders unreadable' figure is the size of the unreadable record."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "ListRoot",
+    "claim": "Execute ends the scan RootUnreadable (or Cancelled) when ListRoot returns an error, and calls FolderDone for the root with opened: true."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "StoreSkipped",
+    "claim": "StoreSkipped completes a folder with SetChildren(folder, _store.Count, 0) and FolderExited with failed: null and notScanned: true, the existing way to finish a folder with nothing listed without calling it unreadable."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "EntryKind.Folder",
+    "claim": "FolderDone pushes onto _pending only children whose store kind is EntryKind.Folder."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "VanishedBeforeProbe = _vanished",
+    "claim": "Finish builds the ScanResult with Unreadable = _unreadable and VanishedBeforeProbe = _vanished."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "symbol": "AfterFolder",
+    "claim": "FolderDone invokes options.AfterFolder with the folders-listed count after publishing progress, which is the seam the tests use to delete a queued folder."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/SizeProbe.cs",
+    "symbol": "IsGone",
+    "claim": "SizeProbe.IsGone is true exactly for Kernel32.ERROR_FILE_NOT_FOUND and Kernel32.ERROR_PATH_NOT_FOUND."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Native/Kernel32.cs",
+    "symbol": "ERROR_PATH_NOT_FOUND",
+    "claim": "Kernel32 defines ERROR_FILE_NOT_FOUND = 2 and ERROR_PATH_NOT_FOUND = 3."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/DirectoryReader.cs",
+    "symbol": "ERROR_FILE_NOT_FOUND",
+    "claim": "DirectoryReader's listing treats ERROR_FILE_NOT_FOUND on the first page as nothing to list, and the file uses neither ERROR_PATH_NOT_FOUND nor SizeProbe.IsGone."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/ScanResult.cs",
+    "symbol": "VanishedBeforeProbe",
+    "claim": "ScanResult exposes VanishedBeforeProbe as a public init-only int counting files gone before their size was read, kept apart from ProbeFailures."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Scanning/EntryClassifier.cs",
+    "symbol": "REPARSE_TAG_NAME_SURROGATE",
+    "claim": "EntryClassifier.Classify returns EntryKind.Link for a reparse point with a name-surrogate tag before it checks for a directory, so the walk never pushes or opens a junction or symlink."
+   },
+   {
+    "path": "src/FsAnalyser.App/CoveragePanelText.cs",
+    "symbol": "VanishedNote",
+    "claim": "VanishedNote is the singular/plural ending note for files deleted before their true size could be read, built with Count."
+   },
+   {
+    "path": "src/FsAnalyser.App/FigureText.cs",
+    "symbol": "Count",
+    "claim": "FigureText.Count renders '1 noun' for one and '{n:N0} nouns' otherwise."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "OutcomeNotes",
+    "claim": "The ending adds CoveragePanelText.VanishedNote to its notes list when VanishedBeforeProbe > 0 and joins the notes into OutcomeNotes.Text."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "UnreadableCaption",
+    "claim": "The largest-files and kinds captions append UnreadableCaption(result.Unreadable.Count), the 'may be missing' sentence, only when result.Unreadable.Count > 0."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "HideUnreadable",
+    "claim": "The Unreadable folders tab is shown only when UnreadableRows.Build over result.Unreadable or the not-scanned rows are non-empty, and HideUnreadable is called otherwise."
+   },
+   {
+    "path": "src/FsAnalyser.App/WindowReport.cs",
+    "symbol": "opensUnderExcludedStore",
+    "claim": "The report's core object holds status, rootError, files, folders, links, bytes, bytesOnDisk, elapsedMs, unreadable (result.Unreadable.Count), skippedStores, notScanned and opensUnderExcludedStore, and is null with no result."
+   },
+   {
+    "path": "src/FsAnalyser.App/WindowReport.cs",
+    "symbol": "OutcomeNotes",
+    "claim": "The report writes window OutcomeNotes as visible plus the lines of OutcomeNotes.Text split on newlines."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+    "symbol": "CoveragePanelText",
+    "claim": "Core.Tests compiles src/FsAnalyser.App/CoveragePanelText.cs by link, so new note wording there is unit-testable without WPF."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/StartupHook.cs",
+    "symbol": "FSA_HOOK_PAST_FOLDERS",
+    "claim": "The hook's progress trigger reads FSA_HOOK_PAST and FSA_HOOK_PAST_FOLDERS, logs 'passed folders=' once the folder being listed has gone past that path, and a scan that ends before the trigger counts as a full run."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/TopLevelRowTextTests.cs",
+    "symbol": "ScanFailingPartway",
+    "claim": "TopLevelRowTextTests provides the internal static ScanFailingPartway helper that finish line 4 uses to feed a partway listing failure."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/TempTree.cs",
+    "symbol": "Deny",
+    "claim": "TempTree provides Deny(path, accessMask) and a static WriteFile(path, length), which the planted finish-line tests call."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/Scans.cs",
+    "symbol": "ByPath",
+    "claim": "Scans provides ByPath(store) and Find(result, path), which the planted finish-line tests call."
+   },
+   {
+    "path": "src/FsAnalyser.App/FolderTreeSession.cs",
+    "symbol": "FailedKind",
+    "claim": "FolderTreeSession is built from the store and the unreadable record and answers FailedKind(entry) from that record."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "Compare-StoppedRows",
+    "claim": "Compare-StoppedRows counts a stopped-run unreadable row the finished run lacks and whose times cannot be read as OtherCodeDiffers, which makes W-001 -Stopped inconclusive, so taking vanished folders out of the record removes that cause."
+   }
+  ],
+  "outside_claims": [
+   {
+    "claim": "The scanner's list-open (CreateFileW, FILE_LIST_DIRECTORY, all share modes, backup semantics) fails with 2 for a folder that was removed and with 3 for a folder whose parent was removed, on local NTFS on this PC.",
+    "evidence": "measured",
+    "source": "investigation .taad-scratch\\gone-open.ps1 and walkprobe; survey scratch probe (z error=2, z\\inner error=3); spike folderdone-open-2-3-as-gone base run",
+    "if_wrong": "The predicate misses vanished folders, they stay in Unreadable, and finish lines 1 to 3 fail."
+   },
+   {
+    "claim": "Directory.Delete(path, recursive: true) on this Windows 11 NTFS build removes the folder's name at once, so a later open sees 2 or 3, not 5.",
+    "evidence": "measured",
+    "source": "spike runs (z deleted with Directory.Delete read error 2); investigation: held-then-RemoveDirectoryW gave 2 (name gone at once)",
+    "if_wrong": "The tests' deletions would show 5 (delete pending), which this design keeps unreadable, and the finish lines would fail for a reason outside the fix."
+   },
+   {
+    "claim": "A folder whose delete disposition is set while the deleting handle is still open fails the open with 5 (STATUS_DELETE_PENDING mapped to ERROR_ACCESS_DENIED), the same code as a refusal.",
+    "evidence": "measured",
+    "source": "investigation gone-open.ps1 cases D and E; spike delete-pending-ntstatus-splits-error-5 base (d error=5)",
+    "if_wrong": "Nothing in this design breaks. It only means the stated residue (delete-pending folders stay unreadable) is smaller than said."
+   },
+   {
+    "claim": "A folder replaced by a file of the same name opens under backup semantics, and its listing then fails with 87.",
+    "evidence": "measured",
+    "source": "investigation walkprobe (x error=87 OpenedNothingListed); spike corefx-continue-on-directory-error-not-a-directory base",
+    "if_wrong": "Nothing here breaks. That residue would show under another code."
+   },
+   {
+    "claim": "An empty folder removed while the walk holds its listing handle still lists with success, so the listing phase needs no gone case.",
+    "evidence": "measured",
+    "source": "investigation gone-open.ps1 case G",
+    "if_wrong": "A folder removed mid-listing would still be recorded unreadable (OpenedNothingListed), a remaining false row."
+   },
+   {
+    "claim": "RtlGetLastNtStatus read right after the process's first failed CreateFileW returns the loader's 0xC0000135 unless the import was called once before.",
+    "evidence": "measured",
+    "source": "spike delete-pending-ntstatus-splits-error-5 (S\\fix2 warm=0 runs)",
+    "if_wrong": "Only the rejected delete-pending extension depends on it. It is one reason that extension was left out."
+   },
+   {
+    "claim": "CreateFileW also returns ERROR_PATH_NOT_FOUND for a reparse point whose target is gone.",
+    "evidence": "recalled",
+    "source": "lesson #4 (SL-002 on filesystem-analyser)",
+    "if_wrong": "It does not matter here: the walk never opens name-surrogate reparse points (EntryClassifier makes them Links)."
+   },
+   {
+    "claim": "On SMB shares, DFS links, ReFS and FAT/exFAT, a list-open that fails with 2 or 3 means the folder's name is gone, and a folder that still exists but is unreachable does not fail that way.",
+    "evidence": "recalled",
+    "source": "memory; not measurable on any machine here (no SMB server, DFS, ReFS or FAT volume; the loopback rig changes the person's mappings)",
+    "if_wrong": "A folder still there but unreachable (for example a DFS link whose target is down) would be counted 'deleted while the scan ran' instead of unreadable. The fix would be a locality clause in FolderVanished."
+   },
+   {
+    "claim": "Folders that are non-name-surrogate reparse points (cloud placeholders, ProjFS placeholders) do not fail a list-open with 2 or 3 while they still exist. The WCI tombstones of the container layer store are never opened, because the store is excluded.",
+    "evidence": "recalled",
+    "source": "memory",
+    "if_wrong": "Such a folder would be counted as deleted rather than unreadable. The CF-SYNC-ROOT opt-in tests are where it would show."
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Recursive directory enumerators in runtimes and tools (.NET FileSystemEnumerator, pytest collection, bun's recursive readdir, rustfs's scanner)",
+   "pattern": "A child directory found by its parent's listing whose deferred open fails with not-found is taken as no longer existing, and is skipped or treated as empty. A not-found root and a permission refusal stay errors. rustfs and proton-drive keep a marker or count of the vanished case, so it is reported rather than silently swallowed.",
+   "transfer_found": true,
+   "rationale": "It is the same race with the same codes: the walk lists a folder, pushes its subfolders on _pending and opens each one later. The precedents' guard rails map onto existing seams: the root through ListRoot and RootUnreadable, refusals through FailedKind for every other code. Unlike gemini-cli's silent skip, the count is kept and shown, so the ending still accounts for what it did not read.",
+   "invariants": [
+    {
+     "precondition": "The walk opens only children of EntryKind.Folder and never a name-surrogate reparse point, so a 3 cannot be a dangling link (lesson #4).",
+     "status": "holds",
+     "evidence": "EntryClassifier.cs:40-45 returns Link before Folder. FolderDone pushes only EntryKind.Folder (Scanner.cs:407)."
+    },
+    {
+     "precondition": "A missing root never takes the gone path.",
+     "status": "holds",
+     "evidence": "Execute ends RootUnreadable from ListRoot's error (Scanner.cs:200-205), and the root's FolderDone call passes opened: true (Scanner.cs:209). The spike pytest-missing-as-empty-in-reader kept RootError 2."
+    },
+    {
+     "precondition": "On local NTFS, a refused list-open with 2 or 3 means the folder is really gone.",
+     "status": "holds",
+     "evidence": "gone-open.ps1 on this PC: removed folder 2, child of removed parent 3, held-then-RemoveDirectoryW 2. A live folder opens with 0."
+    },
+    {
+     "precondition": "A folder cannot vanish under an open listing handle and leave a false failure.",
+     "status": "holds",
+     "evidence": "Investigation case G: an empty folder removed while open still lists with success, and a non-empty folder cannot be removed."
+    },
+    {
+     "precondition": "Every folder deleted during the scan fails its open with 2 or 3.",
+     "status": "fails",
+     "evidence": "A delete-pending folder opens with 5, and a folder replaced by a file lists with 87. Both stay unreadable under key decision 3."
+    },
+    {
+     "precondition": "2 and 3 mean gone on SMB shares, DFS links, ReFS, FAT/exFAT and under folder-hiding minifilters.",
+     "status": "must-verify",
+     "evidence": "Not measurable here; filed for a person."
+    }
+   ]
+  },
+  "prior_art": [
+   {
+    "pattern": "NotFound from read_dir on a non-root child deleted after its parent listed it is treated like a directory that vanished during iteration (empty listing, enumeration complete, a dedicated 'missing before opened' marker) rather than a child_scan_failed coverage gap",
+    "where": "https://github.com/rustfs/rustfs/pull/8479",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-10-11"
+   },
+   {
+    "pattern": "One predicate decides which subdirectory open/read errors end that subdirectory. Root errors and other errnos are returned as before",
+    "where": "https://github.com/oven-sh/bun/pull/40000",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-08-21"
+   },
+   {
+    "pattern": "A subdirectory that disappears mid-scan with ENOENT is skipped, while a missing root and EACCES/EPERM still warn",
+    "where": "https://github.com/google-gemini/gemini-cli/pull/29877",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2026-10-22"
+   },
+   {
+    "pattern": "An entry that vanished mid-scan is left out instead of failing the pass, and an unreadable or absent root still fails the pass",
+    "where": "https://git.narl.io/nvrl/proton-drive-linux/commit/7eb6aa06403d34f146afb9a53fb2f9e93d317209",
+    "authority": "community",
+    "basis": "cited"
+   },
+   {
+    "pattern": "ContinueOnDirectoryError: on a subdirectory open, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND and ERROR_DIRECTORY are treated as the name not existing, and enumeration moves on",
+    "where": "dotnet/corefx PR #29908 (System.IO.Enumeration.FileSystemEnumerator)",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "FileNotFoundError from scandir() on a directory deleted after discovery is caught and the directory is treated as empty",
+    "where": "pytest-dev/pytest #13083",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "STATUS_DELETE_PENDING surfaces through Win32 as ERROR_ACCESS_DENIED, so a delete-pending folder cannot be told from a refused one by its Win32 code alone",
+    "where": "Win32 NTSTATUS-to-Win32 mapping (Stack Overflow 6680491, via the investigation)",
+    "authority": "community",
+    "basis": "recalled"
+   }
+  ],
+  "whats_new": [
+   "Scanner.FolderVanished(int error, bool opened), an internal static predicate beside FailedKind, on top of SizeProbe.IsGone",
+   "Run._foldersVanished, incremented in FolderDone when FolderVanished holds; such a folder passes failed: null to FolderExited (not notScanned)",
+   "ScanResult.FoldersVanished, a public init-only int set in Finish for every status, with its doc saying what is and is not counted",
+   "CoveragePanelText.FoldersVanishedNote(int folders), singular and plural, ASCII, no path",
+   "One notes.Add line in MainWindow's ending notes, after the VanishedNote line",
+   "core.foldersVanished in WindowReport's core object (schema 1, additive), and the header comment's key list updated",
+   "A FolderVanished [Theory] in ScannerFailedKindTests",
+   "tests/FsAnalyser.Core.Tests/VanishedFolderTests.cs: subfolders count once and stay a listed empty folder; stopped scan; missing root; separate file and folder counts",
+   "FoldersVanishedNote cases in CoveragePanelTextTests",
+   "Two architecture rules: gone codes only through SizeProbe.IsGone in Scanner.cs; DirectoryReader.cs never swallows a gone open"
+  ],
+  "whats_reused": [
+   "SizeProbe.IsGone as the single definition of the gone codes (2, 3)",
+   "ScanStore.SetChildren(folder, first, 0), already run before the stamp, which leaves the vanished folder listed and empty",
+   "TopLevelTracker.FolderExited with failed: null, which StoreSkipped already uses",
+   "progress.Publish(Totals, _unreadable.Count, ...), so the live figure leaves vanished folders out with no change",
+   "UnreadableRows.Build, FolderTreeSession, UnreadableCaption and the coverage panel's unreadable rows, all keyed on ScanResult.Unreadable",
+   "FigureText.Count for the note's number and plural",
+   "ScanOptions.AfterFolder plus Directory.Delete as the deterministic test seam (the repro and finish line 1)",
+   "The hook's FSA_HOOK_PAST / FSA_HOOK_PAST_FOLDERS stop-mode trigger and throw mode (finish lines 2 and 3)",
+   "TempTree, Scans.Find/ByPath and TopLevelRowTextTests.ScanFailingPartway (the planted tests)"
+  ],
+  "filed_for_later": [
+   {
+    "what": "On an SMB share (the loopback rig), a DFS link whose target is down, and a ReFS or FAT/exFAT volume: delete a queued folder mid-scan and check it appears in core.foldersVanished and not core.unreadable. Also check that a folder that still exists but cannot be reached is never counted as vanished.",
+    "why": "No SMB server, DFS namespace, ReFS or FAT volume exists on this PC, and the SMB loopback rig changes the person's drive mappings. This is the must-verify invariant of the transfer and the recalled outside claim about other file systems. It is not the same as N-050 (delete-pending NTSTATUS) or N-053 (FileStandardInfo off NTFS).",
+    "who": "person"
+   }
+  ],
+  "taste_disagreements": [
+   "Count only, no per-folder mark: the folder tree and the results list show a vanished folder as a plain empty folder, and only the ending's note says folders were deleted, as the file note does. A reviewer may want the tree to say which folders went. That needs a list of entries on ScanResult (additive) and tree wording.",
+   "Note wording: 'deleted while the scan ran, before it could be read; it is counted as an empty folder' against something shorter such as 'N folders were deleted during the scan'.",
+   "Where FolderVanished lives: in Scanner beside FailedKind (chosen, because it reads the walk's phase) or in SizeProbe beside IsGone."
+  ],
+  "channeled_experts": [
+   "Authors of .NET's FileSystemEnumerator (ContinueOnDirectoryError)",
+   "Win32 NTSTATUS-to-Win32 error mapping specialist",
+   "Maintainers of production recursive walkers (bun, rustfs)"
+  ],
+  "reason": "One proposal, confirmed against the code read for this design and against five spikes. The fix withholds the one stamp in FolderDone for a refused open with code 2 or 3. It adds a count to ScanResult, one ending note and one additive report key. Every surface that shows unreadable folders then leaves vanished folders out with no change of its own.",
+  "stack_chosen": [],
+  "decidable_disagreements": [],
+  "open_questions": []
+ }
+}

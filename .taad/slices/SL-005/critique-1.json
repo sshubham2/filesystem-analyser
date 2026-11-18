@@ -1,0 +1,190 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-005",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-11-18T04:12:55.439Z",
+ "head": "28d72d85344b12b82f0ec1479df71a6c20681a56",
+ "run_id": 11372,
+ "summary": "The core is sound and I checked it against the tree. FolderDone is the only place that stamps Unreadable or adds to _unreadable (Scanner.cs:397-398; nothing else in src does). SetChildren runs before the stamp. The root's call passes opened:true. EntryClassifier makes name-surrogate reparse points Links before Folders. The two new rules already sit under '# settled by SL-005', so they need no xUnit twin, and today's tree matches neither. The note wording passes the existing fixed-plural, kind-words and not-read-yet rules. The cited rustfs PR #8479 says what the design claims. The repro asserts only Unreadable.Count==0 and the flag, so the design makes it pass.\n\nTwo majors:\n- The precondition the design marked must-verify (2/3 means the folder is gone) fails in a way it did not consider: it cannot tell a deleted folder from a lost drive letter or a disconnected mapped share. For those, every queued folder's open fails with 3. The design would turn honest 'could not be opened' rows into 'deleted, counted as an empty folder' and remove the 'may be missing' captions. The letter-loss case can be measured here with a SUBST letter TAAD creates, yet the design filed only SMB/DFS/ReFS, for a person.\n- Material cases 2, 3, 10 and 11 check only against E007* tests that do not exist anywhere in the tree. Lessons #876, #888 and #896 record the same absence three times.\n\nOne minor: the two new text rules miss the most likely second spelling, including the spike's own patch.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The core is sound and I checked it against the tree. FolderDone is the only place that stamps Unreadable or adds to _unreadable (Scanner.cs:397-398; nothing else in src does). SetChildren runs before the stamp. The root's call passes opened:true. EntryClassifier makes name-surrogate reparse points Links before Folders. The two new rules already sit under '# settled by SL-005', so they need no xUnit twin, and today's tree matches neither. The note wording passes the existing fixed-plural, kind-words and not-read-yet rules. The cited rustfs PR #8479 says what the design claims. The repro asserts only Unreadable.Count==0 and the flag, so the design makes it pass.\n\nTwo majors:\n- The precondition the design marked must-verify (2/3 means the folder is gone) fails in a way it did not consider: it cannot tell a deleted folder from a lost drive letter or a disconnected mapped share. For those, every queued folder's open fails with 3. The design would turn honest 'could not be opened' rows into 'deleted, counted as an empty folder' and remove the 'may be missing' captions. The letter-loss case can be measured here with a SUBST letter TAAD creates, yet the design filed only SMB/DFS/ReFS, for a person.\n- Material cases 2, 3, 10 and 11 check only against E007* tests that do not exist anywhere in the tree. Lessons #876, #888 and #896 record the same absence three times.\n\nOne minor: the two new text rules miss the most likely second spelling, including the spike's own patch.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "nature": "defect",
+    "claim": "FolderVanished = !opened && SizeProbe.IsGone(error) counts a folder as deleted whenever its open fails with 2 or 3. It cannot tell 'this folder was deleted' from 'the path above it stopped resolving':\n- a drive letter removed mid-scan (USB stick pulled, a SUBST or `net use /d` removed), where \\\\?\\Q:\\child no longer resolves;\n- a mapped share that dropped. Axcient's KB lists error 3 with 'If this is a network mapped drive, then it has been disconnected' (https://help.axcient.com/en_US/115002869807-BACKUP-FOR-FILES-Troubleshoot-Backup-for-Files/115010655808-Backup-for-Files-Backup-fails-due-to-path-not-found-error), and an Unavailable mapped drive answers 'The system cannot find the path specified' (https://stackoverflow.com/questions/1703304).\n\nIn either case every folder still on _pending fails with 3. The design counts each one in FoldersVanished and keeps it as an empty folder, so Unreadable drops to 0. The Unreadable tab hides, the 'may be missing' captions go, and the scan ends Completed with the rest of the drive silently missing and a note claiming the folders were deleted. Today the same folders are honest 'could not be opened' rows.\n\nThis is the transfer's must-verify invariant failing. It also bears on the next proof run: W-003 cuts a mapped share mid-scan, and Get-ShareVerdict never reads the notes, so a 'held' record could ship that false ending. The design filed only SMB/DFS/ReFS/FAT for a person. The letter-loss half can be measured on this PC with a SUBST letter TAAD itself creates.",
+    "class_of": "gone codes caused by losing the volume, drive letter or share above the folder, not the folder itself",
+    "threat": "accident",
+    "file": "src/FsAnalyser.Core/Scanning/SizeProbe.cs",
+    "line": 34,
+    "quote": {
+     "path": "src/FsAnalyser.Core/Scanning/SizeProbe.cs",
+     "line": 34,
+     "text": "public static bool IsGone(int error) => error is Kernel32.ERROR_FILE_NOT_FOUND or Kernel32.ERROR_PATH_NOT_FOUND;"
+    },
+    "evidence": "Design component 'Scanner.FolderVanished' and cross_domain_transfer invariant '2 and 3 mean gone on SMB shares, DFS links ...' (status must-verify). Outside claim 8, recalled. Scanner.cs:394-398 is the only stamp. Measurement not yet made: SUBST a scratch tree as a free letter, scan the letter with ScanOptions.AfterFolder, and at n==1 remove the letter (DefineDosDevice with DDD_REMOVE_DEFINITION, which TAAD owns). Then read the pending folders' Win32Error. Expected 3.",
+    "fix": "Measure first with the SUBST probe above. Then, in FolderDone's gone branch only, check that the scan root still opens: one io.Open of win32Root with keepLastAccess false, cancellable like every other open. If it does not open, stamp the folder unreadable as today. Add a VanishedFolderTests case on a SUBST letter removed mid-scan: Unreadable keeps the queued folders and FoldersVanished is 0."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "test-coverage",
+    "nature": "defect",
+    "claim": "The design calls E007DeletedFolderRecordTests, E007DeletedFoldersEndingTests, E007DeletedFoldersReportTests and E007StillUnreadableTests 'engine's, not changed', and says the helpers they call already exist. None of the four is in the tree: Glob tests/**/E007* finds nothing, and Grep 'E007' matches only .taad/slices/SL-005/design-slice-1.json.\n\nFor four material cases these are the only checks:\n- case 2: code 3 deeper down, with row y's UnreadableBelow 0;\n- case 3: refused and partly read folders are still recorded;\n- case 10: the ending note, the captions without 'missing', the tab hidden, core.unreadable 0;\n- case 11: core.foldersVanished and the schema-1 fields and exit codes.\n\nWith TreatNoTestsAsError=true each of those checks fails because there is nothing to run, whatever is built. The builder's own tests (the FolderVanished theory, VanishedFolderTests, the FoldersVanishedNote cases) touch neither the row path for a non-root folder failing with 3, the scan-level control that a refused folder stays recorded, nor anything in MainWindow or WindowReport. This project has already paid for the same assumption three times (lessons #876, #888 and #896).",
+    "file": ".taad/slices/SL-005/design-slice-1.json",
+    "line": 59,
+    "quote": {
+     "path": ".taad/slices/SL-005/design-slice-1.json",
+     "line": 59,
+     "text": "\"name\": \"Planted finish-line tests (engine's, not changed)\","
+    },
+    "evidence": "Glob tests/**/E007* gives no files. Grep 'E007' over the repository gives only .taad/slices/SL-005/design-slice-1.json. The design's case checks name FullyQualifiedName~FsAnalyser.Core.Tests.E007*Tests with RunConfiguration.TreatNoTestsAsError=true.",
+    "fix": "Have the builder own the material checks:\n- In VanishedFolderTests, assert row y's UnreadableBelow is 0 and w carries no flag in the code-3 case, and add the control: a TempTree.Deny folder stays in Unreadable as 5/NothingListed beside a deleted one.\n- For the App side, add a tests/window/SL-005-*.Tests.ps1 report-mode case (listed as a non-launcher in tests/window/AppArgumentCorpus.json, per #876). It checks OutcomeNotes.lines, the two captions, the tab, core.unreadable and core.foldersVanished.\n- Alternatively, point cases 2, 3, 10 and 11 only at tests that exist when build starts."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "claim": "Each of the two new text rules misses the most likely second spelling of what it forbids.\n- Scanner.cs forbids only the constant names. `error == 2 || error == 3`, which is literally the spike folderdone-open-2-3-as-gone's patch, passes the rule and drifts from SizeProbe.IsGone exactly as the rule's 'because' fears. The FolderVanished theory only pins today's codes, so it cannot catch that drift.\n- DirectoryReader.cs forbids IsGone( and ERROR_PATH_NOT_FOUND but not ERROR_FILE_NOT_FOUND, because List already uses that constant at line 152. So `if (error == Kernel32.ERROR_FILE_NOT_FOUND) return 0;` after Open swallows the main gone code (2) and passes. VanishedFolderTests' FoldersVanished==1 assertion would catch that behaviourally in the default suite, which also makes the rule's claim that only desktop tests would catch it untrue.",
+    "class_of": "spellings of the gone codes the new text rules miss",
+    "threat": "accident",
+    "file": ".taad/fitness.yaml",
+    "line": 1514,
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1514,
+     "text": "- \\bERROR_(?:FILE|PATH)_NOT_FOUND\\b"
+    },
+    "evidence": "DirectoryReader.cs:152 `if (first && error == Kernel32.ERROR_FILE_NOT_FOUND)`. The spike folderdone-open-2-3-as-gone patch: `bool gone = !opened && count == 0 && (error == 2 || error == 3);`",
+    "fix": "Add a Scanner.cs pattern for a read error compared with the literals 2 or 3, for example `\\berror\\s*(?:==|is)\\s*[23]\\b` and `\\bor\\s+[23]\\b(?![\\w.])`. Reword the DirectoryReader rule's 'because' to name VanishedFolderTests as the real guard, or drop that rule as redundant with it."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M1. The must-verify '2/3 means gone' fails for a lost drive letter or a disconnected mapped share. Two web sources tie error 3 to disconnected mapped drives. Outside claim 9 (cloud and ProjFS placeholders) is recalled and only decorative: an opt-in CF test would show it. The cited rustfs PR #8479 does say what the design claims: NotFound from read_dir on a non-root child is treated as vanished, with a marker."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "M1 (volume, letter or share loss). The 5 (delete pending) and 87 (replaced by a file) residues are left out on purpose, backed by the spikes' no-go and conditional verdicts; I accept that. In W-001 -Stopped they would still be OtherCodeDiffers (path gone, times unreadable, WindowCases.ps1:6661), so they make a run inconclusive, never failed. Rare; not raised. Root, links and the cancel path are checked and hold."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "The stamp invariant holds by construction: there is a single call site (Scanner.cs:394-398, the only _unreadable.Add in src), and !opened implies count 0 because Read resets _count. The note's 'no notScanned: true' rule is also a single call site. The rule gaps are in m1."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none: the count, one note, one report key and the predicate are what the brief and its finish lines ask for. The DirectoryReader rule is weak and largely redundant with the behavioural test (m1), but cheap."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "none: ScanResult.FoldersVanished (public init, set in Finish for every status) and core.foldersVanished (absent when core is null, schema 1 additive) are fully specified. The repro needs no new name."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "Cancel during a vanished folder's open still gives 995, which returns Cancelled before the stamp (Scanner.cs:384). The missing root still ends RootUnreadable before FolderDone (Scanner.cs:200-205). The fix proposed for M1 must route its root re-open through io so Stop can cancel it on a dead share."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "none: it matches the brief's prescribed fix (no flag, not in _unreadable, a new FoldersVanished count, a note like VanishedBeforeProbe, the row finishing as an empty folder)."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "m1. The new rules are already appended under '# settled by SL-005' (fitness.yaml:1510), so no ArchitectureRulesTests twin is needed. The note passes 'no count with a fixed plural' (it uses Count), 'only UnreadableRows writes a failed folder's kind' and 'the unread word is written once'. No new trait, so no FsaDefaultTestFilter clause."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "M2: four material cases depend only on E007* tests that are not in the tree. The builder-owned tests cover none of the MainWindow or WindowReport lines, nor the code-3 row path."
+   },
+   {
+    "dimension": "security",
+    "result": "none: the note is ASCII with no path, as Q-016 requires for the report. No new native calls, and nothing outside the cancel guard."
+   }
+  ]
+ },
+ "prescribed": {
+  "host": 651,
+  "at": "2026-11-18T04:20:59.377Z",
+  "runs": [
+   {
+    "run_id": 11374,
+    "resumed_from": "fabeb5ea-fcd4-4d9e-980b-e3e23347532c",
+    "ending": "completed",
+    "cost_usd": 1.6681617999999996,
+    "lost_resume": false
+   }
+  ],
+  "keys_sent": [
+   {
+    "finding_id": 1874,
+    "key": "M1",
+    "digest": "3da9610dbbc5b63b"
+   },
+   {
+    "finding_id": 1875,
+    "key": "M2",
+    "digest": "6898206a9bd4979a"
+   },
+   {
+    "finding_id": 1876,
+    "key": "m1",
+    "digest": "b650a3b4b6002f83"
+   }
+  ],
+  "verdicts": [
+   {
+    "finding_id": 1874,
+    "key": "M1",
+    "digest": "3da9610dbbc5b63b",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "Read SynchronousIoCancel.cs:248-249 (OpenDirectory is the public open; Open at :491 is private), :422 (Settle: Aborted whenever a cancel was issued) and :426-427 (Enter refuses any call once Cancel was requested). Read DirectoryReader.cs:74-75 (Open wraps io.OpenDirectory and leaves Count and Opened alone) and Scanner.cs:382-424 (FolderDone; SetChildren at :391 runs before any stamp). Grep for DefineDosDevice/subst: the only SUBST user in the default suite is ContainerLayerStoreTests' private SubstDrive (ContainerLayerStoreTests.cs:855-882). It picks a free letter via DriveInfo.GetDrives and then runs subst.exe, which asserts exit 0. No [Collection] covers ContainerLayerStoreTests; Grep [Collection|CollectionDefinition] lists only CriticalErrorMode, MemoryBudget, ResendRace and VolumeFigure.",
+    "why": "1. **A cancelled root check stamps a deleted folder unreadable.** A Stop that lands after the folder's own open has returned 2/3 makes the root check's Enter() fail, or makes CancelSynchronousIo abort a root open blocked on a slow share. Either way the check returns Aborted (995). The prescription treats that as 'it does not open', so the folder is stamped unreadable with its own code 2/3. A Stop then leaves a false row in the stopped record. W-001 -Stopped counts that row as OtherCodeDiffers (WindowCases.ps1:6661) and ends inconclusive, which is the cause Q-016's decision expects E-007 to remove. It also breaks the rule that an aborted call commits nothing. The window is tiny on local NTFS, but it is not zero.\n2. **No method called 'io.Open' can be called here.** The reachable ones are io.OpenDirectory and _reader.Open, which return a handle the prescription never closes. A leaked handle on the root, per vanished folder, would block safe-eject of a USB volume.\n3. **The new SUBST test races the existing one.** A second SubstDrive in another test class runs in parallel with ContainerLayerStoreTests. Both can see the same letter free, and the second subst.exe then fails, so the default suite goes intermittently red.\n4. **Residues the check leaves (not holes in the prescription):**\n- A scan root that is itself deleted mid-scan still stamps truly deleted folders unreadable. That is today's behaviour and the safe side.\n- After the letter is removed, the file-probe pass will count the root's files through SizeProbe.IsGone as VanishedBeforeProbe, so the ending still says files were deleted. The new test must not assert VanishedBeforeProbe == 0.",
+    "instead": "Specify all three:\n- When the root check returns SynchronousIoCancel.Aborted (or io.LastCallAborted), it decides nothing. Do not stamp the folder and do not count it; FolderDone's `return ct.IsCancellationRequested` then ends the scan Cancelled. Pin this with a FolderVanished-style unit case, or a scan whose AfterFolder cancels before z is popped.\n- Make the check `_reader.Open(win32Root, keepLastAccess: false, out var h)` followed by `io.Close(h)` when it opened.\n- Move SubstDrive into a shared test helper, and put ContainerLayerStoreTests and the new VanishedFolderTests SUBST case in one `[Collection]` with DisableParallelization = true (as VolumeUsageTests.cs:10 does). Alternatively, retry the letter pick when subst.exe reports the letter already in use."
+   },
+   {
+    "finding_id": 1875,
+    "key": "M2",
+    "digest": "6898206a9bd4979a",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "Glob/Grep confirmed no E007* test exists. Read AppArgumentCorpus.json:31: the entry form is `{ file, check: \"not-a-launcher\", how }`, so listing the new script is buildable. Read StartupHook.cs:346: the modes are stop, throw, close, watch, measure, rescan, expand, hide, kinds, size, tree, reveal, settings, rows and drives. None deletes anything. StartupHook.cs:514 wires the progress trigger (FSA_HOOK_PAST / _FOLDERS) to stop and close only. Existing exit-code coverage: WindowCases.ps1:1028 (exit 2), HookCases.ps1:20 and WindowMutants.ps1:90 (exit 70). Read the repro and the design's case 3 shape (deny 5/NothingListed AND a 995-failpoint ListedPartway folder).",
+    "why": "1. **Nothing can time the deletion.** The report-mode case must get the published app (which has no test seam) to list z1..z3 and lose them before it opens them. The hook cannot delete, and its progress trigger only presses Stop or closes. That leaves a delete timed by the script, as the health check did (50,000 folders, delete at 1.5 s). Start-up time on this PC varies severalfold (lesson #882). A delete before the root's listing leaves z1..z3 out of the store, and a delete after the walk reaches them changes nothing. Both give foldersVanished 0, a false FAILED, and a spent review or validate lap. The prescription gives no verdict for that precondition missing (lesson #892: defects cluster where an ending is mapped to a verdict).\n2. **Case 3 loses half its control.** Case 3's shape also has a partway-listing control (ListedPartway), and the prescribed control is the Deny folder only. Case 3 would then point at a test that does not cover what it claims.\n3. **Re-checking exit codes 2/3/70 in the new script repeats existing cases.** That is extra work, not a hole.",
+    "instead": "In the SL-005 report-mode script:\n- Build the tree so that z1..z3, each with an inner folder, sort after a large 'a' subtree of at least 24,000 folders (lesson #877), rooted where New-CaseFolder roots (%LOCALAPPDATA%\\Temp, lesson #360).\n- Delete z1..z3 on a timer.\n- Decide the verdict from core.folders against the tree. Exactly base + 3 means the deletion landed and the checks apply. Any other count is INCONCLUSIVE (deletion missed its window), not FAILED.\n- Retry an inconclusive run at most twice, with a longer delay.\n\nIf a deterministic trigger is wanted, add a hook mode instead. It is test-only code, and the hook is already on the network-pass staleness list that this slice's MainWindow change makes stale.\n\nIn VanishedFolderTests, add the partway control beside the Deny one via TopLevelRowTextTests.ScanFailingPartway: still ListedPartway in Unreadable. Leave exit codes 2 and 70 to the existing cases; check only 0 and the schema-1 keys in the new script."
+   },
+   {
+    "finding_id": 1876,
+    "key": "m1",
+    "digest": "b650a3b4b6002f83",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "Grep `error\\s*(?:==|is)\\s*[23]\\b` on src/FsAnalyser.Core/Scanning/Scanner.cs: no matches today, so it is quiet as the prescription says. Tried the second spellings against the pattern:\n- `error == 2 || error == 3` and `error is 2 or 3`: fire.\n- `error is (2 or 3)` (the '(' breaks `\\s*[23]`), `2 == error`, `error switch { 2 or 3 => ... }`, and a parameter named win32Error or code: all pass.\n- `error is 32`: correctly quiet.\n\nRead .taad/fitness.yaml:15-17: settled entries have no xUnit twin, are enforced only by Fitness, and are to be changed 'here only', so editing the SL-005 block is allowed. Read the design: the comment above the stamp must be updated to name the error that is not stamped, and FolderVanished's doc names codes 2 and 3.",
+    "why": "1. **The kept pattern fires on comments too.** The triage dropped `\\bor\\s+[23]\\b` because it fires on comment prose. The pattern it kept also matches comments, and the design itself asks for comments here. A doc line such as 'true when the open's error is 2 or 3' or '...whose error == 3...' fails the Fitness gate. That costs one build retry, and the builder is not warned.\n2. **The likeliest pattern-matching spelling of all, `error is (2 or 3)`, gets past it.** The rest are tripwire gaps, which is acceptable.\n3. **The DirectoryReader rewording is correct.** VanishedFolderTests' FoldersVanished==1 assertion is in the default suite, so a reader that turns code 2 into an empty listing turns it red.",
+    "instead": "Use `\\berror\\s*(?:==|is)\\s*\\(?\\s*[23]\\b` so the parenthesised form fires too. Add to the rule's `because`, and to the builder's instructions, that comments in Scanner.cs name the gone codes as 'SizeProbe.IsGone's codes' or 'not found (2) / path not found (3)', never as 'error is N' or 'error == N'. Keep the DirectoryReader rewording as prescribed."
+   }
+  ],
+  "unmatched": [],
+  "unchecked": [],
+  "moved": [],
+  "annotated": [
+   "finding:1874",
+   "finding:1875",
+   "finding:1876"
+  ],
+  "counts": {
+   "holds": 0,
+   "hole": 3,
+   "unworkable": 0,
+   "no_verdict": 0
+  },
+  "summary": "All three prescriptions can be built as written, but each has a gap worth closing before the build.\n- **M1:** the root check is the right fix, but the prescription doesn't say what happens when that check is cancelled by Stop. An aborted check counts as \"did not open\", so a deleted folder gets stamped unreadable with error 2/3. Its SUBST test would also be a second parallel user of a racy letter picker.\n- **M2:** the app-side report case needs three queued folders deleted mid-scan by the published app. Nothing in the hook can time that, and the prescription gives no verdict for when the deletion misses its window.\n- **m1:** the kept pattern does what it says and matches nothing in Scanner.cs today. But it fires on comment wording such as \"error is 2\", which is the same reason the triage gave for dropping the other pattern, and it misses `error is (2 or 3)`.",
+  "why": "",
+  "round": "landed"
+ }
+}

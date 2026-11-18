@@ -41,6 +41,30 @@ public class ScannerFailedKindTests
         Assert.Equal(expected, Scanner.FailedKind(error, opened, listed));
 
     /// <summary>
+    /// A folder is gone, not unreadable (SL-005), only when its open was refused (nothing opened) with a code the file probe also
+    /// calls gone: 2 or 3. An opened folder that later reports either is a listing failure; 5 is a refusal or a delete still
+    /// pending, 87 a folder a file replaced, 995 a cancel; each keeps today's kind. The code set is SizeProbe.IsGone's.
+    /// </summary>
+    [Theory]
+    [InlineData(2, false, true)]
+    [InlineData(3, false, true)]
+    [InlineData(2, true, false)]
+    [InlineData(3, true, false)]
+    [InlineData(0, false, false)]
+    [InlineData(AccessDenied, false, false)]
+    [InlineData(SharingViolation, false, false)]
+    [InlineData(NetworkOrShare, false, false)]
+    [InlineData(87, true, false)]
+    [InlineData(CloudMetadataCorrupt, false, false)]
+    [InlineData(CantAccessFile, false, false)]
+    [InlineData(Aborted, false, false)]
+    public void FolderVanishedIsTrueOnlyForARefusedOpenThatFoundNoFolderOrNoPath(int error, bool opened, bool expected)
+    {
+        Assert.Equal(expected, Scanner.FolderVanished(error, opened));
+        Assert.Equal(!opened && SizeProbe.IsGone(error), Scanner.FolderVanished(error, opened)); // the one definition of gone
+    }
+
+    /// <summary>
     /// The reader's bit, which the stamp reads: true once the last Read's open returned a handle, even when the listing
     /// then failed with nothing kept; false for a refused open; cleared by the next Read, so a refusal after an open is not
     /// stamped as one that opened.

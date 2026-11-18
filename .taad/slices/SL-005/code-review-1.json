@@ -1,0 +1,421 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-005",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-11-18T04:49:18.205Z",
+ "head": "5476e1ca960c0ac7ebc1eff1488eb415c66e57b2",
+ "run_id": 11377,
+ "summary": "The build matches the design, plus the root check that review M1 required, and it declared every departure. FolderDone (Scanner.cs:401-460) now treats a queued folder as gone when its open fails with SizeProbe.IsGone's codes (2 or 3) and nothing opened (FolderVanished, :102), but only if a plain open of the scan root still succeeds (RootOpenError :464-470, GoneGivenRootOpen :111). Such a folder gets no stamp. It goes into _foldersVanished, finishes listed and empty, and is passed to FolderExited with failed: null and without notScanned. If a Stop aborts the root check, it returns before SetChildren, so nothing is committed or counted. If the root does not open (letter removed, root deleted), the folder stays NothingListed as before. Finish sets FoldersVanished for every status. MainWindow adds the note after the files note. WindowReport adds core.foldersVanished after opensUnderExcludedStore, schema 1 unchanged.\n\nChecked by running, with TAAD3_HOME in scratch:\n- Repro (eng/dotnet.ps1 test tests/bugs/SL-005-...): 1 of 1 passed.\n- Focused tests (VanishedFolder*, ScannerFailedKindTests, CoveragePanelTextTests, RootTests, ArchitectureRulesTests, RuleCopiesAgree): 188 of 188 passed.\n- Whole suite (FsAnalyser.slnx, xUnit.MaxParallelThreads=2): 1346 passed, 0 failed.\n- Fitness op=check: every declared rule holds.\n- Window script, `tests/window/SL-005-VanishedFolders.Tests.ps1 -Case C -Exe artifacts/publish/FsAnalyser.App.exe`: all 12 verdict rows held. I did not re-run A and B, because they put the app's window on the person's desktop.\n\nContracts checked:\n- The root check's _reader.Open resets io.KeptLastAccess, but CountListingOpen has already read it (Execute:249 before :250), so the last-access counts are unaffected.\n- The root check bypasses the reader's excluded-store backstop, but a root at or under the store is Refused earlier.\n- io.LastCallAborted after the check reflects that call alone: Enter refuses or Exit sets it, and Close does not touch it.\n- The opened root handle is closed.\n- Compare-StoppedRows (WindowCases.ps1:6645-6667) no longer sees gone folders as rows, which is what Q-016's decision expected.\n\nTwo scratch probes, both outside the tree:\n- A folder whose parent is renamed (not deleted) after the parent's listing is counted as deleted. Output: FoldersVanished=1, Unreadable=0, its 4,096-byte file still on disk and missing from the totals. The ending calls it deleted and drops the 'may be missing' captions (m2, extra).\n- The widened walk rule still lets `case 2 or 3:`, `case (2 or 3):` and a switch arm `2 or 3 =>` through. These are new members of the spelling family O-017 closed. The repro fails 3 of 3 on the current rule, and the suggested patterns are quiet on Scanner.cs and on the corpus's prose row (m1).\n\nNot measurable here: O-002 (SMB, DFS, ReFS, FAT) stays a person-run item.\n\nSecond reader, for inputs: I reviewed the inputs this change can be handed: the new gone branch in Scanner.FolderDone and its root check, the text rules in .taad/fitness.yaml with their corpus reader, SubstDrive, the report and note wording, and the SL-005 window script. The slice's targeted tests pass here: 130 of 130 in VanishedFolder*, ScannerFailedKindTests and CoveragePanelTextTests.\n\n**Inputs that turned out to be fine (measured or read):**\n- **Over-long paths.** CreateFileW on a \\\\?\\ path of 32,760 characters or more fails with 206, not 2 or 3. A real folder whose path is too long therefore cannot be counted deleted.\n- **The root check.** It goes through the guarded open, so:\n  - `_reader.Open` leaves the reader's Count and Opened alone.\n  - KeptLastAccess is counted before the check runs.\n  - A Stop that refuses or aborts the root open is caught through LastCallAborted.\n  - The handle is closed on success.\n- **The wording.** The note's number uses the current culture's group separator for counts of 1,000 or more, but the report writes anything outside ASCII as \\uXXXX, so the report stays ASCII.\n- **PatternsOf.** The YAML reader in VanishedFolderCorpusTests fails loudly when the file's shape changes.\n\n**Two findings:**\n1. **Defect (minor).** The widened walk rule still misses the C# 9 pattern-combinator spellings that this codebase already uses: `case 2 or 3:`, `case (2 or 3):`, and switch-expression arms such as `2 or 3 =>`. These are new members of the closed O-017 family. The repro runs and fails on this tree. Two extra patterns fix it, and I checked that both stay quiet on Scanner.cs, comments included.\n2. **Extra (minor).** A queued folder that is renamed or moved while the scan runs also opens with 2. A probe I ran showed that it is now reported as \"deleted while the scan ran\", even though its file is still on disk. Its 4,096 bytes drop out of the totals with no \"may be missing\" caption; before this change it was an honest \"could not be opened\" row.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The build matches the design, plus the root check that review M1 required, and it declared every departure. FolderDone (Scanner.cs:401-460) now treats a queued folder as gone when its open fails with SizeProbe.IsGone's codes (2 or 3) and nothing opened (FolderVanished, :102), but only if a plain open of the scan root still succeeds (RootOpenError :464-470, GoneGivenRootOpen :111). Such a folder gets no stamp. It goes into _foldersVanished, finishes listed and empty, and is passed to FolderExited with failed: null and without notScanned. If a Stop aborts the root check, it returns before SetChildren, so nothing is committed or counted. If the root does not open (letter removed, root deleted), the folder stays NothingListed as before. Finish sets FoldersVanished for every status. MainWindow adds the note after the files note. WindowReport adds core.foldersVanished after opensUnderExcludedStore, schema 1 unchanged.\n\nChecked by running, with TAAD3_HOME in scratch:\n- Repro (eng/dotnet.ps1 test tests/bugs/SL-005-...): 1 of 1 passed.\n- Focused tests (VanishedFolder*, ScannerFailedKindTests, CoveragePanelTextTests, RootTests, ArchitectureRulesTests, RuleCopiesAgree): 188 of 188 passed.\n- Whole suite (FsAnalyser.slnx, xUnit.MaxParallelThreads=2): 1346 passed, 0 failed.\n- Fitness op=check: every declared rule holds.\n- Window script, `tests/window/SL-005-VanishedFolders.Tests.ps1 -Case C -Exe artifacts/publish/FsAnalyser.App.exe`: all 12 verdict rows held. I did not re-run A and B, because they put the app's window on the person's desktop.\n\nContracts checked:\n- The root check's _reader.Open resets io.KeptLastAccess, but CountListingOpen has already read it (Execute:249 before :250), so the last-access counts are unaffected.\n- The root check bypasses the reader's excluded-store backstop, but a root at or under the store is Refused earlier.\n- io.LastCallAborted after the check reflects that call alone: Enter refuses or Exit sets it, and Close does not touch it.\n- The opened root handle is closed.\n- Compare-StoppedRows (WindowCases.ps1:6645-6667) no longer sees gone folders as rows, which is what Q-016's decision expected.\n\nTwo scratch probes, both outside the tree:\n- A folder whose parent is renamed (not deleted) after the parent's listing is counted as deleted. Output: FoldersVanished=1, Unreadable=0, its 4,096-byte file still on disk and missing from the totals. The ending calls it deleted and drops the 'may be missing' captions (m2, extra).\n- The widened walk rule still lets `case 2 or 3:`, `case (2 or 3):` and a switch arm `2 or 3 =>` through. These are new members of the spelling family O-017 closed. The repro fails 3 of 3 on the current rule, and the suggested patterns are quiet on Scanner.cs and on the corpus's prose row (m1).\n\nNot measurable here: O-002 (SMB, DFS, ReFS, FAT) stays a person-run item.\n\nSecond reader, for inputs: I reviewed the inputs this change can be handed: the new gone branch in Scanner.FolderDone and its root check, the text rules in .taad/fitness.yaml with their corpus reader, SubstDrive, the report and note wording, and the SL-005 window script. The slice's targeted tests pass here: 130 of 130 in VanishedFolder*, ScannerFailedKindTests and CoveragePanelTextTests.\n\n**Inputs that turned out to be fine (measured or read):**\n- **Over-long paths.** CreateFileW on a \\\\?\\ path of 32,760 characters or more fails with 206, not 2 or 3. A real folder whose path is too long therefore cannot be counted deleted.\n- **The root check.** It goes through the guarded open, so:\n  - `_reader.Open` leaves the reader's Count and Opened alone.\n  - KeptLastAccess is counted before the check runs.\n  - A Stop that refuses or aborts the root open is caught through LastCallAborted.\n  - The handle is closed on success.\n- **The wording.** The note's number uses the current culture's group separator for counts of 1,000 or more, but the report writes anything outside ASCII as \\uXXXX, so the report stays ASCII.\n- **PatternsOf.** The YAML reader in VanishedFolderCorpusTests fails loudly when the file's shape changes.\n\n**Two findings:**\n1. **Defect (minor).** The widened walk rule still misses the C# 9 pattern-combinator spellings that this codebase already uses: `case 2 or 3:`, `case (2 or 3):`, and switch-expression arms such as `2 or 3 =>`. These are new members of the closed O-017 family. The repro runs and fails on this tree. Two extra patterns fix it, and I checked that both stay quiet on Scanner.cs, comments included.\n2. **Extra (minor).** A queued folder that is renamed or moved while the scan runs also opens with 2. A probe I ran showed that it is now reported as \"deleted while the scan ran\", even though its file is still on disk. Its 4,096 bytes drop out of the totals with no \"may be missing\" caption; before this change it was an honest \"could not be opened\" row.",
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "claim": "The walk rule 'the walk calls a folder gone only through SizeProbe.IsGone' still lets C# pattern-combinator spellings of the gone codes through. `case 2 or 3:`, `case (2 or 3):` and the switch-expression arm `error switch { 2 or 3 => true, _ => false }` match none of its three patterns. `\\bcase\\s+[23]\\s*:` needs the colon straight after the digit, and the error-name pattern needs ==, != or `is` after the name. Any of these is a second definition of gone in Scanner.cs that can drift from SizeProbe.IsGone, and the build reported this family closed (O-017). GoneCodeSpellingsCorpus.json has `case 2:` and `case 3:` but no combinator row. Measured in a scratch copy of the repro below: 3 of 3 rows fail against the patterns read from .taad/fitness.yaml.",
+    "evidence": ".taad/fitness.yaml:1514-1516, the walk rule's must_not_match. tests/FsAnalyser.Core.Tests/GoneCodeSpellingsCorpus.json rows w-switch-case-2 and w-switch-case-3 are its only switch spellings.",
+    "file": ".taad/fitness.yaml",
+    "line": 1516,
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1516,
+     "text": "    - '\\bcase\\s+[23]\\s*:'"
+    },
+    "fix": "Replace `'\\bcase\\s+[23]\\s*:'` with `'\\bcase\\s+\\(?\\s*[23]\\b'`, which still catches `case 2:` and not `case 23:`. Add `'\\b[23]\\s+or\\s+[23]\\s*=>'` for a switch arm. Both were measured quiet on today's Scanner.cs and on the corpus row `// not found (2) / path not found (3): the folder is gone`. Add three corpus rows to GoneCodeSpellingsCorpus.json, all with rule walk and fires true: w-case-or `case 2 or 3:`, w-case-paren-or `    case (2 or 3): return true;`, w-switch-arm-or `bool gone = !opened && error switch { 2 or 3 => true, _ => false };`.",
+    "class_of": "spellings of the gone codes the new text rules miss",
+    "threat": "accident",
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/SL005ReviewGoneCodeCaseSpellingTests.cs",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~SL005ReviewGoneCodeCaseSpellingTests",
+     "body": "using System.Text.RegularExpressions;\n\nnamespace FsAnalyser.Core.Tests;\n\n/// <summary>\n/// SL-005 review: the walk's text rule must catch the pattern-combinator spellings of the gone codes too, as it does\n/// 'case 2:' and 'error is 2 or 3'. The patterns are read from .taad/fitness.yaml, the rule the Fitness gate runs.\n/// </summary>\npublic class SL005ReviewGoneCodeCaseSpellingTests\n{\n    [Theory]\n    [InlineData(\"case 2 or 3:\")]\n    [InlineData(\"    case (2 or 3): return true;\")]\n    [InlineData(\"bool gone = !opened && error switch { 2 or 3 => true, _ => false };\")]\n    public void TheWalkRuleCatchesThePatternCombinatorSpellingsOfTheGoneCodes(string line)\n    {\n        string[] lines = File.ReadAllLines(Path.Combine(FailCriticalErrorsTests.FindRepo(), @\".taad\\fitness.yaml\"));\n        int name = Array.FindIndex(lines, l => l.StartsWith(\"  - name:\", StringComparison.Ordinal)\n            && l.Contains(\"calls a folder gone only through SizeProbe.IsGone\", StringComparison.Ordinal));\n        Assert.True(name >= 0, \"no walk rule in .taad/fitness.yaml\");\n        int must = Array.FindIndex(lines, name, l => l.Trim() == \"must_not_match:\");\n        Assert.True(must > name, \"the walk rule has no must_not_match\");\n        var patterns = new List<string>();\n        for (int i = must + 1; i < lines.Length && lines[i].StartsWith(\"    - \", StringComparison.Ordinal); i++)\n        {\n            string pattern = lines[i][\"    - \".Length..].Trim();\n            if (pattern.Length >= 2 && pattern[0] == '\\'' && pattern[^1] == '\\'')\n                pattern = pattern[1..^1].Replace(\"''\", \"'\");\n            patterns.Add(pattern);\n        }\n        Assert.NotEmpty(patterns);\n        Assert.True(patterns.Any(pattern => Regex.IsMatch(line, pattern)),\n            $\"the walk rule lets `{line}` through: a pattern-combinator spelling of the gone codes, a second definition beside SizeProbe.IsGone\");\n    }\n}\n"
+    }
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "nature": "extra",
+    "claim": "The 'deleted' verdict is also given to a folder that was renamed or moved, not deleted. If a queued folder, or any folder between it and the scan root, is renamed after its parent was listed, the open fails with 2 or 3 while the root still opens. GoneGivenRootOpen then calls it gone. Measured in a scratch probe on the real Scanner.Scan: y was renamed to y-renamed at y's own AfterFolder. Result: FoldersVanished=1, Unreadable=0, files=1, bytes=5. The 4,096-byte y-renamed\\w\\big.bin still exists and is missing from the totals. The ending tells the user '1 folder was deleted while the scan ran ... counted as an empty folder', and the 'may be missing' captions are gone, though its contents were not deleted and are missing. Before SL-005 the same folder was an honest 'could not be opened' row. ScanResult.FoldersVanished's doc goes further and states 'so it was the folder that was deleted'. The root check only proves the root resolves, not the folder's ancestors or the folder itself. The file probe already treats a moved file the same way (VanishedBeforeProbe), so this follows existing practice, but for a folder its whole subtree drops out uncaptioned.",
+    "evidence": "Scratch probe (outside the tree), with TempTree a\\b, y\\w\\big.bin (4096), y\\one.txt (5) and Directory.Move(y, y-renamed) at y's AfterFolder. Output: `moved=True status=Completed foldersVanished=1 unreadable=0 files=1 bytes=5 w-still-exists=True big-still-exists=True vanishedBeforeProbe=1`. Code: Scanner.cs:411-417 (FolderVanished then GoneGivenRootOpen, root only).",
+    "file": "src/FsAnalyser.Core/Scanning/ScanResult.cs",
+    "line": 191,
+    "quote": {
+     "path": "src/FsAnalyser.Core/Scanning/ScanResult.cs",
+     "line": 191,
+     "text": "its parent gone too, no path, and the scan root still opened, so it was the folder that was deleted and not the path"
+    },
+    "fix": "A design decision, not a code bug: the open alone cannot tell a rename from a delete. The smallest honest change is wording. Make the note 'N folders were deleted or moved while the scan ran, before they could be read; they are counted as empty folders.', and have the FoldersVanished doc say the folder's path stopped resolving below a root that still opens (deleted or moved), not that it was deleted."
+   },
+   {
+    "id": "IN-m1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "claim": "The walk's gone-code rule misses the C# 9 pattern-combinator spellings of the codes. Its only switch pattern, `\\bcase\\s+[23]\\s*:`, needs the colon right after the digit, so `case 2 or 3:`, `case 3 or 2: return true;` and `case (2 or 3):` all pass. Nothing catches a switch-expression arm either: `error switch { 2 or 3 => true, _ => false }`, and `{ 2 => true, 3 => true, ... }` both pass. These are the likeliest next spellings in this codebase, which already writes `error is A or B` (SizeProbe.IsGone, and ListRoot at Scanner.cs:303). The build claimed this family closed with a 38-row corpus, and none of these is in it. I ran the patterns against each line: all five pass the rule.",
+    "class_of": "spellings of the gone codes the new text rules miss",
+    "threat": "accident",
+    "file": ".taad/fitness.yaml",
+    "line": 1516,
+    "evidence": ".taad/fitness.yaml:1514-1516, the walk rule's three patterns. tests/FsAnalyser.Core.Tests/GoneCodeSpellingsCorpus.json has only `case 2:` and `case 3:` rows. A run of the patterns in .NET regex gave False for all five lines above.",
+    "fix": "In the walk rule, replace `'\\bcase\\s+[23]\\s*:'` with `'\\bcase\\s+\\(?\\s*[23]\\b'` and add `'\\b[23]\\s*(?:or\\s+[23]\\s*)?=>'`. I checked both against Scanner.cs as it stands, comments included, and neither matches. Add these rows to GoneCodeSpellingsCorpus.json, all with fires: true: w-case-or `case 2 or 3:`, w-case-or-reversed `    case 3 or 2: return true;`, w-case-paren-or `case (2 or 3):`, w-switch-arm-or `bool gone = error switch { 2 or 3 => true, _ => false };`, w-switch-arm-each `return error switch { 2 => true, 3 => true, _ => false };`.",
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1516,
+     "text": "- '\\bcase\\s+[23]\\s*:'"
+    },
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/GoneCodePatternCombinatorSpellingTests.cs",
+     "body": "using System.Text.RegularExpressions;\n\nnamespace FsAnalyser.Core.Tests;\n\n/// <summary>\n/// SL-005 m1's class (spellings of the gone codes the new text rules miss): the C# 9 pattern-combinator spellings the walk's\n/// rule in .taad/fitness.yaml must also catch, a switch case and a switch-expression arm.\n/// </summary>\npublic class GoneCodePatternCombinatorSpellingTests\n{\n    [Theory]\n    [InlineData(\"case 2 or 3:\")]\n    [InlineData(\"    case 3 or 2: return true;\")]\n    [InlineData(\"case (2 or 3):\")]\n    [InlineData(\"bool gone = error switch { 2 or 3 => true, _ => false };\")]\n    [InlineData(\"return error switch { 2 => true, 3 => true, _ => false };\")]\n    public void TheWalkRuleCatchesTheCombinatorSpellingsOfTheGoneCodes(string line)\n    {\n        List<string> patterns = WalkRulePatterns();\n        Assert.True(patterns.Any(p => Regex.IsMatch(line, p)),\n            $\"the walk's gone-code rule ({string.Join(\" | \", patterns)}) does not fire on `{line}`\");\n    }\n\n    private static List<string> WalkRulePatterns()\n    {\n        string[] lines = File.ReadAllLines(Path.Combine(FailCriticalErrorsTests.FindRepo(), @\".taad\\fitness.yaml\"));\n        int name = Array.FindIndex(lines, l => l.TrimStart().StartsWith(\"- name:\", StringComparison.Ordinal)\n            && l.Contains(\"the walk calls a folder gone only through SizeProbe.IsGone\", StringComparison.Ordinal));\n        Assert.True(name >= 0, \"no walk gone-code rule in .taad/fitness.yaml\");\n        int must = Array.FindIndex(lines, name, l => l.Trim() == \"must_not_match:\");\n        Assert.True(must > name);\n        var patterns = new List<string>();\n        for (int i = must + 1; i < lines.Length && lines[i].TrimStart().StartsWith(\"- \", StringComparison.Ordinal)\n            && !lines[i].TrimStart().StartsWith(\"- name:\", StringComparison.Ordinal); i++)\n        {\n            string p = lines[i].TrimStart()[2..].Trim();\n            if (p.Length >= 2 && p[0] == '\\'' && p[^1] == '\\'')\n                p = p[1..^1].Replace(\"''\", \"'\");\n            patterns.Add(p);\n        }\n        Assert.NotEmpty(patterns);\n        return patterns;\n    }\n}\n",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~GoneCodePatternCombinatorSpellingTests"
+    }
+   },
+   {
+    "id": "IN-m2",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "extra",
+    "claim": "A queued folder that another program renames or moves while the scan runs fails its open with 2, exactly like a deleted one. The scan root still opens, so FolderDone counts it in FoldersVanished and stamps nothing. The ending then says the folder 'was deleted while the scan ran ... counted as an empty folder', and the 'may be missing' captions go. Its contents are still on the drive but are missing from the totals with no warning. Before SL-005 the same folder was an honest 'could not be opened' row. I measured this with a real Scanner.Scan on root\\{a, z\\inner\\f.txt (4,096 B)} and Directory.Move(z, moved) at AfterFolder n==1. The result was status Completed, foldersVanished 1, unreadable 0, files 0, bytes 0, while moved\\inner\\f.txt still existed. On a busy C:\\, tools that build a folder under a temporary name and rename it into place (installers, package managers, updaters) produce exactly this shape.",
+    "class_of": "gone codes for a folder that still exists under another name",
+    "threat": "accident",
+    "file": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+    "line": 411,
+    "end_line": 416,
+    "evidence": "Scanner.cs:411-416, the gone branch, which keys only on the open's code and the root open. FolderVanished (Scanner.cs:102) cannot tell a rename from a delete. The note wording is CoveragePanelText.cs:172-174.",
+    "fix": "Smallest change: word the note to match what the code can know, for example 'deleted or moved while the scan ran'. Fuller change: in the gone branch, when the listing gave the folder a FileId, try a guarded OpenFileById on the root's volume. If that opens, the folder still exists elsewhere, so keep it unreadable rather than counting it deleted.",
+    "quote": {
+     "path": "src/FsAnalyser.Core/Scanning/Scanner.cs",
+     "line": 411,
+     "text": "            if (FolderVanished(error, opened))"
+    }
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "I ran `eng/dotnet.ps1 test tests/bugs/SL-005-VanishedFolderNotUnreadable/SL-005-VanishedFolderNotUnreadable.Tests.csproj`: Passed 1, Failed 0. The fix is Scanner.cs:410-435, which gives no stamp when FolderVanished holds and the root opens."
+   },
+   {
+    "key": "O-002",
+    "discharged": "cannot-tell",
+    "evidence": "A person-run precondition owed to validate-slice. There is no SMB server, DFS, ReFS or FAT volume here. The root check (Scanner.cs:411-417) keeps a dropped share or removed letter unreadable when the root open fails. A DFS link whose target is down, inside a share whose root still opens, would still be counted as vanished, and that is unmeasured."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "VanishedFolderTests.cs:21-49 deletes z at n==1, so its open fails with 2. It asserts FoldersVanished 1, an empty Unreadable, progress.Unreadable 0, no flags, NotListed false and row Done. It passed in my run."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "VanishedFolderTests.cs:51-86 deletes y at its own AfterFolder, so w opens with 3. It asserts row y Done, failedKind null, UnreadableBelow 0, and no flag on w. The non-root path is Scanner.cs:453, FolderExited with failed null."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "VanishedFolderTests.cs:146-184 has a Deny(FILE_LIST_DIRECTORY) folder that stays at 5/NothingListed beside a deleted z (progress 1, row Unreadable). A separate ScanFailingPartway scan keeps its ListedPartway record."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "ScannerFailedKindTests.cs:48-65: 12 InlineData rows matching the design's truth table, each also checked against !opened && SizeProbe.IsGone. The predicate is at Scanner.cs:102."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "VanishedFolderTests.cs:186-197: RootUnreadable, RootError 2, FoldersVanished 0. ListRoot's error returns before FolderDone (Scanner.cs:219-225)."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "VanishedFolderTests.cs:36-45: count 1, ChildCount 0, not NotListed, Totals.Folders 3, z\\inner absent from the store."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "VanishedFolderTests.cs:88-113 cancels at z's own AfterFolder: Cancelled, FoldersVanished 1, Unreadable empty. Finish sets FoldersVanished for every status (Scanner.cs:647)."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "VanishedFolderTests.cs:115-140: FoldersVanished 1, VanishedBeforeProbe 1, ProbeFailures 0. The counters are separate fields (Scanner.cs:202, 591, 430)."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "CoveragePanelTextTests.cs:273-287 checks counts 1, 2, 3 and 1234: exact strings, ASCII, no backslash, no 'missing' or 'unreadable'. The wording is at CoveragePanelText.cs:172-174."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "tests/window/SL-005-VanishedFolders.Tests.ps1 Test-A (lines 186-209) runs a real report-mode run with z1..z3 deleted while queued. It checks foldersVanished 3, unreadable 0, the note word for word, both captions without 'missing' and the tab hidden. The verdict table (142-154) makes a missed deletion window INCONCLUSIVE. I ran Case C, 12 of 12 held. Cases A and B rest on the builder's run, because they open the app on the desktop."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "Test-ReportKeys (SL-005-VanishedFolders.Tests.ps1:176-182) checks schema 1 and every top-level and core key, foldersVanished included. Exit codes 2, 3 and 70 and the throw, missing-value and unwritable runs were left to the existing WindowCases and HookCases cases, as the critic on M2 prescribed. WindowReport's only change is the additive key (WindowReport.cs:266)."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "I ran `eng/dotnet.ps1 test FsAnalyser.slnx -- xUnit.MaxParallelThreads=2`: Passed 1346, Failed 0, Skipped 0."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "Scanner.cs:411-417 asks the root (RootOpenError, :464-470) only when FolderVanished holds. A Stop (io.LastCallAborted) returns before anything is committed. The opened handle is closed with io.Close. VanishedFolderTests covers a SUBST letter removed mid-scan (204-230: 3 unreadable, 0 vanished), a deleted scan root (236-249) and a Stop before and during the root check (255-285). SubstDrive.cs picks the letter and maps it under one static lock. VolumeLossCorpus.json has 18 rows run against both predicates."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "VanishedFolderTests carries the code-3 row and flag assertions (51-86) and both controls (146-184). The App side is tests/window/SL-005-VanishedFolders.Tests.ps1, listed as not-a-launcher at tests/window/AppArgumentCorpus.json:33."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": ".taad/fitness.yaml:1511-1538. The walk rule now catches `error == 2 || error == 3`, `is` forms with or without parentheses, other error names and `case 2:`. The reader rule's because names VanishedFolderTests. GoneCodeSpellingsCorpus.json is run by VanishedFolderCorpusTests against the live patterns. A further member, `case 2 or 3:` and switch arms, still gets through: see finding m1."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "VanishedFolderTests.AFolderDeletedWithItsSubfoldersCountsOnceAndIsAListedEmptyFolder deletes root child z after the root's listing, so z's open fails with 2. The SL-005 repro does the same and passed in my run."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "VanishedFolderTests.AFolderUnderADeletedParentIsGoneAndItsRowCountsNoUnreadableBelow deletes y at its own AfterFolder (CurrentFolder == y, guarded by Assert.True(deleted)), so y\\w opens with 3. It asserts row y's UnreadableBelow 0 and no flag on w."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "VanishedFolderTests.RefusedAndPartlyReadFoldersAreStillRecordedBesideADeletedOne: a TempTree.Deny(FILE_LIST_DIRECTORY) folder recorded as 5/NothingListed beside a deleted z, and a 2,000-file folder failed partway through TopLevelRowTextTests.ScanFailingPartway, recorded ListedPartway."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "ScannerFailedKindTests.FolderVanishedIsTrueOnlyForARefusedOpenThatFoundNoFolderOrNoPath: (2,f), (3,f) true; (2,t), (3,t), (0,f), (5,f), (32,f), (53,f), (87,t), (363,f), (1920,f) and (995,f) false."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "VanishedFolderTests.AMissingRootIsRootUnreadableAndCountsNoVanishedFolder scans tree.PathOf(\"nope\"): RootUnreadable, RootError 2, FoldersVanished 0."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "The same test as C-001 builds z\\inner\\f.txt and asserts count 1, ChildCount 0, NotListed false, Totals.Folders 3, and z\\inner absent."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "VanishedFolderTests.AStoppedScanCountsTheFoldersThatVanishedBeforeTheStop deletes z at n==1 and cancels at z's own AfterFolder: Cancelled, FoldersVanished 1, Unreadable empty."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "VanishedFolderTests.FilesAndFoldersThatVanishKeepTheirOwnCounts deletes y after its listing, so y\\g.txt vanishes before its probe and y\\w opens with 3: VanishedBeforeProbe 1, FoldersVanished 1, ProbeFailures 0."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "CoveragePanelTextTests.TheFoldersVanishedNoteCountsFoldersDeletedWhileTheScanRan covers 1, 2, 3 and 1234 with the exact strings, ASCII and no path characters."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "tests/window/SL-005-VanishedFolders.Tests.ps1 Test-A: the published app in report mode on a 50,201-folder tree, z1..z3 deleted on a timer while queued, nothing unreadable. It checks the note, captions, tab and core.unreadable 0. The verdict is gated on core.folders == base+3, so a missed window is INCONCLUSIVE, never a false pass. Case C ran here, 12 of 12 held. A and B are the builder's run."
+   },
+   {
+    "key": "C-011",
+    "exercised": "no",
+    "evidence": "The three-folder run checks core.foldersVanished 3 and every schema-1 key. The throw-mode, missing-value and unwritable-path runs, and exits 2 and 70, are not fed by this script. That narrowing was decided by the critic on the M2 fix, which left them to the existing WindowCases and HookCases cases. WindowReport's only change is one additive key, so the exit paths are untouched."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "Non-material: the (5,false) row of the FolderVanished theory pins a delete-pending 5 as not gone, as the design said. VolumeLossCorpus row folder-delete-pending agrees."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "Non-material: the (87,true) theory row and VolumeLossCorpus row folder-replaced-by-file keep a folder replaced by a file unreadable."
+   },
+   {
+    "key": "C-014",
+    "exercised": "yes",
+    "evidence": "Whole suite, run here: 1346 passed, 0 failed (FsAnalyser.slnx, xUnit.MaxParallelThreads=2)."
+   }
+  ],
+  "drift": [],
+  "matches_design": true,
+  "unreviewed": [
+   "src/FsAnalyser.App/CoveragePanelText.cs:1-162 -- only the SL-005 hunk (163-175) was read; the rest is unchanged by this slice",
+   "src/FsAnalyser.App/WindowReport.cs -- read through the diff hunks (57-60, 102-107, 263-266) and a Grep of its window keys, not whole",
+   "src/FsAnalyser.Core/Scanning/ScanResult.cs -- only the added FoldersVanished block (187-201) was read",
+   "tests/FsAnalyser.Core.Tests/ContainerLayerStoreTests.cs -- only the removed nested SubstDrive (847-883) was read; the rest is unchanged",
+   "tests/FsAnalyser.Core.Tests/ScannerFailedKindTests.cs:1-29,76-136 -- only the new theory and its neighbours (30-75) were read",
+   "tests/FsAnalyser.Core.Tests/CoveragePanelTextTests.cs:1-264 -- only the new test (265-300) was read",
+   "tests/bugs/SL-005-VanishedFolderNotUnreadable/VanishedFolderNotUnreadableTests.cs -- not opened; it is the engine's repro, which the build kept, and I ran it (passed)",
+   ".taad/fitness.yaml -- only the SL-005 entries (1506-1538) were read; Fitness op=check evaluated the whole file"
+  ],
+  "second_round": {
+   "run_id": 11378,
+   "filed": 2,
+   "reader": "inputs"
+  },
+  "reading_pass": {
+   "state": "none",
+   "why": [],
+   "lens": null,
+   "cut_off": false,
+   "cut_runs": {
+    "line": false,
+    "inputs": false,
+    "any": false
+   },
+   "run_id": null,
+   "session": null,
+   "resumed": null,
+   "asked": [],
+   "asked_hunks": 0,
+   "named": [
+    "tests/bugs/SL-005-VanishedFolderNotUnreadable/VanishedFolderNotUnreadableTests.cs"
+   ],
+   "before": {
+    "read_whole": 8,
+    "changed": 18,
+    "listed": 10
+   },
+   "filed": 0,
+   "read_after": 0,
+   "still_unread": []
+  },
+  "unread_measured": {
+   "measured": true,
+   "why": "",
+   "changed": 18,
+   "read_whole": 8,
+   "deleted": [],
+   "runs": [
+    11377,
+    11378
+   ],
+   "range": {
+    "base": "28d72d85344b12b82f0ec1479df71a6c20681a56",
+    "head": "5476e1ca960c0ac7ebc1eff1488eb415c66e57b2",
+    "source": "commits",
+    "hunk_base": "28d72d85344b12b82f0ec1479df71a6c20681a56",
+    "hunk_base_from": "the merge base with the integration branch"
+   },
+   "items": [
+    {
+     "path": "tests/bugs/SL-005-VanishedFolderNotUnreadable/VanishedFolderNotUnreadableTests.cs",
+     "state": "never-opened",
+     "section": null,
+     "reason": "no Read, Grep, shell read or graph result returned any of its lines; it was named only in 2 listings",
+     "size_lines": 88,
+     "hunks": [
+      {
+       "lines": [
+        1,
+        88
+       ],
+       "unseen": [
+        [
+         1,
+         88
+        ]
+       ],
+       "scope": {
+        "first": 1,
+        "last": 88,
+        "line": null,
+        "header": null
+       }
+      }
+     ]
+    },
+    {
+     "path": ".taad/fitness.yaml",
+     "state": "partly-opened",
+     "section": "lines 1-1489 of 1538",
+     "reason": "a Read returned only part of it; seen only as 1 Grep line; seen only through a shell command: $body, git diff; 1 returned line differ from the reviewed file (read before it changed)",
+     "size_lines": 1538,
+     "hunks": []
+    },
+    {
+     "path": "src/FsAnalyser.App/CoveragePanelText.cs",
+     "state": "partly-opened",
+     "section": "lines 1-149 of 175",
+     "reason": "a Read returned only part of it; seen only through a shell command: git diff; 1 returned line differ from the reviewed file (read before it changed)",
+     "size_lines": 175,
+     "hunks": []
+    },
+    {
+     "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+     "state": "partly-opened",
+     "section": "lines 1-619, 750-1099 of 1099",
+     "reason": "a Read returned only part of it; seen only through a shell command: git diff, git log",
+     "size_lines": 1099,
+     "hunks": []
+    },
+    {
+     "path": "src/FsAnalyser.App/WindowReport.cs",
+     "state": "partly-opened",
+     "section": "lines 1-473 of 473",
+     "reason": "seen only as 32 Grep lines; seen only through a shell command: git diff, git log",
+     "size_lines": 473,
+     "hunks": []
+    },
+    {
+     "path": "src/FsAnalyser.Core/Scanning/ScanResult.cs",
+     "state": "partly-opened",
+     "section": "lines 1-250 of 250",
+     "reason": "seen only through a shell command: git diff",
+     "size_lines": 250,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/ContainerLayerStoreTests.cs",
+     "state": "partly-opened",
+     "section": "lines 1-850 of 850",
+     "reason": "seen only through a shell command: git diff",
+     "size_lines": 850,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/CoveragePanelTextTests.cs",
+     "state": "partly-opened",
+     "section": "lines 1-264 of 300",
+     "reason": "a Read returned only part of it; seen only as 1 Grep line",
+     "size_lines": 300,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/ScannerFailedKindTests.cs",
+     "state": "partly-opened",
+     "section": "lines 1-29, 75-220 of 220",
+     "reason": "a Read returned only part of it",
+     "size_lines": 220,
+     "hunks": []
+    },
+    {
+     "path": "tests/window/AppArgumentCorpus.json",
+     "state": "partly-opened",
+     "section": "lines 1-38 of 38",
+     "reason": "seen only through a shell command: git diff",
+     "size_lines": 38,
+     "hunks": []
+    }
+   ],
+   "notes": []
+  }
+ }
+}

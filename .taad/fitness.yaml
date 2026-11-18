@@ -1506,3 +1506,33 @@ rules:
       and pruned, so the record owed since SL-107 was never kept. Window cases give no signal
       without an interactive desktop (lesson #261), so only a text rule catches a case pointed
       back there at gate time.'
+
+  # settled by SL-005
+  - name: the walk calls a folder gone only through SizeProbe.IsGone
+    files: src/FsAnalyser.Core/Scanning/Scanner.cs
+    must_not_match:
+    - \bERROR_(?:FILE|PATH)_NOT_FOUND\b
+    - '\b\w*(?:[Ee]rror|[Cc]ode|[Ee]rr|rc)\s*(?:==|!=|is(?:\s+not)?)\s*\(?\s*[23]\b'
+    - '\bcase\s+[23]\s*:'
+    because: The walk and the file probe must agree on what 'deleted during the scan' means.
+      A second spelling of the gone codes in the walk, the constants or a read error compared
+      with the literals 2 or 3 as in 'error == 2 || error == 3', can drift from SizeProbe.IsGone.
+      The ending's two notes (files deleted, folders deleted) would then count by different
+      rules, and a code added to one side would be silently missing from the other. The rule
+      reads comments too. Comments in Scanner.cs name the codes as SizeProbe.IsGone's codes
+      or as 'not found (2) / path not found (3)', and never spell a comparison of an error with
+      a number. tests/FsAnalyser.Core.Tests/GoneCodeSpellingsCorpus.json holds the spellings
+      this must catch and the lines it must leave alone, and VanishedFolderCorpusTests runs
+      them against this entry.
+  - name: the directory reader returns a failed open's code and never turns a gone folder into an empty listing
+    files: src/FsAnalyser.Core/Scanning/DirectoryReader.cs
+    must_not_match:
+    - \bIsGone\s*\(
+    - \bERROR_PATH_NOT_FOUND\b
+    because: If the reader answers 0 for an open that found nothing, a vanished folder cannot
+      be told from an empty one. FolderDone then cannot count it, and core.foldersVanished and
+      the ending's note read 0. The reader's own use of the first-page not found, in List, is
+      a listing on an open handle and stays. The behavioural guard in the default suite is
+      the FoldersVanished assertions of VanishedFolderTests, which fail if the reader swallows
+      the open's code 2 or 3, whatever it is spelled as; this rule only catches the two
+      spellings that would be written first.

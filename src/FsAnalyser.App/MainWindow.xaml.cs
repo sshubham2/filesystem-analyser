@@ -663,6 +663,8 @@ public partial class MainWindow : Window
             notes.Add(CoveragePanelText.ProbeFailuresNote(result.ProbeFailures));
         if (result.VanishedBeforeProbe > 0)
             notes.Add(CoveragePanelText.VanishedNote(result.VanishedBeforeProbe));
+        if (result.FoldersVanished > 0)
+            notes.Add(CoveragePanelText.FoldersVanishedNote(result.FoldersVanished));
         // Beside the totals they are missing from: what was left out on purpose, and why (SL-095).
         IReadOnlyList<NotScannedRow> notScanned = UnreadableRows.NotScanned(result.SkippedStores, result.Store.GetPath);
         foreach (NotScannedRow row in notScanned)
