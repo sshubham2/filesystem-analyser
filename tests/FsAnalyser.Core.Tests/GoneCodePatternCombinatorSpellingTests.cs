@@ -3,8 +3,9 @@ using System.Text.RegularExpressions;
 namespace FsAnalyser.Core.Tests;
 
 /// <summary>
-/// SL-005 m1's class (spellings of the gone codes the new text rules miss): the C# 9 pattern-combinator spellings the walk's
-/// rule in .taad/fitness.yaml must also catch, a switch case and a switch-expression arm.
+/// SL-005 m1's class (spellings of the gone codes the new text rules miss): the switch-case and switch-expression-arm
+/// spellings the walk's rule in .taad/fitness.yaml must also catch, the C# 9 pattern combinators ('2 or 3') and an arm for
+/// each code ('2 => ..., 3 => ...'). The patterns are read from the file, the rule the Fitness gate runs.
 /// </summary>
 public class GoneCodePatternCombinatorSpellingTests
 {

@@ -86,9 +86,10 @@ public class VanishedFolderCorpusTests
     }
 
     /// <summary>
-    /// What no text rule can hold: the walk's own predicate is SizeProbe.IsGone's for every code, so a third code added to one
-    /// and not the other, spelled however it is spelled, fails here. 0 to 2000 covers every Win32 error the open can return
-    /// and the NT-status-mapped codes beside them.
+    /// What no text rule can hold: the walk's own predicate (Scanner.FolderVanished) answers as SizeProbe.IsGone does for
+    /// every code of a failed open, so a code the walk comes to accept beside IsGone's two, spelled however it is spelled,
+    /// fails here; and a folder whose open returned a handle is never gone, whatever the code. The sweep runs the codes 0 to
+    /// 2000, which covers every Win32 error the open can return and the NT-status-mapped codes beside them.
     /// </summary>
     [Fact]
     public void TheWalksPredicateAgreesWithSizeProbeIsGoneForEveryCode()
