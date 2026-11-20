@@ -1,0 +1,635 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-008",
+ "stage": "design-slice",
+ "attempt": 1,
+ "at": "2026-11-20T07:46:49.258Z",
+ "head": "a805368de1910f4bda8774e5acea5a04f033fc84",
+ "run_id": 11489,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "reason": "One proposal (practice), selected as the core after its claims were checked against the tree. Five seams were changed (see coherence_check). Retiered to medium: this is the product's first path that asks Windows for elevation, and it adds keys to the schema-1 report that other code reads.",
+  "selection_rationale": "Only one proposal was made, so the only selection was the one against reality. Checked against the tree, it fits how the code is already shaped:\n- VolumeSpace.IsDriveRoot is internal, so the App has to restate the X:\\ shape through the public LongPath.ToDisplay.\n- Kernel32 is internal and OpenRootForQuery is private, so the GLOBAL?? open has to live in Kernel32.cs behind a public facade. Monitors and ShellReveal are already public types in Core.Native, and MainWindow.xaml.cs already imports FsAnalyser.Core.Native.\n- The elevated copy needs nothing new to start. App.OnStartup → MainWindow(root) → OnLoaded → StartScan already scans a root given at launch. CommandLine.Arguments returns an argv with no quote unchanged, so App.xaml.cs is not edited and report mode cannot be reached.\n- WindowReport already reads controls and never rebuilds them from Core, so 'offered' is read from the button.\n- The pure-App-file-linked-into-Core.Tests pattern (CoveragePanelText.cs, DriveReads.cs, ReportFile.cs) is where the planted E005 tests expect RescanAsAdministrator.cs to be.\n\nThe spikes settle the hardest choice. subst-letter-invisible-to-linked-elevated-token came back no-go: a letter defined under the limited token does not resolve under the linked full token. global-dos-namespace-separates-local-letters came back go on this PC: C: and D: open through \\\\?\\GLOBALROOT\\GLOBAL??\\X:\\, while a SUBST letter and mapped Z: fail with error 3 in under 4 ms. So the offer is gated on that open, and nothing else was invented for it.\n\nThe proposal's own over_engineering_flag is honoured. There is no elevated helper or IPC, no merging into the open scan, no shield icon, no background STA thread and no SeBackupPrivilege. Its one piece of extra machinery, the GLOBAL?? check, exists because of a measured no-go.\n\nWhat I changed from the proposal:\n1. Start takes a nullable exe path and returns a not-started line without calling Windows. The proposal had MainWindow invent a refused line with no code.\n2. The probe has an internal overload with the drive-type and namespace readers injected, as VolumeSpace.Start takes its reader. That way 'a network letter is never opened' and 'a throwing reader gives null' are tested without touching Z:\\ (lessons #878 and #879).\n3. The probe runs only for a Completed scan with at least one unreadable folder in a copy that is not elevated, so a finished scan with nothing to offer costs no I/O.\n4. A positive exe-level check is added. Every planted exe-level check is a negative, so a report that always writes offered=false would pass them all.",
+  "components": [
+   {
+    "name": "RescanAsAdministrator (pure App file, linked into Core.Tests)",
+    "lives_at": "src/FsAnalyser.App/RescanAsAdministrator.cs",
+    "responsibility": "A static class in namespace FsAnalyser.App with no WPF in it. It holds the offer decision, the start, the probe and the wording.\n(1) Offers(ScanStatus status, string root, int unreadableFolders, DriveType? driveType, bool elevated) returns true only when all of these hold: status == Completed; !elevated; unreadableFolders > 0; driveType is Fixed or Removable; and LongPath.ToDisplay(root) has the drive-root shape (three characters: an ASCII letter, ':' and '\\'). A null or empty root gives false. The shape is the same one VolumeSpace.IsDriveRoot checks; it is restated here because that one is internal to Core.\n(2) Start(string? exePath, string root, Func<ProcessStartInfo, Process?> start):\n- A null or empty exePath returns NoProgramLine without calling start.\n- Otherwise it builds ProcessStartInfo(exePath) with UseShellExecute = true and Verb = \"runas\". Arguments is the root alone, in quotes, with its trailing backslashes doubled. ArgumentList stays empty, and --report is never added.\n- It calls start exactly once and disposes any Process it gets back.\n- It returns null when Windows took the request, DeclinedLine for a Win32Exception with NativeErrorCode 1223, and RefusedLine(code) for any other Win32Exception. Other exceptions propagate.\n(3) DriveTypeAnElevatedCopySees(string root) calls the internal overload DriveTypeAnElevatedCopySees(root, Func<string, DriveType> typeOf, Func<char, bool> holdsLetter) with typeOf = r => new DriveInfo(r).DriveType and holdsLetter = GlobalDosDevices.HoldsDriveLetter.\n- It returns null, with no I/O, when the root does not have the drive-root shape.\n- It returns typeOf's answer as it is when that is neither Fixed nor Removable; holdsLetter is never called then.\n- For Fixed or Removable it returns the type only when holdsLetter(letter) is true, and null otherwise.\n- IOException, UnauthorizedAccessException and ArgumentException give null.\n(4) The wording, as ASCII constants with no path in them:\n- the button text 'Rescan as administrator';\n- its tooltip 'Starts this app again as administrator, after the Windows prompt, to scan this drive again with the rights to read folders this scan could not';\n- DeclinedLine 'The rescan as administrator was not started: the Windows prompt was declined.';\n- RefusedLine(code) 'The rescan as administrator was not started: Windows did not start it (error N).';\n- NoProgramLine 'The rescan as administrator was not started: the app could not find its own program file.';\n- StartedLine 'A copy running as administrator was started; it scans this drive again in its own window.'",
+    "key_interactions": "MainWindow calls three things: the probe on the scan's LongRunning task, Offers in ShowOutcome, and Start from the button's Click with Environment.ProcessPath and the Process.Start method group. Compiled into FsAnalyser.Core.Tests by <Compile Include Link>, so the planted E005RescanOfferTests, E005RescanStartTests and E005RescanDeclinedTests compile against it."
+   },
+   {
+    "name": "GlobalDosDevices (public Core.Native facade) + Kernel32.OpensThroughGlobalDosDevices",
+    "lives_at": "src/FsAnalyser.Core/Native/GlobalDosDevices.cs",
+    "responsibility": "public static class GlobalDosDevices { public static bool HoldsDriveLetter(char letter) }. It returns false for anything that is not an ASCII letter. Otherwise it upper-cases the letter and returns Kernel32.OpensThroughGlobalDosDevices(letter).\nThat new internal method in src/FsAnalyser.Core/Native/Kernel32.cs:\n- begins a CriticalErrorBoxOff;\n- calls the existing private OpenRootForQuery on \\\\?\\GLOBALROOT\\GLOBAL??\\X:\\ (FILE_READ_ATTRIBUTES, FILE_SHARE_ALL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, exactly the spike's open);\n- returns !handle.IsInvalid and disposes the handle.\nIt makes no new call by a Win32 path entry-point name, so FailCriticalErrorsTests' expected list is unchanged. OpenRootForQuery's doc comment is widened to name this third caller. GlobalDosDevices.cs names no entry point of PathOpensGoOnlyThroughTheGuardedOpen, in code or in comments, because that rule matches comments.",
+    "key_interactions": "Called only through RescanAsAdministrator's probe, and only for a letter whose DriveType is already Fixed or Removable, so it never opens a network letter. Measured on this PC: C: and D: open in under 3 ms; a SUBST letter and mapped Z: fail with error 3 in under 4 ms without reaching the server."
+   },
+   {
+    "name": "MainWindow: the offer on the ending",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "responsibility": "StartScan: beside the other Hide* resets, collapse RescanAsAdministratorButton and re-enable it, and clear and collapse RescanStatus.\nThe Task.Factory.StartNew lambda returns (ScanResult, DriveType?). The DriveType? is RescanAsAdministrator.DriveTypeAnElevatedCopySees(result.Root) when the result is Completed, Unreadable.Count > 0 and !Environment.IsPrivilegedProcess, and null otherwise. It is computed on that same LongRunning task, never on the UI thread.\nShowOutcome takes the DriveType? as a parameter. After the unreadable rows are built, and before ShowVolumeInUse, it sets RescanAsAdministratorButton.Visibility from Offers(result.Status, result.Root, result.Unreadable.Count, driveType, Environment.IsPrivilegedProcess). The RootUnreadable and Refused early returns and both ShowProblem paths leave the button collapsed.\nOnRescanAsAdministrator, the Click handler:\n- reads LastResult.Root;\n- calls RescanAsAdministrator.Start(Environment.ProcessPath, root, Process.Start) on the UI thread;\n- on null, disables the button and shows StartedLine;\n- on a line, leaves the button enabled and shows that line. Nothing else in the window changes.\nNothing here names the report (existing fitness rule).",
+    "key_interactions": "Reads ScanResult.Status, Root and Unreadable.Count. Writes two controls, which WindowReport reads."
+   },
+   {
+    "name": "MainWindow.xaml: the button and its status line on the pickers' line",
+    "lives_at": "src/FsAnalyser.App/MainWindow.xaml",
+    "responsibility": "The unnamed horizontal StackPanel holding ChooseFolderButton and SettingsButton becomes a DockPanel (LastChildFill, same Margin 0,8,0,0). Its children, in order:\n- ChooseFolderButton, Dock Left;\n- SettingsButton, Dock Left;\n- the new RescanAsAdministratorButton: Dock Left, Padding 12,6, Margin 8,0,0,0, Collapsed, Click=OnRescanAsAdministrator, with the tooltip constant;\n- the new RescanStatus TextBlock, last: NoWrap, CharacterEllipsis, ToolTip bound to its own Text, VerticalAlignment Center, Margin 8,0,0,0, Collapsed.\nThe line stays one button tall, so PickerPanel's height and the minimum-size budget below it do not move. Nothing goes into OutcomeTexts (76 px cap, lessons #874 and #904), into a new row, or into the bottom dock.",
+    "key_interactions": "The x:Names RescanAsAdministratorButton and RescanStatus are new. No existing x:Name is renamed or moved."
+   },
+   {
+    "name": "WindowReport: additive schema-1 keys",
+    "lives_at": "src/FsAnalyser.App/WindowReport.cs",
+    "responsibility": "Adds a top-level \"rescanAsAdministrator\" = { offered = window.RescanAsAdministratorButton.IsVisible }, written on every ending and never null. Adds under \"window\" the key RescanAsAdministratorButton = { visible, enabled, inView }, read with the existing InView helper. No text is built and no path is added. The remarks gain an additive SL-008 paragraph.",
+    "key_interactions": "Read by the planted E005-2 script and the builder's local-drive script. Existing readers do subset checks (SL-005-VanishedFolders TopKeys), so no reader breaks."
+   },
+   {
+    "name": "Core.Tests link and the builder's unit tests",
+    "lives_at": "tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+    "responsibility": "Adds <Compile Include=\"..\\..\\src\\FsAnalyser.App\\RescanAsAdministrator.cs\" Link=\"Linked\\RescanAsAdministrator.cs\" />.\nAdds tests/FsAnalyser.Core.Tests/RescanAsAdministratorProbeTests.cs:\n- HoldsDriveLetter is true for the system drive's letter, and false for a SUBST letter made with the shared SubstDrive helper.\n- DriveTypeAnElevatedCopySees gives Fixed for the system drive, and null for that SUBST letter, a folder path and a UNC path.\n- With an injected typeOf returning Network, CDRom, Ram or NoRootDirectory, the overload returns that type and holdsLetter is never called.\n- An injected typeOf that throws IOException, UnauthorizedAccessException or ArgumentException gives null.\nAdds tests/FsAnalyser.Core.Tests/RescanAsAdministratorStartTests.cs:\n- For every root A:\\ to Z:\\ and a:\\ to z:\\, with an exe path holding spaces, the CommandLineToArgvW split of Arguments is exactly [root], ArgumentList is empty, and FileName is the exe.\n- Win32Exception codes 2, 5 and 1155 give a line that matches 'not ... started', is ASCII, and holds neither the exe path nor the root.\n- A null or empty exePath gives NoProgramLine and start is never called.\nNo test touches Z:\\ or any network letter. No new Trait is added.",
+    "key_interactions": "Default suite. The FsaDefaultTestFilter and OptInTraitTests contract is untouched."
+   },
+   {
+    "name": "Local-drive report check (builder's window script)",
+    "lives_at": "tests/window/SL-008-RescanOfferOnALocalDrive.Tests.ps1",
+    "responsibility": "The one unattended positive check at the exe level.\nIt publishes the app as the E005 scripts do and picks the ready Fixed drive with the least used space that `subst` does not list. It runs report mode on that X:\\ with a 3600 s bound, then one folder scan of a small tree, for comparison. Its scratch lives under %LOCALAPPDATA%\\Temp (lesson #360).\nEnding table:\n- PASSED, exit 0: outcome completed, core.unreadable >= 1, rescanAsAdministrator.offered true, window.RescanAsAdministratorButton visible and inView, and window.PickerPanel.actualHeight equal to the folder-scan report's.\n- FAILED, exit 1: completed and unreadable >= 1 with offered false; offered true with unreadable 0; or a PickerPanel height that differs.\n- INCONCLUSIVE, exit 2: no qualifying drive, TIMEOUT, no report, an outcome other than completed, or unreadable 0.",
+    "key_interactions": "If its text matches FsAnalyser\\.App\\.exe, Start-App or Invoke-App, it gets a producers row in tests/window/AppArgumentCorpus.json (AppArgumentTests)."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "RescanAsAdministrator.Offers(ScanStatus status, string root, int unreadableFolders, DriveType? driveType, bool elevated) -> bool",
+    "kind": "function",
+    "error_cases": "Never throws. A null or empty root, or any shape other than X:\\ in display form, gives false. A null driveType gives false; that is how the window says either 'not a drive root' or 'a letter an elevated copy would not see'.",
+    "notes": "Pure, with no I/O. Pinned by the planted E005RescanOfferTests."
+   },
+   {
+    "name": "RescanAsAdministrator.Start(string? exePath, string root, Func<ProcessStartInfo, Process?> start) -> string?",
+    "kind": "function",
+    "auth_model": "The 'runas' verb with UseShellExecute is the only way the app ever asks for elevation, and only from the button's Click (architecture rule 1).",
+    "error_cases": "Null means Windows took the request. DeclinedLine for Win32Exception 1223 (ERROR_CANCELLED, the prompt was declined). RefusedLine(code) for any other Win32Exception. NoProgramLine for a null or empty exePath, without calling start. It calls start at most once, never retries, and lets non-Win32 exceptions propagate.",
+    "notes": "Arguments is the quoted root alone, with its trailing backslashes doubled. --report never appears. Pinned by the planted E005RescanStartTests and E005RescanDeclinedTests, and by the builder's RescanAsAdministratorStartTests."
+   },
+   {
+    "name": "RescanAsAdministrator.DriveTypeAnElevatedCopySees(string root) -> DriveType? (plus an internal overload with injected typeOf and holdsLetter)",
+    "kind": "function",
+    "error_cases": "Null when the root is not a drive root; when the letter is Fixed or Removable but not in GLOBAL?? (a SUBST letter, or a device letter that only this session has); or when typeOf threw an IO, access or argument exception. Other types are returned as they are, without opening anything, and Offers refuses them.",
+    "notes": "Runs only on the scan's LongRunning task, after a Completed scan with unread folders, in a copy that is not elevated."
+   },
+   {
+    "name": "GlobalDosDevices.HoldsDriveLetter(char letter) -> bool",
+    "kind": "function",
+    "error_cases": "False for a non-letter and for any failed open: error 3 for a letter not in GLOBAL??, error 21 for a removable drive with no media. The critical-error box is off throughout.",
+    "notes": "A new public type in FsAnalyser.Core.Native, additive to Core's API. The open is Kernel32's existing OpenRootForQuery."
+   },
+   {
+    "name": "Elevated relaunch command line: <same exe> \"X:\\\\\"",
+    "kind": "cli",
+    "auth_model": "UAC consent, or credentials for a standard account, on the secure desktop. The new copy has the full token, so Environment.IsPrivilegedProcess is true there and it makes no offer of its own.",
+    "error_cases": "A declined prompt starts nothing (1223). The started copy treats its single argument like any launch with a path: CommandLine.Arguments returns a quote-free argv unchanged, and RootArgument leaves X:\\ as it is.",
+    "notes": "Both ends are the same exe, so this is not a cross-version contract. Report mode is never reached this way."
+   },
+   {
+    "name": "Report schema 1, additive: \"rescanAsAdministrator\": { \"offered\": bool }, and window \"RescanAsAdministratorButton\": { \"visible\", \"enabled\", \"inView\" }",
+    "kind": "cli",
+    "error_cases": "Present on every ending that writes a report: completed, cancelled, root-unreadable, refused, Could not read and Scan failed. offered is false on every ending but an offered one.",
+    "notes": "No schema bump. Read from the button, never rebuilt from Core. ASCII, with no path (Q-016). Once read, a key is never renamed."
+   },
+   {
+    "name": "RescanAsAdministratorButton and RescanStatus",
+    "kind": "ui",
+    "error_cases": "Declined or refused: the button stays enabled and RescanStatus shows the not-started line; nothing else changes. Started: the button is disabled, RescanStatus shows StartedLine, and the original window keeps its ending.",
+    "notes": "On the pickers' line. Collapsed at every scan start. Visible only when ShowOutcome finds Offers true."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Elevate by starting the same exe again with the 'runas' verb and the root as its only argument, in a window of its own. No elevated helper, no IPC, and no merging into the open scan.",
+    "reversibility": "cheap",
+    "rationale": "Finish line 3 asks for exactly this. The launch-with-a-path route (App.OnStartup → MainWindow(root) → OnLoaded → StartScan) is reused unchanged, so App.xaml.cs is not edited, the guard from lesson #913 is not in play, and report mode cannot be reached. A merge would need a cross-process channel and a way to reconcile two stores, for a gain the epic does not ask for."
+   },
+   {
+    "decision": "Offer only for drive letters in the global DOS-device namespace. A Fixed or Removable letter that is not there (a SUBST letter, or a device letter only this session has) reaches Offers as driveType null, so there is no offer. This is not a workaround setting.",
+    "reversibility": "cheap",
+    "rationale": "The subst spike measured a no-go: a letter defined under the limited token does not resolve under the linked full token (errors 2 and 3). The GLOBAL?? spike measured the separator on this PC. Handing over the SUBST target folder was rejected: the elevated copy would then scan a folder, not the same root, and its ending would describe a different scan. Per-logon-session device maps are how Windows is designed, not a defect outside the project, so the one-checkbox-per-outside-defect rule does not apply: turning this off would only offer a rescan that ends 'Could not read'."
+   },
+   {
+    "decision": "The trigger is ScanResult.Unreadable.Count > 0, whatever each folder's error code.",
+    "reversibility": "cheap",
+    "rationale": "The person-approved finish line says 'recorded at least one unreadable folder'. Since SL-005, folders deleted mid-scan are no longer counted there. A drive whose only unread folders failed for reasons elevation does not fix (cloud 362/363, in use 32) still gets the offer. Narrowing to access-denied codes would be a one-line change in Offers if anyone sees that happen."
+   },
+   {
+    "decision": "Run the probe (GetDriveTypeW, then the GLOBAL?? open) on the scan's own LongRunning task, only after a Completed scan with unread folders in a copy that is not elevated, and hand the answer to ShowOutcome. The probe is total, and its readers can be injected.",
+    "reversibility": "cheap",
+    "rationale": "Lesson #878: nothing that opens a root runs on the UI thread. The answer exists before ShowOutcome, so the offer is set before EndingShown and the report sees it. A probe failure can never turn a finished scan into 'Scan failed'. The injected readers, the shape VolumeSpace.Start already uses, let the network and throwing cases be tested without Z:\\."
+   },
+   {
+    "decision": "The button and a one-line status go on the pickers' line, which becomes a DockPanel: not in OutcomeTexts, not in a new row, not in the bottom dock.",
+    "reversibility": "cheap",
+    "rationale": "OutcomeTexts is capped at 76 px, so anything new there is below the fold on a real C:\\ (lessons #874 and #904, Q-002 open). The MinHeight budgets below the pickers were already spent on RevealStatus. The pickers' line is always in view and stays one button tall. The price is that RescanStatus is trimmed, with a tooltip, at the 560 px minimum width."
+   },
+   {
+    "decision": "Report: a top-level \"rescanAsAdministrator\": { \"offered\" } read from RescanAsAdministratorButton.IsVisible, plus a window key RescanAsAdministratorButton { visible, enabled, inView }. Both are additive under schema 1.",
+    "reversibility": "expensive",
+    "rationale": "The key name and shape come from the planted E005-2 script, and readers parse the report. It is additive and allowed under schema 1, so it is not irreversible (lesson #906), but once read it cannot be renamed. Reading it from the button follows the existing 'reads the window, never rebuilds it from Core' rule."
+   },
+   {
+    "decision": "Decide 'already elevated' with Environment.IsPrivilegedProcess, with no new P/Invoke, and call Process.Start for runas on the UI thread from the Click handler.",
+    "reversibility": "cheap",
+    "rationale": "The survey measured the API returning False in an unelevated shell. ShellExecuteEx holds the calling thread while the consent prompt is up, and the secure desktop covers the window anyway. A background STA thread would add context posting on a path no loop can drive."
+   },
+   {
+    "decision": "The window that started the rescan keeps its ending. After a successful start its button is disabled and the started line is shown. A declined or refused start changes nothing but the status line, and the button stays enabled.",
+    "reversibility": "cheap",
+    "rationale": "Finish line 4 requires 'leaves the window as it was' on a decline. Keeping the original window lets the person compare the two Unreadable tabs, which is what line 6 checks. Disabling the button stops a double press from starting two elevated scans. The cost: while both windows are open, two scan stores sit in memory. The survey saw 4.11 GB free; the person can close either window."
+   },
+   {
+    "decision": "The elevated copy does not enable SeBackupPrivilege. It scans with the elevated token's ordinary rights.",
+    "reversibility": "cheap",
+    "rationale": "The epic's goal, other accounts' profiles, is reachable through the Administrators ACLs. The proxy spike recovered 72 of 78 folders with 0 newly failed, and left a residue of 6 SYSTEM-only folders. The sebackup spike did recover that residue, but probe failures rose from 9 to 33 for a cause nobody measured, and the privilege bypasses ACLs throughout Core's open path."
+   },
+   {
+    "decision": "The positive report wiring is checked by one report-mode scan of a real local fixed drive (the builder's SL-008 script), with an INCONCLUSIVE ending when no drive qualifies or the scan does not finish.",
+    "reversibility": "cheap",
+    "rationale": "Every planted exe-level check is a negative, so a report that always writes offered=false would pass them all. A SUBST letter cannot stand in, because this design refuses it. The only unattended positive is a global letter. Every NTFS volume's System Volume Information is refused to an unelevated token (measured on C:\\), so unreadable >= 1 is expected."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal, taken as the core. Five seams were changed: a nullable exe path in Start, injected probe readers, a probe gate that does no I/O on scans with nothing to offer, a positive exe-level report check, and a retier to medium. Its over_engineering_flag was honoured, not overridden."
+   }
+  ],
+  "coherence_check": "One proposal, so there is no composition to check. Nothing here has yet survived a disagreement, and the reviewer is the first to argue with it.\n\nWithin the one proposal and my changes, I checked these invariants:\n1. Timing against the report. The probe runs on the scan task before ShowOutcome, and ShowOutcome sets the button before ShowVolumeInUse/AddVolumeInUse raises EndingShown. WriteAsync runs after EndingShown and a Loaded-priority yield, so the report sees the decided button. The probe never touches VolumeUsed, so neither 'nothing waits on the volume figure' rule is crossed.\n2. Report rules. 'offered' is read from the control, never rebuilt from Core (SL-023 rule). MainWindow never names WindowReport and adds no 'if (... report' line (SL-023 rule).\n3. The linked file. RescanAsAdministrator.cs is compiled into Core.Tests, so it uses only System.*, FsAnalyser.Core.Scanning and FsAnalyser.Core.Native: no WPF. Its Func and reader parameters carry none of the FSA_HOOK_ or DOTNET_STARTUP_HOOKS spellings the 'no test seam' rule bans.\n4. Interop. The new open lives in Kernel32.cs, which the guarded-open and cancel-guard rules except. It reuses OpenRootForQuery, so FailCriticalErrorsTests' count is unchanged. GlobalDosDevices.cs has no import, which is the InteropLivesOnlyInNative rule.\n5. Who owns the button. StartScan collapses and re-enables it, ShowOutcome alone shows it, and the Click handler alone disables it. Only one writer per state transition, and every new scan resets it.\n6. Error contracts. Start and the probe never throw for Windows' refusals. Only non-Win32 exceptions from Start propagate, which are bugs, as elsewhere in the App.\n7. The trigger's source. Since SL-005, Unreadable excludes vanished folders, so the trigger and the Unreadable tab count the same thing.\n\nSeams I redesigned:\n- The proposal's 'ProcessPath null → MainWindow shows the refused line' had no code to show; that branch moved into Start as NoProgramLine.\n- The probe's reachability of Z:\\\\ was only arguable from the code's order; it is now a tested property, through the injected reader.\n\nKnown limits, recorded rather than built:\n- Editing MainWindow.xaml(.cs) and Core.Native makes the person's network, C:\\\\ and OneDrive proof runs stale. The project's order already puts those runs after the started items.\n- With UAC off, a standard account's runas may start a copy that is still not elevated, and that copy would offer again. Nothing was measured; this PC has EnableLUA=1.\n\nTwo architecture rules are written. Both pin the never-elevates-by-itself non-goal, which only the person can check end to end.",
+  "architecture_rules": [
+   {
+    "name": "only the rescan button's file asks Windows for elevation",
+    "files": "src/**/*.cs",
+    "except_files": [
+     "src/FsAnalyser.App/RescanAsAdministrator.cs"
+    ],
+    "must_not_match": [
+     "(?m)(?i)\\brunas\\b",
+     "(?m)\\blpVerb\\b",
+     "(?m)\\bVerb\\s*=[^=]"
+    ],
+    "because": "Non-goal 353: the app never elevates by itself, and the one guarded path is the button's Click through RescanAsAdministrator.Start. A verb set or 'runas' spelled anywhere else can raise a UAC prompt from a scan start, a launch or report mode. E005-5 watches only the first seconds of a start, so a prompt raised later, or in an unattended report-mode run, would pass every test and wait on a person for ever. The survey's grep found no runas or Verb in src, so the rule fires only on a defect."
+   },
+   {
+    "name": "the app never asks for elevation at start",
+    "files": "src/FsAnalyser.App/**",
+    "must_not_match": [
+     "(?m)(?i)\\b(requireAdministrator|highestAvailable)\\b"
+    ],
+    "because": "Finish line 5: the app starts at the invoker's level, and the default asInvoker manifest applies because FsAnalyser.App.csproj names no ApplicationManifest. A manifest level of requireAdministrator or highestAvailable would make every start prompt, report mode included. An unattended report-mode run would then fail with 740 or block on the secure desktop. E005-5 is the behavioural guard, but it needs a published exe and a desktop; this one fails at every gate."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "decide whether an ending offers 'Rescan as administrator'",
+    "shape": "a finished scan of a fixed or removable X:\\ (either letter case) that recorded at least one unreadable folder, in a copy that is not elevated",
+    "why": "The one branch that shows the button. If the shape test or the type test is wrong, the offer never appears where the epic is for.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.E005RescanOfferTests -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "decide whether an ending offers 'Rescan as administrator'",
+    "shape": "the scan did not finish: stopped (Cancelled), root unreadable, or refused before it started",
+    "why": "A stopped scan's unread count is partial, and a refused or unreadable root has nothing to rescan. ShowOutcome's early returns must leave the button collapsed. E005-2 also covers the stopped and root-unreadable endings at exe level.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.E005RescanOfferTests -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "decide whether an ending offers 'Rescan as administrator', and the report says so",
+    "shape": "the root is not a drive letter: a folder (with or without a trailing backslash), or a UNC share in its \\\\server and \\\\?\\UNC\\ spellings",
+    "why": "The display-form shape test is the only thing between a folder scan and the offer. An extended UNC path must not pass as a drive root. The report key must be present and false on these endings.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E005-2-NoRescanOfferAndTheReportSaysSo.Tests.ps1",
+    "material": true
+   },
+   {
+    "behaviour": "decide whether an ending offers 'Rescan as administrator', and the report says so",
+    "shape": "a finished scan of a whole drive that read every folder (unreadable 0)",
+    "why": "An offer with nothing unread promises a gain that cannot come. The gate is unreadableFolders > 0, after SL-005's vanished-folder exclusion.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E005-2-NoRescanOfferAndTheReportSaysSo.Tests.ps1",
+    "material": true
+   },
+   {
+    "behaviour": "probe what an elevated copy would see of the scanned letter",
+    "shape": "a network or mapped letter, or a type neither Fixed nor Removable (CDRom, Ram, NoRootDirectory, Unknown)",
+    "why": "An elevated copy cannot see the limited session's mapped letters. The probe must return the type without calling the namespace open, so no network letter is ever opened from the scan task (lesson #878). The test uses an injected typeOf and never touches Z:\\.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.RescanAsAdministratorProbeTests -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "probe what an elevated copy would see of the scanned letter",
+    "shape": "a letter in the global DOS-device namespace (the system drive) against one only this session holds (a SUBST letter made with SubstDrive)",
+    "why": "The subst spike's no-go: a SUBST letter reads as Fixed and passes IsDriveRoot, but the elevated copy cannot open it. The GLOBAL?? open must say true for C: and false for the SUBST letter, or the offer either vanishes everywhere or starts a rescan that ends 'Could not read'.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.RescanAsAdministratorProbeTests -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "probe what an elevated copy would see of the scanned letter",
+    "shape": "the drive-type read throws IOException, UnauthorizedAccessException or ArgumentException",
+    "why": "The probe runs inside the scan task's lambda. An escaped exception lands in StartScan's catch-all and turns a finished scan into 'Scan failed'.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.RescanAsAdministratorProbeTests -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "decide whether an ending offers 'Rescan as administrator'",
+    "shape": "the copy is already running elevated",
+    "why": "Without the elevated gate, the elevated copy offers itself again on its own SYSTEM-only residue, and each press starts another elevated copy.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.E005RescanOfferTests -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "press 'Rescan as administrator'",
+    "shape": "every root A:\\ to Z:\\ and a:\\ to z:\\, with an exe path that holds spaces",
+    "why": "Quoting is SL-007's bug class. A single backslash before the closing quote makes argv[0] 'X:\"', and an unquoted path with spaces splits. The split of Arguments must be exactly [root], ArgumentList must stay empty, and --report must never appear.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.RescanAsAdministratorStartTests -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "press 'Rescan as administrator'",
+    "shape": "the person declines the UAC prompt (Win32Exception 1223)",
+    "why": "Process.Start throws on a decline. Uncaught, the click reaches the crash handler, so the window is not left as it was.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.E005RescanDeclinedTests -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "press 'Rescan as administrator'",
+    "shape": "Windows refuses for another reason (Win32Exception 2, 5, 1155), or the app has no program path (null or empty)",
+    "why": "This is a branch apart from 1223. The line must still say 'not started' with no path in it, and a missing path must not reach Process.Start, which throws InvalidOperationException for an empty file name.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.RescanAsAdministratorStartTests -- RunConfiguration.TreatNoTestsAsError=true",
+    "material": true
+   },
+   {
+    "behaviour": "the ending shows the offer, and the report says so",
+    "shape": "a report-mode scan of a real whole local fixed drive (the ready Fixed drive with the least used space, not a SUBST letter) that leaves System Volume Information unread",
+    "why": "Every planted exe-level check is a negative, so a report that always writes offered=false passes them all. This run proves offered=true is read from a visible button that is in view, on the pickers' line, and that the line kept PickerPanel's height (compared with a folder-scan report). Duration is unmeasured for D:\\, so it is bounded at 3600 s, and a timeout ends INCONCLUSIVE.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/SL-008-RescanOfferOnALocalDrive.Tests.ps1",
+    "material": true
+   },
+   {
+    "behaviour": "start the app",
+    "shape": "started with no path, with a path, and in report mode, from an unelevated CreateProcess",
+    "why": "The offer must be the only elevation. A manifest level or an early runas would prompt at start (architecture rule 2 is the gate-time tripwire).",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/E005-5-AppStartsAtTheInvokersLevel.Tests.ps1",
+    "material": true
+   },
+   {
+    "behaviour": "start another scan in the window after an offered ending",
+    "shape": "an offered ending, pressed or not, followed by a scan of a folder in the same window",
+    "why": "Judged not worth a test. The only unattended route to an offered ending is a whole real drive (case 12), and the hook cannot start a second scan without producing the outcome under test. The reset is one line beside StartScan's existing Hide* resets, held by code review. A later slice may disagree.",
+    "check": "none: code review of StartScan's reset block",
+    "material": false
+   }
+  ],
+  "code_claims": [
+   {
+    "path": "src/FsAnalyser.Core/Scanning/VolumeSpace.cs",
+    "symbol": "IsDriveRoot",
+    "claim": "IsDriveRoot is internal and returns true only when LongPath.ToDisplay(root) is three characters: an ASCII letter, a colon and a backslash. Its comment says a SUBST letter passes it."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Native/Kernel32.cs",
+    "symbol": "Kernel32",
+    "claim": "Kernel32 is declared internal static unsafe partial, so the App cannot call its members directly."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Native/Kernel32.cs",
+    "symbol": "OpenRootForQuery",
+    "claim": "OpenRootForQuery is private and opens a path through the CreateFile wrapper with FILE_READ_ATTRIBUTES, FILE_SHARE_ALL, OPEN_EXISTING and FILE_FLAG_BACKUP_SEMANTICS, given a CriticalErrorBoxOff."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Native/Kernel32.cs",
+    "symbol": "FILE_SHARE_ALL",
+    "claim": "FILE_SHARE_ALL is 0x1 | 0x2 | 0x4 (read, write and delete), the share mode the GLOBAL?? spike used."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Native/Kernel32.cs",
+    "symbol": "IsRemoteRoot",
+    "claim": "IsRemoteRoot begins a CriticalErrorBoxOff, opens the root with OpenRootForQuery and returns null when the handle is invalid; the new global-namespace method follows the same shape."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Native/Kernel32.cs",
+    "symbol": "CreateFile",
+    "claim": "The public CreateFile wrapper throws InvalidOperationException when the CriticalErrorBoxOff is not armed, and otherwise passes fileName unchanged to the private CreateFileW import, so a \\\\?\\GLOBALROOT path reaches Windows as written."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Native/LongPath.cs",
+    "symbol": "ToDisplay",
+    "claim": "ToDisplay is public: it maps the extended UNC prefix back to a double-backslash share, strips the extended prefix, and otherwise returns its input unchanged."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/FailCriticalErrorsTests.cs",
+    "symbol": "Kernel32MakesOnlyThePathCallsThatRunInsideTheScope",
+    "claim": "This test counts Kernel32.cs's code-line calls of the guarded-open rule's named entry points against a fixed expected list (CreateFile, CreateFileW, GetDiskFreeSpaceEx and GetFileAttributesEx entries), so a new method that only calls OpenRootForQuery leaves the count unchanged."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "PathOpensGoOnlyThroughTheGuardedOpen",
+    "claim": "This rule forbids calls to, or strings naming, CreateFile, GetFileAttributes and the other listed path entry points anywhere in src/FsAnalyser.Core except Kernel32.cs and SynchronousIoCancel.cs, comments included."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "FileSystemCallsGoThroughTheCancelGuard",
+    "claim": "This rule forbids Kernel32.CreateFile( and Kernel32.GetFileInformationByHandleEx( in src outside Kernel32.cs and SynchronousIoCancel.cs, so the GLOBAL?? open must stay inside Kernel32.cs."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "the main window does not know it is being observed",
+    "claim": "This rule bars MainWindow.xaml.cs from naming WindowReport, from an if condition mentioning a report, and from ReportMode or ReportPath, so the offer's code in MainWindow must not mention the report."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "the shipped app carries no test seam",
+    "claim": "This rule bars src from FSA_HOOK_, FSA_T005_, DOTNET_STARTUP_HOOKS, StartupHook, FsaWindowHook and paths into tests/window; a Func parameter on a pure function matches none of them."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "StartScan",
+    "claim": "StartScan resets the last ending's controls (RevealStatus, HideUnreadable, HideCoverage and others), runs Scanner.Scan on a Task.Factory.StartNew LongRunning task, then calls ShowProblem for a failure or a rejected root, and ShowOutcome for a result."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "ShowOutcome",
+    "claim": "ShowOutcome returns early through ShowProblem for RootUnreadable and Refused, sets finished from Status == Completed, builds UnreadableRows from result.Unreadable, and ends by calling ShowVolumeInUse."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "AddVolumeInUse",
+    "claim": "AddVolumeInUse returns on a generation mismatch and otherwise raises EndingShown on the UI thread after the volume figure lands, so controls set in ShowOutcome before ShowVolumeInUse are in place when EndingShown fires."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "ShowProblem",
+    "claim": "ShowProblem paints the Could-not-read ending, hides the unreadable, coverage, largest-files and kinds sections, and raises EndingShown."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "OnLoaded",
+    "claim": "OnLoaded calls StartScan(_launchPath) when the window was given a launch path, then loads the drives."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "LoadDrives",
+    "claim": "LoadDrives reads DriveInfo.GetDrives and each drive's DriveType off the UI thread, and its comment records that the list and types are read without opening any drive (0 ms on a share that had stopped answering)."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "LastResult",
+    "claim": "LastResult is an internal ScanResult? with a private setter, set in ShowOutcome and cleared in StartScan."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+    "symbol": "Coverage",
+    "claim": "Coverage writes the PS-012 coverage line, whose finished-scan wording says the unseen space includes 'anything else an ordinary account cannot list', and its comment says those words stay as they are."
+   },
+   {
+    "path": "src/FsAnalyser.App/App.xaml.cs",
+    "symbol": "OnStartup",
+    "claim": "OnStartup passes e.Args through CommandLine.Arguments, sends any argv holding --report to StartReportMode, and otherwise shows new MainWindow(CommandLine.RootArgument(args[0])), or a window with no path when there is no argument."
+   },
+   {
+    "path": "src/FsAnalyser.Core/CommandLine.cs",
+    "symbol": "HoldsAQuote",
+    "claim": "CommandLine.Arguments returns argv unchanged unless HoldsAQuote(argv) is true, so a relaunch whose argv is the bare X:\\ goes through with no repair."
+   },
+   {
+    "path": "src/FsAnalyser.Core/CommandLine.cs",
+    "symbol": "RootArgument",
+    "claim": "RootArgument turns a trailing double quote back into a backslash and otherwise returns the argument unchanged."
+   },
+   {
+    "path": "src/FsAnalyser.App/WindowReport.cs",
+    "symbol": "WriteAsync",
+    "claim": "WriteAsync yields at Loaded priority, then builds the schema-1 report as a dictionary of top-level keys whose 'window' object is read from the MainWindow's controls."
+   },
+   {
+    "path": "src/FsAnalyser.App/WindowReport.cs",
+    "symbol": "InView",
+    "claim": "InView is a private helper that is false unless the control is visible with some height and nothing up to the window was laid out larger than its slot."
+   },
+   {
+    "path": "src/FsAnalyser.App/WindowReport.cs",
+    "symbol": "PickerPanel",
+    "claim": "The report's window object holds PickerPanel.actualHeight, which a check can compare between endings to show that the pickers' line kept its height."
+   },
+   {
+    "path": "src/FsAnalyser.App/MainWindow.xaml",
+    "symbol": "ChooseFolderButton",
+    "claim": "ChooseFolderButton and SettingsButton share one unnamed horizontal StackPanel with Margin 0,8,0,0 inside PickerPanel, both with Padding 12,6."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+    "symbol": "CoveragePanelText.cs",
+    "claim": "The test project compiles pure App files such as CoveragePanelText.cs, DriveReads.cs and ReportFile.cs by Compile Include with a Link under Linked\\, which is how RescanAsAdministrator.cs is added."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/AppArgumentTests.cs",
+    "symbol": "EveryScriptThatLaunchesTheAppIsListedAndQuotesByTheRule",
+    "claim": "This test requires a producers row in AppArgumentCorpus.json only for scripts whose text matches FsAnalyser\\.App\\.exe, Start-App or Invoke-App."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/SubstDrive.cs",
+    "symbol": "SubstDrive",
+    "claim": "SubstDrive is the test project's internal, disposable SUBST helper, which the new probe test uses for its session-local letter case."
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "Handing paths across Linux mount namespaces and container boundaries",
+   "pattern": "A name resolved in the sender's private namespace means nothing on the other side of a security boundary. Hand across only names that live in a namespace both sides share, and refuse a name that is private to the sender before the handoff, not after it.",
+   "transfer_found": true,
+   "rationale": "In Windows terms, the limited and elevated tokens have separate logon sessions, each with its own DOS-device map, and both fall back to GLOBAL??. A SUBST or mapped letter lives in the limited session's private map, as a bind mount lives in one mount namespace. Checking GLOBAL?? before offering is the 'shared namespace only' rule. Selected in full: it is decision 2.",
+   "invariants": [
+    {
+     "precondition": "A letter that opens through GLOBAL?? resolves to the same volume for the elevated token",
+     "status": "holds",
+     "evidence": "Spike global-dos-namespace-separates-local-letters (go): C: and D: open through GLOBAL?? on this PC. In the subst spike, C:\\ resolved under both the limited and the linked full token."
+    },
+    {
+     "precondition": "A letter private to the limited session is not visible to the elevated token",
+     "status": "holds",
+     "evidence": "Spike subst-letter-invisible-to-linked-elevated-token: under the full token, QueryDosDeviceW gave error 2 and GetFileAttributesW gave error 3."
+    },
+    {
+     "precondition": "The elevated session does not shadow a global letter with a session-local definition of its own",
+     "status": "must-verify",
+     "evidence": "Not measured. Creating one needs a deliberate DefineDosDevice in the elevated session; the shell refuses to map a letter that is already in use."
+    },
+    {
+     "precondition": "A real interactive consent elevation behaves like the LogonUserW linked pair the spike used",
+     "status": "must-verify",
+     "evidence": "N-075, not measurable here. The person's existing check on C:\\ (finish line 6) covers it for the system drive. If the two differ, the gate only refuses a letter that might have worked, which is harmless."
+    }
+   ]
+  },
+  "channeled_experts": [
+   "Windows UAC split token and per-logon-session DOS device maps",
+   "WPF single-window layout under a fixed height budget",
+   "argv quoting that round-trips through CommandLineToArgvW"
+  ],
+  "prior_art": [
+   {
+    "pattern": "A disk-usage tool offers 'Scan as administrator' on the result of an ordinary scan whose folders were kept private; the Store build, which ships without the elevated helper, never asks for administrator rights and makes no such offer.",
+    "where": "https://poppydisk.com/docs/scan/elevated-rescan",
+    "authority": "official",
+    "basis": "cited",
+    "source_date": "fetched 2026-11-20"
+   },
+   {
+    "pattern": "The common fix for a disk mapper's inaccessible folders is to launch the whole app with administrator rights; its FAQ still expects some 'Unknown' space after running as admin, which matches the SYSTEM-only residue measured here.",
+    "where": "https://rapidrepair.blog/how-to-use-spacesniffer-inaccessible-files",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2026-06-21"
+   },
+   {
+    "pattern": "After a scan the tool says 'N folders couldn't be read', points to the one grant that fixes it, and then the person presses Rescan.",
+    "where": "https://www.ltclabs.dev/docs/underbrush/troubleshooting/mac-full-disk-access",
+    "authority": "official",
+    "basis": "cited",
+    "source_date": "2026-10-22"
+   },
+   {
+    "pattern": "ShellExecuteEx with the 'runas' verb raises the UAC consent prompt; a declined prompt fails with ERROR_CANCELLED (1223), which .NET's Process.Start with UseShellExecute surfaces as a Win32Exception.",
+    "where": "Microsoft Win32 ShellExecuteEx and .NET Process.Start documentation",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "An elevated process does not see drive letters mapped in the limited session, because the two tokens have separate logon sessions; EnableLinkedConnections is the documented workaround for mapped drives.",
+    "where": "Microsoft support article on mapped drives under UAC (EnableLinkedConnections)",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Windows disk analysers restart themselves elevated rather than elevating a running process, which Windows cannot do.",
+    "where": "TreeSize, WizTree and similar Windows disk analysers",
+    "authority": "community",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "Environment.IsPrivilegedProcess, added in .NET 8, reports whether the process runs elevated, with no P/Invoke.",
+    "where": ".NET 8 System.Environment API",
+    "authority": "official",
+    "basis": "recalled"
+   }
+  ],
+  "outside_claims": [
+   {
+    "claim": "Process.Start with UseShellExecute = true and Verb = \"runas\" calls ShellExecuteEx, which raises the UAC consent prompt and, on Yes, starts the exe with the full token.",
+    "evidence": "recalled",
+    "source": "memory",
+    "if_wrong": "The press starts an unelevated copy, which then offers again. Finish line 6, the person's check, would catch it; the design would need a ShellExecuteExW P/Invoke in Core.Native."
+   },
+   {
+    "claim": "A declined consent prompt makes Process.Start throw Win32Exception with NativeErrorCode 1223 (ERROR_CANCELLED).",
+    "evidence": "recalled",
+    "source": "memory",
+    "if_wrong": "A decline would show RefusedLine(code) and not DeclinedLine. Both say 'not started' and leave the window as it was, so the behaviour still holds; only the reason's words would be off."
+   },
+   {
+    "claim": "With UseShellExecute, Process.Start passes ProcessStartInfo.Arguments as ShellExecuteEx's lpParameters, and the started .NET exe splits it with CommandLineToArgvW-compatible rules, so \"X:\\\\\" arrives as X:\\.",
+    "evidence": "recalled",
+    "source": "memory; the planted E005RescanStartTests' SplitLikeWindows encodes these rules",
+    "if_wrong": "The elevated copy receives X:\" or a merged argument. SL-007's RootArgument repairs the trailing-quote shape. The person's line-6 check would show any other damage."
+   },
+   {
+    "claim": "ShellExecuteEx with 'runas' holds the calling thread until the consent prompt is answered.",
+    "evidence": "recalled",
+    "source": "memory",
+    "if_wrong": "Nothing breaks. If it returns earlier, the window simply stays responsive."
+   },
+   {
+    "claim": "A SUBST letter defined under the limited token does not resolve under the linked elevated token.",
+    "evidence": "measured",
+    "source": "spike subst-letter-invisible-to-linked-elevated-token (Sandbox, LogonUserW linked pair, EnableLUA=1): QueryDosDeviceW error 2, GetFileAttributesW error 3 under hFull",
+    "if_wrong": "If a real interactive elevation does see it (N-075), the GLOBAL?? gate refuses a letter that would have worked: a missed offer, never a broken rescan."
+   },
+   {
+    "claim": "On this PC, \\\\?\\GLOBALROOT\\GLOBAL??\\X:\\ opens for the local volumes C: and D:, and fails at once with error 3, without reaching a server, for a SUBST letter and the mapped Z:.",
+    "evidence": "measured",
+    "source": "spike global-dos-namespace-separates-local-letters (this PC, unelevated, CreateFileW 0x80, share 7, OPEN_EXISTING, BACKUP_SEMANTICS)",
+    "if_wrong": "The probe would refuse real drives (no offer anywhere) or pass session-local ones (rescans that end 'Could not read'). The builder's probe test checks the system-drive and SUBST sides."
+   },
+   {
+    "claim": "Mount-manager drive letters for fixed and removable volumes are symbolic links in the global \\GLOBAL?? directory, visible to every logon session.",
+    "evidence": "recalled",
+    "source": "memory; C: and D: measured by the GLOBAL?? spike",
+    "if_wrong": "A removable or second fixed volume whose letter is session-local gets no offer. That is a missed offer, not a wrong one."
+   },
+   {
+    "claim": "GetDriveTypeW (DriveInfo.DriveType) returns DRIVE_FIXED for a SUBST letter over a local folder and DRIVE_REMOTE for a mapped letter, without opening the drive.",
+    "evidence": "recalled",
+    "source": "memory; the LoadDrives comment records type reads taking 0 ms on a share that had stopped answering",
+    "if_wrong": "If a mapped letter read as Fixed, the probe's GLOBAL?? open would still fail at once (measured on Z:), so no offer. If a type read blocked, it would hold only the scan task's ending, off the UI thread."
+   },
+   {
+    "claim": "Environment.IsPrivilegedProcess is false under the UAC-filtered admin token and true in a process started elevated through runas.",
+    "evidence": "measured",
+    "source": "survey: [Environment]::IsPrivilegedProcess = False in the unelevated survey shell; the true side is recalled",
+    "if_wrong": "An elevated copy would offer again, and the person's line-6 check would show it."
+   },
+   {
+    "claim": "An elevated token lists other accounts' profile folders that the ordinary scan left unread, and makes no fully read folder unreadable.",
+    "evidence": "measured",
+    "source": "spike elevated-rescan-reads-what-acl-allows: proxy pair (separate std and admin accounts, Sandbox, UAC off) gave 72 recovered, 6 SYSTEM-only residue, 0 newly failed; the same-account UAC pair was not measured",
+    "if_wrong": "The rescan would recover less than promised. Finish line 6 is the person's check on this PC's C:\\."
+   },
+   {
+    "claim": "The SDK's default apphost manifest runs the exe asInvoker, so an unelevated CreateProcess start raises no prompt.",
+    "evidence": "measured",
+    "source": "survey: the built App launched in report mode from an unelevated shell exited 0 with no prompt; FsAnalyser.App.csproj names no ApplicationManifest",
+    "if_wrong": "Finish line 5 fails. Architecture rule 2 guards against a manifest level being added."
+   },
+   {
+    "claim": "Every NTFS volume's System Volume Information refuses listing to an unelevated token, so a finished whole-drive scan of a local NTFS drive records at least one unreadable folder.",
+    "evidence": "measured",
+    "source": "survey: listing C:\\System Volume Information raised UnauthorizedAccessException; D:\\ was not measured",
+    "if_wrong": "The local-drive script ends INCONCLUSIVE (unreadable 0) on D:\\ and needs C:\\ instead; the script picks by used space, so it could pick C:\\ only if D:\\ is larger."
+   }
+  ],
+  "decidable_disagreements": [],
+  "taste_disagreements": [
+   "Uncontested, with one designer: the button sits on the pickers' line, not on the ending beside the Unreadable tab. It is always in view, but it is further from the count that explains it.",
+   "Uncontested: a new RescanStatus line, not the existing RevealStatus line at the bottom. It costs a control, but it keeps the reveal status words that window cases read from mixing with the rescan's.",
+   "Uncontested: the original window stays open after a successful start. The person can compare the two scans, at the price of two scan stores in memory."
+  ],
+  "open_questions": [
+   "In the elevated copy, the finished whole-drive coverage line still says the unseen space includes 'anything else an ordinary account cannot list' (MainWindow.xaml.cs Coverage, PS-012 wording, frozen by a constraint). This design keeps it word for word in both copies. Should the elevated copy be allowed different words, which means lifting the PS-012 constraint for that copy?"
+  ],
+  "filed_for_later": [],
+  "stack_chosen": [],
+  "whats_new": [
+   "src/FsAnalyser.App/RescanAsAdministrator.cs: Offers, Start, DriveTypeAnElevatedCopySees (with an internal overload taking injected readers) and the wording constants, WPF-free",
+   "src/FsAnalyser.Core/Native/GlobalDosDevices.cs: public HoldsDriveLetter(char)",
+   "Kernel32.OpensThroughGlobalDosDevices(char), internal, reusing OpenRootForQuery inside a CriticalErrorBoxOff",
+   "MainWindow.xaml: RescanAsAdministratorButton and RescanStatus on the pickers' line, which becomes a one-line DockPanel",
+   "MainWindow.xaml.cs: the probe on the scan task, the offer set in ShowOutcome, the reset in StartScan, the OnRescanAsAdministrator handler",
+   "WindowReport.cs: top-level rescanAsAdministrator.offered and window RescanAsAdministratorButton { visible, enabled, inView }, additive under schema 1",
+   "FsAnalyser.Core.Tests.csproj: a Compile Link for RescanAsAdministrator.cs",
+   "tests/FsAnalyser.Core.Tests/RescanAsAdministratorProbeTests.cs and RescanAsAdministratorStartTests.cs",
+   "tests/window/SL-008-RescanOfferOnALocalDrive.Tests.ps1: the one positive exe-level report check, with an ending table",
+   "Two fitness rules: runas only in RescanAsAdministrator.cs; no requireAdministrator or highestAvailable in the App"
+  ],
+  "whats_reused": [
+   "App.OnStartup → MainWindow(launchPath) → OnLoaded → StartScan: the elevated copy's whole start path, unchanged",
+   "CommandLine.Arguments and CommandLine.RootArgument: an argv of the bare X:\\ goes through unrepaired",
+   "Kernel32.OpenRootForQuery and CriticalErrorBoxOff: the measured open flags, with the no-media box suppressed",
+   "LongPath.ToDisplay: the drive-root shape test VolumeSpace.IsDriveRoot uses",
+   "ScanStatus.Completed and ScanResult.Unreadable (vanished folders already excluded by SL-005)",
+   "WindowReport's InView helper and its read-the-control convention",
+   "The Task.Factory.StartNew LongRunning scan task in StartScan, to run the probe",
+   "The pure-App-file-linked-into-Core.Tests pattern (CoveragePanelText.cs, DriveReads.cs, ReportFile.cs)",
+   "The injected-reader shape of VolumeSpace.Start, for the probe's overload",
+   "SubstDrive test helper for the session-local letter case",
+   "The E005 scripts' Publish-App and Read-Report helpers, as the model for the local-drive script",
+   "The default asInvoker manifest: finish line 5 is already present and is kept so"
+  ],
+  "retier": {
+   "tier": "medium",
+   "why": "This is the product's first code path that asks Windows for elevation, and it builds a command line handed to an elevated copy. Lessons #914 and #919 say such argv- and privilege-sensitive slices need an input-driven review. It also adds keys to the schema-1 report, which the engine, window cases and finish-line scripts parse, and a public type to Core.Native. And it re-lays the pickers' line that every ending's minimum-size budget sits under. Low risk is too little review for that."
+  }
+ }
+}

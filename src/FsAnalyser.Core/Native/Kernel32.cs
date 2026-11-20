@@ -218,11 +218,30 @@ internal static unsafe partial class Kernel32
     /// Opens a drive's root for a query and nothing else (SL-001): FILE_READ_ATTRIBUTES only, shared with every other
     /// open (FILE_SHARE_ALL, as every open in Core is, so it never races the scan's own open of the same root and never
     /// loses to a program that holds the drive), backup semantics so a directory opens. Nothing is listed, no data is
-    /// read, and an open for attributes alone moves no last-access time. The one place the volume thread's root opens
-    /// are spelled, so <see cref="IsRemoteRoot"/> and <see cref="TryGetMftValidData"/> cannot differ in them.
+    /// read, and an open for attributes alone moves no last-access time. The one place these query opens are spelled (the
+    /// volume thread's two, and the rescan probe's on the scan's own thread), so <see cref="IsRemoteRoot"/>,
+    /// <see cref="TryGetMftValidData"/> and <see cref="OpensThroughGlobalDosDevices"/> cannot differ in them.
     /// </summary>
     private static SafeFileHandle OpenRootForQuery(in CriticalErrorBoxOff boxOff, string root) =>
         CreateFile(boxOff, root, FILE_READ_ATTRIBUTES, FILE_SHARE_ALL, 0, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
+
+    /// <summary>
+    /// Whether the drive letter is held by the global DOS-device namespace (SL-008): the root opens through
+    /// <c>\\?\GLOBALROOT\GLOBAL??\X:\</c>, the namespace every logon session falls back to. A letter made in this logon
+    /// session only (a SUBST letter, a mapped drive) is not in it, so the open fails at once, with error 3, and never reaches a
+    /// server; an elevated copy of the app runs in a logon session of its own, and sees only what the global namespace holds.
+    /// The same open <see cref="IsRemoteRoot"/> makes, measured on this PC: the system drive and another fixed drive open in
+    /// under 3 ms, a SUBST letter and a mapped drive fail in under 4 ms. The critical-error box is off for the call, so a
+    /// removable drive with no media fails instead of asking for one. Only for a letter whose drive type is already Fixed or
+    /// Removable (<c>RescanAsAdministrator</c>), never for a network letter.
+    /// </summary>
+    /// <param name="letter">An ASCII letter, upper-cased by the caller (<see cref="GlobalDosDevices.HoldsDriveLetter"/>).</param>
+    internal static bool OpensThroughGlobalDosDevices(char letter)
+    {
+        using CriticalErrorBoxOff boxOff = CriticalErrorBoxOff.Begin();
+        using SafeFileHandle handle = OpenRootForQuery(boxOff, $@"\\?\GLOBALROOT\GLOBAL??\{letter}:\");
+        return !handle.IsInvalid;
+    }
 
     /// <summary>
     /// Whether <paramref name="root"/> is on a network file system: a mapped drive, a DFS letter, a SUBST letter over a

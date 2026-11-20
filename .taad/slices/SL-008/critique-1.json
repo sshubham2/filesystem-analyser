@@ -1,0 +1,319 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-008",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-11-20T08:18:29.494Z",
+ "head": "a805368de1910f4bda8774e5acea5a04f033fc84",
+ "run_id": 11505,
+ "summary": "The design's main mechanism holds. It checks the drive letter through GLOBAL?? because of the SUBST no-go, it reuses the launch-with-a-path route, it reads 'offered' from the button, and it sets the button before EndingShown. The recalled claim that a declined prompt raises Win32Exception 1223 holds (stackoverflow.com/questions/16926232 uses ERROR_CANCELLED = 1223 for exactly this Process.Start runas case). ScanResult.Root is already in display form (Scanner.cs:639), so the probe's DriveInfo call gets X:\\ and not \\\\?\\X:\\.\n\nSix findings need fixing:\n1. Every planted E005 test and script the cases point at is absent. The decision function and the 1223 path have no test that exists.\n2. The never-elevates-by-itself guard only controls where the verb is spelled. It does not control who reaches Start or the button. Nothing stops another App call site, or the window hook raising ClickEvent, from starting the rescan.\n3. The elevated copy loads WPF's native DLLs from %TEMP%\\.net, a folder the limited token can write. Microsoft's single-file documentation warns against exactly this setup. The design's security model never mentions it.\n4. The probe test's SUBST half fails under LocalSystem. Microsoft documents that a SUBST letter made by LocalSystem is created in the global namespace.\n5. The local-drive script reports FAILED when offered=false is the correct answer.\n6. Both new regex rules have gaps: other spellings that set the verb (CC-001), and a manifest kept outside the App folder.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The design's main mechanism holds. It checks the drive letter through GLOBAL?? because of the SUBST no-go, it reuses the launch-with-a-path route, it reads 'offered' from the button, and it sets the button before EndingShown. The recalled claim that a declined prompt raises Win32Exception 1223 holds (stackoverflow.com/questions/16926232 uses ERROR_CANCELLED = 1223 for exactly this Process.Start runas case). ScanResult.Root is already in display form (Scanner.cs:639), so the probe's DriveInfo call gets X:\\ and not \\\\?\\X:\\.\n\nSix findings need fixing:\n1. Every planted E005 test and script the cases point at is absent. The decision function and the 1223 path have no test that exists.\n2. The never-elevates-by-itself guard only controls where the verb is spelled. It does not control who reaches Start or the button. Nothing stops another App call site, or the window hook raising ClickEvent, from starting the rescan.\n3. The elevated copy loads WPF's native DLLs from %TEMP%\\.net, a folder the limited token can write. Microsoft's single-file documentation warns against exactly this setup. The design's security model never mentions it.\n4. The probe test's SUBST half fails under LocalSystem. Microsoft documents that a SUBST letter made by LocalSystem is created in the global namespace.\n5. The local-drive script reports FAILED when offered=false is the correct answer.\n6. Both new regex rules have gaps: other spellings that set the verb (CC-001), and a manifest kept outside the App folder.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "test-coverage",
+    "nature": "required",
+    "claim": "The planted tests the design leans on do not exist: E005RescanOfferTests, E005RescanStartTests, E005RescanDeclinedTests, E005-2-NoRescanOfferAndTheReportSaysSo.Tests.ps1 and E005-5-AppStartsAtTheInvokersLevel.Tests.ps1. Glob tests/**/E00* finds nothing, and Grep 'E005' finds only the design's own fitness text and the design JSON. Cases 1, 2, 3, 4, 8, 10 and 13 point at checks that run nothing; with TreatNoTestsAsError=true, or a missing .ps1, they fail every time. The builder's own tests cover only the probe, the argument string, codes 2/5/1155 and a null exe path. So Offers has no existing test at all: not its status, elevated, unread-count, drive-type or root-shape branches, including the \\\\?\\UNC\\ spelling the design singles out. DeclinedLine for 1223 (finish line 4, 'leaves the window as it was') has none either. Nor does the report's offered=false on folder, stopped and root-unreadable endings. This is the fourth slice to hit this (lessons #876, #896, #900).",
+    "evidence": "Glob tests/**/E00* → No files found; Grep E005 → only .taad/fitness.yaml and .taad/slices/SL-008/design-slice-1.json. Design: 'Pinned by the planted E005RescanOfferTests'; cases 1, 2, 8 and 10 check FullyQualifiedName~FsAnalyser.Core.Tests.E005Rescan*; cases 3, 4 and 13 run tests/window/E005-*.ps1.",
+    "file": ".taad/fitness.yaml",
+    "line": 1600,
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1600,
+     "text": "      else can raise a UAC prompt from a scan start, a launch or report mode. E005-5 watches"
+    },
+    "fix": "Put builder-owned tests in the cases:\n- tests/FsAnalyser.Core.Tests/RescanAsAdministratorOfferTests.cs covering every Offers branch: each ScanStatus; elevated true/false; unreadable 0/1; each DriveType and null; and the roots C:\\, c:\\, C:, C:\\dir, C:\\dir\\, \\\\server\\share, \\\\?\\UNC\\server\\share, \\\\?\\C:\\, null and empty.\n- Add 1223 → DeclinedLine to RescanAsAdministratorStartTests.\n- Fold the no-offer report negatives (a folder scan, a stopped scan, a root-unreadable scan: key present, offered false) into the builder's SL-008 script.\nRetarget case 13 to that script's unelevated report-mode launch, which exits within its bound with no prompt. If the engine really does plant E005 files before build, keep these anyway: the cases must not depend on files that do not exist."
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "claim": "The rule says it pins non-goal 353 ('the one guarded path is the button's Click through RescanAsAdministrator.Start'), but it only bans spelling the verb outside RescanAsAdministrator.cs. Nothing pins who calls Start, so the 'only from the Click' invariant holds only as long as every later call site remembers it. Two concrete routes:\n(a) Any App code can call RescanAsAdministrator.Start(...) from OnLoaded, ShowOutcome or report mode and pass every rule. An unattended report-mode run would then wait on the secure desktop for ever, which is the failure the rule's own text names.\n(b) The window hook presses controls by raising ClickEvent (SettingsMode.cs:60, StoppedTree.cs:174, RevealMode.cs:978). A hook mode that presses RescanAsAdministratorButton raises a real UAC prompt from an unattended window case. tests/window's elevation rule bans only '-Verb RunAs' and 'Verb = \"runas\"', and a ClickEvent spells neither.",
+    "evidence": "fitness.yaml:1592-1605 (only verb spellings); fitness.yaml:1015-1019 (tests/window elevation rule bans the two verb spellings only); the hook's RaiseEvent(ButtonBase.ClickEvent) pattern.",
+    "file": ".taad/fitness.yaml",
+    "line": 1598,
+    "quote": {
+     "path": "tests/window/FsaWindowHook/SettingsMode.cs",
+     "line": 60,
+     "text": "        settings.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));"
+    },
+    "fix": "Add two rules:\n1. Over src/**/*.cs: must_not_match '(?m)\\bRescanAsAdministrator\\.Start\\b' and '(?m)\\bOnRescanAsAdministrator\\b', except in src/FsAnalyser.App/MainWindow.xaml.cs and RescanAsAdministrator.cs. MainWindow.xaml already wires Click= by name, so the XAML is untouched.\n2. Over tests/window/FsaWindowHook/**: must_not_match '(?m)\\bRescanAsAdministrator', so the hook never names the button or its handler. The report scripts read the JSON key from .ps1 files, which this rule does not cover."
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "security",
+    "nature": "defect",
+    "claim": "The auth_model treats UAC consent as the whole boundary. That fails for the same-user split token: the elevated copy runs code from folders the limited token can write.\nThe App publishes with IncludeNativeLibrariesForSelfExtract=true, so WPF's native DLLs are extracted to %TEMP%\\.net\\FsAnalyser.App\\<bundle-id>. The unelevated original window has already created that folder, and an elevated copy of the same account uses the same %TEMP%. The host reuses an existing extraction after checking only that the files are present (dotnet/runtime PR #32649: 'verify that it contains all files listed in the manifest'). Any process of the user's limited token can therefore replace wpfgfx_cor3.dll or PresentationNative_cor3.dll. The next press of 'Rescan as administrator' then loads that code with the full admin token.\nMicrosoft's single-file documentation names this exact setup: 'If running on Windows, the files are extracted to a directory under %TEMP%/.net. To prevent tampering, these directories shouldn't be writable by users or services with different privileges' (learn.microsoft.com/en-us/dotnet/core/deploying/single-file/overview).\nTwo siblings share the cause:\n- an exe run from Downloads searches its own folder first for DLLs not in KnownDLLs;\n- DOTNET_STARTUP_HOOKS set in HKCU\\Environment reaches the elevated copy's fresh environment, and the shipped exe must honour startup hooks for the window hook.\nThis slice is the product's first elevated execution, so it is the slice that opens this.",
+    "class_of": "code an elevated copy loads from a place the limited token can write",
+    "threat": "adversary",
+    "evidence": "src/FsAnalyser.App/FsAnalyser.App.csproj:13-15 (SelfContained, PublishSingleFile, IncludeNativeLibrariesForSelfExtract); the design's elevated relaunch contract 'auth_model: UAC consent ... on the secure desktop'; the Microsoft Learn single-file overview cited above.",
+    "file": "src/FsAnalyser.App/FsAnalyser.App.csproj",
+    "line": 15,
+    "quote": {
+     "path": "src/FsAnalyser.App/FsAnalyser.App.csproj",
+     "line": 15,
+     "text": "    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>"
+    },
+    "fix": "Before build, settle it in the design. Either:\n- record it as an accepted known limit (Microsoft does not treat the same-user split token as a security boundary), decided by the maintainer because it touches the 'single-file exe, no installer' release constraint; or\n- choose packaging where the elevated copy loads nothing from a folder the limited token can write. For example, ship the natives beside the exe (IncludeNativeLibrariesForSelfExtract=false) and say in the tooltip that the rescan runs the program from where it lies.\nThe current design does neither and never mentions the extraction folder."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "defect",
+    "claim": "The probe tests assert that HoldsDriveLetter, and DriveTypeAnElevatedCopySees, give false/null for a letter made with SubstDrive. That holds only when the suite runs in an ordinary logon session. Microsoft documents that 'any thread that is running as the LocalSystem user, do[es] not run in a local DosDevices context' and that 'only processes running in the LocalSystem context can call DefineDosDevice to create an MS-DOS device in the Global MS-DOS device namespace'. When the default suite runs as SYSTEM, as Windows Sandbox validations here do (lesson #909; the survey: 'the Sandbox runs as SYSTEM'), subst.exe creates the letter in GLOBAL??. The open then succeeds and the test goes red with no defect in the product. The product itself is unaffected, because a SYSTEM process is privileged and never probes.",
+    "evidence": "learn.microsoft.com/en-us/windows-hardware/drivers/kernel/local-and-global-ms-dos-device-names and learn.microsoft.com/en-us/windows/win32/fileio/defining-an-ms-dos-device-name; the design's RescanAsAdministratorProbeTests: 'false for a SUBST letter made with the shared SubstDrive helper'.",
+    "file": "tests/FsAnalyser.Core.Tests/SubstDrive.cs",
+    "line": 6,
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/SubstDrive.cs",
+     "line": 6,
+     "text": "/// A subst drive letter for this logon session, mapped to a folder of a tree and removed again: the first letter from Z: down"
+    },
+    "fix": "Assert HoldsDriveLetter(substLetter) == (WindowsIdentity.GetCurrent().IsSystem), and the matching null/Fixed for DriveTypeAnElevatedCopySees. The test then states the namespace rule instead of assuming the session."
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "claim": "The SL-008 local-drive script's ending table maps 'completed, unreadable >= 1, offered false' to FAILED in every case. But offered=false is the correct answer in at least two runs the script can meet:\n- The script itself runs elevated: an elevated shell, or the Sandbox as SYSTEM, which has only C:\\ and keeps code-5 residue folders (the spike saw 7 unreadable under a full admin token). The app correctly makes no offer, and the script reports a regression.\n- The chosen Fixed letter is session-local but not a SUBST, for example one defined by DefineDosDevice or a non-global volume mount. 'subst does not list' does not exclude it, and the product correctly refuses it.\nLesson #892: defects in this project's window cases cluster in exactly these ending-to-verdict rows.",
+    "class_of": "runs where offered=false is correct but the table says FAILED",
+    "threat": "accident",
+    "evidence": "Design component 'Local-drive report check': 'FAILED, exit 1: completed and unreadable >= 1 with offered false'; drive pick 'the ready Fixed drive with the least used space that `subst` does not list'.",
+    "fix": "Add an INCONCLUSIVE (exit 2) row taken before launching when [Environment]::IsPrivilegedProcess is true, as W-001 does when elevated. Pick only letters whose QueryDosDevice target starts with \\Device\\ and not \\??\\, or that open through \\\\?\\GLOBALROOT\\GLOBAL??\\X:\\ from the script. Test each row with a stubbed run, per lesson #892."
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "required",
+    "claim": "CC-001 applies, and the design gives neither a variation sweep nor an uncaught list. '\\bVerb\\s*=[^=]' misses compound assignment: 'psi.Verb ??= \"runas\"' and 'psi.Verb += ...' are both valid C#, and neither matches because a '?' or '+' sits between Verb and '='. A verb built as \"run\" + \"as\" and set through either form passes all three patterns. Reflection (GetProperty(\"Verb\")) and the COM elevation moniker ('Elevation:Administrator!new:') also elevate without any banned spelling. The pattern is also over-broad: an expression-bodied 'Verb =>' matches, a harmless false positive. Lesson #916 says to ban the API family, not a list of spellings.",
+    "class_of": "C# spellings that set a shell verb or request elevation",
+    "threat": "accident",
+    "evidence": "fitness.yaml:1595-1597. The survey's grep found no UseShellExecute or ShellExecute in src (re-checked: Grep 'Process\\.Start|UseShellExecute' in src → no matches).",
+    "file": ".taad/fitness.yaml",
+    "line": 1597,
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1597,
+     "text": "    - (?m)\\bVerb\\s*=[^=]"
+    },
+    "fix": "Replace the Verb pattern with a family ban outside RescanAsAdministrator.cs: '(?m)\\bUseShellExecute\\b', '(?m)\\bShellExecute\\w*' and '(?m)(?i)Elevation:Administrator'. Keep '(?i)\\brunas\\b' and 'lpVerb'. List reflection on ProcessStartInfo.Verb in the rule's because text as an uncaught spelling."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "claim": "Rule 2 says it 'fails at every gate' against a manifest level being added, but its files glob is src/FsAnalyser.App/** only. A manifest kept elsewhere evades it: for example <ApplicationManifest>..\\..\\eng\\app.manifest</ApplicationManifest> in the App csproj, or an ApplicationManifest set in Directory.Build.props. The csproj then holds only a path, the level sits in a file outside the glob, and every start prompts, report mode included.",
+    "file": ".taad/fitness.yaml",
+    "line": 1607,
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1607,
+     "text": "    files: src/FsAnalyser.App/**"
+    },
+    "fix": "Also ban '(?m)\\bApplicationManifest\\b' in src/FsAnalyser.App/** and Directory.Build.props, since the App relies on the SDK's default asInvoker manifest. Or add a second entry over **/*.manifest and Directory.Build.props with the same level pattern."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "under-engineering",
+    "nature": "defect",
+    "claim": "The conditions for showing the offer are written twice. MainWindow's scan-task lambda probes only when 'Completed, Unreadable.Count > 0 and !Environment.IsPrivilegedProcess', and Offers restates the same three conditions. The design invites changing the trigger ('Narrowing to access-denied codes would be a one-line change in Offers'). Widening Offers instead, say to a stopped scan, silently leaves driveType null and the offer never appears. Narrowing it leaves the probe doing I/O for an offer that cannot show. Nothing ties the two copies together, so they stay in step only by remembering.",
+    "evidence": "Design, MainWindow component: 'The DriveType? is RescanAsAdministrator.DriveTypeAnElevatedCopySees(result.Root) when the result is Completed, Unreadable.Count > 0 and !Environment.IsPrivilegedProcess'; Offers contract: 'status == Completed; !elevated; unreadableFolders > 0'.",
+    "fix": "Add one pure predicate, RescanAsAdministrator.WorthProbing(status, unreadableFolders, elevated). The lambda calls it and Offers starts with it, and an Offer test pins that Offers is false whenever WorthProbing is false."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "Precondition 1 (the elevated session does not shadow a global letter with a session-local one) is mostly backed by Windows' own rule. learn.microsoft.com 'Defining an MS-DOS Device Name' says DefineDosDevice will not define a local name that already exists in the local or global namespace. What is left is a local mapping made before the global letter appears, such as a USB letter that collides with a mapping in the elevated session. Then the elevated copy scans a different volume under the same letter: a visibly different ending, rare, and not filed. Precondition 2 (a real consent elevation behaves like the LogonUserW pair): if it shares device maps, the GLOBAL?? check only refuses a letter that would have worked, a missed offer, as the design says. The 1223 claim checked out (stackoverflow 16926232). ScanResult.Root is display form (Scanner.cs:639 'Root = display'), so the DriveInfo concern about \\\\?\\ roots does not arise. The cited prior art (poppydisk, rapidrepair, ltclabs) was not checked: no decision rests on it."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "m2: the local-drive script reports FAILED when run elevated, or on a session-local Fixed letter. m1: the SUBST letter is global under LocalSystem. Removable FAT/exFAT drives never complete (lesson #909), so they need no case. A drive with no media cannot follow a Completed scan."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "m5: the probe gate and Offers restate the same conditions."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none: GlobalDosDevices and the Kernel32 method exist because of a measured no-go. The whole-drive positive script is costly (C:\\ took 653-1,299 s in earlier records; D:\\ unmeasured), but it is the only unattended positive, since SUBST is refused by design."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "none of note. The report keys are additive and readers check subsets (SL-005-VanishedFolders.Tests.ps1:49 TopKeys). The StartTests can reuse TestNative's existing CommandLineToArgvW helper, which already prepends 'app.exe ' (TestNative.cs:75), so the argv[0] parsing quirk does not bite."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "none: 1223, other Win32 codes and a null exe path are each handled. Non-Win32 exceptions from the Click reaching the crash handler is a stated choice. A probe IO, access or argument exception gives null. Any other probe exception would turn a finished scan into 'Scan failed' through StartScan's catch-all (MainWindow.xaml.cs:308), which the design accepts."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "none: Q-026 (keep the PS-012 wording) is honoured. Q-016's order is not affected. Q-002 is avoided, because nothing goes into OutcomeTexts. No existing x:Name is renamed. The hook finds ChooseFolderButton by name only (StartupHook.cs:1035, TreeMode.cs:606), so turning the StackPanel into a DockPanel breaks nothing that walks types."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "M2: the guard covers where the verb is spelled, not who calls Start or presses the button (including the hook's ClickEvent). m3: CC-001 spellings (??=, +=, reflection, the COM moniker), with a family ban suggested instead. m4: a manifest outside the App folder evades rule 2. The existing (?m)(?i) prefix is already used in fitness.yaml (line 198), so it parses in both engines."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "M1: every planted E005 file is absent, so Offers, DeclinedLine and the no-offer report have no check that exists. m1: the SUBST probe assertion goes red under SYSTEM. Case 14 (reset on the next scan) is left to code review, as the design says."
+   },
+   {
+    "dimension": "security",
+    "result": "M3: the elevated copy loads WPF natives from %TEMP%\\.net, which the limited token can write (Microsoft Learn's single-file overview warns against this). The exe folder's DLL search order and DOTNET_STARTUP_HOOKS from HKCU\\Environment are the same class. The argument string is the quoted root alone, --report can never appear, and report mode cannot be reached."
+   }
+  ]
+ },
+ "prescribed": {
+  "host": 664,
+  "at": "2026-11-20T08:33:04.812Z",
+  "runs": [
+   {
+    "run_id": 11513,
+    "resumed_from": "844738ee-0133-4f83-a793-65865f43107b",
+    "ending": "completed",
+    "cost_usd": 1.2367385999999994,
+    "lost_resume": false
+   }
+  ],
+  "keys_sent": [
+   {
+    "finding_id": 1901,
+    "key": "M1",
+    "digest": "6f347e7b3452c69a"
+   },
+   {
+    "finding_id": 1902,
+    "key": "M2",
+    "digest": "c35bab8d0b965607"
+   },
+   {
+    "finding_id": 1904,
+    "key": "m1",
+    "digest": "18106caa4c405d9c"
+   },
+   {
+    "finding_id": 1905,
+    "key": "m2",
+    "digest": "f42e7090cb9e7bb9"
+   },
+   {
+    "finding_id": 1906,
+    "key": "m3",
+    "digest": "65763504d1601161"
+   },
+   {
+    "finding_id": 1907,
+    "key": "m4",
+    "digest": "daf6095608a14d29"
+   },
+   {
+    "finding_id": 1908,
+    "key": "m5",
+    "digest": "d8e4dd2bb1b05bc6"
+   }
+  ],
+  "verdicts": [
+   {
+    "finding_id": 1901,
+    "key": "M1",
+    "digest": "6f347e7b3452c69a",
+    "verdict": "hole",
+    "severity": "major",
+    "checked": "Read how the window scripts launch the app: WindowCases.ps1:502-521. Start-App uses Start-Process, which goes through ShellExecuteEx. Wait-App returns 'TIMEOUT' after killing a process that 'waits on a person'. Other scripts use [Diagnostics.Process]::Start with UseShellExecute=$false (WindowCases.ps1:717-722, T005Batch.ps1:186-200). Read LongPath.ToDisplay (LongPath.cs:61-67): it strips \\\\?\\ and maps \\\\?\\UNC\\ back to \\\\. Checked these against the design's ending table for the SL-008 script ('INCONCLUSIVE, exit 2: no qualifying drive, TIMEOUT, no report, ...') and against lesson #877 (a stopped scan through the hook needs a tree of about 24,000 folders).",
+    "why": "1. Case 13 cannot fail. If the app asks for elevation at start, through a requireAdministrator manifest or an early Start call:\n- launched through Start-Process (ShellExecuteEx), it raises a UAC prompt; the script kills it at its bound and records TIMEOUT;\n- launched through CreateProcess, the launch fails with 740 and no report is written.\nThe table maps both TIMEOUT and 'no report' to INCONCLUSIVE, never FAILED. A prompt on the engine's desktop is also the misuse the engine watches for.\n2. The fix does not say how the negatives combine with the drive scan's ending. That scan can take up to 3600 s and ends INCONCLUSIVE whenever no drive qualifies or the scan times out. Unless a FAILED negative outranks it, the negatives are lost behind that INCONCLUSIVE.\n3. The stopped and root-unreadable negatives can only be scans of folders. Offers refuses a folder on its shape before it ever reads the status, so these runs prove only that the key is present. They never exercise the status gate or ShowOutcome's early returns. A stopped scan in report mode also needs the hook's stop mode and a tree that outlasts the first 250 ms progress tick; the fix names neither.\n4. The root list gives no expected results. \\\\?\\C:\\ displays as C:\\, so Offers must return true for it. A builder who reads the list as a list of non-drive spellings would assert false and break the design's ToDisplay rule.",
+    "instead": "Give case 13 its own short run, at the start of the SL-008 script and before the drive scan:\n- launch a tiny folder in report mode with [Diagnostics.Process]::Start and UseShellExecute=$false, never Start-Process, so a manifest-level prompt cannot be raised;\n- a Win32Exception 740 at launch is FAILED; TIMEOUT within about 60 s is FAILED (a tiny folder finishes in seconds, so a run still going is waiting on a prompt); no report is FAILED;\n- only then run the drive scan.\nState the combination rule: any FAILED makes the whole script FAILED, else any INCONCLUSIVE makes it INCONCLUSIVE.\nDrop the stopped-scan negative from the script. The status gate belongs to the Offers unit tests. Keep folder and root-unreadable runs only as 'key present, offered false'.\nIn RescanAsAdministratorOfferTests, write the expected value per root: true for C:\\, c:\\ and \\\\?\\C:\\; false for C:, C:\\dir, C:\\dir\\, \\\\server\\share, \\\\?\\UNC\\server\\share, null and empty."
+   },
+   {
+    "finding_id": 1902,
+    "key": "M2",
+    "digest": "c35bab8d0b965607",
+    "verdict": "hole",
+    "severity": "major",
+    "checked": "Read the finding's route (a), which names OnLoaded and ShowOutcome as the places that could call Start. Both are in MainWindow.xaml.cs (OnLoaded at :149, ShowOutcome at :627). Read rule 1 as prescribed: except_files lists MainWindow.xaml.cs and RescanAsAdministrator.cs. Grep of src/FsAnalyser.App for RescanAsAdministrator, RaiseEvent and ClickEvent found nothing today. Grep of FsaWindowHook for RescanAsAdministrator found nothing. StartupHook.cs:923 shows the hook already identifies buttons by their Content text.",
+    "why": "Rule 1 excepts the whole of MainWindow.xaml.cs, which is exactly where OnLoaded and ShowOutcome live. A call RescanAsAdministrator.Start(Environment.ProcessPath, root, Process.Start) from OnLoaded or ShowOutcome still passes every rule. So does a direct call OnRescanAsAdministrator(this, new RoutedEventArgs()) from either, or RescanAsAdministratorButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)). The unattended report-mode prompt the finding describes therefore stays possible.\nTwo smaller gaps:\n- in any other src file, `using static FsAnalyser.App.RescanAsAdministrator;` followed by a bare `Start(...)` never spells `RescanAsAdministrator.Start`;\n- the hook rule matches the identifier only. A hook mode that finds the button by its text, 'Rescan as administrator', and raises ClickEvent passes it, as StartupHook.cs:923 already does for drive buttons.",
+    "instead": "Keep both regex rules, and add one behavioural xUnit fact beside ArchitectureRulesTests. It reads MainWindow.xaml.cs and asserts:\n- `RescanAsAdministrator.Start(` occurs exactly once, inside the brace-matched body of `void OnRescanAsAdministrator(`;\n- `OnRescanAsAdministrator` occurs only in that declaration (and in MainWindow.xaml's Click=);\n- MainWindow.xaml.cs contains no `ClickEvent`.\nAdd `(?m)\\busing\\s+static\\s+[\\w.]*\\bRescanAsAdministrator\\b` to rule 1. Add `(?i)Rescan as administrator` to the FsaWindowHook rule."
+   },
+   {
+    "finding_id": 1904,
+    "key": "m1",
+    "digest": "18106caa4c405d9c",
+    "verdict": "holds",
+    "severity": "none",
+    "checked": "Read SubstDrive.cs:6 ('A subst drive letter for this logon session'). Weighed against Microsoft's 'Local and Global MS-DOS Device Names' page, from the earlier search: LocalSystem threads run in the global DosDevices context. Then tried four kinds of identity. LocalService and NetworkService have their own logon sessions, so their SUBST letters are local and IsSystem is false. An elevated admin's letter goes into the elevated session's local map, so IsSystem is false and the open fails. SYSTEM's letter is global, so IsSystem is true and the open succeeds. A process impersonating another account, where IsSystem reads the process token, does not arise in the test host. WindowsIdentity.IsSystem is a public property in System.Security.Principal on net10.0-windows.",
+    "why": "In every identity the suite can run under, the assertion HoldsDriveLetter(subst) == IsSystem states the namespace rule correctly. So does the matching Fixed-or-null assertion for DriveTypeAnElevatedCopySees. Under SYSTEM the refusal case is not exercised, but no session-local letter can be made there at all, so nothing is lost. The product is not affected, because a SYSTEM process is privileged and never probes.",
+    "instead": ""
+   },
+   {
+    "finding_id": 1905,
+    "key": "m2",
+    "digest": "f42e7090cb9e7bb9",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "Read the prescribed drive pick: 'opens through \\\\?\\GLOBALROOT\\GLOBAL??\\X:\\ (or whose QueryDosDevice target is \\Device\\...)'. Compared it with the GLOBAL?? spike's rows: Z:'s QueryDosDevice target is \\Device\\LanmanRedirector\\..., and SUBST R:'s is \\??\\C:\\.... Compared it with the finding's own case: a letter made by DefineDosDevice. Checked the stub requirement against how the window scripts are run: standalone .Tests.ps1 files; lesson #892's stubs are WindowCases.ps1's Invoke-HookedRun.",
+    "why": "1. The QueryDosDevice alternative lets through the very letter the finding named. DefineDosDevice(DDD_RAW_TARGET_PATH, 'Q:', '\\Device\\HarddiskVolume2') in the limited session makes a session-local letter whose target starts with \\Device\\. QueryDosDevice in that session returns the local definition, which takes precedence over any global one. The letter passes the alternative, the product correctly makes no offer, and the script reports FAILED. Only the GLOBAL?? open separates the two.\n2. The privileged check reads [Environment]::IsPrivilegedProcess, which exists only on .NET 8 and later. Run under Windows PowerShell 5.1 it returns $null, the INCONCLUSIVE row is skipped, and the script goes on to FAILED.\n3. 'Test each row with a stubbed run' gives the stubs no file or runner. They can become another check that runs nothing, the same class as M1.",
+    "instead": "Pick letters by the GLOBAL?? open alone, done from the script with the spike's CreateFileW flags, and drop the QueryDosDevice alternative.\nDecide privilege with [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole('Administrator') -or IsSystem, which works on both PowerShells.\nGive the script a -Stub parameter that replaces its launch and report read. Add one default-suite xUnit test, or a named check in the case list, that runs every ending row through it and asserts each row's exit code."
+   },
+   {
+    "finding_id": 1906,
+    "key": "m3",
+    "digest": "65763504d1601161",
+    "verdict": "holds",
+    "severity": "none",
+    "checked": "Read the current rule at fitness.yaml:1592-1605, with the prescribed patterns \\bUseShellExecute\\b, \\bShellExecute\\w* and (?i)Elevation:Administrator outside RescanAsAdministrator.cs. Grep of src for Process.Start and UseShellExecute found no matches. Tried these spellings against the rule:\n- psi.Verb ??= v; with UseShellExecute=true: caught, by the UseShellExecute pattern.\n- typeof(ProcessStartInfo).GetProperty(\"UseShellExecute\"): caught; the string holds the token.\n- Shell.Application's .ShellExecute(...) through COM or dynamic: caught.\n- A shell32 entry point \"ShellExecuteExW\": caught.\n- powershell -c \"Start-Process -Verb RunAs\": caught, by (?i)\\brunas\\b.\n- The elevation moniker: caught.\n- 'Verb =>' expression bodies: no longer a false positive.\n- \"Use\"+\"ShellExecute\" built at run time: not caught.",
+    "why": "Dropping the Verb pattern loses nothing. On .NET Core, Process.Start reads Verb only on the ShellExecuteEx path, and that path needs UseShellExecute=true, which is now banned outside the one file. The one run-time-built spelling that gets through is reflection, the class the prescription already lists as uncaught. One thing for the builder to know: the rule matches comments. A comment at MainWindow's Click handler that says 'Process.Start calls ShellExecuteEx', which the design's own rationale invites, would fail the gate. The comment has to name it differently.",
+    "instead": ""
+   },
+   {
+    "finding_id": 1907,
+    "key": "m4",
+    "digest": "daf6095608a14d29",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "Glob of **/Directory.Build.* found only the root Directory.Build.props. Grepped every *.csproj, *.props and *.targets for ApplicationManifest: none. Traced the routes by which an apphost gets its manifest on Windows: the SDK copies the IL assembly's Win32 resources into the apphost, and Csc embeds those from ApplicationManifest/Win32Manifest or from a Win32Resource .res file.",
+    "why": "Three routes get past the rule:\n- `<Win32Resource>app.res</Win32Resource>` in the App csproj embeds a compiled resource whose RT_MANIFEST says requireAdministrator. The file the level lives in can sit outside src/FsAnalyser.App, and the csproj never says ApplicationManifest. (Recalled, not run.)\n- `<Win32Manifest>` set directly is likely a second spelling of the same property.\n- A new src/Directory.Build.props or Directory.Build.targets is imported ahead of, or after, the root file. Neither name is in the prescribed files list, so an ApplicationManifest set there is never matched.\nThe behavioural guard for this, case 13, currently cannot fail (see M1), so this text rule is the only guard.",
+    "instead": "Ban (?m)\\b(ApplicationManifest|Win32Manifest|Win32Resource)\\b over src/** and every Directory.Build.* at any depth (src/**/Directory.Build.*, and Directory.Build.props and Directory.Build.targets at the root). Make the M1 fix for case 13, so that an unelevated CreateProcess launch with 740 or a timeout is FAILED. That catches a manifest level whatever its spelling."
+   },
+   {
+    "finding_id": 1908,
+    "key": "m5",
+    "digest": "d8e4dd2bb1b05bc6",
+    "verdict": "hole",
+    "severity": "minor",
+    "checked": "Read the design's probe and Offers contracts side by side. The probe returns its type unchecked when it is neither Fixed nor Removable, and runs the GLOBAL?? check only for Fixed or Removable. Offers requires a Fixed or Removable type and the X:\\ display shape. The probe also tests that shape.",
+    "why": "WorthProbing joins the status, unread-count and elevated conditions, but a second copy of the same drift class remains: the set of accepted drive types and the drive-root shape test are still written once in the probe and again in Offers. Say a later change widens Offers to accept Ram or CDRom, for RAM disks or optical media. The probe hands those types back without the GLOBAL?? check, because that check is guarded by its own copy of 'Fixed or Removable'. Offers then offers a rescan for a letter the elevated copy cannot open; RAM-disk tools can define session-local letters. That is the 'ends Could not read' failure the design's decision 2 exists to prevent. 'Offers is false whenever WorthProbing is false' does not test this.",
+    "instead": "In RescanAsAdministrator.cs, also add one IsRescannableType(DriveType) and one IsDriveRootShape(string). The probe runs the GLOBAL?? check exactly when IsRescannableType(type) is true, and Offers calls both. Pin it with one test: for every DriveType value where IsRescannableType is true, the probe with an injected holdsLetter that returns false gives null."
+   }
+  ],
+  "unmatched": [],
+  "unchecked": [],
+  "moved": [],
+  "annotated": [
+   "finding:1901",
+   "finding:1902",
+   "finding:1905",
+   "finding:1907",
+   "finding:1908"
+  ],
+  "counts": {
+   "holds": 2,
+   "hole": 5,
+   "unworkable": 0,
+   "no_verdict": 0
+  },
+  "summary": "Of the seven fixes, one holds as written (m1), one holds with a caveat about comments (m3), and five have holes.\n- M1: the case 13 check it moves cannot fail. A prompt at start ends as TIMEOUT, and a refused launch ends with no report; the SL-008 ending table calls both INCONCLUSIVE. The script's other negatives test only the root-shape gate.\n- M2: the new rule leaves MainWindow.xaml.cs out wholesale, and that file is where OnLoaded and ShowOutcome live, the very routes the finding named.\n- m2: its QueryDosDevice alternative lets through the session-local letter it was meant to keep out.\n- m4: a manifest can still come in through Win32Resource, or through a new src/Directory.Build.props.\n- m5: it leaves the drive-type set and the root-shape test duplicated between the probe and Offers.",
+  "why": "",
+  "round": "landed"
+ }
+}

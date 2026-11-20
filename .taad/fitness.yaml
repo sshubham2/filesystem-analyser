@@ -1587,3 +1587,86 @@ rules:
       it follows a symlink to a file that does not exist (CVE-2025-0913), so that kind is covered
       only by the name being unpredictable, not by CreateNew. ReportFileTests is the behavioural guard,
       SettledRulesCorpus.json the corpus of spellings.'
+
+
+  # settled by SL-008
+  - name: only the rescan button's file asks Windows for elevation
+    files: src/**/*.cs
+    must_not_match:
+    - '(?m)(?i)\brunas\b'
+    - '(?m)\blpVerb\b'
+    - '(?m)\bUseShellExecute\b'
+    - '(?m)\bShellExecute\w*'
+    - '(?m)(?i)Elevation:Administrator'
+    because: 'Non-goal 353: the app never elevates by itself, and the one guarded path is the
+      button''s Click through RescanAsAdministrator.Start. A shell verb set, or a shell start spelled,
+      anywhere else in src can raise a UAC prompt from a scan start, a launch or report mode, and an
+      unattended report-mode run would wait on the secure desktop for ever. It bans the API family and
+      not the spellings of the verb (SL-008 review m3): on .NET a verb takes effect only through
+      ProcessStartInfo.UseShellExecute, so that name, the ShellExecute names, the lpVerb field, the word
+      runas in any case and the COM elevation moniker are the ways in, and ''Verb ??='' or a verb built
+      as two strings are caught through the first of them. Not caught, by design: reflection on
+      ProcessStartInfo (GetProperty with the property''s name as a string). SettledRulesCorpus-style
+      rows in tests/FsAnalyser.Core.Tests/RescanElevationRulesCorpus.json, run by
+      RescanElevationRulesCorpusTests, keep the class and the patterns it was closed with. The patterns
+      match code only, as every settled entry does, so a comment may name them.'
+    except_files:
+    - src/FsAnalyser.App/RescanAsAdministrator.cs
+  - name: the app never asks for elevation at start
+    files: src/FsAnalyser.App/**
+    must_not_match:
+    - '(?m)(?i)\b(requireAdministrator|highestAvailable)\b'
+    because: 'Finish line 5: the app starts at the invoker''s level, and the default asInvoker manifest
+      applies because the App''s project names no manifest. A manifest level of requireAdministrator or
+      highestAvailable would make every start prompt, report mode included, and an unattended
+      report-mode run would fail with 740 or block on the secure desktop. The next entry bans the ways
+      of attaching a manifest from outside this folder, and SL-008''s own script, which launches the
+      app by CreateProcess and fails on 740 or a start that never ends, is the behavioural guard.'
+  - name: no manifest or resource is attached to the app from outside its project
+    files: src/**
+    must_not_match:
+    - '(?m)\b(ApplicationManifest|Win32Manifest|Win32Resource)\b'
+    because: 'The App relies on the SDK''s default asInvoker manifest (SL-008 review m4). The level of
+      a manifest lives in a file the previous entry''s folder glob never sees when the project only
+      names a path (ApplicationManifest, Win32Manifest) or a compiled resource that carries it
+      (Win32Resource), and a Directory.Build.props or .targets under src is imported ahead of or after
+      the root one. Any of them in src fails here; the next entry holds the root build files.'
+  - name: no manifest or resource is attached to the app from the root build files
+    files: Directory.Build.*
+    must_not_match:
+    - '(?m)\b(ApplicationManifest|Win32Manifest|Win32Resource)\b'
+    because: 'The same ban as the previous entry, for Directory.Build.props and .targets at the root of
+      the repository, which every project under it imports (SL-008 review m4).'
+  - name: only the window's own handler calls the rescan start, and nothing else names the handler
+    files: src/**/*.cs
+    must_not_match:
+    - '(?m)\bRescanAsAdministrator\s*\.\s*Start(?!edLine\b)'
+    - '(?m)\bOnRescanAsAdministrator\b'
+    - '(?m)\busing\s+static\s+[\w.:\s]*\bRescanAsAdministrator\b'
+    - '(?m)\busing\s+\w+\s*=\s*[\w.:\s]*\bRescanAsAdministrator\b'
+    because: 'The one place the app asks Windows for elevation is RescanAsAdministrator.Start, and the
+      only caller is the button''s Click handler (SL-008 review M2): a second call from OnLoaded, an
+      ending, report mode or any other file would raise the prompt without a person pressing anything.
+      The spelling of the verb is the previous entries'' business; this one is who reaches Start. It
+      holds every file but the two that own the call; inside MainWindow.xaml.cs,
+      RescanElevationGuardTests holds the rest: Start is called once, inside the handler''s body, the
+      handler is named nowhere else, and nothing in that file raises a click or invokes a button.
+      An alias or a static import of the class is a way to name Start without spelling it, so both
+      fail here, with or without the global:: or an extern alias before the name, and with spaces or
+      line breaks about the dots (the directive ends at its semicolon, so another directive is left
+      alone). Any member of the class whose name begins with Start is Start by another name, so a
+      forwarder fails too, and only StartedLine, the status line''s words, is let by
+      (SL-008 review O-023 and O-026; rows E17 to E35 of RescanElevationRulesCorpus.json). A forwarder
+      that RescanAsAdministrator.cs itself would add is held by RescanElevationGuardTests.'
+    except_files:
+    - src/FsAnalyser.App/MainWindow.xaml.cs
+    - src/FsAnalyser.App/RescanAsAdministrator.cs
+  - name: the window hook never names the rescan button
+    files: tests/window/FsaWindowHook/**
+    must_not_match:
+    - '(?m)(?i)rescan\s*as\s*admin'
+    because: 'The hook presses controls by raising their click (SettingsMode, StoppedTree, RevealMode):
+      a hook mode that pressed the rescan button would raise a real UAC prompt from an unattended
+      window case, which waits on a person for ever (SL-008 review M2). The window cases read the
+      offer from the report''s rescanAsAdministrator key and the button''s window key, and never
+      press it. The pattern matches the button''s text and its names in any case and spacing.'
