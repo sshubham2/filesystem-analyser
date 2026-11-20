@@ -1,0 +1,426 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-008",
+ "stage": "code-review",
+ "attempt": 2,
+ "at": "2026-11-20T09:29:45.985Z",
+ "head": "9761118edd8b9256a150b78a8e5bd7ca3c42791d",
+ "run_id": 11520,
+ "summary": "Both sent-back defects are fixed, but the class they belong to is not fully closed: a `<Using>` item in a project file still reaches Start, shown by a failing repro. I also filed one gap in the excepted file and one stale corpus note.\n\n**O-023 is fixed.** `.taad/fitness.yaml:1645-1646` now uses `[\\w.:\\s]*`, so `global::`, an extern-alias qualifier, spaces and line breaks around the dots are caught. The `;` is still excluded, so a match cannot run into the next directive. `RescanElevationGuardTests.MainWindowDoesNotImportOrAliasTheClass` now reads those two patterns from the entry instead of keeping its own copy.\n\n**O-026 is fixed.**\n- The Start pattern at `fitness.yaml:1643` is now `Start(?!edLine\\b)`. Forwarders named `StartFor`, `StartAsync` or `StartElevated` fire, and `StartedLine` stays quiet.\n- A new guard fact holds `RescanAsAdministrator.cs` to one call of the start delegate, inside Start, with Start named only once.\n- Corpus rows E17-E35 each carry an `attempt1` column, recomputed from the first build's patterns.\n\n**What I ran:**\n- 214 targeted tests, all passed: the engine's two tests (`CrSl008UsingDirectiveSpellingsTests`, `RescanStartGlobalQualifiedImportTests`), the corpus and guard tests, `SettledRulesCorpus`, `ArchitectureRulesTests`, `RuleCopiesAgree`, and the offer, probe, start and endings tests.\n- Fitness check: all 120 rules hold. It read 332 files, two more than before (the two new test files), so it reads the files git can see, not `obj/`.\n- The `Kernel32.cs`, `RescanOfferEndingsTests.cs` and `RescanAsAdministratorStartTests.cs` hunks are comment rewrites only, from 9353a34 (the comment fixer). No behaviour changed.\n\n**New findings:**\n- **m1 (repro run, fails 3 of 3).** `Directory.Build.props:5` turns on ImplicitUsings. So `<Using Include=\"FsAnalyser.App.RescanAsAdministrator\" Static=\"true\" />`, or its `Alias=` form, in the App project file or a root build file becomes a project-wide `global using static global::...` line. That line is written only into the generated `GlobalUsings.g.cs` under `obj`. No SL-008 entry reads those files with a pattern that fires on that item: the call-site entry reads `src/**/*.cs` only, the census skips `obj`, and Fitness does not read `obj`. A bare `Start(...)` in any App file, `OnLoaded` included, then passes every guard. The corpus note itself names \"a project file\" inside the class's bound, so this is a new member of a class the build claimed closed.\n- **m2 (extra).** `RescanAsAdministrator.cs` is excepted from the elevation ban as a whole file. A second method there that builds its own runas `ProcessStartInfo`, without calling Start and with a name that does not begin with Start, is caught by no rule or fact. `MainWindow` could then call it from `OnLoaded`.\n- **t1 (text).** Corpus row E14's note still credits \"the word boundary\" for letting `StartedLine` by. It is now the `(?!edLine\\b)` lookahead.\n\nThe repro file was removed afterwards; git status shows only the engine's own slice files. The waived notes (O-024, O-027, O-028) and backlog item O-025 are unchanged in the code, as their decisions intend.\n\nSecond round: This round found one new problem: the forwarder check this fix added passes even when the forwarder it is meant to catch is present. The rest of the fix held up against the inputs I tried.\n\n**The new problem (m3).** In `RescanElevationGuardTests.TheRescanFileCallsItsStartDelegateOnceInsideStartAndStartIsCalledByNoMemberOfIt`, the Start-call count uses `(?<![\\w.])Start\\s*\\(`. That lookbehind skips any `Start(` that has a dot in front of it. It also needs a `(`, so a method group is never counted. I added two forwarders to the text of `RescanAsAdministrator.cs` in memory and ran the fact's three regexes on it:\n- `RescanAsAdministrator.Start(...)`, called qualified from inside the class;\n- `Go => Start`, a method group.\n\nBoth left the counts exactly as on the real file: one declaration, one delegate call, one Start. So the fact still passes with a forwarder in place. `MainWindow.xaml.cs` is excepted from the call-site rule, and its guard looks only for `RescanAsAdministrator.Start…`, so `OnLoaded` could call `RescanAsAdministrator.Rescan(root)` or `.Go(...)` and reach the prompt. That is the forwarder half of O-026, which the build reported as closed. No repro is possible without putting a forwarder into the source file itself, so this stays a note.\n\n**What still holds.**\n- **Line breaks:** the widened directive patterns stop at `;` and handle CRLF.\n- **Prefixes:** an `@` verbatim prefix on the class name still matches.\n- **Flags and flavour:** `(?m)(?i)` and the `(?!edLine\\b)` lookahead are valid in the Fitness engine, which checks every rule and reports them all holding.\n- **Reader:** `ReadRule` reads the entry the same way under CRLF and with a BOM.\n- **Product code:** nothing changed in this fix apart from a comment in `Kernel32.cs`.\n\n**Not filed again.** Some spellings are exotic and nobody writes them by accident: `RescanAsAdministrator.@Start`, Unicode escapes in the name, and a comment between a directive's tokens (the builder already flagged that last one). The lock and partial-failure prompts have nothing new to apply to here.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "Both sent-back defects are fixed, but the class they belong to is not fully closed: a `<Using>` item in a project file still reaches Start, shown by a failing repro. I also filed one gap in the excepted file and one stale corpus note.\n\n**O-023 is fixed.** `.taad/fitness.yaml:1645-1646` now uses `[\\w.:\\s]*`, so `global::`, an extern-alias qualifier, spaces and line breaks around the dots are caught. The `;` is still excluded, so a match cannot run into the next directive. `RescanElevationGuardTests.MainWindowDoesNotImportOrAliasTheClass` now reads those two patterns from the entry instead of keeping its own copy.\n\n**O-026 is fixed.**\n- The Start pattern at `fitness.yaml:1643` is now `Start(?!edLine\\b)`. Forwarders named `StartFor`, `StartAsync` or `StartElevated` fire, and `StartedLine` stays quiet.\n- A new guard fact holds `RescanAsAdministrator.cs` to one call of the start delegate, inside Start, with Start named only once.\n- Corpus rows E17-E35 each carry an `attempt1` column, recomputed from the first build's patterns.\n\n**What I ran:**\n- 214 targeted tests, all passed: the engine's two tests (`CrSl008UsingDirectiveSpellingsTests`, `RescanStartGlobalQualifiedImportTests`), the corpus and guard tests, `SettledRulesCorpus`, `ArchitectureRulesTests`, `RuleCopiesAgree`, and the offer, probe, start and endings tests.\n- Fitness check: all 120 rules hold. It read 332 files, two more than before (the two new test files), so it reads the files git can see, not `obj/`.\n- The `Kernel32.cs`, `RescanOfferEndingsTests.cs` and `RescanAsAdministratorStartTests.cs` hunks are comment rewrites only, from 9353a34 (the comment fixer). No behaviour changed.\n\n**New findings:**\n- **m1 (repro run, fails 3 of 3).** `Directory.Build.props:5` turns on ImplicitUsings. So `<Using Include=\"FsAnalyser.App.RescanAsAdministrator\" Static=\"true\" />`, or its `Alias=` form, in the App project file or a root build file becomes a project-wide `global using static global::...` line. That line is written only into the generated `GlobalUsings.g.cs` under `obj`. No SL-008 entry reads those files with a pattern that fires on that item: the call-site entry reads `src/**/*.cs` only, the census skips `obj`, and Fitness does not read `obj`. A bare `Start(...)` in any App file, `OnLoaded` included, then passes every guard. The corpus note itself names \"a project file\" inside the class's bound, so this is a new member of a class the build claimed closed.\n- **m2 (extra).** `RescanAsAdministrator.cs` is excepted from the elevation ban as a whole file. A second method there that builds its own runas `ProcessStartInfo`, without calling Start and with a name that does not begin with Start, is caught by no rule or fact. `MainWindow` could then call it from `OnLoaded`.\n- **t1 (text).** Corpus row E14's note still credits \"the word boundary\" for letting `StartedLine` by. It is now the `(?!edLine\\b)` lookahead.\n\nThe repro file was removed afterwards; git status shows only the engine's own slice files. The waived notes (O-024, O-027, O-028) and backlog item O-025 are unchanged in the code, as their decisions intend.\n\nSecond round: This round found one new problem: the forwarder check this fix added passes even when the forwarder it is meant to catch is present. The rest of the fix held up against the inputs I tried.\n\n**The new problem (m3).** In `RescanElevationGuardTests.TheRescanFileCallsItsStartDelegateOnceInsideStartAndStartIsCalledByNoMemberOfIt`, the Start-call count uses `(?<![\\w.])Start\\s*\\(`. That lookbehind skips any `Start(` that has a dot in front of it. It also needs a `(`, so a method group is never counted. I added two forwarders to the text of `RescanAsAdministrator.cs` in memory and ran the fact's three regexes on it:\n- `RescanAsAdministrator.Start(...)`, called qualified from inside the class;\n- `Go => Start`, a method group.\n\nBoth left the counts exactly as on the real file: one declaration, one delegate call, one Start. So the fact still passes with a forwarder in place. `MainWindow.xaml.cs` is excepted from the call-site rule, and its guard looks only for `RescanAsAdministrator.Start…`, so `OnLoaded` could call `RescanAsAdministrator.Rescan(root)` or `.Go(...)` and reach the prompt. That is the forwarder half of O-026, which the build reported as closed. No repro is possible without putting a forwarder into the source file itself, so this stays a note.\n\n**What still holds.**\n- **Line breaks:** the widened directive patterns stop at `;` and handle CRLF.\n- **Prefixes:** an `@` verbatim prefix on the class name still matches.\n- **Flags and flavour:** `(?m)(?i)` and the `(?!edLine\\b)` lookahead are valid in the Fitness engine, which checks every rule and reports them all holding.\n- **Reader:** `ReadRule` reads the entry the same way under CRLF and with a BOM.\n- **Product code:** nothing changed in this fix apart from a comment in `Kernel32.cs`.\n\n**Not filed again.** Some spellings are exotic and nobody writes them by accident: `RescanAsAdministrator.@Start`, Unicode escapes in the name, and a comment between a directive's tokens (the builder already flagged that last one). The lock and partial-failure prompts have nothing new to apply to here.",
+  "matches_design": true,
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "claim": "The class 'spellings that reach RescanAsAdministrator.Start without spelling RescanAsAdministrator.Start' is still open through the project-file spelling of a global using. Directory.Build.props:5 sets <ImplicitUsings>enable</ImplicitUsings>. So <Using Include=\"FsAnalyser.App.RescanAsAdministrator\" Static=\"true\" /> (or Alias=\"RA\") in src/FsAnalyser.App/FsAnalyser.App.csproj, a src Directory.Build.*, or the root Directory.Build.props/targets generates `global using static global::FsAnalyser.App.RescanAsAdministrator;` into obj/.../FsAnalyser.App.GlobalUsings.g.cs. After that, a bare `Start(Environment.ProcessPath, root, Process.Start)` compiles in every App file, MainWindow.xaml.cs's OnLoaded included. Nothing catches it:\n- the call-site entry's files are src/**/*.cs, so it never reads a project file;\n- its patterns do not match a <Using> item;\n- Fitness reads git-visible files, not obj (332 files read, while src/**/obj alone holds 32 .cs files), and RescanElevationRulesCorpusTests.FilesOf drops bin and obj;\n- RescanElevationGuardTests checks directives only in MainWindow.xaml.cs's own text, and its Start counters only see the qualified spelling.\nThe corpus note bounds the class by 'whoever edits src, a project file or the window hook next', so a project-file spelling is inside the bound the build claimed closed. Measured: the repro below fails 3 of 3 on this tree, with 'no SL-008 entry reads ... and fires on: <Using Include=...>'.",
+    "class_of": "spellings that reach RescanAsAdministrator.Start without spelling RescanAsAdministrator.Start",
+    "threat": "accident",
+    "file": ".taad/fitness.yaml",
+    "line": 1641,
+    "end_line": 1647,
+    "evidence": "Directory.Build.props:5 <ImplicitUsings>enable</ImplicitUsings>. The call-site entry at .taad/fitness.yaml:1640-1647 has files: src/**/*.cs. The manifest entries over src/** and Directory.Build.* ban only ApplicationManifest, Win32Manifest and Win32Resource. src/FsAnalyser.App/obj/.../FsAnalyser.App.GlobalUsings.g.cs exists, so the SDK's GenerateGlobalUsings target runs for this project.",
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1641,
+     "text": "    files: src/**/*.cs"
+    },
+    "fix": "Add '(?m)(?i)<Using\\s+Include\\s*=\\s*\"[^\"]*\\bRescanAsAdministrator\\b' to an entry that reads project and build files: the two manifest entries over src/** and Directory.Build.*, or a new entry over src/** with MainWindow.xaml excepted. Add corpus rows E36 (<Using Include=\"FsAnalyser.App.RescanAsAdministrator\" Static=\"true\" />, fire, attempt1 quiet), E37 (the Alias=\"RA\" form, fire) and E38 (<Using Include=\"System.Text.Json\" />, quiet).",
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/CrSl008ProjectFileUsingTests.cs",
+     "body": "using System.Text.RegularExpressions;\n\nnamespace FsAnalyser.Core.Tests;\n\n// Code review of SL-008, attempt 2: with ImplicitUsings on (Directory.Build.props), a <Using> item in a project file or a root\n// build file becomes a 'global using static global::FsAnalyser.App.RescanAsAdministrator;' (or an alias) in the generated\n// GlobalUsings.g.cs under obj, which no rule reads. A bare Start(...) in any App file then reaches the elevation. Some settled\n// SL-008 entry has to read those files and fire on that item, whatever entry it is.\npublic class CrSl008ProjectFileUsingTests\n{\n    private static string[] Sl008RuleNames()\n    {\n        string[] lines = File.ReadAllLines(Path.Combine(FailCriticalErrorsTests.FindRepo(), \".taad\", \"fitness.yaml\"));\n        int start = Array.FindIndex(lines, l => l.Trim() == \"# settled by SL-008\");\n        Assert.True(start >= 0, \"no '# settled by SL-008' block in .taad/fitness.yaml\");\n        var names = new List<string>();\n        for (int i = start + 1; i < lines.Length; i++)\n        {\n            string t = lines[i].Trim();\n            if (t.StartsWith(\"# settled by\", StringComparison.Ordinal))\n                break;\n            if (t.StartsWith(\"- name: \", StringComparison.Ordinal))\n            {\n                string n = t[\"- name: \".Length..].Trim();\n                names.Add(n.Length >= 2 && n[0] == '\\'' && n[^1] == '\\'' ? n[1..^1].Replace(\"''\", \"'\") : n);\n            }\n        }\n        return [.. names];\n    }\n\n    private static bool GlobMatches(string glob, string path)\n    {\n        string re = Regex.Escape(glob).Replace(@\"\\*\\*/\", \"(.*/)?\").Replace(@\"\\*\\*\", \".*\").Replace(@\"\\*\", \"[^/]*\");\n        return Regex.IsMatch(path, \"^\" + re + \"$\", RegexOptions.IgnoreCase);\n    }\n\n    [Theory]\n    [InlineData(\"src/FsAnalyser.App/FsAnalyser.App.csproj\", \"    <Using Include=\\\"FsAnalyser.App.RescanAsAdministrator\\\" Static=\\\"true\\\" />\")]\n    [InlineData(\"src/FsAnalyser.App/FsAnalyser.App.csproj\", \"    <Using Include=\\\"FsAnalyser.App.RescanAsAdministrator\\\" Alias=\\\"RA\\\" />\")]\n    [InlineData(\"Directory.Build.props\", \"    <Using Include=\\\"FsAnalyser.App.RescanAsAdministrator\\\" Static=\\\"true\\\" />\")]\n    public void AProjectFileUsingOfTheRescanClassIsCaughtBySomeSettledEntry(string file, string line)\n    {\n        bool caught = Sl008RuleNames()\n            .Select(SettledRulesCorpusTests.ReadRule)\n            .Any(rule => GlobMatches(rule.Files, file)\n                && !rule.ExceptFiles.Contains(file, StringComparer.OrdinalIgnoreCase)\n                && rule.Patterns.Any(p => Regex.IsMatch(line, p)));\n        Assert.True(caught, $\"no SL-008 entry reads {file} and fires on: {line.Trim()}\");\n    }\n}\n",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~CrSl008ProjectFileUsingTests"
+    }
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "extra",
+    "claim": "The new fact TheRescanFileCallsItsStartDelegateOnceInsideStartAndStartIsCalledByNoMemberOfIt holds RescanAsAdministrator.cs only to calling its `start` delegate once and naming `Start(` once. The file is excepted wholesale from 'only the rescan button's file asks Windows for elevation', so a second member there can elevate without either:\n- it builds its own ProcessStartInfo with UseShellExecute = true and Verb = ElevationVerb;\n- it calls Process.Start directly, and its name does not begin with Start.\nNo rule or fact catches it. MainWindow.xaml.cs could then call that member from OnLoaded or ShowOutcome: MainWindow is excepted from the call-site entry, and the guard test looks only for StartName. The fitness because text ('A forwarder that RescanAsAdministrator.cs itself would add is held by RescanElevationGuardTests') covers only a forwarder that calls Start.",
+    "file": "tests/FsAnalyser.Core.Tests/RescanElevationGuardTests.cs",
+    "line": 112,
+    "evidence": "RescanElevationGuardTests.cs:112-128 counts `(?<![\\w.])start\\s*\\(` and `(?<![\\w.])Start\\s*\\(` only. RescanAsAdministrator.cs:116-121 is the one place UseShellExecute and ElevationVerb are used today, and nothing pins that.",
+    "fix": "Extend the fact: in RescanAsAdministrator.cs, `UseShellExecute`, `ElevationVerb` (outside its own declaration), `new ProcessStartInfo` and `Process.Start(` (outside crefs) occur only inside Start's brace-matched body."
+   },
+   {
+    "id": "t1",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "text",
+    "claim": "Corpus row E14's note says StartedLine is let by 'the word boundary'. Since this fix, the Start pattern is `Start(?!edLine\\b)`, so a word boundary no longer separates them; the negative lookahead excludes StartedLine.",
+    "file": "tests/FsAnalyser.Core.Tests/RescanElevationRulesCorpus.json",
+    "line": 81,
+    "evidence": ".taad/fitness.yaml:1643 '(?m)\\bRescanAsAdministrator\\s*\\.\\s*Start(?!edLine\\b)'.",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/RescanElevationRulesCorpus.json",
+     "line": 81,
+     "text": "\"note\": \"StartedLine is not Start: the word boundary\""
+    },
+    "fix": "Change the note to 'StartedLine is not Start: the pattern's (?!edLine\\b) lets it by, and any other Start... member fires'."
+   },
+   {
+    "id": "R2-m3",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "defect",
+    "claim": "The forwarder fact added for O-026 cannot see the two common forwarder shapes. Its Start-call count is `(?<![\\w.])Start\\s*\\(`.\n- The lookbehind drops any `Start(` with a dot before it. That was meant for the `Process.Start(` cref, but it also drops a qualified self-call `RescanAsAdministrator.Start(...)` inside the class.\n- The `\\(` means a method group `=> Start;` is never counted.\nMeasured by running the fact's three regexes on the file's text with each forwarder appended in memory:\n- `public static string? Rescan(string root) => RescanAsAdministrator.Start(Environment.ProcessPath, root, Process.Start);` gives decl=1, delegate=1, startNamed=1, the same as the real file, so the fact passes;\n- `public static Func<string?, string, Func<ProcessStartInfo, Process?>, string?> Go => Start;` gives the same counts.\nThe file is excepted from the call-site entry, MainWindow.xaml.cs is excepted too, and MainWindow's guard looks only for `RescanAsAdministrator\\s*\\.\\s*Start(?!edLine\\b)`. So `RescanAsAdministrator.Rescan(root)` or `.Go(...)` called from OnLoaded or ShowOutcome reaches the elevation and trips nothing. This is a member of the class O-026 was closed as.",
+    "class_of": "spellings that reach RescanAsAdministrator.Start without spelling RescanAsAdministrator.Start",
+    "threat": "accident",
+    "file": "tests/FsAnalyser.Core.Tests/RescanElevationGuardTests.cs",
+    "line": 124,
+    "end_line": 127,
+    "evidence": "The fact is at RescanElevationGuardTests.cs:112-128. Its comment at :110-111 says 'Start is not called by another member of that file'. In the real file today, `\\bStart\\b` occurs only in doc comments (cref=\"Start\", cref=\"Process.Start(...)\", 'VolumeSpace.Start') and in the declaration.",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/RescanElevationGuardTests.cs",
+     "line": 125,
+     "text": "        MatchCollection startNamed = Regex.Matches(text, @\"(?<![\\w.])Start\\s*\\(\");"
+    },
+    "fix": "Strip `//` and `///` comment text from the file before counting, then require `(?<!Process\\s*\\.\\s*)\\bStart\\b` to occur exactly once, at the declaration. That counts qualified self-calls, bare calls and method groups alike. Add two corpus-style rows to the fact's own theory: the qualified forwarder and the method-group forwarder above, each expected to fail the count."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "cannot-tell",
+    "evidence": "Owed to validate-slice. The code still proves only that GLOBAL?? holds the letter (Kernel32.OpensThroughGlobalDosDevices). Elevated-session shadowing cannot be observed at code review."
+   },
+   {
+    "key": "O-002",
+    "discharged": "cannot-tell",
+    "evidence": "Owed to validate-slice. It needs a real interactive consent elevation (N-075), which cannot be driven here."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "Unchanged since attempt 1. RescanAsAdministratorOfferTests.AFinishedScanOfAFixedOrRemovableDriveThatLeftFoldersUnreadOffersIt passed in this run."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "Unchanged. OnlyAScanThatCompletedOffersIt passes. ShowOutcome's early returns are at MainWindow.xaml.cs:645-657, and StartScan's reset at :273."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "Unchanged. ARootIsADriveOnlyInTheShapeOfOne passes. The script's folder, folder-slash and root-unreadable negatives are as before."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "Unchanged. ADriveThatWasReadInFullDoesNotOfferIt and corpus rows D05/D06 pass."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "Unchanged. The injected-type probe tests pass, and holdsLetter is never called for non-local types (RescanAsAdministrator.cs:172-174)."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "Unchanged. The real SubstDrive and system-drive probe tests passed here, not running as SYSTEM."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "Unchanged. The catch filter is at RescanAsAdministrator.cs:177, and the throwing-reader tests pass."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "Unchanged. AnElevatedCopyNeverOffersItWhateverElseHolds passes."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "Unchanged. The 52-root CommandLineToArgvW test passes. Only the comment at RescanAsAdministratorStartTests.cs:169 was reworded."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "Unchanged. The 1223 → DeclinedLine catch is at RescanAsAdministrator.cs:127-130, and its test passes."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "Unchanged. The refused-code and no-program tests pass."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "The script is unchanged. The builder re-ran it for real (whole D:, held). I did not repeat the whole-drive scan."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "The script's CreateProcess short runs are unchanged. The window-run overclaim stays as waived note O-024/O-028 (script line 220 unchanged)."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "The builder-owned tests and script rows are unchanged and pass (214 targeted tests green)."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "The call-site entry is widened (fitness.yaml:1643-1646), and the guard now reads its directive patterns from the entry (RescanElevationGuardTests.cs:96-108). New member m1 (a project-file <Using>) is filed against the same class."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "Unchanged. The IsSystem-conditional SUBST asserts are in RescanAsAdministratorProbeTests.cs."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "The script and the 44-row corpus are unchanged. RescanOfferEndingsTests passes; only its doc comment was reworded."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "The family ban at fitness.yaml:1595-1600 is unchanged, and the corpus A-rows pass."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "The manifest entries are unchanged, and the corpus C/D rows pass."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "WorthProbing, IsRescannableType and IsDriveRootShape are unchanged in RescanAsAdministrator.cs:61-82, and the sweep tests pass."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "fitness.yaml:1645-1646 now use [\\w.:\\s]*. RescanElevationGuardTests.MainWindowDoesNotImportOrAliasTheClass reads them from the entry. tests/FsAnalyser.Core.Tests/CrSl008UsingDirectiveSpellingsTests.cs is in the tree as given and passes. Corpus: tests/FsAnalyser.Core.Tests/RescanElevationRulesCorpus.json rows E17-E35, with the attempt1 column recomputed by TheFirstBuildsCallSitePatternsLetByTheRowsTheWideningClosed. A further class member is still open (finding m1)."
+   },
+   {
+    "key": "O-026",
+    "discharged": "yes",
+    "evidence": "fitness.yaml:1643 is 'Start(?!edLine\\b)', and the directive patterns are widened as in O-023. The forwarder fact is at RescanElevationGuardTests.cs:112-128. tests/FsAnalyser.Core.Tests/RescanStartGlobalQualifiedImportTests.cs is in the tree as given and passes. Corpus: tests/FsAnalyser.Core.Tests/RescanElevationRulesCorpus.json (E20-E22 global using, E25 extern alias, E27-E29 forwarders). The project-file member (m1) and a non-Start elevating member in the excepted file (m2) remain."
+   },
+   {
+    "key": "O-024",
+    "discharged": "no",
+    "evidence": "Waived as note N-080. SL-008-RescanOfferOnALocalDrive.Tests.ps1:220 still maps ALIVE to 'held ... with no prompt', with no prompt check. Nothing was built, as the waiver intends."
+   },
+   {
+    "key": "O-025",
+    "discharged": "no",
+    "evidence": "Carried to SC-086. fitness.yaml's only moniker pattern is still '(?m)(?i)Elevation:Administrator', so 'Elevation:Highest!new:' is still quiet. Not built here, as decided."
+   },
+   {
+    "key": "O-027",
+    "discharged": "no",
+    "evidence": "Waived as note N-081. Get-Privileged in the script still reads only IsInRole(Administrator) or IsSystem."
+   },
+   {
+    "key": "O-028",
+    "discharged": "no",
+    "evidence": "Waived as note N-079. It is the same unchanged line 220 as O-024."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "RescanAsAdministratorOfferTests is unchanged and passes."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "OnlyAScanThatCompletedOffersIt varies every ScanStatus with the drive root held fixed."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "ARootIsADriveOnlyInTheShapeOfOne covers the shapes, and the script runs the folder negatives at exe level. The UNC report run is declared as not made."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "ADriveThatWasReadInFullDoesNotOfferIt, and stub rows D05/D06."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "Injected Network, CDRom, Ram, NoRootDirectory and Unknown types, with holdsLetter counted at 0."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "A real SubstDrive letter and the real system drive; passed here."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "Readers that throw from both the type read and the namespace read."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "Elevated true for every DriveType."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "52 roots with a spaced exe path, split by the real CommandLineToArgvW."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "An injected Win32Exception(1223)."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "Codes 2, 5, 1155 and others, plus a null or empty exe path."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "The script's drive step on a real global Fixed drive; the builder re-ran it unelevated (held)."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "CreateProcess short runs. The window runs detect only 740 (waived notes N-079/N-080)."
+   },
+   {
+    "key": "C-014",
+    "exercised": "no",
+    "evidence": "Not material and has no test. The reset is still at MainWindow.xaml.cs:273 (HideRescanOffer)."
+   }
+  ],
+  "drift": [],
+  "second_round": {
+   "run_id": 11521,
+   "filed": 1
+  },
+  "reading_pass": {
+   "state": "none",
+   "why": [],
+   "lens": null,
+   "cut_off": false,
+   "cut_runs": {
+    "line": false,
+    "inputs": false,
+    "any": false
+   },
+   "run_id": null,
+   "session": null,
+   "resumed": null,
+   "asked": [],
+   "asked_hunks": 0,
+   "named": [],
+   "before": {
+    "read_whole": 0,
+    "changed": 9,
+    "listed": 9
+   },
+   "filed": 0,
+   "read_after": 0,
+   "still_unread": []
+  },
+  "unread_measured": {
+   "measured": true,
+   "why": "",
+   "changed": 9,
+   "read_whole": 0,
+   "deleted": [],
+   "runs": [
+    11515,
+    11520,
+    11521
+   ],
+   "range": {
+    "base": "a805368de1910f4bda8774e5acea5a04f033fc84",
+    "head": "9761118edd8b9256a150b78a8e5bd7ca3c42791d",
+    "source": "commits",
+    "hunk_base": "e8626f2cae34820c48bdfdaa47f5206e52711931",
+    "hunk_base_from": "the earlier review's scope"
+   },
+   "items": [
+    {
+     "path": ".taad/fitness.yaml",
+     "state": "partly-opened",
+     "section": "lines 1-1672 of 1672",
+     "reason": "seen only as 2 Grep lines (before the build); seen only through a shell command: $f, git diff (before the build), git log",
+     "size_lines": 1672,
+     "hunks": []
+    },
+    {
+     "path": "src/FsAnalyser.Core/Native/Kernel32.cs",
+     "state": "partly-opened",
+     "section": "lines 1-485 of 485",
+     "reason": "seen only as 45 Grep lines (before the build); seen only through a shell command: git diff (before the build), git log",
+     "size_lines": 485,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/CrSl008UsingDirectiveSpellingsTests.cs",
+     "state": "partly-opened",
+     "section": "lines 1-20 of 20",
+     "reason": "seen only through a shell command: $f (before the build), git diff",
+     "size_lines": 20,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/RescanAsAdministratorStartTests.cs",
+     "state": "partly-opened",
+     "section": "lines 169 of 188",
+     "reason": "a Read returned only part of it; seen only through a shell command: git log; 2 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 188,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/RescanElevationGuardTests.cs",
+     "state": "partly-opened",
+     "section": "lines 9-24, 26-109, 130-171 of 171",
+     "reason": "a Read returned only part of it; seen only through a shell command: git diff; 131 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 171,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/RescanElevationRulesCorpus.json",
+     "state": "partly-opened",
+     "section": "lines 2, 17-52, 54-115 of 115",
+     "reason": "a Read returned only part of it; seen only as 8 Grep lines (7 before the build) (long lines elided); seen only through a shell command: git diff; 73 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 115,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/RescanElevationRulesCorpusTests.cs",
+     "state": "partly-opened",
+     "section": "lines 132-178 of 178",
+     "reason": "a Read returned only part of it; seen only through a shell command: git diff; 22 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 178,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/RescanOfferEndingsTests.cs",
+     "state": "partly-opened",
+     "section": "lines 16-17 of 217",
+     "reason": "a Read returned only part of it; seen only through a shell command: git log; 3 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 217,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/RescanStartGlobalQualifiedImportTests.cs",
+     "state": "partly-opened",
+     "section": "lines 1-18 of 18",
+     "reason": "seen only through a shell command: git diff",
+     "size_lines": 18,
+     "hunks": []
+    }
+   ],
+   "notes": []
+  }
+ }
+}
