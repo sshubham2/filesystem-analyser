@@ -6,7 +6,8 @@ namespace FsAnalyser.Core.Tests;
 /// SL-008 review M2: the app never elevates by itself. The one place it asks Windows to start it with more rights is
 /// RescanAsAdministrator.Start, and the one caller is the rescan button's Click handler in MainWindow.xaml.cs. The settled
 /// fitness entries keep every other file from calling or naming it, and from spelling the verb; they cannot see inside
-/// MainWindow.xaml.cs, where OnLoaded, the endings and report mode also live, so this reads that file: Start is called once, inside
+/// MainWindow.xaml.cs, where OnLoaded and the endings also live (a report-mode run goes through them, from App.xaml.cs and
+/// WindowReport.cs), so this reads that file: Start is called once, inside
 /// the handler's body, the handler is named nowhere else, and nothing in the file raises a click or invokes a button, so that a
 /// route that reached the call without a person pressing the button would fail here. The text is read whole, comments included,
 /// which is stricter than the entries.
@@ -96,8 +97,7 @@ public class RescanElevationGuardTests
         Assert.DoesNotMatch(@"\busing\s+\w+\s*=\s*[\w.]*\bRescanAsAdministrator\b", text);
     }
 
-    // The one call asks for what the design says: this program, the ending's own root, and Process.Start; and it is the only thing
-    // the handler does with the result besides showing it.
+    // The one call asks for what the design says: this program, the ending's own root, and Process.Start.
     [Fact]
     public void TheCallGivesTheRunningProgramTheEndingsRootAndTheSystemsStart()
     {
@@ -105,7 +105,9 @@ public class RescanElevationGuardTests
         Assert.Contains("RescanAsAdministrator.Start(Environment.ProcessPath, last.Root, Process.Start)", text, StringComparison.Ordinal);
     }
 
-    // Nothing starts a rescan at a start, at an ending or in report mode: the three places a scan's own code runs are free of it.
+    // Nothing starts a rescan when the window loads (OnLoaded), when a scan starts (StartScan) or at an ending (ShowOutcome,
+    // ShowProblem, AddVolumeInUse): these methods of MainWindow.xaml.cs hold neither the call nor the handler's name. Report mode's
+    // own files are the next test.
     [Theory]
     [InlineData("OnLoaded")]
     [InlineData("StartScan")]
@@ -125,7 +127,7 @@ public class RescanElevationGuardTests
         }
     }
 
-    // The App's own start, and report mode, are in App.xaml.cs and WindowReport.cs: neither names the rescan's start or its handler.
+    // The App's own start, and report mode, are in App.xaml.cs, WindowReport.cs and ReportFile.cs: none names the rescan's start or its handler.
     [Theory]
     [InlineData("App.xaml.cs")]
     [InlineData("WindowReport.cs")]

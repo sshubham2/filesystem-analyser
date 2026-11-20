@@ -13,8 +13,8 @@ namespace FsAnalyser.Core.Tests;
 /// <list type="bullet">
 /// <item>every row's exit code and step verdicts, under pwsh and under Windows PowerShell 5.1 (the script has to work under both: the
 /// privilege read is the same under both, where [Environment]::IsPrivilegedProcess exists only on .NET 8 and later);</item>
-/// <item>the same rows through a copy of the script with the two lines marked MUTATE taken out, which is the table as it was before
-/// the fix: its exit codes are the corpus's 'before' column, and the rows where it differs from 'expect' are the members the fix closed;</item>
+/// <item>the same rows through a copy of the script with the two lines marked MUTATE put back as they were before the fix (no
+/// privilege read, no global-namespace test on the drive it picks), which is the table as it was before the fix: its exit codes are the corpus's 'before' column, and the rows where it differs from 'expect' are the members the fix closed;</item>
 /// <item>the process's own exit code for one row of each verdict.</item>
 /// </list>
 /// </summary>

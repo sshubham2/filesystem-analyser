@@ -166,7 +166,7 @@ public class RescanAsAdministratorStartTests
         Assert.Null(RescanAsAdministrator.Start(SpacedExe, @"C:\", new Recorder().Start));
     }
 
-    // The words are all ASCII, and the refusal's carries the code and nothing of the machine.
+    // The words are all ASCII and name nothing of the machine: neither the program's path nor the root.
     [Fact]
     public void EveryLineStartGivesIsAsciiAndHoldsNeitherTheProgramNorTheRoot()
     {

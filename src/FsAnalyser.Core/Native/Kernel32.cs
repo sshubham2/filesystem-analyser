@@ -218,9 +218,9 @@ internal static unsafe partial class Kernel32
     /// Opens a drive's root for a query and nothing else (SL-001): FILE_READ_ATTRIBUTES only, shared with every other
     /// open (FILE_SHARE_ALL, as every open in Core is, so it never races the scan's own open of the same root and never
     /// loses to a program that holds the drive), backup semantics so a directory opens. Nothing is listed, no data is
-    /// read, and an open for attributes alone moves no last-access time. The one place the volume thread's root opens
-    /// are spelled, so <see cref="IsRemoteRoot"/>, <see cref="TryGetMftValidData"/> and
-    /// <see cref="OpensThroughGlobalDosDevices"/> cannot differ in them.
+    /// read, and an open for attributes alone moves no last-access time. The one place these query opens are spelled (the
+    /// volume thread's two, and the rescan probe's on the scan's own thread), so <see cref="IsRemoteRoot"/>,
+    /// <see cref="TryGetMftValidData"/> and <see cref="OpensThroughGlobalDosDevices"/> cannot differ in them.
     /// </summary>
     private static SafeFileHandle OpenRootForQuery(in CriticalErrorBoxOff boxOff, string root) =>
         CreateFile(boxOff, root, FILE_READ_ATTRIBUTES, FILE_SHARE_ALL, 0, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
