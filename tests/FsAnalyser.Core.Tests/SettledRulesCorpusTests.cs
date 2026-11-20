@@ -74,7 +74,7 @@ public class SettledRulesCorpusTests
         return wasSingleQuoted ? scalar[1..^1].Replace("''", "'") : scalar;
     }
 
-    // The files a rule's glob names, as the two forms this file's rules use: <folder>/**/*.cs.
+    // The files a rule's glob names, in the one form this file's rules use: <folder>/**/<pattern>, as src/**/*.cs.
     private static IEnumerable<string> FilesOf(Rule rule)
     {
         string repo = FailCriticalErrorsTests.FindRepo();

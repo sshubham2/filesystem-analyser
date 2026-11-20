@@ -109,7 +109,7 @@ public class CommandLineTests
         Assert.Null(CommandLine.Arguments([@"D:\Data""", @"E:\a""b"], "app.exe nothing"));
     }
 
-    // The grammar the repair reads differently from Windows, or that it opens (lesson #791): one row each. The second column
+    // The grammar the repair reads differently from Windows, or that it opens (lesson #791): one row each. The first column
     // is the program's name as the line starts, which the repair must skip by the C runtime's rule.
     public static TheoryData<string, string, string[]> TheGrammar() => new()
     {

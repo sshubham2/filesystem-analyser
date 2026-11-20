@@ -6,9 +6,9 @@
  *     FsAnalyser.App.exe "D:\Data\" --report "D:\out\r.json"
  *
  * reaches the app as ONE argument:  D:\Data" --report D:\out\r.json  (Windows argv rules: \" is a literal quote and the
- * quoting goes on). App.OnStartup (src/FsAnalyser.App/App.xaml.cs:21) then finds no "--report" among e.Args, so it does
- * not enter report mode and opens an interactive MainWindow on that nonsense root (line 26). CommandLine.RootArgument
- * only repairs an argument that ENDS in a quote, so it does not help here.
+ * quoting goes on). At the base, App.OnStartup (src/FsAnalyser.App/App.xaml.cs:21 there) then found no "--report" among
+ * e.Args, so it did not enter report mode and opened an interactive MainWindow on that nonsense root (line 26 there).
+ * CommandLine.RootArgument only repairs an argument that ENDS in a quote, so it did not help here.
  *
  * EXPECTED: the app takes the root as <tree>\ and "--report" as an option, scans, writes the report, and exits 0, exactly
  * as it does for the same line without the trailing backslash.
