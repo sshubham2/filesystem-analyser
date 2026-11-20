@@ -1539,3 +1539,51 @@ rules:
       the FoldersVanished assertions of VanishedFolderTests, which fail if the reader swallows
       the open's code 2 or 3, whatever it is spelled as; this rule only catches the two
       spellings that would be written first.
+
+  # settled by SL-007
+  # Written by hand: the engine appends a design's rules by name and skips one whose name is already here, so the first attempt's
+  # narrower copies of the first two had to be replaced, not added to (review m7). Matched against code only (no including_comments),
+  # so a comment may name what a rule forbids. SettledRulesCorpusTests reads these patterns from here and runs
+  # SettledRulesCorpus.json and the App's own source through them.
+  - name: the app decides its mode only on repaired arguments
+    files: src/FsAnalyser.App/**/*.cs
+    must_not_match:
+    - '(?m)(?<!CommandLine\.Arguments\()\b\w+\.Args\b'
+    - '(?m)\bGetCommandLineArgs\b'
+    - '(?m)[{,]\s*Args\s*[:.]'
+    because: 'Windows'' split merges a quoted root ending in a backslash with everything after
+      it. Any --report test or root taken from StartupEventArgs.Args (whatever the parameter is
+      called, and also as a property pattern such as `e is { Args: var a }`) or from
+      GetCommandLineArgs (also as a bare call after `using static System.Environment`) before
+      CommandLine.Arguments has repaired it reopens SL-007''s hang: an interactive window on a
+      nonsense root that never exits, which an unattended caller waits on for ever.'
+  - name: nothing reads the rebuilt command line
+    files: src/**/*.cs
+    must_not_match:
+    - '(?m)\bEnvironment\.CommandLine\b'
+    because: 'On .NET 10, Environment.CommandLine is rebuilt from the already-split argv (measured
+      by this slice''s investigation). It has lost the quoting and the runs of spaces the repair
+      needs, so code that uses it gets a spaced report path wrong while looking as if it read
+      the raw line. Only Kernel32.CommandLineAsTyped (GetCommandLineW) holds the line as typed.'
+  - name: the app writes files only by exclusive create
+    files: src/FsAnalyser.App/**/*.cs
+    except_files:
+    - 'src/FsAnalyser.App/ReportFile.cs'
+    must_not_match:
+    - '(?m)\bFile\.(WriteAll(Bytes|Text|Lines)|AppendAll(Text|Lines)|AppendText|CreateText|Create|OpenWrite)(Async)?\s*\('
+    - '(?m)\bFileMode\.(Create|OpenOrCreate|Truncate|Append)\b'
+    - '(?m)\.(Create|OpenWrite|CreateText|AppendText)\s*\(\s*\)'
+    - '(?m)\bStreamWriter\b'
+    - '(?m)\bFileStream\b'
+    - '(?m)\bFile\.Open(Handle)?\s*\('
+    because: 'These open whatever entry is already at the name and write through it when it is a
+      planted hardlink or symlink, and the types that wrap them (StreamWriter, FileStream) are
+      banned outright, because a pattern cannot tell `new StreamWriter(path)` from one over a
+      stream, or a mode held in a variable from a safe one. The survey measured a hardlink planted
+      at <report>.tmp mid-scan having its target overwritten while the run still exited 0 (SC-037).
+      Every byte the App writes goes through ReportFile, the one file this leaves out: FileMode.CreateNew
+      at a name drawn at the moment of opening, then a rename over the report. CreateNew refuses
+      a file, a hardlink, a symlink to a file that exists, a folder or a junction at the name, but
+      it follows a symlink to a file that does not exist (CVE-2025-0913), so that kind is covered
+      only by the name being unpredictable, not by CreateNew. ReportFileTests is the behavioural guard,
+      SettledRulesCorpus.json the corpus of spellings.'

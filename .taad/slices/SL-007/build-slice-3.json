@@ -1,0 +1,94 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-007",
+ "stage": "build-slice",
+ "attempt": 3,
+ "at": "2026-11-20T05:09:06.126Z",
+ "head": "e912d6bd9811187491dcdfb7a4cdb72f0e8314ad",
+ "run_id": 11452,
+ "summary": "Closed O-053. `CommandLine.JoinsNothingWindowsSplit` now treats an exposed token as an option only when it is exactly `--report`, which a new public `CommandLine.ReportOption` const names. App.xaml.cs reads the same const, so the two cannot drift. So `\"D:\\Data\\\" --report \"C:\\out --old\\r.json\"` repairs to [D:\\Data\\, --report, C:\\out --old\\r.json] instead of exiting 2. The review's test is at tests/FsAnalyser.Core.Tests/CommandLineDashFolderTests.cs unchanged and passes. The class is closed in tests/FsAnalyser.Core.Tests/UnpairedQuoteCorpus.json with 12 D rows, 1 R row and a dashSweep, and the old check fails those rows. The whole suite is 1451 of 1451 and the bug project 8 of 8.",
+ "payload": {
+  "status": "complete",
+  "summary": "Closed O-053. `CommandLine.JoinsNothingWindowsSplit` now treats an exposed token as an option only when it is exactly `--report`, which a new public `CommandLine.ReportOption` const names. App.xaml.cs reads the same const, so the two cannot drift. So `\"D:\\Data\\\" --report \"C:\\out --old\\r.json\"` repairs to [D:\\Data\\, --report, C:\\out --old\\r.json] instead of exiting 2. The review's test is at tests/FsAnalyser.Core.Tests/CommandLineDashFolderTests.cs unchanged and passes. The class is closed in tests/FsAnalyser.Core.Tests/UnpairedQuoteCorpus.json with 12 D rows, 1 R row and a dashSweep, and the old check fails those rows. The whole suite is 1451 of 1451 and the bug project 8 of 8.",
+  "files": [
+   {
+    "path": "src/FsAnalyser.Core/CommandLine.cs",
+    "change": "modified",
+    "why": "Exposed-token check compares to the app's one option (`argument == ReportOption`) instead of `StartsWith(\"--\")`; new public const ReportOption; docstring and comment corrected."
+   },
+   {
+    "path": "src/FsAnalyser.App/App.xaml.cs",
+    "change": "modified",
+    "why": "ReportOption now reads CommandLine.ReportOption, so the option spelling lives in one place."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/CommandLineDashFolderTests.cs",
+    "change": "added",
+    "why": "The code review's failing test, verbatim."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/UnpairedQuoteCorpus.json",
+    "change": "modified",
+    "why": "Class corpus: rows D01-D12 and R01, and a dashSweep (tokens, rename, maxTokens)."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/UnpairedQuoteCorpusTests.cs",
+    "change": "modified",
+    "why": "New fact ADashedNameIsNeverTheReasonForADifferentVerdict: every line of up to 4 tokens is run as typed and with '--old' renamed to 'old', and the verdicts must match."
+   },
+   {
+    "path": "tests/bugs/SL-007-QuotedRootTrailingBackslash/QuotedRootShapesTests.cs",
+    "change": "modified",
+    "why": "Exe-level fact AReportFolderWhoseNameStartsWithTwoDashesAfterASpaceIsTakenWhole (the Debug apphost exits 0 and writes the report at the exact path)."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-053",
+    "done": true,
+    "how": "Replaced `argument.StartsWith(\"--\")` with `argument == ReportOption` (a new public const in CommandLine; App reads the same one) in the exposed-token check, and corrected the docstring and comment. The review's test is at tests/FsAnalyser.Core.Tests/CommandLineDashFolderTests.cs verbatim and passes (2 of 2). The class is a corpus: UnpairedQuoteCorpus.json rows D01-D12 (dashed folders, several pieces, a bare '--', a name that is exactly '--report', a dashed piece after another argument, an argument absorbed into the piece, one dash, a dashed root, a dashed path ahead of the root, a stray quote with a dashed path) plus R01, which is still refused because the exposed '--report' would be hidden. The dashSweep runs 3,900 lines twice, as typed and with '--old' renamed to 'old', and requires the same verdict and the same elements. Before the fix, measured on the unfixed code: both CommandLineDashFolderTests rows fail (null), D01-D04 and D06-D08 fail (null), and the sweep fails 157 of 3,900 lines; D05, D09-D12 and R01 pass either way. After the fix all pass: the 39 CommandLine tests, the whole suite 1451 of 1451, and the bug project 8 of 8. The new exe fact exits 2 with the old check and 0 with the fix.",
+    "corpus": "tests/FsAnalyser.Core.Tests/UnpairedQuoteCorpus.json",
+    "mutation": {
+     "file": "src/FsAnalyser.Core/CommandLine.cs",
+     "find": "quote < 0 && argument == ReportOption",
+     "replace": "quote < 0 && argument.StartsWith(\"--\", StringComparison.Ordinal)",
+     "test_command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~CommandLineDashFolderTests"
+    }
+   }
+  ],
+  "tests": [
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~CommandLineDashFolderTests|FullyQualifiedName~UnpairedQuoteCorpusTests\" (on the code before the fix)",
+    "outcome": "failed",
+    "note": "Before: 4 of 5 fail. Both dash-test rows get null; corpus D01-D04 and D06-D08 are wrongly refused; the dash sweep fails 157 of 3,900 lines. Windows' own splits in every row's 'windows' field matched shell32."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~CommandLineDashFolderTests|FullyQualifiedName~UnpairedQuoteCorpusTests|FullyQualifiedName~CommandLine\"",
+    "outcome": "passed",
+    "note": "39 of 39 after the fix."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx -- xUnit.MaxParallelThreads=2",
+    "outcome": "passed",
+    "note": "1451 of 1451 (was 1448, +3: two dash-test rows and the dash sweep)."
+   },
+   {
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-007-QuotedRootTrailingBackslash/SL-007-QuotedRootTrailingBackslash.Tests.csproj",
+    "outcome": "passed",
+    "note": "8 of 8 on the Debug apphost, started through its real entry point with a raw ProcessStartInfo.Arguments; includes the new fact on `\"<tree>\\\" --report \"<work>\\out --old\\r.json\"`, which exits 0 and writes the report there with the right root and 3 files. Run again after restoring the fix from the mutant: 8 of 8."
+   },
+   {
+    "command": "mutant: StartsWith(\"--\") restored, then eng/dotnet.ps1 test <bug project> --filter AReportFolderWhoseNameStartsWithTwoDashes",
+    "outcome": "failed",
+    "note": "Red as it must be: the app exited with 2 on the dashed line. The fix was put back immediately and re-run green."
+   }
+  ],
+  "deviations": [
+   "Added the public const CommandLine.ReportOption and made App.ReportOption read it. The obligation allowed `argument == \"--report\"` or a set of option names passed in; the App's option spelling is private to App.xaml.cs and Core cannot see it, so a second literal would be a copy that could drift."
+  ],
+  "follow_ups": [
+   "The single-file published exe was not rebuilt for this attempt: the change is one string comparison in Core, and the Debug apphost exe facts (same code, real entry point) pass. Attempt 1 already measured the published exe on the repaired shapes.",
+   "A piece of a quoted report path that ends in a quote (a report path typed ending in a backslash, such as `\"C:\\out --old\\\"`) is still taken for a damaged root by the root branch of the exposed-token check and refused. That path is a folder, so the app would refuse the report path anyway (exit 3), and the obligation does not name it; filing it, not building it."
+  ]
+ }
+}

@@ -1,0 +1,220 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-007",
+ "stage": "reflect",
+ "attempt": 1,
+ "at": "2026-11-20T05:26:12.089Z",
+ "head": "e912d6bd9811187491dcdfb7a4cdb72f0e8314ad",
+ "run_id": 11458,
+ "summary": "SL-007 fixed the unattended-report hang for a quoted root ending in a backslash. It re-reads GetCommandLineW through a new CommandLine.Arguments (gate, ucrt-faithful split, repair split, alignment check, fallback). It also folded in SC-028 (an up-front ReportFile.Probe, so an unwritable report folder exits 3 before any window) and SC-037 (CreateNew temporaries at fresh names, then a rename-over). It shipped with the repro green, 1451 of 1451 default tests, 8 of 8 exe facts, 114 fitness rules holding, and the published exe measured. Getting there cost two regressions that each came from the previous fix widening the refusal rule (IN-M1, then O-053) and one disproved rights precondition (the probe, O-042).",
+ "payload": {
+  "status": "complete",
+  "reason": "Reflection written from the full record of SL-007 (repro, spikes, 3 designs, 4 critiques, 3 builds, 6 code reviews, 4 validations). Commit stage had not run.",
+  "summary": "SL-007 fixed the unattended-report hang for a quoted root ending in a backslash. It re-reads GetCommandLineW through a new CommandLine.Arguments (gate, ucrt-faithful split, repair split, alignment check, fallback). It also folded in SC-028 (an up-front ReportFile.Probe, so an unwritable report folder exits 3 before any window) and SC-037 (CreateNew temporaries at fresh names, then a rename-over). It shipped with the repro green, 1451 of 1451 default tests, 8 of 8 exe facts, 114 fitness rules holding, and the published exe measured. Getting there cost two regressions that each came from the previous fix widening the refusal rule (IN-M1, then O-053) and one disproved rights precondition (the probe, O-042).",
+  "estimate_error": "Under-sized. The slice was first judged size S for the argv repair alone. Build-check moved it to the full loop because SC-028 and SC-037 carried a race and a safety part, and it ran as medium risk with one designer. The actual run was 3 designs (one cut off by the provider's weekly limit), 4 critiques, 3 builds, 6 code reviews and 4 validations. The builds changed 27, 15 and 10 files. The cost came from classes of input the sizing never counted:\n- argv grammar classes: unpaired quotes (IN-M1), partly quoted program names (IN-m1), dash-leading path pieces (O-053);\n- link kinds at the temporary name: hardlink, file symlink, dangling symlink, junction, directory symlink;\n- folder-rights shapes: 11 rows in ReportFileFolderRightsCorpus.json, one of which, the create-only drop folder F03, disproved the probe precondition.\nRisk 'medium' fits the file count but not the parser and ACL surface. Treat any slice that rewrites CommandLine.Arguments or the ReportFile rights logic as high risk.",
+  "learned": [
+   {
+    "kind": "design",
+    "lesson": "Each parser defect in this slice came from the fix before it widening a refusal or repair rule, so three laps chained: the gate opens on any quote in argv, then IN-M1 (the repair opens a quote Windows never opened), then O-053 (any '--' token counts as an option). The oracle that finally closed them is the class corpus plus sweep in tests/FsAnalyser.Core.Tests/UnpairedQuoteCorpus.json (D/U/Q/R rows, a 7,380-line sweep and a 3,900-line dashSweep). Any further change to CommandLine.Arguments or JoinsNothingWindowsSplit must add rows there and run both sweeps before code review.",
+    "evidence": "IN-M1: 'D:\\Data\\\" --report out.json' ran report mode on base aa3d96b and hung with its window up on f42a20b. O-053: the StartsWith(\"--\") check failed 157 of 3,900 sweep lines and exited 2 on a valid line, fixed by `argument == ReportOption` at CommandLine.cs:99."
+   },
+   {
+    "kind": "design",
+    "lesson": "The design enumerated only lines that were broken on the base. IN-M1 was a line that worked on the base and that the new code broke. For a parser slice the first oracle is differential: every line Windows split correctly must give the base behaviour (e.Args plus RootArgument). Generate those lines before writing the repair.",
+    "evidence": "The design contract said a line is 'never re-split wrongly', but the grammar rows had no line where Windows' split was already correct and one stray backslash-quote remained. A second reader found it by feeding crafted lines to CommandLine.Arguments beside shell32 argv."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "On NTFS the creating open is granted the access it asks for (DELETE via DeleteOnClose) without the folder ACL being checked. A writability probe therefore has to replay every later open the real write makes. ReportFile.Probe now opens with FileShare.Delete and calls File.Delete while the handle is held. Do not settle a rights precondition by reasoning. One TempTree.Deny experiment settles it.",
+    "evidence": "The create-only drop folder (inherited Deny DELETE on files plus Deny FILE_DELETE_CHILD on the folder) passed the probe, scanned, then File.Move failed and left .fsa-*.tmp (code-review #1, validate #1). The M3 triage's critic had said a folder refusing one refuses the other. After the fix the published exe exits 3 in 186 ms with no window, and the 11-row ReportFileFolderRightsCorpus.json holds."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "tests/bugs/* is not in FsAnalyser.slnx, so the 8 exe-level facts are the only guard that StartReportMode probes before any window and that OnStartup routes through CommandLine.Arguments. The default suite guards the second only by a regex fitness rule, and nothing guards the first. A slice that edits App.xaml.cs OnStartup or StartReportMode must run the bug project explicitly.",
+    "evidence": "Survey: the slnx holds Core, App, CfProvider, Core.Tests and HoldRig. With the Probe call removed, UnwritableReportFolderTests failed (window opened, exit 3 after 1071 ms). The default suite has no equivalent. Bug project: 8 of 8 at e912d6b, run as eng/dotnet.ps1 test tests/bugs/SL-007-QuotedRootTrailingBackslash/SL-007-QuotedRootTrailingBackslash.Tests.csproj."
+   },
+   {
+    "kind": "process",
+    "lesson": "The substantive defects here (IN-M1, the probe rights, the program-name rule, the new fitness-rule spellings) were found by a second code-review pass that built the apphost and Core and fed crafted inputs, or by validators measuring the exe. They were not found by reading the diff. The engine measured that code review left 6 of 19, then 5 of 14, then 5 of 6 changed files not read whole, including WindowCases.ps1 (8,152 lines unread) and fitness.yaml. For parser and security slices, require the input-driven pass.",
+    "evidence": "code-review #1 round 2 'Second reader, for inputs' filed IN-M1, IN-m1, IN-m2 and IN-m3. The unread-file figures are the engine's measurement in the code-review account."
+   },
+   {
+    "kind": "process",
+    "lesson": "Stage verdicts do not say whether a slice is clean. validate-slice #2 and #3 returned 'pass' while a major regression (O-045) and then O-053 were still open, and the work was routed back to build-slice only through obligations. Read the obligations list and the last validation's 'LEFT OPEN', not the stage verdict.",
+    "evidence": "validate #2 'pass (none contact)' with O-045 owed to build-slice. validate #3 'passed over the validator's partial' with O-053 owed. Build #2 and #3 followed."
+   },
+   {
+    "kind": "process",
+    "lesson": "Regex fitness rules for a class of writers or readers keep getting new spellings after the class is 'closed' by a corpus (SC-083 and SC-084 now carry them). The type-level ban in rule 3 (StreamWriter, FileStream, File.Open, with ReportFile.cs excepted) was the right shape, but it still missed File.Copy, File.AppendAllBytes and FileInfo.Open(mode). When the next slice adds a rule, ban the type or the API family and add one behavioural fact, not a spelling list.",
+    "evidence": "O-023 and O-024 were closed with SettledRulesCorpus.json (18 and 32 rows). code-review #1 then found e?.Args, e!.Args, (e).Args and File.Copy(src, r.json, true), which wrote through a planted hardlink and a symlink when measured."
+   },
+   {
+    "kind": "process",
+    "lesson": "A design rewritten after a spike or triage must carry the accepted-pending fixes verbatim. design #3 contradicted accepted m2 (it dropped StreamWriter and AppendText from rule 3) and left attempt 1's fitness block in place, and critique #2 had to file both as contradictions. The cost was critique laps 3 and 4. Also, design #1 was cut off by the provider's weekly limit, so one whole design attempt was lost.",
+    "evidence": "critique #2 account: 'Two new contradictions would each cost a lap'. Critique ran 4 times, two of them halted waiting on findings."
+   },
+   {
+    "kind": "codebase",
+    "lesson": "tests/window/WindowMutants.ps1 finds App.xaml.cs's crash and Exit handlers by regex, so their lambda shapes must stay. This slice changed the crash handler body (WindowReport.Discard(report) became file.Discard()). The NoCrashHandler and NoExitRule mutants are listed 'not run' in validate #3 and #4, so nothing in this record shows they were re-run after that edit.",
+    "evidence": "validate #4 '[not-run] WindowMutants NoCrashHandler and NoExitRule'. The design's constraint is at WindowMutants.ps1:79 and :83."
+   },
+   {
+    "kind": "estimate",
+    "lesson": "This project's argv, ACL and link slices need laps in proportion to the classes of input. Plan around 3 builds, about 6 code-review rounds and 4 validations when a parser or rights check is new, and open them as high risk with the class list written out. Do not merge unrelated hardening findings (here SC-028 and SC-037) into a parser bug unless they share the touched functions and the same corpus approach.",
+    "evidence": "Rework tally for SL-007: repro 2, risk-spike 2, design 3, critique 4, build 3, code-review 6, validate 4. It was first sized S for the argv repair alone."
+   }
+  ],
+  "candidates": [
+   {
+    "title": "Run SL-007's exe-level facts where a regression would be seen",
+    "urgency": "soon",
+    "why": "FsAnalyser.slnx holds Core, App, CfProvider, Core.Tests and HoldRig (survey, Get-Content FsAnalyser.slnx), so `eng/dotnet.ps1 test FsAnalyser.slnx` (1451 of 1451 at e912d6b) never launches the exe. The 8 facts live in tests/bugs/SL-007-QuotedRootTrailingBackslash and passed 8 of 8 at e912d6b. Breakdown: the repro 1; QuotedRootShapesTests 5 (spaced pair, alone, extra argument, no opening quote, dash folder); UnwritableReportFolderTests 2 (Deny CreateFiles, create-only drop folder). They are the only guard that StartReportMode calls file.Probe() before any window in src/FsAnalyser.App/App.xaml.cs. With the Probe call removed, UnwritableReportFolderTests failed (window up, exit 3 after 1071 ms), while the default suite has nothing for it. OnStartup's routing through CommandLine.Arguments has only the regex fitness rule. Decide where these facts run (a named regression command in the validate stage, or a second solution file) so a later App.xaml.cs edit cannot drop them silently."
+   },
+   {
+    "title": "Skip the program name by the C runtime's rule in CommandLine.AfterProgramName",
+    "urgency": "soon",
+    "why": "IN-m1 (kept as N-069, waived in this slice). AfterProgramName in src/FsAnalyser.Core/CommandLine.cs (lines 75-94 at f42a20b; the file is 207 lines at e912d6b) ends a quoted name at its first closing quote and an unquoted name at the first space. ucrt flips quoting on every '\"' and ends at a space or tab outside quotes. Measured through cmd /c on the Debug apphost via a junction 'a b': `<dir>\\\"a b\"\\FsAnalyser.App.exe \"<tree>\\\" --report \"<r>\"` exits 2 at 155 ms with no report. The same line with the exe path fully quoted exits 0 in 742 ms. The docstring on Arguments claims the CRT rule, so the code and its claim disagree. The fix is a short quote-flag loop, plus a row in CommandLineTests.TheGrammarTheRepairOpensIsSplitAsTyped with a partly quoted, spaced program name."
+   },
+   {
+    "title": "Harden the report folder against a swap during the scan",
+    "urgency": "soon",
+    "why": "m5 was deferred in this slice's critique, and I could not tell from the record whether it is already on the backlog. StartReportMode checks the report folder once at launch (App.xaml.cs, the Directory.Exists / DeleteFirst / Probe try block). ReportFile.Write (src/FsAnalyser.App/ReportFile.cs) re-resolves Path.GetDirectoryName(path) when it writes, possibly minutes later. Someone who can rename entries in the folder's parent can swap the folder for a junction mid-scan, and the rename-over then replaces a file of the report's name in the target, for example under an elevated runner. The fresh unpredictable temp name does not cover this. Two options: hold a handle on the folder from launch without FILE_SHARE_DELETE, or compare GetFinalPathNameByHandle at launch and at write. This is outside SC-037's measured shape, which was a plant inside the folder."
+   }
+  ],
+  "missed": [
+   {
+    "gate": "critique",
+    "dimension": "missing-edge-cases",
+    "severity": "major",
+    "what": "The design's gate opens whenever argv holds any '\"', including a trailing-only quote, and the REPAIR tokeniser toggles quoting on every '\"'. The critique never asked what happens when Windows' split is already correct and one unpaired backslash-quote remains, e.g. `D:\\Data\\\" --report out.json` (no opening quote). That line ran report mode on the base. On the repaired build it became one argument, --report disappeared, and the exe hung with its window up. A check could be written from it: for every line where shell32's argv is not merged, Arguments must keep --report as an element, or fall back to argv.",
+    "caught_by": "code-review #1 (second reader, inputs); reproduced by validate #1 on the published exe; fixed in build #2",
+    "prescribed_fix": ""
+   },
+   {
+    "gate": "critique",
+    "dimension": "unfounded-assumptions",
+    "severity": "minor",
+    "what": "The design carried 'the probe needs exactly the rights the real write needs' as a must-verify precondition. The M3 triage and its critic note then dismissed measuring it, on the reasoning that a folder refusing one refuses the other. Windows grants DELETE to the creating open (DeleteOnClose), so a create-only folder (inherited Deny DELETE on files plus Deny FILE_DELETE_CHILD on the folder) passes the probe. File.Move then fails and leaves .fsa-*.tmp, so the app scans the whole root and exits 3 at the end. A single TempTree.Deny experiment would have shown it before build.",
+    "caught_by": "code-review #1 round 1 (measured), then validate #1; fixed in build #2 by FileShare.Delete plus File.Delete in Probe",
+    "prescribed_fix": ""
+   },
+   {
+    "gate": "critique",
+    "dimension": "unfounded-assumptions",
+    "severity": "minor",
+    "what": "The design and the Arguments docstring say the program name is skipped 'by the CRT rule', but the spec'd rule (a quoted name ends at its first closing quote, an unquoted name at the first space) is not ucrt's, which flips quoting on every '\"'. The critique accepted the spec without comparing it to ucrt. A legal partly quoted exe path (`<dir>\\\"a b\"\\FsAnalyser.App.exe ...`) fails alignment and is refused with exit 2.",
+    "caught_by": "code-review #1 round 2 (cmd /c through a junction 'a b', exit 2 at 155 ms); waived as N-069",
+    "prescribed_fix": ""
+   },
+   {
+    "gate": "critique",
+    "dimension": "cross-cutting-conformance",
+    "severity": "minor",
+    "what": "m1's prescribed widening of the 'decides its mode only on repaired arguments' rule to `\\b\\w+\\.Args\\b` still needs a word character before the dot. `e?.Args`, `e!.Args` and `(e).Args` read StartupEventArgs.Args before the repair and pass the rule. The critic's note on the fix filed other spellings but not these.",
+    "caught_by": "code-review #1 round 2 (ran the rule's patterns against new spellings); carried to SC-083",
+    "prescribed_fix": "m1"
+   },
+   {
+    "gate": "critique",
+    "dimension": "security",
+    "severity": "minor",
+    "what": "The write-opener rule, even after m6's type-level ban (StreamWriter, FileStream, File.Open, the parameterless .Create/.OpenWrite/.CreateText/.AppendText), lets File.AppendAllBytes(Async), File.Copy(src, dst, overwrite) and FileInfo.CopyTo(dst, true) through. File.Copy was measured overwriting a sentinel through a hardlink and through a file symlink at the destination, which is SC-037 again at the one predictable name <report>.",
+    "caught_by": "code-review #1 round 2; carried to SC-084",
+    "prescribed_fix": "m6"
+   },
+   {
+    "gate": "critique",
+    "dimension": "contract-gaps",
+    "severity": "minor",
+    "what": "The design's own contract lists a new exit 2 (Arguments returns null) that happens before the report path is read and deletes nothing. Its only WindowReport.cs change was an Exit 3 sentence, so the exit-code contract that App.xaml.cs:11 points to stayed stale. Its sentence 'Every non-zero exit leaves no file at <file>' is untrue for the no-value exit 2 and for this one.",
+    "caught_by": "code-review #1 (m2 / RD-m2); waived to the comment fixer",
+    "prescribed_fix": ""
+   }
+  ],
+  "what_went_wrong": [
+   "A regression the slice introduced got past design critique, build #1 and the first reading pass: the repair re-split a line Windows had split correctly (IN-M1), so `D:\\Data\\\" --report out.json` hung where the base worked. It took a second-reader input pass to find it. It cost build #2 plus two code-review rounds and validate #1's 'halted' verdict.",
+   "The IN-M1 fix then created O-053. The builder widened the exposed-option check from the decided `--report` to any token starting with '--', and the docstring called such a token 'unmistakable', which was false. A valid line `\"D:\\Data\\\" --report \"C:\\out --old\\r.json\"` exited 2 although attempt 1 had handled it. Found by code-review #3 and validate #3, it cost build #3 and two more reviews. The widening was declared as a deviation but not challenged at build.",
+   "The probe-rights precondition (O-042) was reasoned away at triage instead of measured, and was then disproved by a reviewer and a validator on a create-only drop folder. SC-028's promise that every refusal exits at once was false for that folder until build #2.",
+   "validate-slice returned 'pass' twice with a major or minor defect still open (O-045 and O-053), so the pass label hid owed build work. The record is only readable through the obligations list.",
+   "The fitness-rule family closed by corpus (O-023, O-024) reopened with new spellings the same round it was closed (e?.Args, File.Copy overwrite). Those were waived to SC-083 and SC-084, so this slice ships with the rule's known holes recorded rather than closed.",
+   "The rewritten design (attempt 3) contradicted accepted triage decisions: it dropped the StreamWriter and AppendText patterns that m2 required and left attempt 1's fitness block in place. Critique #2 found both, so critique ran again (laps 3 and 4). Separately, design #1 was lost entirely to the provider's weekly limit, and critique #1 and #3 halted on findings a model answered afterwards.",
+   "Code review did not read most of the changed files whole (6 of 19, then 5 of 14, then 5 of 6; WindowCases.ps1 8,152 lines unread). Its value came from measuring rather than reading, so a pass from this gate says less than its count of rounds implies.",
+   "Nothing in the record shows WindowMutants.ps1 (NoCrashHandler, NoExitRule) re-run after the crash handler body in App.xaml.cs changed. It is listed not-run in validate #3 and #4."
+  ],
+  "unknowns": [
+   "Do WindowMutants.ps1's NoCrashHandler and NoExitRule mutants still find their targets and fail the C-012 and O-016 cases after build #1 changed the crash handler body in App.xaml.cs (file.Discard() in place of WindowReport.Discard(report))? Running tests/window/WindowMutants.ps1 against HEAD settles it.",
+   "Which root does the interactive window show for `\"<tree>\\\"` alone on the published exe? Three validators saw only that a window was alive with a non-zero MainWindowHandle after 3 s. The root value rests on CommandLineTests rows plus RootArgument. UI Automation is refused on this host (lesson #888), so it needs a startup-hook readout from a path launch.",
+   "Does argv still equal the ucrt split of GetCommandLineW on other Windows builds or ucrtbase versions? It was measured only on Windows 11 10.0.26300 with ucrtbase 10.0.26100.9711 (N-065). If it diverges, `\"X\\\" --report f` falls back to null and the app exits 2 instead of writing a report.",
+   "Does a real second principal planting at the report folder mid-scan behave like the same-account plants measured here? Every plant was made by the runner's own account, and the fresh .fsa-<hex>.tmp name could only be planted through an injected stem in unit rows.",
+   "Does an unattended whole-drive run of `C:\\ --report <writable path>` run to completion and write the report on the published exe? Only the up-front refusal on C:\\ was measured (exit 3 in 145-152 ms)."
+  ],
+  "lessons_judged": [
+   {
+    "id": 89,
+    "verdict": "used",
+    "why": "The design's coherence check (f) walked every new exit path in both directions: the null-arguments exit 2 before any window or file, the probe's exit 3 after DeleteFirst with a DeleteOnClose file, and the unchanged Exit handler so exit 0 still implies a file. Validators also asserted an empty folder after each exit 3."
+   },
+   {
+    "id": 791,
+    "verdict": "used",
+    "why": "The design added a grammar row for each feature the tokeniser opened (the 16-row TheGrammarTheRepairOpensIsSplitAsTyped plus the corpus roots). It was not enough on its own: IN-M1 and O-053 came from feature interactions, and only the class corpora and sweeps (UnpairedQuoteCorpus.json) closed them."
+   },
+   {
+    "id": 13,
+    "verdict": "not relevant",
+    "why": "The slice was sized by a person and moved off the direct lane for the race and safety parts, not by counting alias classes, so the lesson changed nothing done. Its prediction did hold: argv, link and ACL classes took 3 builds, 6 code reviews and 4 validations (recorded under learned)."
+   },
+   {
+    "id": 893,
+    "verdict": "not relevant",
+    "why": "The only WindowCases.ps1 edit was Test-NoReportTemporary, which takes $report, not $Root. No $Root consumer was added."
+   },
+   {
+    "id": 876,
+    "verdict": "used",
+    "why": "Critique M2 found the E006 finish-line tests absent, the same failure as this lesson. The design dropped the E006 names, and the exe facts went into tests/bugs/SL-007-QuotedRootTrailingBackslash as .cs files, so no *.ps1 census or AppArgumentCorpus change was needed."
+   },
+   {
+    "id": 889,
+    "verdict": "used",
+    "why": "The design and spike put probe and launcher scratch outside the worktree (%LOCALAPPDATA%\\Temp), and the default suite stayed 1443 then 1448 then 1451 green. Validators created their trees and deny rules under %LOCALAPPDATA%\\Temp\\fsa-validate*."
+   },
+   {
+    "id": 412,
+    "verdict": "used",
+    "why": "Same effect as #889: scratch launchers and probes were kept outside the tree, so no untracked script reached AppArgumentTests."
+   },
+   {
+    "id": 180,
+    "verdict": "used",
+    "why": "The critic's check of the m3 fix verified that each of the four WindowCases sites (C-007, C-008, C-012 and O-016) reaches the leftover check: C-012 throws mid-scan before any temporary exists, and O-016 closes mid-scan. It did not trust the named assertion blindly."
+   },
+   {
+    "id": 360,
+    "verdict": "used",
+    "why": "The repro's WorkFolder and the new AppRun.WorkFolder root their trees at LocalAppData\\Temp when %TEMP% is under the Windows folder, and the spike and validators placed trees there."
+   },
+   {
+    "id": 494,
+    "verdict": "not relevant",
+    "why": "This repo's checks are `pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test ...` and were written in runnable form from the start. The scripts/test.ps1 pytest form does not exist here and no build lap was spent rewriting commands."
+   },
+   {
+    "id": 908,
+    "verdict": "used",
+    "why": "The whole suite was run as `eng/dotnet.ps1 test FsAnalyser.slnx -- xUnit.MaxParallelThreads=2` throughout, and the spike used the worktree's .dotnet SDK 10.0.401 with restore from the local package cache."
+   },
+   {
+    "id": 888,
+    "verdict": "used",
+    "why": "Finish line 3 (`\"<tree>\\\"` alone) was proved only as alive after 3 s with a non-zero MainWindowHandle, with the root value left to CommandLineTests rows. All three validators then listed the window's displayed root as not reached, as the lesson predicted."
+   },
+   {
+    "id": 462,
+    "verdict": "not relevant",
+    "why": "No Windows Sandbox run of TempTree facts was part of this slice. All measurements ran on this PC as a Medium-integrity user."
+   }
+  ],
+  "filed": []
+ }
+}

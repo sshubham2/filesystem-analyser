@@ -1,0 +1,655 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-007",
+ "stage": "design-slice",
+ "attempt": 3,
+ "at": "2026-11-20T03:06:13.793Z",
+ "head": "",
+ "run_id": 11431,
+ "summary": "",
+ "payload": {
+  "status": "complete",
+  "selection_rationale": "There was one proposal (practice), so this is a sized tournament with no rival pieces. I selected it against what the tree and the measurements show, not against taste.\n\n1. It fits how the code is already shaped. The bug is in App.OnStartup, which tests e.Args.Contains(ReportOption) at App.xaml.cs:21 before anything is repaired. The fix puts one call ahead of that test, so StartReportMode and its refusal order (2, then 3, then 2 for the argument count) stay as they are. It also follows three patterns the tree already uses:\n   - Win32 interop lives in Core.Native (InteropLivesOnlyInNative), and Kernel32 is internal.\n   - Pure WPF-free App files are compiled into Core.Tests by link (DriveReads.cs and others).\n   - WindowReport is internal, so a WriteAsync that takes an internal ReportFile compiles.\n\n2. Reality has settled the premise it rests on. The fork decider's O-019 was measured by the spike e-args-match-ucrt-split-on-shipped-hosts: go, 16 of 16 runs. Those runs covered the Debug apphost and the single-file Release exe in a folder with a space in its path, through ProcessStartInfo.Arguments, Start-Process and cmd /c, on lines L0 to L4. GetCommandLineArgs()[1..] equalled the ucrt split, the FAITHFUL tokeniser and shell32. The investigation measured that only GetCommandLineW holds finish line 2's exact path: Environment.CommandLine is rebuilt from argv, and a run of spaces is lost from e.Args.\n\n3. It is cheap to reverse. Almost all of it is small, local code: one Core function, one import, one routing line, one pure App file, one probe call. The one expensive decision is the CLI meaning of an odd backslash run before a quote.\n\n4. It is the simplest thing that meets all four finish lines. Repairing from e.Args alone cannot meet finish line 2 (measured), and System.CommandLine or a shared hook parser would be over-built.\n\nI changed three things in it after checking against the tree:\n- I dropped two of rule 3's patterns (`new StreamWriter(` and `.AppendText(`). They match correct code: a StreamWriter over a CreateNew FileStream, and WPF's TextBoxBase.AppendText. A rule has to name what is wrong.\n- I corrected the WorkFolder claim. Both branches append fsa-sl007\\<guid>.\n- I added a constraint the proposal missed. tests/window/WindowMutants.ps1 finds the crash handler and the Exit handler in App.xaml.cs by regex, so their lambda shapes must stay as they are.\n\nI also found that attempt 1's three SL-007 rules are already appended at .taad/fitness.yaml:1543-1571. This design's rules replace them. Every pattern in that block is matched by a pattern at least as wide here, so the two never disagree if both stay.",
+  "components": [
+   {
+    "name": "CommandLine.Arguments (argv repair, pure)",
+    "lives_at": "src/FsAnalyser.Core/CommandLine.cs",
+    "responsibility": "Two new public static methods beside the unchanged RootArgument.\n\nArguments(string[] argv, string commandLine) -> string[]? is pure and never throws:\n- GATE: if no element of argv contains '\"', return argv unchanged and never look at commandLine.\n- ARGV0: skip it by the CRT rule. A quoted argv0 runs to the next '\"' with no escapes; an unquoted one runs to the first space or tab. Then skip spaces and tabs.\n- FAITHFUL (ucrt parse_cmdline) on the rest:\n  - 2n backslashes before '\"' give n backslashes and a delimiting quote;\n  - 2n+1 give n backslashes and a literal '\"';\n  - '\"\"' inside quotes is a literal '\"', with quoting kept on;\n  - space and tab separate outside quotes;\n  - a quote pair yields an argument even when it is empty.\n- REPAIR: the same, except that every '\"' toggles quoting and none becomes a literal. An odd run of backslashes before '\"' is kept whole; an even run is halved.\n- ALIGNMENT: if FAITHFUL(rest) equals argv (count and every element, ordinal), return REPAIR(rest).\n- FALLBACK: otherwise return argv unchanged when every '\"' is the last character of its element, and null when any '\"' is inside an element.\n\nArguments(string[] argv) applies the same gate and calls Kernel32.CommandLineAsTyped() only when the gate is open. The XML doc explains why the line is read raw and why an odd run is kept literally.",
+    "key_interactions": "Measured premise (spike e-args-match-ucrt-split-on-shipped-hosts):\n- B==C==D==E on L0-L4, on both hosts and every route.\n- '\"' sits inside an element on L1, L2 and L4, and is only trailing on L3.\nSo finish lines 1, 2 and 4 take the repair branch, and line 3 takes it too and gets [X\\].\n\nAlignment is a safety interlock. A host whose argv is not the ucrt split of its own line (for example a `dotnet App.dll` muxer launch, where the first token after argv0 is the dll) fails it, so the line falls back and is never repaired wrongly. On the repair path the output holds no '\"', so RootArgument is a no-op there; it still serves the fallback path."
+   },
+   {
+    "name": "Kernel32.CommandLineAsTyped",
+    "lives_at": "src/FsAnalyser.Core/Native/Kernel32.cs",
+    "responsibility": "Adds `[LibraryImport(\"kernel32.dll\", EntryPoint = \"GetCommandLineW\")] private static partial char* GetCommandLineW();` and `internal static string CommandLineAsTyped() => new(GetCommandLineW());`. The buffer belongs to the process and is never freed. A one-line comment says the line is read raw because .NET rebuilds its own command-line string from argv.",
+    "key_interactions": "It sits under Native, as InteropLivesOnlyInNative requires. GetCommandLineW takes no path, so PathOpensGoOnlyThroughTheGuardedOpen and FailCriticalErrorsTests' count of Kernel32 path calls are untouched. It is internal: only Core's CommandLine can call it."
+   },
+   {
+    "name": "App.OnStartup routing",
+    "lives_at": "src/FsAnalyser.App/App.xaml.cs",
+    "responsibility": "The first statement is `string[]? args = CommandLine.Arguments(e.Args);`.\n- null: Shutdown(BadArguments) and return. No window opens and no file is touched.\n- args.Contains(ReportOption): StartReportMode(args).\n- Otherwise: `new MainWindow(args.Length > 0 ? CommandLine.RootArgument(args[0]) : null)`.\nNothing else reads StartupEventArgs.Args or GetCommandLineArgs (architecture rule 1).",
+    "key_interactions": "- `\"X\\\" --report f` reaches StartReportMode as [X\\, --report, f].\n- `\"X\\\" extra --report f` arrives as 4 tokens and gets exit 2 from roots.Count != 1.\n- `\"X\\\"` alone opens the window on X\\.\n- Every ArgumentList, Format-AppArgument and read-window launch has no '\"' in argv, so the gate stays closed and the behaviour is byte-for-byte today's."
+   },
+   {
+    "name": "Up-front write probe and ReportFile wiring in StartReportMode (SC-028)",
+    "lives_at": "src/FsAnalyser.App/App.xaml.cs",
+    "responsibility": "Right after `report = Path.GetFullPath(...)`, create `var file = new ReportFile(report);`. Inside the existing try at :62-73, after DeleteFirst(report) and DeleteFirst(report + \".tmp\"), call `file.Probe();`. An IOException or UnauthorizedAccessException lands in the existing catch and gives Shutdown(CannotWriteReport), before any window.\n\nRefusal order is unchanged: 2 for no value or a bad path, then 3 for the folder checks, the deletes and the probe, then 2 for the argument count. The crash handler calls `file.Discard()` in place of WindowReport.Discard(report). EndingShown calls `WindowReport.WriteAsync(window, root, file)`. The Exit handler is unchanged.\n\nThe lambda shapes `DispatcherUnhandledException += (_, ex) =>` and `Exit += (_, e) =>` stay exactly as written, because tests/window/WindowMutants.ps1 finds them by regex for its C-012 and O-016 mutants. The comment at :30 is now true.",
+    "key_interactions": "Lesson #89, both ways:\n- A non-zero exit leaves no file: the probe's exit 3 follows DeleteFirst, and the probe file is DeleteOnClose.\n- Exit 0 still implies a file, through the unchanged Exit handler.\nThe probe tells nobody the temporary's name, because Write draws a stem of its own later."
+   },
+   {
+    "name": "ReportFile (new, WPF-free, linked into Core.Tests)",
+    "lives_at": "src/FsAnalyser.App/ReportFile.cs",
+    "responsibility": "`internal sealed class ReportFile`, using System.IO only.\n\nFields: `_path`; `_freshStem`, a Func<string>, which is a source of names and never a stored name; `_temporary`, a string?.\n\nConstructors:\n- `public ReportFile(string path) : this(path, FreshStem)`.\n- `internal ReportFile(string path, Func<string> freshStem)` stores the Func and draws nothing.\n- `static string FreshStem() => \".fsa-\" + Guid.NewGuid().ToString(\"N\")`.\n\nProbe() draws its own stem and opens <folder>\\<stem>.probe with FileMode.CreateNew, FileAccess.Write, FileShare.None and FileOptions.DeleteOnClose, through FileStreamOptions or the bufferSize overload. It disposes the handle at once.\n\nWrite(byte[] json):\n- Draws a new stem on the line just above its `new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None)`.\n- Sets `_temporary` only once that constructor has returned.\n- Writes, disposes, calls File.Move(temporary, _path, overwrite: true) and clears `_temporary`.\n- On any exception it quietly deletes `_temporary` if it is set, then rethrows.\n\nDiscard() quietly deletes `_path`, the legacy `_path + \".tmp\"` and `_temporary` if it is set, swallowing IOException and UnauthorizedAccessException.\n\nThe class comment says that CreateNew refuses an existing file, hardlink or folder at the name but follows a dangling symlink. .NET cannot pass FILE_FLAG_OPEN_REPARSE_POINT, and only the classifier may read the reparse attribute. So the dangling-symlink kind is covered only by a name drawn at the moment of opening that nobody else ever sees.",
+    "key_interactions": "Add `<Compile Include=\"..\\..\\src\\FsAnalyser.App\\ReportFile.cs\" Link=\"Linked\\ReportFile.cs\" />` to tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj beside the other linked files.\n\nThe App calls only the one-argument constructor. The Func constructor reads no environment and cannot be reached from outside the exe, so 'the shipped app carries no test seam' holds. The file must not spell FileAttributes.ReparsePoint, IsReparsePoint or 0x400 (OnlyTheClassifierReadsTheReparseAttribute matches comments)."
+   },
+   {
+    "name": "WindowReport.WriteAsync / Discard delegate to ReportFile (SC-037)",
+    "lives_at": "src/FsAnalyser.App/WindowReport.cs",
+    "responsibility": "The signature becomes WriteAsync(MainWindow window, string root, ReportFile file). It builds the JSON exactly as today and ends with `file.Write(json);`, replacing the fixed-name block at :329-339. WindowReport.Discard and DeleteQuietly are removed; their only caller is App.xaml.cs:87. Schema 1, every key and the exit codes are unchanged. The remarks' Exit 3 sentence gains 'a folder that takes no new file is refused before the scan'.",
+    "key_interactions": "[\"root\"] is the root as the App took it, which is now the repaired X\\ for a trailing-backslash line. TheWindowReportReadsOnlyTheFailedFolderCount and the SL-001 written-once checks on WindowReport.cs are unaffected, because no Unreadable, CoverageLines or ScreenLines spelling is added."
+   },
+   {
+    "name": "Parser tests",
+    "lives_at": "tests/FsAnalyser.Core.Tests/CommandLineTests.cs",
+    "responsibility": "Every row calls Arguments(argv, \"app.exe \" + tail) with argv = TestNative.SplitArguments(tail), and its expected array is written out beforehand (lesson #791).\n\nNew facts:\n- AQuotedRootEndingInABackslashThenReportIsSplitAsTyped: `\"D:\\Data\\\" --report out.json` and `\"C:\\\" --report C:\\r.json`.\n- ASpacedRootAndASpacedReportPathKeepTheirSpaces: `\"D:\\My Data\\\" --report \"C:\\out  dir\\r.json\"`, two spaces kept.\n- AQuotedRootEndingInABackslashAloneIsTheFolder: `\"D:\\Data\\\"` gives [D:\\Data\\].\n- ALineWindowsSplitCleanlyIsReturnedAsItCame: `\"D:\\Data\" --report out.json`, `\"D:\\Data\\\\\" --report out.json`, `\"D:\\My Data\" --report \"C:\\out dir\\r.json\"`, unquoted `C:\\ --report C:\\r.json`. Each returns the same elements, and is also called with a commandLine that would split differently, to show the line is never read.\n- ALineThatDoesNotMatchItsArgvIsRefusedOrLeftAlone: argv with an extra token the line lacks. An inner quote gives null; a trailing-only quote gives argv.\n- TheGrammarTheRepairOpensIsSplitAsTyped: two \\\" in one line; an odd run of three; an even run elsewhere on a repaired line; a tab separator; a quoted argv0 with a space and an unquoted argv0; `--report \"\" \"D:\\Data\\\"` giving [--report, \"\", D:\\Data\\]; a non-ASCII root; `\"\\\\server\\share\\\"` and `\"\\\\?\\C:\\\"` roots; the root last after --report.\n\nNo row puts '\"\"' inside quoted state, where shell32 and ucrt differ. The six RootArgument rows stay.\n\nIn tests/FsAnalyser.Core.Tests/AppArgumentTests.cs, a new fact EveryRootOfTheCorpusHandQuotedIsRepairedByArguments hand-quotes roots A01-A10 as `\"<root>\" --report \"<report>\"` and expects [root, --report, report]. A07's even run is halved, so it expects the root less one backslash, the same as today's split.",
+    "key_interactions": "These rows carry the lines the spike could not reach (N-066), against shell32, which the spike found equal to ucrt on L0-L4. A divergence there falls back and is never repaired wrongly."
+   },
+   {
+    "name": "ReportFileTests (Core.Tests, default suite)",
+    "lives_at": "tests/FsAnalyser.Core.Tests/ReportFileTests.cs",
+    "responsibility": "On a TempTree:\n- AFreshStemIsDrawnForEachOpenAtTheMomentOfOpening: a counting Func reads 0 after the constructor, 1 after Probe and 2 after Write, and the stems differ.\n- AProbeLeavesAWritableFolderAsItWas.\n- AProbeIsRefusedWhereNoFileCanBeCreated: TempTree.Deny(folder, 0x2) makes it throw UnauthorizedAccessException and creates nothing.\n- AProbeOfAnAbsentFolderThrows: DirectoryNotFoundException.\n- AWriteRefusesALinkAlreadyAtItsTemporaryName: with an injected stem, plant at <stem>.tmp a hardlink to a sentinel, a file symlink to an existing sentinel, or a junction. Write throws, the sentinel and the junction target are unchanged, no <path> exists, and the plant remains.\n- AWriteReplacesALinkAtTheReportItself: a hardlink, then a file symlink, to a sentinel at <path>. Afterwards the sentinel's bytes are unchanged, <path> holds the JSON and its LinkTarget is null.\n- AWriteNeverUsesTheOldFixedName: with a hardlink at <path>.tmp, Write succeeds and the sentinel is unchanged.\n- AFailedMoveLeavesNoTemporary: with <path> held open without FileShare.Delete, Write throws, no `.fsa-*` entry remains and the held file is intact.\n- DiscardRemovesTheReport.",
+    "key_interactions": "No trait and no exe launch. Symlinks need Developer Mode, which the suite already requires. Hardlinks and junctions need no administrator rights."
+   },
+   {
+    "name": "Exe-level facts in the slice's bug project",
+    "lives_at": "tests/bugs/SL-007-QuotedRootTrailingBackslash",
+    "responsibility": "New files beside the repro. They run the Debug apphost that the project already builds and finds through FsaAppFolder, started with a raw ProcessStartInfo.Arguments.\n\nAppRun.cs is a small internal helper:\n- WorkFolder: the repro's LocalAppData\\Temp-aware rule (lesson #360).\n- MakeTree: 3 files.\n- Start: raw Arguments, with every FSA_HOOK_* and DOTNET_STARTUP_HOOKS variable removed.\n- Watch: polls Refresh/MainWindowHandle every 10 ms until exit or budget, and records whether a window ever appeared.\n- Stop: kills the process tree, in finally.\n\nQuotedRootShapesTests.cs:\n- ASpacedRootAndAReportPathWithTwoSpacesAreTakenWhole: `\"<work>\\a quoted tree\\\" --report \"<work>\\out  dir\\r.json\"` exits 0 within 7000 ms. The report is at that exact path, its root is `<work>\\a quoted tree\\`, its outcome is completed and core.files is 3.\n- AQuotedRootEndingInABackslashAloneOpensTheWindow: `\"<tree>\\\"` alone is alive after 3 s with a non-zero MainWindowHandle, then is killed.\n- AnArgumentAfterTheQuotedRootIsRefusedWithExit2AndNoWindow: `\"<tree>\\\" extra --report \"<work>\\r.json\"` exits 2 within 5000 ms and no window ever appears. Afterwards there is no r.json, no r.json.tmp and no `.fsa-*` entry.\n\nUnwritableReportFolderTests.cs, AFolderThatTakesNoNewFileIsRefusedWithExit3BeforeAnyWindow: the report folder carries a no-inheritance Deny CreateFiles rule for the current user, set through DirectorySecurity. `\"<tree>\" --report \"<folder>\\r.json\"` exits 3 within 5000 ms, no window ever appears, and the folder is empty. The rule and the work folder are removed in finally.",
+    "key_interactions": "The spaced-pair, extra-argument and SC-028 facts fail on the base: the first two hang, and the measured base showed a window at 1062 ms for the unwritable folder. The alone fact is a regression guard. The repro is finish line 1. The files are .cs, so AppArgumentTests' *.ps1 census is unaffected."
+   },
+   {
+    "name": "WindowCases leftover checks follow the fresh names",
+    "lives_at": "tests/window/WindowCases.ps1",
+    "responsibility": "A helper Test-NoReportTemporary($report) is true only when neither \"$report.tmp\" nor any `.fsa-*.tmp` or `.fsa-*.probe` entry exists in Split-Path -Parent $report. It replaces the bare `Test-Path \"$report.tmp\"` in four leftover checks:\n- C-007 'unquoted root: no .tmp' (:1030);\n- C-008 'with a root: no .tmp left' (:1076);\n- C-012 'no .tmp left' (:1219);\n- O-016 'no .tmp left' (:1275).\nC-008's 'the stale .tmp is gone' checks and C-009's checks stay as they are.",
+    "key_interactions": "There is no new case and no new launcher, so AppArgumentCorpus.json is unchanged. WindowCases.ps1 is on the network-pass staleness list, which App.xaml.cs makes stale anyway."
+   },
+   {
+    "name": "Build order and acceptance",
+    "responsibility": "Build the argv part first (CommandLine, Kernel32, OnStartup), then run the repro and QuotedRootShapesTests before any ReportFile work. The spike measured alignment holding on both hosts, so if a repaired line lands in the fallback (exit 2), that is a wiring defect. If a measurement contradicts the spike, return it for resynthesis rather than reshape the parser contract.\n\nAcceptance:\n- the repro command exits 0;\n- the whole bug project passes;\n- the parser and ReportFile facts pass;\n- the whole suite passes: `pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx -- xUnit.MaxParallelThreads=2` (baseline 1389 of 1389, plus the new facts).\n\nThe E-006 finish-line tests (tests/FsAnalyser.Core.Tests/E006*.cs) are not in the tree. The engine plants them and runs them from the integration branch. Everything they call already exists: TestNative.SplitArguments, TempTree.Folder/File/Root, and the hook's tree mode with FSA_HOOK_WALK=0 and its 'ending' and 'closed' lines. So they compile and are made to pass by this design, but no case check names them.",
+    "key_interactions": "Scratch launchers and probes stay outside the worktree (lessons #889, #412). The engine appends the three architecture rules to .taad/fitness.yaml from this design. Attempt 1's SL-007 block at :1543-1571 is superseded by them."
+   }
+  ],
+  "key_decisions": [
+   {
+    "decision": "Repair from the line as typed (kernel32 GetCommandLineW). Never repair from e.Args alone, and never from .NET's Environment.CommandLine.",
+    "reversibility": "cheap",
+    "rationale": "Measured: after a \\\" the quoting of a quoted report path flips, and a run of spaces collapses (the spike's L2 gives 3 argv elements, and one space or two give identical argv). Only the raw line holds finish line 2's exact path. Environment.CommandLine is rebuilt from argv on .NET 10 (investigation, raw-spaced.txt)."
+   },
+   {
+    "decision": "In the repaired reading every '\"' delimits. An odd backslash run before it is kept literally, and an even run is halved as Windows does.",
+    "reversibility": "expensive",
+    "rationale": "A '\"' cannot occur in a Windows path or in --report, and escaping callers always produce even runs, so the repair differs from the CRT only on odd runs, which are the escape that merged the arguments. Scripts will come to rely on `\"C:\\\" --report c.json`, so taking this back breaks callers even though the code is small."
+   },
+   {
+    "decision": "Keep the gate (repair only when argv holds a '\"'), the ucrt-rule alignment check and the fallback (null on an inner quote, argv on trailing-only quotes). Align against the FAITHFUL ucrt emulator, not CommandLineToArgvW.",
+    "reversibility": "cheap",
+    "rationale": "Spike e-args-match-ucrt-split-on-shipped-hosts: outcome 1 on 16 of 16 runs, and the gate premise held. With the gate closed, every launch the repo makes today (ArgumentList, Format-AppArgument) behaves exactly as before. Alignment is a safety interlock: a line it cannot account for is refused or left alone, never re-split wrongly. No shell32 import is needed."
+   },
+   {
+    "decision": "Each name is drawn at the moment of its own open. The constructor stores a Func<string>; Probe and Write each call it, and Write calls it immediately before its CreateNew.",
+    "reversibility": "cheap",
+    "rationale": "A stem drawn once at launch would reveal the temporary's name through the .probe file for the whole scan. CreateNew follows a dangling symlink (CVE-2025-0913, recalled), so for that kind the unpredictable name is the defence and has to hold by construction. A counting-Func fact enforces the order."
+   },
+   {
+    "decision": "CreateNew is presented as refusing only existing files, hardlinks, symlinks to existing files and folders at the name. A dangling symlink at the exact fresh name is recorded as the residual that only unpredictability covers, and no test expects it to be refused.",
+    "reversibility": "cheap",
+    "rationale": "FileOptions cannot pass FILE_FLAG_OPEN_REPARSE_POINT, and an attribute check in the App would break OnlyTheClassifierReadsTheReparseAttribute. Claiming more than CreateNew does would mislead the next writer."
+   },
+   {
+    "decision": "The SC-028 probe goes inside the existing file-check try, after both DeleteFirst calls and before the argument-count refusal. It opens CreateNew with DeleteOnClose, and a failure gives exit 3.",
+    "reversibility": "cheap",
+    "rationale": "The order of exit codes for lines that are wrong twice stays as C-008 and C-009 expect. The probe needs the same rights as the real create-and-rename (FILE_ADD_FILE on the folder, DELETE on its own file). DeleteOnClose leaves nothing behind even if the process is killed."
+   },
+   {
+    "decision": "Keep DeleteFirst(report + \".tmp\") at launch, Discard's legacy delete, RootArgument, FsaWindowHook TreeMode.cs:99, and the exact lambda shapes of the crash and Exit handlers.",
+    "reversibility": "cheap",
+    "rationale": "- C-008 plants a stale, then read-only, <report>.tmp and checks that it is gone.\n- RootArgument is documented Core API, and the fallback path uses it.\n- The hook's --report test only refuses misuse, and its launches are quoted by Format-AppArgument, so its argv has no '\"'.\n- WindowMutants.ps1 finds `DispatcherUnhandledException += (_, ex) =>` and `Exit += (_, e) =>` by regex for its C-012 and O-016 mutants."
+   },
+   {
+    "decision": "Exe-level proof of finish lines 2, 3 and 4 and of SC-028 lives in tests/bugs/SL-007-QuotedRootTrailingBackslash. No case check names the E006 tests.",
+    "reversibility": "cheap",
+    "rationale": "The E006 files are not in the tree (Glob tests/**/E00* found none), so a filter for them with TreatNoTestsAsError fails whatever is built. The bug project already builds the Debug apphost and launches it with a raw line, so nothing extra is published."
+   },
+   {
+    "decision": "Architecture rule 3 forbids the path-opening writers that follow an entry already at the name: File.WriteAll*, AppendAll*, AppendText, CreateText, Create and OpenWrite, FileMode.Create/OpenOrCreate/Truncate/Append, and the FileInfo openers .OpenWrite( and .CreateText(. Unlike the proposal, it does not forbid `new StreamWriter(` or `.AppendText(`.",
+    "reversibility": "cheap",
+    "rationale": "A rule names what is wrong. `new StreamWriter(stream)` over a CreateNew FileStream is the correct way to write text, and it cannot be told from `new StreamWriter(path)` by its text. `.AppendText(` is also WPF's TextBoxBase.AppendText. ReportFileTests is the behavioural guard; the regex rule does not close the class (lesson #903)."
+   },
+   {
+    "decision": "Report file I/O moves into the WPF-free ReportFile.cs, linked into Core.Tests, with an internal Func<string> name-source constructor.",
+    "reversibility": "cheap",
+    "rationale": "The deny, link, rename-over and held-open behaviours become default-suite facts with no exe launch (lesson #897). The constructor reads no environment and cannot be reached from outside the exe. WindowReport is internal, so the internal parameter type compiles."
+   }
+  ],
+  "proposals": [
+   {
+    "designer": "practice",
+    "selected": "core",
+    "note": "The only proposal; taken whole with three corrections:\n- rule 3 drops `new StreamWriter(` and `.AppendText(`, which match correct code;\n- the WorkFolder claim is restated;\n- the WindowMutants lambda-shape constraint is added.\nIts over_engineering_flag (true) was read as a real signal. It argues the trimmed shape against System.CommandLine, a shared hook parser and mid-scan link-plant window cases, and I agree. The alignment check it once flagged as trimmable is now measured correct and costs about five lines."
+   }
+  ],
+  "coherence_check": "One proposal, so there is no composition to check, and nothing here has yet survived a disagreement with another designer. The critique is the first thing that will argue with it.\n\nSeams inside the design, checked against the tree:\n\n(a) Rule 1 against the new OnStartup line. The lookbehind `(?<!CommandLine\\.Arguments\\()` exempts exactly `CommandLine.Arguments(e.Args)`. `.Args` occurs in src/FsAnalyser.App only at App.xaml.cs:21, 23 and 26 (Grep), and all three are replaced. `CommandLine.Arguments` itself does not match `\\.Args\\b`.\n\n(b) Rule 3 against ReportFile. `FileMode.CreateNew` does not match `FileMode\\.(Create|...)\\b`, because no word boundary separates Create from New. The only writer in src/FsAnalyser.App today is WindowReport.cs:332 (File.WriteAllBytes), and the build removes it. DeleteFirst writes no bytes.\n\n(c) Accessibility. ReportFile is internal and WindowReport is `internal static class` (WindowReport.cs:141), so WriteAsync(…, ReportFile) compiles.\n\n(d) Refusal order. The probe sits inside the :62-73 try, so 2-then-3-then-2 is unchanged for C-008 and C-009. DeleteFirst(report + \".tmp\") stays, which C-008's 'stale .tmp is gone' needs.\n\n(e) Repair output against RootArgument. Repaired arrays hold no '\"', so RootArgument is a no-op on them, and it keeps its job only on the fallback path. No double repair is possible.\n\n(f) Lesson #89, both directions, on every new exit path:\n- The null fallback is Shutdown(2) before any window or file is touched. No Exit handler is registered on that path, so ShutdownMode cannot turn it into 0.\n- The probe's 3 follows the deletes and leaves no probe file.\n- Write failures still give 3, with the temporary removed.\n- Exit 0 still implies a file, through the unchanged Exit handler.\n\n(g) The hook and WindowCases. Their launches quote by Format-AppArgument or ArgumentList, so the gate is closed and they see today's behaviour. TreeMode.cs:99's own --report test is unaffected.\n\n(h) WindowMutants.ps1 still finds its two App.xaml.cs mutation targets, because the lambda shapes are kept.\n\n(i) Attempt 1's SL-007 block. It is already appended at .taad/fitness.yaml:1543-1571. Every pattern in it is matched by a pattern at least as wide in this design's rules, so if the engine appends these beside it, the two blocks never disagree.\n\nPre-existing behaviour this design neither fixes nor worsens, and which lies outside epic E-006:\n- DeleteFirst clears IsReadOnly before deleting. On a hardlink or symlink planted at <report> or <report>.tmp before launch, that change reaches the link's target (HF-018 code).\n- Someone who can rename entries in the report folder's parent could swap the folder for a junction mid-scan (m5).\n\nNo decidable disagreement is left: O-019 was settled by the spike (go, 16 of 16). The queued spikes (createnew-at-fixed-name-vs-planted-links and the others) cannot change a boundary, because names are fresh whatever CreateNew does with a link. They were written against `.r.json.*.tmp` names, so whoever runs them must match `.fsa-*` instead.",
+  "code_claims": [
+   {
+    "path": "src/FsAnalyser.App/App.xaml.cs",
+    "symbol": "OnStartup",
+    "claim": "It tests e.Args.Contains(ReportOption) before repairing any argument, and otherwise opens a MainWindow on CommandLine.RootArgument(e.Args[0]), ignoring the remaining arguments."
+   },
+   {
+    "path": "src/FsAnalyser.App/App.xaml.cs",
+    "symbol": "StartReportMode",
+    "claim": "Its only up-front report checks are a folder/existence test, DeleteFirst(report) and DeleteFirst(report + \".tmp\"), in one try that maps IOException or UnauthorizedAccessException to Shutdown(CannotWriteReport), all before the `unexpected || roots.Count != 1` refusal."
+   },
+   {
+    "path": "src/FsAnalyser.App/App.xaml.cs",
+    "symbol": "DeleteFirst",
+    "claim": "It clears IsReadOnly on an existing file and deletes it; for an absent file it writes nothing, so it never tests whether the folder takes a new file."
+   },
+   {
+    "path": "src/FsAnalyser.App/App.xaml.cs",
+    "symbol": "ApplicationExitCode",
+    "claim": "The Exit handler turns a ReportWritten exit with no file at the report path into Crashed, so exit 0 implies a file."
+   },
+   {
+    "path": "src/FsAnalyser.App/App.xaml.cs",
+    "symbol": "WindowReport.Discard(report)",
+    "claim": "The DispatcherUnhandledException handler calls WindowReport.Discard(report) and then Shutdown(Crashed); it is the only caller of Discard."
+   },
+   {
+    "path": "src/FsAnalyser.App/App.xaml.cs",
+    "symbol": "BadArguments",
+    "claim": "Exit code 2 is the constant every report-mode argument refusal uses."
+   },
+   {
+    "path": "src/FsAnalyser.Core/CommandLine.cs",
+    "symbol": "RootArgument",
+    "claim": "It replaces a trailing '\"' with a backslash and otherwise returns the argument unchanged; it never looks at a quote inside the argument."
+   },
+   {
+    "path": "src/FsAnalyser.App/WindowReport.cs",
+    "symbol": "WriteAllBytes",
+    "claim": "WriteAsync writes the JSON with File.WriteAllBytes to the fixed name path + \".tmp\", then calls File.Move(temporary, path, overwrite: true), and deletes the temporary quietly when that throws."
+   },
+   {
+    "path": "src/FsAnalyser.App/WindowReport.cs",
+    "symbol": "Discard",
+    "claim": "Discard quietly deletes the report and the fixed path + \".tmp\"."
+   },
+   {
+    "path": "src/FsAnalyser.App/WindowReport.cs",
+    "symbol": "internal static class WindowReport",
+    "claim": "WindowReport is internal, so a WriteAsync taking an internal ReportFile has consistent accessibility."
+   },
+   {
+    "path": "src/FsAnalyser.App/WindowReport.cs",
+    "symbol": "[\"root\"] = root",
+    "claim": "The report's root key is the root string the App passes to WriteAsync."
+   },
+   {
+    "path": "src/FsAnalyser.Core/Native/Kernel32.cs",
+    "symbol": "internal static unsafe partial class Kernel32",
+    "claim": "Kernel32 is an internal static unsafe partial class holding the kernel32 LibraryImports, so only Core code can call a new import there."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "InteropLivesOnlyInNative (src)",
+    "claim": "LibraryImport and DllImport are forbidden across src/**/*.cs except under src/FsAnalyser.Core/Native/**."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "PathOpensGoOnlyThroughTheGuardedOpen",
+    "claim": "It names path-taking entry points such as CreateFile, FindFirstFile, GetFileAttributes and GetDiskFreeSpace, and does not name GetCommandLineW."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "OnlyTheClassifierReadsTheReparseAttribute",
+    "claim": "It forbids FileAttributes.ReparsePoint, FILE_ATTRIBUTE_REPARSE_POINT, IsReparsePoint and 0x400 across src/**/*.cs, comments included, outside EntryClassifier.cs and Kernel32.cs."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "the shipped app carries no test seam",
+    "claim": "This settled rule forbids FSA_HOOK_, FSA_T005_, DOTNET_STARTUP_HOOKS, StartupHook, FsaWindowHook and tests/window spellings across src/**."
+   },
+   {
+    "path": ".taad/fitness.yaml",
+    "symbol": "the app never opens a file for writing in a way that follows an existing entry",
+    "claim": "A '# settled by SL-007' block from this slice's first design attempt already holds three rules (e.Args, Environment.CommandLine, path-following writers) whose patterns are subsets of this design's rules."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/TestNative.cs",
+    "symbol": "SplitArguments",
+    "claim": "It splits \"app.exe \" + arguments with shell32 CommandLineToArgvW and returns argv without argv0."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/TempTree.cs",
+    "symbol": "Deny",
+    "claim": "It adds an explicit deny ACE with a raw access mask for the current user through SDDL and keeps the original ACL so it can be restored."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/TempTree.cs",
+    "symbol": "FileSymlink",
+    "claim": "TempTree has FileSymlink, Junction (mklink /J) and a static Hardlink (mklink /H) helper for planting links, plus Folder, File and Root, which the E006 finish-line tests use."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/CommandLineTests.cs",
+    "symbol": "AQuotedPathEndingInABackslashGetsItsBackslashBack",
+    "claim": "Six InlineData rows pin RootArgument's behaviour for quoted and unquoted roots."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/AppArgumentTests.cs",
+    "symbol": "Scripts",
+    "claim": "The producer walk enumerates only *.ps1 files, so new .cs tests that launch the app are not producers."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/AppArgumentTests.cs",
+    "symbol": "EveryRootOfTheCorpusReachesTheAppsArgvAsWritten",
+    "claim": "It reads AppArgumentCorpus.json's roots, replacing <temp>, and checks each one's hand-quoted split with TestNative.SplitArguments."
+   },
+   {
+    "path": "tests/window/AppArgumentCorpus.json",
+    "symbol": "A07",
+    "claim": "Row A07 is a root ending in two backslashes, for which hand-quoting drops one."
+   },
+   {
+    "path": "tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+    "symbol": "DriveReads.cs",
+    "claim": "Pure App files such as DriveReads.cs are compiled into Core.Tests by a Compile Include with a Link, the pattern ReportFile.cs follows."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "no root: the stale .tmp is gone",
+    "claim": "C-008 plants a stale, and then read-only, \"$report.tmp\" and checks that it is gone, which relies on the launch-time DeleteFirst(report + \".tmp\")."
+   },
+   {
+    "path": "tests/window/WindowCases.ps1",
+    "symbol": "Test-O016",
+    "claim": "Test-O016 begins after Test-C014, so the bare \"$report.tmp\" leftover check at line 1275 belongs to O-016; C-007, C-008 and C-012 have the same bare check at 1030, 1076 and 1219."
+   },
+   {
+    "path": "tests/window/FsaWindowHook/TreeMode.cs",
+    "symbol": "FSA_HOOK_WALK",
+    "claim": "Tree mode refuses a launch whose Environment.GetCommandLineArgs() contains \"--report\", reads FSA_HOOK_WALK (0 reads nothing), and logs 'ending' and 'closed' lines, which the E006 window finish line reads."
+   },
+   {
+    "path": "tests/window/WindowMutants.ps1",
+    "symbol": "DispatcherUnhandledException",
+    "claim": "Two mutants find App.xaml.cs's crash handler and Exit handler by regexes on `DispatcherUnhandledException += (_, ex) =>` and `Exit += (_, e) =>`, for cases C-012 and O-016."
+   },
+   {
+    "path": "tests/bugs/SL-007-QuotedRootTrailingBackslash/QuotedRootTrailingBackslashTests.cs",
+    "symbol": "WorkFolder",
+    "claim": "The repro launches the Debug exe found through the FsaAppFolder metadata with a raw ProcessStartInfo.Arguments, gives each run BudgetMs = 7000, and puts its work folder at <temp>\\fsa-sl007\\<guid>, where <temp> is LocalAppData\\Temp when %TEMP% is at or under the Windows folder."
+   }
+  ],
+  "cases": [
+   {
+    "behaviour": "split the command line the app was started with",
+    "shape": "a quoted root ending in one backslash, followed by --report and a path, which Windows merges into one argument (`\"D:\\Data\\\" --report out.json`, `\"C:\\\" --report C:\\r.json`)",
+    "why": "This is the merged-argument branch behind the hang. Without the repair, --report is never an element and the app opens the interactive window.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.CommandLineTests.AQuotedRootEndingInABackslashThenReportIsSplitAsTyped -- RunConfiguration.TreatNoTestsAsError=true"
+   },
+   {
+    "behaviour": "split the command line the app was started with",
+    "shape": "the root and a quoted report path both contain spaces, and the report path has a run of two spaces (`\"D:\\My Data\\\" --report \"C:\\out  dir\\r.json\"`)",
+    "why": "Windows flips the quoting of the tail and collapses the run of spaces, so argv has 2 elements and has lost the path. Only the raw line holds it, and a re-split of e.Args would give the report path `C:\\out`.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.CommandLineTests.ASpacedRootAndASpacedReportPathKeepTheirSpaces -- RunConfiguration.TreatNoTestsAsError=true"
+   },
+   {
+    "behaviour": "split the command line the app was started with",
+    "shape": "a quoted root ending in a backslash with nothing after it (`\"D:\\Data\\\"`), so argv's only '\"' is its last character",
+    "why": "The gate opens on a trailing-only quote. The repair must give [D:\\Data\\], the same root RootArgument gives today, or finish line 3's window scans another root.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.CommandLineTests.AQuotedRootEndingInABackslashAloneIsTheFolder -- RunConfiguration.TreatNoTestsAsError=true"
+   },
+   {
+    "behaviour": "split the command line the app was started with",
+    "shape": "a line Windows split cleanly, with no '\"' left in argv (a quoted root without a trailing backslash, an even run `\"D:\\Data\\\\\"`, a spaced quoted pair, an unquoted `C:\\`)",
+    "why": "The gate is closed here. If it leaks, every ArgumentList and Format-AppArgument launch the repo makes would be re-split, and an even run would lose a second backslash.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.CommandLineTests.ALineWindowsSplitCleanlyIsReturnedAsItCame -- RunConfiguration.TreatNoTestsAsError=true"
+   },
+   {
+    "behaviour": "split the command line the app was started with",
+    "shape": "the typed line does not account for argv, so the alignment fails: an inner '\"' gives null, and a trailing-only '\"' gives argv unchanged",
+    "why": "This is the safety interlock. Without it, a host whose argv is not the ucrt split of its own line would be repaired wrongly or would reopen the hang, and today's RootArgument behaviour must survive for the trailing-only shape.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.CommandLineTests.ALineThatDoesNotMatchItsArgvIsRefusedOrLeftAlone -- RunConfiguration.TreatNoTestsAsError=true"
+   },
+   {
+    "behaviour": "split the command line the app was started with",
+    "shape": "the grammar the new tokeniser opens, one row each: two \\\" in one line, an odd run of three, an even run elsewhere on a repaired line, a tab, a quoted argv0 with a space and an unquoted argv0, an empty quoted value, a non-ASCII root, UNC and \\\\?\\ roots, the root last after --report, and the corpus roots A01-A10 hand-quoted",
+    "why": "Lesson #791: a widened parser breeds a defect in the next round unless each grammar feature it opens has a row. The spike reached only L0-L4 (N-066).",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.CommandLineTests.TheGrammarTheRepairOpensIsSplitAsTyped|FullyQualifiedName~FsAnalyser.Core.Tests.AppArgumentTests.EveryRootOfTheCorpusHandQuotedIsRepairedByArguments\" -- RunConfiguration.TreatNoTestsAsError=true"
+   },
+   {
+    "behaviour": "run an unattended report from cmd or Start-Process",
+    "shape": "the exe started as `\"<tree>\\\" --report \"<file>\"` (finish line 1)",
+    "why": "This is the reported hang. The engine's repro fails on the base: no exit within 7000 ms and no report.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-007-QuotedRootTrailingBackslash/SL-007-QuotedRootTrailingBackslash.Tests.csproj --filter FullyQualifiedName~SL007.QuotedRootTrailingBackslash.Tests.QuotedRootTrailingBackslashTests -- RunConfiguration.TreatNoTestsAsError=true"
+   },
+   {
+    "behaviour": "run an unattended report from cmd or Start-Process",
+    "shape": "the exe started with a spaced quoted root and a report path whose folder has two spaces (finish line 2)",
+    "why": "It proves at exe level that the raw line, not e.Args, reached report mode, because the report must land at the exact two-space path.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-007-QuotedRootTrailingBackslash/SL-007-QuotedRootTrailingBackslash.Tests.csproj --filter FullyQualifiedName~QuotedRootShapesTests.ASpacedRootAndAReportPathWithTwoSpacesAreTakenWhole -- RunConfiguration.TreatNoTestsAsError=true"
+   },
+   {
+    "behaviour": "open the window on a folder given at launch",
+    "shape": "the exe started as `\"<tree>\\\"` with nothing after it (finish line 3)",
+    "why": "The repair branch now handles this line where RootArgument did before. A regression would open no window, or exit 2 on a person's own launch.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-007-QuotedRootTrailingBackslash/SL-007-QuotedRootTrailingBackslash.Tests.csproj --filter FullyQualifiedName~QuotedRootShapesTests.AQuotedRootEndingInABackslashAloneOpensTheWindow -- RunConfiguration.TreatNoTestsAsError=true"
+   },
+   {
+    "behaviour": "refuse a report line it cannot take",
+    "shape": "the exe started as `\"<tree>\\\" extra --report \"<file>\"` (finish line 4)",
+    "why": "After the repair the extra token must reach roots.Count != 1 and exit 2 with no window, no report and no temporary left. On the base it hangs.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-007-QuotedRootTrailingBackslash/SL-007-QuotedRootTrailingBackslash.Tests.csproj --filter FullyQualifiedName~QuotedRootShapesTests.AnArgumentAfterTheQuotedRootIsRefusedWithExit2AndNoWindow -- RunConfiguration.TreatNoTestsAsError=true"
+   },
+   {
+    "behaviour": "refuse a report path it cannot write",
+    "shape": "the report's folder exists but the account cannot create a file in it (Deny CreateFiles), as an ordinary user meets with `C:\\ --report C:\\r.json`",
+    "why": "SC-028: the base scans the whole tree and exits 3 only at the write (measured: window at 1062 ms). The probe must refuse with 3 before any window, both at exe level and in ReportFile.Probe.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-007-QuotedRootTrailingBackslash/SL-007-QuotedRootTrailingBackslash.Tests.csproj --filter FullyQualifiedName~UnwritableReportFolderTests -- RunConfiguration.TreatNoTestsAsError=true"
+   },
+   {
+    "behaviour": "create the probe and the report's temporary",
+    "shape": "a writable folder, where each open must draw a name of its own at that moment; the probe must leave nothing, and a failed move must remove the temporary",
+    "why": "C4 and C5. A stem drawn once at launch would reveal the temporary's name through the probe, and the dangling-symlink kind rests on that name staying unseen. A leftover .probe or .fsa-*.tmp breaks 'a non-zero exit leaves no file'.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.ReportFileTests.AFreshStemIsDrawnForEachOpenAtTheMomentOfOpening|FullyQualifiedName~FsAnalyser.Core.Tests.ReportFileTests.AProbe|FullyQualifiedName~FsAnalyser.Core.Tests.ReportFileTests.AFailedMoveLeavesNoTemporary\" -- RunConfiguration.TreatNoTestsAsError=true"
+   },
+   {
+    "behaviour": "write the report without writing through a planted link",
+    "shape": "a link already at the write's target name: a hardlink, a symlink to an existing file or a junction at the temporary's name; a hardlink or symlink at <report> itself; a hardlink at the old fixed <report>.tmp",
+    "why": "SC-037: the base overwrote a hardlink's target and still exited 0 (measured). CreateNew must refuse the first group, the rename-over must replace the second without touching its target, and the old fixed name must never be written.",
+    "check": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter \"FullyQualifiedName~FsAnalyser.Core.Tests.ReportFileTests.AWriteRefusesALinkAlreadyAtItsTemporaryName|FullyQualifiedName~FsAnalyser.Core.Tests.ReportFileTests.AWriteReplacesALinkAtTheReportItself|FullyQualifiedName~FsAnalyser.Core.Tests.ReportFileTests.AWriteNeverUsesTheOldFixedName\" -- RunConfiguration.TreatNoTestsAsError=true"
+   },
+   {
+    "behaviour": "write the report without writing through a planted link",
+    "shape": "a dangling symlink planted at the temporary's exact fresh name",
+    "why": "Considered and judged not worth a test. CreateNew follows a dangling symlink (CVE-2025-0913), so the only defence is that the name is drawn at the moment of opening and never shown, and the counting-Func fact already holds that. A test would plant at a name only an injected stem can know, so it would measure the OS, not this code.",
+    "material": false,
+    "check": "none: covered by ReportFileTests.AFreshStemIsDrawnForEachOpenAtTheMomentOfOpening"
+   }
+  ],
+  "architecture_rules": [
+   {
+    "name": "the app decides its mode only on repaired arguments",
+    "files": "src/FsAnalyser.App/**/*.cs",
+    "must_not_match": [
+     "(?m)(?<!CommandLine\\.Arguments\\()\\b\\w+\\.Args\\b",
+     "(?m)\\bEnvironment\\.GetCommandLineArgs\\s*\\("
+    ],
+    "because": "Windows' split merges a quoted root ending in a backslash with everything after it. Any --report test or root taken from StartupEventArgs.Args (whatever the parameter is called) or from GetCommandLineArgs before CommandLine.Arguments has repaired it reopens SL-007's hang: an interactive window on a nonsense root that never exits, which an unattended caller waits on forever."
+   },
+   {
+    "name": "nothing reads the rebuilt command line",
+    "files": "src/**/*.cs",
+    "must_not_match": [
+     "(?m)\\bEnvironment\\.CommandLine\\b"
+    ],
+    "because": "On .NET 10, Environment.CommandLine is rebuilt from the already-split argv (measured by this slice's investigation). It has lost the quoting and the runs of spaces the repair needs, so code that uses it gets a spaced report path wrong while looking as if it read the raw line. Only Kernel32.CommandLineAsTyped (GetCommandLineW) holds the line as typed."
+   },
+   {
+    "name": "the app writes files only by exclusive create",
+    "files": "src/FsAnalyser.App/**/*.cs",
+    "must_not_match": [
+     "(?m)\\bFile\\.(WriteAll(Bytes|Text|Lines)|AppendAll(Text|Lines)|AppendText|CreateText|Create|OpenWrite)(Async)?\\s*\\(",
+     "(?m)\\bFileMode\\.(Create|OpenOrCreate|Truncate|Append)\\b",
+     "(?m)\\.(OpenWrite|CreateText)\\s*\\("
+    ],
+    "because": "These open whatever entry is already at the name and write through it when it is a planted hardlink or symlink. The survey measured a hardlink planted at <report>.tmp mid-scan having its target overwritten while the run still exited 0 (SC-037). Report bytes go only through ReportFile: FileMode.CreateNew at a name drawn at the moment of opening, then a rename over the report. CreateNew refuses an existing file or folder at the name but follows a dangling symlink (CVE-2025-0913), so that kind is covered by the unpredictable name, not by CreateNew. `new StreamWriter(` and `.AppendText(` are deliberately absent, because they match correct code (a writer over a CreateNew stream, and WPF's TextBoxBase.AppendText). ReportFileTests is the behavioural guard."
+   }
+  ],
+  "contracts": [
+   {
+    "name": "Command-line grammar of FsAnalyser.App.exe",
+    "kind": "cli",
+    "auth_model": "none; the caller's own account",
+    "error_cases": "Exit 2:\n- --report with no value, or a second --report;\n- no root, or more than one root (including `\"X\\\" extra --report f`);\n- a bad or empty report path;\n- new: argv holds an inner '\"' that the typed line cannot account for. This exit comes before StartReportMode, so, like today's no-value exit, it cannot name <file> and deletes nothing.\n\nExit 3:\n- the report path is a folder, or its folder is absent;\n- a stale file cannot be deleted;\n- new: the folder takes no new file, found before any window;\n- the final write or move fails.\n\nExit 70: an unhandled exception, or an end with no report. Exit 0 only with a file at <file>.",
+    "notes": "Usage is unchanged. The repaired reading applies only when Windows' split left a '\"' in an argument. Then every '\"' in the typed line delimits: an odd backslash run before it is kept literally (`\"C:\\\"` names C:\\), and an even run is halved. Every ArgumentList, Format-AppArgument and read-window.ps1 line is handled as before. A launch through the dotnet muxer fails alignment and falls back (exit 2, or RootArgument's repair for a trailing-only quote); it is never repaired wrongly."
+   },
+   {
+    "name": "CommandLine.Arguments(string[] argv, string commandLine) -> string[]?",
+    "kind": "function",
+    "error_cases": "Returns null when argv holds a '\"' that is not the last character of its element and the ucrt-rule split of commandLine after argv0 is not argv. It never throws.",
+    "notes": "Public, added beside RootArgument; the Core API change is additive. On the repair path its output holds no '\"'. With the gate closed it returns argv as it came. Arguments(string[] argv) supplies GetCommandLineW only when the gate is open. The alignment premise was measured on both shipped hosts."
+   },
+   {
+    "name": "ReportFile: Probe / Write / Discard",
+    "kind": "function",
+    "error_cases": "Probe and Write throw IOException or UnauthorizedAccessException, which the App maps to exit 3. Discard never throws.",
+    "notes": "Each open draws its own stem at the moment of opening, and the constructor draws nothing.\n\nOn-disk names:\n- `.fsa-<32 hex>.probe` exists only while its handle is open.\n- `.fsa-<32 hex>.tmp` exists only between its CreateNew and the File.Move, and is deleted on failure.\n\nThe only predictable name written is <report>, by rename-over. Leftover checks look for `.fsa-*` as well as the legacy `<report>.tmp`."
+   },
+   {
+    "name": "Report JSON schema 1",
+    "kind": "function",
+    "notes": "Unchanged: no key is added, renamed or changed in meaning. \"root\" is the root as the App took it, which is the repaired form for a trailing-backslash line and so equals the unquoted control's root."
+   }
+  ],
+  "cross_domain_transfer": {
+   "source_domain": "POSIX secure temporary files (mkstemp, Python tempfile.mkstemp + os.replace, Go os.CreateTemp + os.Rename)",
+   "pattern": "Create the temporary with an exclusive create at a random name, generated at the moment of opening, in the destination's own directory. Write it, then rename it atomically over the destination. The same exclusive create, closed at once, is the writable-folder probe.",
+   "rationale": "SC-037 is the classic temp-file link race moved to a shared report folder, and SC-028 is the check that the folder is writable before the work starts. Go's CVE-2025-0913 is this same pattern failing on Windows: an exclusive create follows a dangling symlink. That is why the freshness of the name, not CreateNew, carries the defence here.",
+   "transfer_found": true,
+   "invariants": [
+    {
+     "precondition": "The temporary's name cannot be learned by another account before it is created.",
+     "status": "holds",
+     "evidence": "By construction: Write draws its 122-bit random stem immediately before its own CreateNew, and Probe's name is a separate draw. ReportFileTests.AFreshStemIsDrawnForEachOpenAtTheMomentOfOpening holds the order."
+    },
+    {
+     "precondition": "CREATE_NEW refuses an existing file, a hardlink, a symlink to an existing file and a junction at the name, without writing through any of them.",
+     "status": "must-verify",
+     "evidence": "ReportFileTests.AWriteRefusesALinkAlreadyAtItsTemporaryName, a default-suite fact. The spike createnew-at-fixed-name-vs-planted-links is still queued."
+    },
+    {
+     "precondition": "CREATE_NEW refuses a dangling symlink at the name.",
+     "status": "fails",
+     "evidence": "Go issue 73702 / CVE-2025-0913 (recalled): the exclusive create follows the link and creates its target. Accepted as a residual that only the unpredictable name covers."
+    },
+    {
+     "precondition": "Rename-over replaces a hardlink or symlink planted at <report> rather than writing through it.",
+     "status": "must-verify",
+     "evidence": "ReportFileTests.AWriteReplacesALinkAtTheReportItself."
+    },
+    {
+     "precondition": "The temporary is on the report's volume, so the move is a rename.",
+     "status": "holds",
+     "evidence": "Both names are built from Path.GetDirectoryName(report)."
+    },
+    {
+     "precondition": "The probe needs exactly the rights the real write needs: FILE_ADD_FILE on the folder and DELETE on its own file.",
+     "status": "must-verify",
+     "evidence": "UnwritableReportFolderTests and ReportFileTests.AProbeIsRefusedWhereNoFileCanBeCreated cover the FILE_ADD_FILE deny. The queued spike createnew-probe-refuses-unwritable-folder-up-front covers the agreement on other shapes."
+    }
+   ]
+  },
+  "outside_claims": [
+   {
+    "claim": "Under the Windows/MSVC argument rule, a backslash before a double quote is a literal quote and quoting continues, so `\"D:\\Data\\\" --report out.json` reaches argv as the one argument <D:\\Data\" --report out.json>.",
+    "evidence": "measured",
+    "source": "Survey: CommandLineToArgvW on 9 sample lines; investigation: .NET 10.0.15 argv through Start-Process and cmd. The rule is quoted from Microsoft's documentation in https://github.com/rust-lang/rust/issues/72653",
+    "if_wrong": "Nothing needs repairing. The gate stays closed, but the finish lines would already pass."
+   },
+   {
+    "claim": "On both shipped hosts (the Debug apphost and the single-file Release exe in a spaced folder), Environment.GetCommandLineArgs()[1..] equals the ucrt split of GetCommandLineW after argv0, and equals the FAITHFUL tokeniser's output, on ProcessStartInfo.Arguments, Start-Process and cmd /c routes.",
+    "evidence": "measured",
+    "source": "Spike e-args-match-ucrt-split-on-shipped-hosts (go, 16 of 16 runs; ucrtbase 10.0.26100.9711, Windows 11 10.0.26300)",
+    "if_wrong": "Alignment would fail, finish lines 1, 2 and 4 would exit 2 instead, and the alignment contract would have to move to CommandLineToArgvW or be dropped."
+   },
+   {
+    "claim": "On .NET 10, Environment.CommandLine is rebuilt from the split argv and does not hold the line as typed; only kernel32 GetCommandLineW does.",
+    "evidence": "measured",
+    "source": "Investigation under pwsh on .NET 10.0.15 (.taad-scratch/raw-spaced.txt); dotnet/runtime#5095 named by the investigation, not fetched here",
+    "if_wrong": "Rule 2 would forbid a usable source. The design would still work through GetCommandLineW."
+   },
+   {
+    "claim": "WPF's StartupEventArgs.Args is Environment.GetCommandLineArgs() without its first element.",
+    "evidence": "recalled",
+    "source": "The investigation's reading of the dotnet/wpf source; consistent with the repro's behaviour",
+    "if_wrong": "e.Args could differ from what the alignment compares against, and the gate or alignment would misfire on a host that matched in the spike."
+   },
+   {
+    "claim": "GetCommandLineW returns a pointer to a process-owned buffer that must not be freed and that stays valid for the life of the process.",
+    "evidence": "recalled",
+    "source": "memory (Win32 API reference)",
+    "if_wrong": "CommandLineAsTyped would need to copy differently. Copying at once into a managed string already makes this moot."
+   },
+   {
+    "claim": "FileMode.CreateNew (CREATE_NEW) fails when any entry already exists at the name, including a hardlink, a symlink whose target exists, or a junction, and does not write through it.",
+    "evidence": "recalled",
+    "source": "memory; held by ReportFileTests.AWriteRefusesALinkAlreadyAtItsTemporaryName",
+    "if_wrong": "The fixed-name residual widens, but the name is fresh, so a planted link cannot be at it. The test would go red and show this."
+   },
+   {
+    "claim": "CREATE_NEW on a dangling symlink follows the link and creates its target (Go issue 73702, CVE-2025-0913).",
+    "evidence": "recalled",
+    "source": "memory; named by this slice's critique, not fetched here",
+    "if_wrong": "CreateNew would cover more than the design claims, which is harmless."
+   },
+   {
+    "claim": "FileOptions.DeleteOnClose (FILE_FLAG_DELETE_ON_CLOSE) makes CreateFile request DELETE access and removes the file when its last handle closes, including when the process is killed.",
+    "evidence": "recalled",
+    "source": "memory (CreateFileW documentation)",
+    "if_wrong": "A killed process could leave a .fsa-*.probe file behind. The leftover checks would then see it."
+   },
+   {
+    "claim": "File.Move(src, dst, overwrite: true) on one volume is MoveFileEx with MOVEFILE_REPLACE_EXISTING, a rename that replaces a hardlink or symlink at dst as a directory entry without writing to its target.",
+    "evidence": "recalled",
+    "source": "memory; held by ReportFileTests.AWriteReplacesALinkAtTheReportItself",
+    "if_wrong": "A link planted at <report> could redirect the report. The m4 fact would go red."
+   },
+   {
+    "claim": "An ordinary, non-elevated account can create a hardlink in a folder it can write, so a mid-scan plant needs no administrator rights.",
+    "evidence": "measured",
+    "source": "Survey experiment B: a hardlink was planted at r.json.tmp at 409 ms, and its target was overwritten",
+    "if_wrong": "SC-037 would be less reachable; the design is unchanged."
+   },
+   {
+    "claim": "A Deny CreateFiles ACE for the current user on a folder makes creating a new file there fail with access denied, while the folder still exists.",
+    "evidence": "measured",
+    "source": "Survey experiment A2: exit 3 at the write after the scan",
+    "if_wrong": "UnwritableReportFolderTests could not produce the unwritable-folder shape."
+   },
+   {
+    "claim": "The engine appends a design's architecture_rules without including_comments, so a settled entry is matched against code only, not comments.",
+    "evidence": "recalled",
+    "source": ".taad/fitness.yaml header, lines 57-60 (the engine's documented behaviour)",
+    "if_wrong": "The comments in Kernel32.cs and ReportFile.cs that name Environment.CommandLine or FileMode.Create would trip rules 2 and 3. They would need rewording."
+   },
+   {
+    "claim": "ProcessStartInfo.ArgumentList quotes an argument containing a space and doubles the backslashes before its closing quote, so a trailing-backslash root reaches argv whole.",
+    "evidence": "recalled",
+    "source": "memory (.NET PasteArguments); the E006 finish lines rely on it for their control runs",
+    "if_wrong": "The E006 control runs would fail their own premise, which would be a planted-test defect, not this design's."
+   }
+  ],
+  "prior_art": [
+   {
+    "pattern": "A quoted path ending in a backslash swallows the arguments after it. This follows the specification and the issue was closed as expected behaviour, so the program has to cope; PowerShell tab completion produces the shape.",
+    "where": "https://github.com/rust-lang/rust/issues/72653",
+    "authority": "oss",
+    "basis": "cited",
+    "source_date": "2020-05-27"
+   },
+   {
+    "pattern": "The same symptom in C# args from cmd.",
+    "where": "https://stackoverflow.com/questions/41607045/why-does-trailing-backslash-followed-by-quote-behave-so-strangely-in-cmd/41607359",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2017-01-12"
+   },
+   {
+    "pattern": "The same symptom in Python's sys.argv for a tab-completed quoted directory.",
+    "where": "https://stackoverflow.com/questions/71283820/directory-parameter-on-windows-has-trailing-backslash-replaced-with-double-quote",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2022-02-27"
+   },
+   {
+    "pattern": "Windows passes one command line, not an argument array, and `C:\\data\\` merging with the next argument is a recurring launch failure.",
+    "where": "https://comcomponent.com/en/blog/windows-command-line-argument-rules/",
+    "authority": "community",
+    "basis": "cited",
+    "source_date": "2026-09-02"
+   },
+   {
+    "pattern": "Arguments can split or combine in the Windows encode and decode round trip, so launchers have to check them.",
+    "where": "https://openjdk.org/jeps/8263697",
+    "authority": "official",
+    "basis": "cited",
+    "source_date": "2022-03-24"
+   },
+   {
+    "pattern": "On Windows an exclusive create (O_CREATE|O_EXCL) on a dangling symlink creates the file at the link's target; Go fixed it by opening with FILE_FLAG_OPEN_REPARSE_POINT.",
+    "where": "Go issue 73702 / CVE-2025-0913 (named by this slice's critique, not fetched here)",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "The MSVC rule: \\\" is a literal quote, while 2n backslashes before a quote are halved and the quote delimits.",
+    "where": "Microsoft Learn, 'Parsing C command-line arguments' (named by the investigation)",
+    "authority": "official",
+    "basis": "recalled"
+   },
+   {
+    "pattern": ".NET rebuilds its command-line string from argv; for the line as typed, use GetCommandLineW.",
+    "where": "dotnet/runtime issue 5095 (named by the investigation)",
+    "authority": "oss",
+    "basis": "recalled"
+   },
+   {
+    "pattern": "An exclusive-create temporary file at a random name, then an atomic rename over the target.",
+    "where": "POSIX mkstemp; Python tempfile.mkstemp + os.replace; Go os.CreateTemp + os.Rename",
+    "authority": "oss",
+    "basis": "recalled"
+   }
+  ],
+  "channeled_experts": [
+   "Raymond Chen (The Old New Thing) on CommandLineToArgvW and how a command line is quoted",
+   "Daniel Colascione, 'Everyone quotes command line arguments the wrong way'",
+   "The mkstemp / O_CREAT|O_EXCL secure temporary file practice (CERT FIO21-C)"
+  ],
+  "taste_disagreements": [
+   "An odd run of 2n+1 backslashes before a quote in a repaired line is kept whole, as typed. The alternative is n+1, treating the escape as undone. Both resolve to the same folder through Win32, but the report's \"root\" carries the extra backslashes under the chosen rule.",
+   "Rule 3 leaves out the proposal's `new StreamWriter(` and `.AppendText(` patterns, because they match correct code. A reviewer may prefer them back, together with an except list.",
+   "The name source is a Func<string> injected through an internal constructor rather than an injected IFileSystem or a stored stem. This was chosen as the smallest seam that lets a test plant a link at the exact temporary name."
+  ],
+  "whats_new": [
+   "CommandLine.Arguments(argv, commandLine) and Arguments(argv): the gate, the CRT argv0 skip, the FAITHFUL ucrt tokeniser, the REPAIR tokeniser, the alignment check and the fallback",
+   "Kernel32.CommandLineAsTyped (GetCommandLineW)",
+   "App.OnStartup decides its mode only on the repaired arguments; null gives exit 2 with no window",
+   "An up-front ReportFile.Probe in StartReportMode, giving exit 3 before any window for a folder that takes no new file (SC-028)",
+   "src/FsAnalyser.App/ReportFile.cs: a fresh `.fsa-<hex>` stem drawn at each open, CreateNew writes, rename-over, and Discard tracking the actual temporary (SC-037)",
+   "WindowReport.WriteAsync takes a ReportFile; WindowReport.Discard and DeleteQuietly are removed",
+   "CommandLineTests rows for the repair, the gate, the fallback and the opened grammar; AppArgumentTests.EveryRootOfTheCorpusHandQuotedIsRepairedByArguments",
+   "ReportFileTests: fresh draws, the probe on writable, denied and absent folders, links at the temporary and at the report, the old fixed name, and a failed move",
+   "Bug-project exe facts: AppRun.cs, QuotedRootShapesTests (finish lines 2, 3 and 4) and UnwritableReportFolderTests",
+   "Test-NoReportTemporary in WindowCases at C-007, C-008, C-012 and O-016",
+   "Three settled architecture rules superseding attempt 1's SL-007 block"
+  ],
+  "whats_reused": [
+   "The spike's measurement e-args-match-ucrt-split-on-shipped-hosts as the settled premise of the alignment check",
+   "CommandLine.RootArgument and its call sites",
+   "StartReportMode's refusal block, exit-code constants and refusal order; roots.Count != 1 gives finish line 4",
+   "The Exit handler's 'exit 0 only with a file' conversion and the crash handler's lambda shape (which WindowMutants relies on)",
+   "DeleteFirst, including the legacy <report>.tmp delete that C-008 relies on",
+   "TestNative.SplitArguments as the argv oracle in the parser rows",
+   "TempTree.Deny, Hardlink, FileSymlink and Junction",
+   "AppArgumentCorpus.json roots A01-A10",
+   "The linked pure-App-file pattern in the Core.Tests csproj",
+   "The bug project's FsaAppFolder Debug-apphost build and its WorkFolder rule",
+   "Schema 1 and exit codes 0/2/3/70, unchanged"
+  ],
+  "filed_for_later": [],
+  "decidable_disagreements": [],
+  "epic_parts": [],
+  "open_questions": [],
+  "reason": "Rewritten with the spike's answer to O-019 (go, 16 of 16), so the parser contract stands as written. This is one proposal, checked against the tree. Corrections: rule 3 now names only wrong code, the WorkFolder claim is restated, and the WindowMutants lambda shapes are now a constraint. Attempt 1's SL-007 rules at fitness.yaml:1543 are superseded."
+ }
+}

@@ -1,0 +1,187 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-007",
+ "stage": "critique",
+ "attempt": 1,
+ "at": "2026-11-20T02:44:17.308Z",
+ "head": "aa3d96b8842dca5f5e5ebdcc22845e56029bbfad",
+ "run_id": 11425,
+ "summary": "The argv half of the design holds up against the tree and the measurements. The fix comes before App.xaml.cs:21. The gate catches every mangled line, because an odd backslash run before a quote always leaves a literal '\"' in argv. Alignment fails safe. Probe order keeps the exit-code order that C-008 and C-009 expect. Four things need fixing before build.\n\n(1) Security. Windows CREATE_NEW follows a dangling symlink and creates the file at the link's target. This is Go's CVE-2025-0913 (golang/go#73702). So \"CreateNew refuses any entry already there as a second line\" is false for that kind of link, and the unpredictable name is the only defence. The design never says when the stem is drawn. A stem drawn once in the constructor at launch shows up in the folder as the probe file, which tells anyone watching the temporary's name. A dangling symlink planted there mid-scan then gets an arbitrary file created with the runner's rights, and the run still exits 0.\n\n(2) Missing tests. Cases 7-10 check four E006* tests that are not in the tree (Glob tests/**/E00* finds nothing). Their filters use TreatNoTestsAsError, so they fail whatever is built. That leaves finish lines 2-4 with no test, the exact pattern lesson #900 describes.\n\n(3) The design's one decidable disagreement and its must-verify preconditions rest on queued spikes that have no verdict, even though the risk-spike stage recorded a pass.\n\n(4) Smaller items:\n- two new fitness rules close only one spelling each;\n- the leftover-temporary check at line 1275 belongs to O-016, not C-014;\n- rename-over at the one predictable name, <report>, has no default-suite test.\n\nOne thing is an extra for the backlog: the report folder can be swapped for a junction during the scan.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The argv half of the design holds up against the tree and the measurements. The fix comes before App.xaml.cs:21. The gate catches every mangled line, because an odd backslash run before a quote always leaves a literal '\"' in argv. Alignment fails safe. Probe order keeps the exit-code order that C-008 and C-009 expect. Four things need fixing before build.\n\n(1) Security. Windows CREATE_NEW follows a dangling symlink and creates the file at the link's target. This is Go's CVE-2025-0913 (golang/go#73702). So \"CreateNew refuses any entry already there as a second line\" is false for that kind of link, and the unpredictable name is the only defence. The design never says when the stem is drawn. A stem drawn once in the constructor at launch shows up in the folder as the probe file, which tells anyone watching the temporary's name. A dangling symlink planted there mid-scan then gets an arbitrary file created with the runner's rights, and the run still exits 0.\n\n(2) Missing tests. Cases 7-10 check four E006* tests that are not in the tree (Glob tests/**/E00* finds nothing). Their filters use TreatNoTestsAsError, so they fail whatever is built. That leaves finish lines 2-4 with no test, the exact pattern lesson #900 describes.\n\n(3) The design's one decidable disagreement and its must-verify preconditions rest on queued spikes that have no verdict, even though the risk-spike stage recorded a pass.\n\n(4) Smaller items:\n- two new fitness rules close only one spelling each;\n- the leftover-temporary check at line 1275 belongs to O-016, not C-014;\n- rename-over at the one predictable name, <report>, has no default-suite test.\n\nOne thing is an extra for the backlog: the report folder can be swapped for a junction during the scan.",
+  "findings": [
+   {
+    "id": "M1",
+    "severity": "major",
+    "dimension": "security",
+    "nature": "defect",
+    "claim": "The design's 'second line of defence' does not exist for one link kind, and the first line depends on something the design leaves unstated.\n\nThe dangling-symlink gap: FileMode.CreateNew is CREATE_NEW, and on Windows CREATE_NEW follows a dangling file symlink and creates the file at its target. The design's outside claim says CreateNew 'never writes through it'. The fitness rule says CreateNew is the way the app 'never opens a file for writing in a way that follows an existing entry'. Both are therefore false for that link kind.\n\nThe stem timing: ReportFile gets one 'freshStem', and Probe writes stem+'.probe' while Write writes stem+'.tmp'. The design never says the stem is drawn separately for each open, at the moment of opening. A builder who computes the stem once, in the constructor that runs right after GetFullPath at launch, puts `.fsa-<hex>.probe` in the report's folder before the scan. Anyone who can list that folder (ReadDirectoryChangesW) then knows the temporary's name for the whole scan. Planting a dangling symlink at `.fsa-<hex>.tmp` (unprivileged with Developer Mode, which this PC has on, or with the junction plus object-manager-link trick) makes Write create and fill an attacker-chosen file with the runner's rights. File.Move then moves the link itself to <report>, and the Exit handler's File.Exists follows it, so the run exits 0.\n\nThat is SC-037's threat again, and criterion C5 fails. ReportFileTests.AWriteRefusesALinkAlreadyAtItsTemporaryName plants a hardlink, a symlink to an existing file and a junction, but deliberately not a dangling symlink, so it would pass on the vulnerable build.",
+    "evidence": "Cited: https://github.com/golang/go/issues/73702 ('On Windows, OpenFile creates a file in the location referenced by the link' for O_CREATE|O_EXCL on a dangling symlink). Go fixed it in adcad7b, CVE-2025-0913, by adding FILE_FLAG_OPEN_REPARSE_POINT (https://github.com/golang/go/commit/adcad7bea9f6933a219c7b05d8173cf8a4586092). The design's components text: 'the default stem is \".fsa-\" + Guid.NewGuid()...'; 'Probe(): opens ... stem + \".probe\"'; 'Write ... opens folder\\stem + \".tmp\"'. The invariant evidence says the GUID is 'made at write time after the scan (recalled)', which nothing in the component spec enforces. .NET FileOptions cannot pass FILE_FLAG_OPEN_REPARSE_POINT. A FileAttributes.ReparsePoint check in ReportFile would break OnlyTheClassifierReadsTheReparseAttribute (.taad/fitness.yaml:92-103).",
+    "file": ".taad/slices/SL-007/design-slice-2.json",
+    "line": 137,
+    "quote": {
+     "path": ".taad/slices/SL-007/design-slice-2.json",
+     "line": 137,
+     "text": "CreateNew refuses any entry already there as a second line."
+    },
+    "fix": "Make freshness hold by construction:\n- Probe and Write each call freshStem() themselves, Write immediately before its CreateNew, so the temporary's name never exists on disk before its own create. The constructor stores the Func, never a value.\n- Add a ReportFileTests fact with a counting Func. It asserts two distinct draws and that the second happens inside Write.\n- Strike 'CreateNew refuses any entry already there' and 'never writes through it' for symlinks. Correct the fitness rule's because text.\n- Record dangling symlinks as the residual that only the unpredictable name covers, citing CVE-2025-0913.",
+    "class_of": "links planted at the temporary name that CREATE_NEW does not refuse",
+    "threat": "adversary"
+   },
+   {
+    "id": "M2",
+    "severity": "major",
+    "dimension": "test-coverage",
+    "nature": "defect",
+    "claim": "Four of the design's cases (finish lines 1-4 at exe level) check tests that do not exist: E006QuotedRootReportTests, E006QuotedRootAndReportWithSpacesTests, E006QuotedRootWindowTests and E006QuotedRootExtraArgumentTests in FsAnalyser.Core.Tests. Their filters carry RunConfiguration.TreatNoTestsAsError=true, so they fail whatever is built. Coherence item (8) and whats_reused describe them as present ('the four engine-planted E-006 finish-line tests', 'carry no trait', 'publishes the app four times').\n\nThe builder is therefore told to write no exe-level test for:\n- finish line 2, which the design calls 'the only exe-level proof that the raw line, not e.Args, is what the app splits';\n- finish line 3, an interactive `\"X\\\"` window;\n- finish line 4, `\"X\\\" extra --report f` giving exit 2 with no file and no window.\n\nNothing runs the repaired path on the published single-file exe either. Once merged, the only things guarding the App.OnStartup wiring are the tests/bugs repro, which the slnx does not run, and a fitness rule keyed to one spelling (m1).",
+    "evidence": "Glob tests/**/E00* found no files. Grep 'E006' across the worktree finds only .taad/slices/SL-007/design-slice-2.json and SL-005 records. Lesson #900 records this exact failure for SL-005, and #876 and #896 for SL-001 and SL-003.",
+    "file": ".taad/slices/SL-007/design-slice-2.json",
+    "line": 237,
+    "quote": {
+     "path": ".taad/slices/SL-007/design-slice-2.json",
+     "line": 237,
+     "text": "E006QuotedRootReportTests -- RunConfiguration.TreatNoTestsAsError=true"
+    },
+    "fix": "Put the builder's own facts for finish lines 2, 3 and 4 into tests/bugs/SL-007-QuotedRootTrailingBackslash, beside UnwritableReportFolderTests. That project already launches the Debug apphost with a raw ProcessStartInfo.Arguments.\n- Line 2: the spaced root and a two-space report path; the report must be at the exact path.\n- Line 3: the process is alive with a MainWindowHandle after 3 s. Its root value is already covered by the CommandLineTests rows.\n- Line 4: exit 2 within 5000 ms, no window, no report and no .fsa-* entry.\n\nPoint cases 7-10 at the bug-project command. Drop the E006 names unless `git ls-files tests/**/E006*` shows them."
+   },
+   {
+    "id": "M3",
+    "severity": "major",
+    "dimension": "unfounded-assumptions",
+    "nature": "required",
+    "claim": "The design's one decidable disagreement, marked would_force_resynthesis: true, asks whether e.Args equals the ucrt-rule split of GetCommandLineW on the apphost. Two of its three must-verify preconditions, CREATE_NEW against planted links and the probe's rights, are handed to queued spikes. None of those spikes has a verdict.\n\nThe risk-spike stage still recorded 'passed: nothing here was both load-bearing and uncertain'. That contradicts the design's own labels. If alignment fails on the apphost, finish lines 1, 2 and 4 send the repaired lines to the fallback (exit 2), and the parser contract has to be redesigned after a build lap. The rename-over and probe-rights preconditions likewise reach the builder unmeasured.",
+    "evidence": "'What reality already said about this slice': all six spikes show verdict null. Four read 'waits its turn: a fix check runs its experiments one at a time', and getcommandlinew-retokenise-restores-report-args and caller-doubles-or-drops-trailing-backslash have no detail. The design's decidable_disagreements entry reads 'The queued spike getcommandlinew-retokenise-restores-report-args settles it.' M1 above already settles the dangling-symlink half of createnew-at-fixed-name-vs-planted-links from the web.",
+    "fix": "Send the slice back to the risk-spike stage to run getcommandlinew-retokenise-restores-report-args before build. At minimum, launch the Debug apphost on the four finish-line lines and compare GetCommandLineW's ucrt-rule split after argv0 with Environment.GetCommandLineArgs()[1..]. Read createnew-at-fixed-name-vs-planted-links with the dangling-symlink row expected to write through."
+   },
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "claim": "The rule 'the app decides its mode only on repaired arguments' matches the parameter name `e`, not the property it guards. Renaming OnStartup's parameter to `args` (`args.Args.Contains(\"--report\")`), or reading StartupEventArgs.Args through any other variable, brings back SL-007's hang and the rule stays green. The invariant holds only while every later edit remembers to keep the name `e`.",
+    "evidence": "App.xaml.cs:19 `private void OnStartup(object sender, StartupEventArgs e)` is the only thing that makes the `e.` prefix line up.",
+    "file": ".taad/fitness.yaml",
+    "line": 1547,
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1547,
+     "text": "(?m)(?<!CommandLine\\.Arguments\\()\\be\\.Args\\b"
+    },
+    "fix": "Match the property whatever the receiver is called: `(?m)(?<!CommandLine\\.Arguments\\()\\b\\w+\\.Args\\b`, or `\\.Args\\b` limited to App.xaml.cs. Or move the read into Core, so that `CommandLine.Arguments()` reads GetCommandLineArgs()[1..] itself and the App never touches StartupEventArgs.Args, then forbid `\\.Args\\b` in src/FsAnalyser.App.",
+    "class_of": "spellings of StartupEventArgs.Args that bypass the e.Args pattern",
+    "threat": "accident"
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "claim": "The rule 'the app never opens a file for writing in a way that follows an existing entry' lists only the File.* static methods and FileMode members. Other common write openers truncate through a planted link and pass it:\n- `new StreamWriter(path)` (FileMode.Create inside the BCL);\n- `FileInfo.Create()`, `.OpenWrite()`, `.CreateText()` and `.AppendText()`;\n- `new FileStream(path, FileStreamOptions { Mode = ... })` built from a variable.\nThe next report-adjacent writer, a log or a sidecar file, can reopen SC-037 without tripping it.",
+    "evidence": "Grep of src for FileMode., File.WriteAll/AppendAll/Create/OpenWrite/Open, new StreamWriter, .OpenWrite(, .CreateText(, .AppendText( and new FileStream returns nothing today, so widening the rule costs no current code.",
+    "file": ".taad/fitness.yaml",
+    "line": 1565,
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1565,
+     "text": "(?m)\\bFile\\.(WriteAll(Bytes|Text|Lines)|AppendAll(Text|Lines)|CreateText|Create|OpenWrite)(Async)?\\s*\\("
+    },
+    "fix": "Add `(?m)\\bnew\\s+StreamWriter\\s*\\(` and `(?m)\\.(OpenWrite|CreateText|AppendText)\\s*\\(` to must_not_match, with ReportFile.cs excepted if it needs one of them.",
+    "class_of": "BCL write openers that truncate through an existing entry",
+    "threat": "accident"
+   },
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "drift-from-design",
+    "nature": "defect",
+    "claim": "The design says Test-NoReportTemporary replaces the leftover check in 'C-014 no .tmp left (:1275)'. Line 1275 is in Test-O016, the window-closed-mid-scan case, and C-014 (1244-1257) has no .tmp check at all. A builder following the case names finds nothing to change in C-014 and may leave O-016's check testing nothing.",
+    "evidence": "WindowCases.ps1:1262 starts Test-O016, and its line 1275 is `Check (-not (Test-Path -LiteralPath \"$report.tmp\")) 'no .tmp left'`. Test-C014 at 1244-1257 checks only exit codes and the report's absence.",
+    "file": "tests/window/WindowCases.ps1",
+    "line": 1262,
+    "end_line": 1275,
+    "quote": {
+     "path": "tests/window/WindowCases.ps1",
+     "line": 1262,
+     "text": "function Test-O016 {"
+    },
+    "fix": "Name O-016 (line 1275), not C-014, among the callers of Test-NoReportTemporary. The list then reads C-007 (1030), C-008 (1076), C-012 (1219) and O-016 (1275)."
+   },
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "required",
+    "claim": "The transfer's must-verify precondition 'Rename-over replaces a link planted at <report> instead of writing through it' is left to the unrun spike fresh-temp-name-defeats-planted-link. <report> is the one name the design still writes that anyone can predict. If File.Move(overwrite) wrote through a hardlink or symlink planted at <report> mid-scan, the whole SC-037 defence would be bypassed at the fixed name. ReportFileTests plants links only at <stem>.tmp and <path>.tmp, never at <path>.",
+    "evidence": "The rename-over is today's WindowReport.cs:333 and moves into ReportFile.Write unchanged. The design's ReportFileTests list has no row with a link at <path>.",
+    "file": "src/FsAnalyser.App/WindowReport.cs",
+    "line": 333,
+    "quote": {
+     "path": "src/FsAnalyser.App/WindowReport.cs",
+     "line": 333,
+     "text": "File.Move(temporary, path, overwrite: true);"
+    },
+    "fix": "Add ReportFileTests.AWriteReplacesALinkAtTheReportItself. Plant a hardlink to a sentinel, and a file symlink to a sentinel, at <path>, then Write with the default names. Assert the sentinel's bytes are unchanged and that <path> is a regular file holding the JSON, not a link and not a second name of the sentinel."
+   },
+   {
+    "id": "m5",
+    "severity": "minor",
+    "dimension": "security",
+    "nature": "extra",
+    "claim": "The temporary and the rename target are built from the folder path string when Write runs, minutes after the probe. Someone who can rename entries in the report folder's parent can swap the report folder for a junction during the scan, for example to System32 under an elevated runner. The rename-over then replaces any file of the report's name in the junction's target. This is outside SC-037's measured shape, which is a plant inside the report folder, so it is filed for later and not as slice work.",
+    "evidence": "StartReportMode checks the folder only once, at launch, and the design's ReportFile resolves Path.GetDirectoryName(path) again at write time.",
+    "file": "src/FsAnalyser.App/App.xaml.cs",
+    "line": 64,
+    "quote": {
+     "path": "src/FsAnalyser.App/App.xaml.cs",
+     "line": 64,
+     "text": "if (Directory.Exists(report) || !Directory.Exists(Path.GetDirectoryName(report)))"
+    },
+    "fix": "Backlog: hold a handle to the report folder from launch, opened without FILE_SHARE_DELETE, so that it cannot be renamed or replaced during the scan. Or compare the folder's final path (GetFinalPathNameByHandle) at launch and at write."
+   }
+  ],
+  "dimensions_checked": [
+   {
+    "dimension": "unfounded-assumptions",
+    "result": "M3: the alignment question (would_force_resynthesis) and the must-verify preconditions rest on spikes with no verdict. Checked and holding: e.Args is the CRT split of the apphost line, which the investigation measured on pwsh and the repro will exercise. The gate is complete, because any odd backslash run before a quote emits a literal '\"'. The argv0 rule differs from ucrt's (ucrt toggles on every quote inside argv0), but that only sends odd lines to the fallback, so it fails safe."
+   },
+   {
+    "dimension": "missing-edge-cases",
+    "result": "M1: a dangling symlink at the temporary name. m4: a link at <report> itself. Also walked, without findings: `\"X\\\"--report` with no space, an empty value through the repair, `\"D:\\\" \"E:\\\"` from Explorer multi-drop, A04-A08 corpus roots, `\"\"` inside quotes kept out of the test rows, a probe in a create-but-no-delete folder (the probe and the rename both need DELETE, so they agree), and probe-before-count changing exit 2 to 3 for a line that is wrong twice (no case tests that)."
+   },
+   {
+    "dimension": "under-engineering",
+    "result": "M1: stem freshness is left to the builder to remember rather than built into Probe and Write. m1 and m2: the fitness rules close only one spelling each."
+   },
+   {
+    "dimension": "over-engineering",
+    "result": "none: the two-mode tokeniser, the alignment check and the fallback are about the minimum the measured facts (flipped quoting, collapsed spaces, Environment.CommandLine rebuilt from argv) leave room for. ReportFile replaces inline code rather than adding a layer, and the proposal's over_engineering_flag was honoured."
+   },
+   {
+    "dimension": "contract-gaps",
+    "result": "M1: the ReportFile contract does not say when the stem is drawn. The new exit 2 for an unaligned inner quote cannot delete a stale <file>, which the design acknowledges. WindowReport's remark 'Every non-zero exit leaves no file at <file>' already has the same exception for a --report with no value, and the builder must keep that docstring true."
+   },
+   {
+    "dimension": "error-paths",
+    "result": "none beyond M1. A failed Write deletes only a temporary the app created, and the name is recorded only after CreateNew succeeds. A failed probe exits 3 after DeleteFirst, so no file is left. The null fallback exits 2 before any handler or window. Non-IO exceptions still reach DispatcherUnhandledException, then Discard, then exit 70. The Exit handler's rule of exit 0 only with a file is unchanged (lesson #89, both directions)."
+   },
+   {
+    "dimension": "drift-from-design",
+    "result": "m3: the C-014 and O-016 mix-up. The design otherwise follows the investigation's fix direction: GetCommandLineW, refusing rather than guessing, the CreateNew probe, and a fresh temporary tracked by Discard."
+   },
+   {
+    "dimension": "cross-cutting-conformance",
+    "result": "m1 and m2. Checked: InteropLivesOnlyInNative holds, because GetCommandLineW goes in Native/Kernel32.cs, which is `internal static unsafe partial class`. GetCommandLineW is in neither the guarded-open pattern nor the cancel-guard pattern. ReportFile must not read FileAttributes.ReparsePoint (OnlyTheClassifierReadsTheReparseAttribute), which rules out that mitigation for M1. The hook does not call WindowReport, so the signature change reaches only App.xaml.cs."
+   },
+   {
+    "dimension": "test-coverage",
+    "result": "M2: the E006 tests are missing, so finish lines 2-4 have no exe-level test and nothing runs the published exe. m4: rename-over at <report> has no test. The probe and argv wiring are guarded only by the tests/bugs project, which is outside the slnx."
+   },
+   {
+    "dimension": "security",
+    "result": "M1 (major): CREATE_NEW follows dangling symlinks (CVE-2025-0913), and the stem may be revealed by the probe. m5 (extra): the parent folder can be swapped for a junction mid-scan. GetCommandLineW reads only the process's own command line, so it has no security impact."
+   }
+  ]
+ }
+}

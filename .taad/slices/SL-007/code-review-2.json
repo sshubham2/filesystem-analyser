@@ -1,0 +1,538 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-007",
+ "stage": "code-review",
+ "attempt": 2,
+ "at": "2026-11-20T04:40:32.591Z",
+ "head": "cc22a1ed286326adeffe906a8fc58d56bf826c03",
+ "run_id": 11447,
+ "summary": "I re-read the tree at cc22a1e. Both items sent back are fixed, and the given tests are in place word for word and pass.\n\n- **IN-M1 (O-045).** CommandLine.Arguments now repairs a line only when three things hold: Windows' split matches the line as typed, the quotes after the program name pair up, and the repair keeps every token Windows left standing that starts with `--` or is a root whose only damage is a trailing quote. Otherwise it falls back exactly as before. This is at CommandLine.cs:63-108. I ran it on lines of my own: `D:\\Data\\\" --report \"C:\\My Reports\\r.json\"` keeps argv, the four finish-line shapes still repair, and the UNC and two-space report paths repair correctly.\n- **m1 / RD-m1 (O-046, O-051).** ReportFile.Probe opens with FileShare.Delete and calls File.Delete on the probe while its handle is held (ReportFile.cs:65-77). That second open is checked for DELETE, so a create-only drop folder is refused up front. ReportFileFolderRightsCorpusTests holds the class rule across 11 folder-rights shapes: the probe is refused exactly when the write is.\n- **WindowReport.cs remarks.** They now list the null-arguments exit 2 and say which exit-2 refusals delete nothing.\n\nWhat I ran: the bug project passes 7 of 7, the whole suite passes 1448 of 1448 with MaxParallelThreads=2, and the engine reports the architecture rules passing.\n\n**One new minor defect, in the code this lap wrote.** The builder declared that it widened the decided \"--report hidden\" check to any token starting with `--`. That makes a legitimate line come back null, so the app exits 2. The shape is a quoted root ending in a backslash, followed by a quoted report path with a folder whose name starts with `--` after a space, such as `\"D:\\Data\\\" --report \"C:\\out --old\\r.json\"`. Windows exposes `--old\\r.json` as its own token, and the check takes that piece of a path for an option. A repro test fails on this tree with null for both of its rows. Restricting the check to the app's own option, `--report`, as the decision prescribed, fixes it and costs no corpus row or sweep line.\n\nNo undeclared drift.\n\nSecond round: The second pass, trying to break the code this lap changed, found nothing new beyond m3 from the first round.\n\n**CommandLine.Arguments.** I checked the pairing and exposed-token steps against inputs the line format allows:\n- tabs and repeated separators;\n- quotes inside the program name, which are not counted because the count starts after it;\n- a lone trailing `\\\"` token, which gives an odd count, so argv is kept and roots.Count gives exit 2;\n- a second `--report`, which ends in exit 2 either way;\n- a stray backslash-quote paired with a later quote, which the trailing-root stem check refuses, falling back to argv as the base did;\n- an empty quoted value;\n- a quote at both an inner and a trailing position, where IndexOf takes the inner one, so the trailing check is skipped.\n\nEvery one either repairs correctly or falls back to the base's behaviour. The quote-parity rule matches what the repair actually does: every quote toggles, so an even count means no quoted part is left open. The method's \"never throws\" holds on every path.\n\n**The one other family member: no finding.** The trailing-quote stem check also refuses two spaced quoted roots, as in `\"D:\\A B\\\" \"E:\\C D\\\"`. That gives exit 2 where attempt 1 opened a window on the first root. Two roots is not valid usage, so I did not file it.\n\n**ReportFile.Probe.** The new second open (File.Delete while the DeleteOnClose handle with FileShare.Delete is held) is a failure path attempt 1 did not have: a handle another program opens on the new file without sharing delete would turn a writable folder into exit 3. I measured it: 3000 create-then-delete probes in a scratch folder under %LOCALAPPDATA%\\Temp, with Defender real-time protection on, gave 0 failures and left nothing behind. When the delete does throw, the using-dispose still removes the file (measured in round one).\n\n**Partial failures in StartReportMode.** Every exception Probe can now throw, from FileStream or File.Delete, is an IOException or UnauthorizedAccessException, so it lands in the existing exit-3 catch after DeleteFirst. A non-zero exit there still leaves no file at <file>.\n\n**WindowReport.cs.** The new remarks match App.xaml.cs's real order: the three exit-2 refusals before DeleteFirst, then the folder checks, deletes and probe giving exit 3, then the argument-count exit 2.\n\n**Probe-to-write gap.** The rights can change during the scan. That is the deferred m5 and the design's accepted residual, not a new path.\n\nThe new test harnesses (ReportFileFolderRightsCorpusTests, UnpairedQuoteCorpusTests) apply and remove their ACLs in finally and dispose their TempTree for each row.\n\nReading pass: I read the two remaining ranges in full (QuotedRootShapesTests.cs lines 11-123 and UnwritableReportFolderTests.cs lines 1-67). They add no new finding.\n\n- **ABackslashQuoteWithNoOpeningQuoteStillRunsReportMode** feeds the unpaired-quote line `<tree>\\\" --report <r>` to the Debug apphost through raw Arguments. It asserts exit 0 within 7000 ms, root `<tree>\\` and 3 files, so it covers IN-M1's shape at the exe. The line is unquoted, so the test assumes the work folder path has no space. That holds here, because AppRun.WorkFolder lives under this account's LocalAppData\\Temp.\n- **UnwritableReportFolderTests** now routes both facts through RefusedBeforeAnyWindow:\n  - one denies CreateFiles on the folder;\n  - the other builds the create-only drop folder: Deny FILE_DELETE_CHILD on the folder, plus an inherited Deny DELETE on its files.\n  Each asserts exit 3 within 5000 ms, no window ever seen, and an empty folder afterwards, which shows the probe leaves nothing. The deny rules are removed in finally before the work folder is deleted.\n\nBoth were in the 7-of-7 bug-project run on cc22a1e. First-round finding m3 stands.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "I re-read the tree at cc22a1e. Both items sent back are fixed, and the given tests are in place word for word and pass.\n\n- **IN-M1 (O-045).** CommandLine.Arguments now repairs a line only when three things hold: Windows' split matches the line as typed, the quotes after the program name pair up, and the repair keeps every token Windows left standing that starts with `--` or is a root whose only damage is a trailing quote. Otherwise it falls back exactly as before. This is at CommandLine.cs:63-108. I ran it on lines of my own: `D:\\Data\\\" --report \"C:\\My Reports\\r.json\"` keeps argv, the four finish-line shapes still repair, and the UNC and two-space report paths repair correctly.\n- **m1 / RD-m1 (O-046, O-051).** ReportFile.Probe opens with FileShare.Delete and calls File.Delete on the probe while its handle is held (ReportFile.cs:65-77). That second open is checked for DELETE, so a create-only drop folder is refused up front. ReportFileFolderRightsCorpusTests holds the class rule across 11 folder-rights shapes: the probe is refused exactly when the write is.\n- **WindowReport.cs remarks.** They now list the null-arguments exit 2 and say which exit-2 refusals delete nothing.\n\nWhat I ran: the bug project passes 7 of 7, the whole suite passes 1448 of 1448 with MaxParallelThreads=2, and the engine reports the architecture rules passing.\n\n**One new minor defect, in the code this lap wrote.** The builder declared that it widened the decided \"--report hidden\" check to any token starting with `--`. That makes a legitimate line come back null, so the app exits 2. The shape is a quoted root ending in a backslash, followed by a quoted report path with a folder whose name starts with `--` after a space, such as `\"D:\\Data\\\" --report \"C:\\out --old\\r.json\"`. Windows exposes `--old\\r.json` as its own token, and the check takes that piece of a path for an option. A repro test fails on this tree with null for both of its rows. Restricting the check to the app's own option, `--report`, as the decision prescribed, fixes it and costs no corpus row or sweep line.\n\nNo undeclared drift.\n\nSecond round: The second pass, trying to break the code this lap changed, found nothing new beyond m3 from the first round.\n\n**CommandLine.Arguments.** I checked the pairing and exposed-token steps against inputs the line format allows:\n- tabs and repeated separators;\n- quotes inside the program name, which are not counted because the count starts after it;\n- a lone trailing `\\\"` token, which gives an odd count, so argv is kept and roots.Count gives exit 2;\n- a second `--report`, which ends in exit 2 either way;\n- a stray backslash-quote paired with a later quote, which the trailing-root stem check refuses, falling back to argv as the base did;\n- an empty quoted value;\n- a quote at both an inner and a trailing position, where IndexOf takes the inner one, so the trailing check is skipped.\n\nEvery one either repairs correctly or falls back to the base's behaviour. The quote-parity rule matches what the repair actually does: every quote toggles, so an even count means no quoted part is left open. The method's \"never throws\" holds on every path.\n\n**The one other family member: no finding.** The trailing-quote stem check also refuses two spaced quoted roots, as in `\"D:\\A B\\\" \"E:\\C D\\\"`. That gives exit 2 where attempt 1 opened a window on the first root. Two roots is not valid usage, so I did not file it.\n\n**ReportFile.Probe.** The new second open (File.Delete while the DeleteOnClose handle with FileShare.Delete is held) is a failure path attempt 1 did not have: a handle another program opens on the new file without sharing delete would turn a writable folder into exit 3. I measured it: 3000 create-then-delete probes in a scratch folder under %LOCALAPPDATA%\\Temp, with Defender real-time protection on, gave 0 failures and left nothing behind. When the delete does throw, the using-dispose still removes the file (measured in round one).\n\n**Partial failures in StartReportMode.** Every exception Probe can now throw, from FileStream or File.Delete, is an IOException or UnauthorizedAccessException, so it lands in the existing exit-3 catch after DeleteFirst. A non-zero exit there still leaves no file at <file>.\n\n**WindowReport.cs.** The new remarks match App.xaml.cs's real order: the three exit-2 refusals before DeleteFirst, then the folder checks, deletes and probe giving exit 3, then the argument-count exit 2.\n\n**Probe-to-write gap.** The rights can change during the scan. That is the deferred m5 and the design's accepted residual, not a new path.\n\nThe new test harnesses (ReportFileFolderRightsCorpusTests, UnpairedQuoteCorpusTests) apply and remove their ACLs in finally and dispose their TempTree for each row.\n\nReading pass: I read the two remaining ranges in full (QuotedRootShapesTests.cs lines 11-123 and UnwritableReportFolderTests.cs lines 1-67). They add no new finding.\n\n- **ABackslashQuoteWithNoOpeningQuoteStillRunsReportMode** feeds the unpaired-quote line `<tree>\\\" --report <r>` to the Debug apphost through raw Arguments. It asserts exit 0 within 7000 ms, root `<tree>\\` and 3 files, so it covers IN-M1's shape at the exe. The line is unquoted, so the test assumes the work folder path has no space. That holds here, because AppRun.WorkFolder lives under this account's LocalAppData\\Temp.\n- **UnwritableReportFolderTests** now routes both facts through RefusedBeforeAnyWindow:\n  - one denies CreateFiles on the folder;\n  - the other builds the create-only drop folder: Deny FILE_DELETE_CHILD on the folder, plus an inherited Deny DELETE on its files.\n  Each asserts exit 3 within 5000 ms, no window ever seen, and an empty folder afterwards, which shows the probe leaves nothing. The deny rules are removed in finally before the work folder is deleted.\n\nBoth were in the 7-of-7 bug-project run on cc22a1e. First-round finding m3 stands.",
+  "matches_design": true,
+  "findings": [
+   {
+    "id": "m3",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "nature": "defect",
+    "file": "src/FsAnalyser.Core/CommandLine.cs",
+    "line": 94,
+    "end_line": 98,
+    "claim": "The exposed-token check refuses every line where Windows' split left a quote-free token starting with \"--\" that the repair does not keep. It rests on the docstring's premise (lines 49-52) that such a token is 'unmistakable', an option. That premise is false. A quoted report path with a space before a folder whose name starts with \"--\" is merged by Windows after the root's \\\" into `<root>\" --report C:\\out` and `--old\\r.json`. The second piece is part of a path the person quoted, not an option. The alignment holds, the quotes pair, and the repair gives the right answer, [D:\\Data\\, --report, C:\\out --old\\r.json]. The check still returns false, the fallback sees an inner quote, and Arguments returns null, so App.OnStartup exits 2 on a valid unattended report line. Attempt 1 repaired it correctly. The decided IN-M1 fix only asked for a fallback when \"argv has a --report element that the repaired list lacks\". The builder's declared widening to any \"--\" token is what refuses this line, and the app's grammar has no option other than --report.",
+    "evidence": "Ran the built FsAnalyser.Core.dll from pwsh on the shell32 split. `\"D:\\Data\\\" --report \"C:\\out --old\\r.json\"`: argv=[D:\\Data\" --report C:\\out | --old\\r.json] -> NULL. The same for `\"D:\\My Data\\\" --report \"C:\\out --old\\r.json\"`. For contrast, `\"D:\\Data\\\" --report \"C:\\My Reports\\r.json\"` is repaired to [D:\\Data\\ | --report | C:\\My Reports\\r.json]. The repro below failed on this tree for both rows with 'Assert.NotNull() Failure: Value is null'.",
+    "fix": "Hold Windows' exposed tokens to the app's own option only: compare `argument == \"--report\"` (or a set of the app's option names passed in) instead of `argument.StartsWith(\"--\")`. Change the docstring's 'an option that starts with \"--\"' to match. Every U row and the sweep (whose only \"--\" token is --report) keep their results. Add `\"D:\\Data\\\" --report \"C:\\out --old\\r.json\"` as a 'repaired' row of UnpairedQuoteCorpus.json, with result [D:\\Data\\, --report, C:\\out --old\\r.json].",
+    "class_of": "path pieces starting with \"--\" that Windows' split exposes and the exposed-option check takes for an option",
+    "threat": "accident",
+    "quote": {
+     "path": "src/FsAnalyser.Core/CommandLine.cs",
+     "line": 94,
+     "text": "            if (quote < 0 && argument.StartsWith(\"--\", StringComparison.Ordinal))"
+    },
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/CommandLineDashFolderTests.cs",
+     "body": "namespace FsAnalyser.Core.Tests;\n\n// A quoted root ending in a backslash, then a quoted report path whose folder name starts with \"--\" after a space. Windows merges\n// the root with the start of the report path and leaves the rest of the path standing as a token that starts with \"--\"; that token\n// is a piece of a path the person quoted, not an option, and the app's only option is --report. The line as typed accounts for it.\npublic class CommandLineDashFolderTests\n{\n    [Theory]\n    [InlineData(@\"\"\"D:\\Data\\\"\" --report \"\"C:\\out --old\\r.json\"\"\", @\"D:\\Data\\\", @\"C:\\out --old\\r.json\")]\n    [InlineData(@\"\"\"D:\\My Data\\\"\" --report \"\"C:\\Reports --2024\\r.json\"\"\", @\"D:\\My Data\\\", @\"C:\\Reports --2024\\r.json\")]\n    public void AQuotedReportPathWithAFolderStartingWithTwoDashesIsRepairedAsTyped(string tail, string root, string report)\n    {\n        string[] argv = TestNative.SplitArguments(tail);\n        Assert.Contains(argv, a => a.Contains('\"')); // Windows merged the root with what follows\n\n        string[]? got = CommandLine.Arguments(argv, \"app.exe \" + tail);\n\n        Assert.NotNull(got);\n        Assert.Equal([root, \"--report\", report], got);\n    }\n}\n",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~CommandLineDashFolderTests"
+    }
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "I ran the bug project on cc22a1e: 7 of 7 passed, exit 0, including QuotedRootTrailingBackslashTests."
+   },
+   {
+    "key": "O-045",
+    "discharged": "yes",
+    "evidence": "CommandLine.cs:73-108 adds Repaired and JoinsNothingWindowsSplit (quote-count parity, exposed --report and exposed trailing-quote root). CommandLineUnpairedQuoteTests matches the given test and passes. The 18 UnpairedQuoteCorpus rows and the 7,380-line sweep pass in the full suite. QuotedRootShapesTests.ABackslashQuoteWithNoOpeningQuoteStillRunsReportMode passes on the Debug apphost. The widening beyond --report is the source of new finding m3."
+   },
+   {
+    "key": "O-046",
+    "discharged": "yes",
+    "evidence": "ReportFile.cs:72 has Share = FileShare.Delete and ReportFile.cs:76 calls File.Delete(probe) while the DeleteOnClose handle is held. tests/FsAnalyser.Core.Tests/ReportFileDropFolderTests.cs matches the given repro word for word and passes. UnwritableReportFolderTests.ACreateOnlyDropFolderIsRefusedWithExit3BeforeAnyWindow passes."
+   },
+   {
+    "key": "O-051",
+    "discharged": "yes",
+    "evidence": "The same change as O-046, at ReportFile.cs:65-77."
+   },
+   {
+    "key": "O-042",
+    "discharged": "yes",
+    "evidence": "Waived as a note, but now true in the code: ReportFileFolderRightsCorpusTests runs 11 Deny-ACL shapes (F01-F11) and asserts the probe is refused exactly when the write is. It passes, including F03, the create-only drop folder."
+   },
+   {
+    "key": "O-040",
+    "discharged": "yes",
+    "evidence": "ReportFileTests rows T01-T06 pass in the 1448-test suite."
+   },
+   {
+    "key": "O-041",
+    "discharged": "yes",
+    "evidence": "ReportFileTests rows R01-R03 pass."
+   },
+   {
+    "key": "O-047",
+    "discharged": "yes",
+    "evidence": "Waived as a comment fix, and done: WindowReport.cs:24-34 now lists the null-arguments exit 2 and says the exit-2 refusals that come before <file> is known delete nothing. That matches App.xaml.cs:23-28 and :61-69."
+   },
+   {
+    "key": "O-052",
+    "discharged": "yes",
+    "evidence": "Same as O-047."
+   },
+   {
+    "key": "O-048",
+    "discharged": "no",
+    "evidence": "Waived to note N-069, and not built: AfterProgramName (CommandLine.cs:118-137) still ends a quoted program name at its first quote, and the docstring at :43-44 still says 'skipped by that runtime's own rule'."
+   },
+   {
+    "key": "O-049",
+    "discharged": "no",
+    "evidence": "Carried to SC-083, and not built: rule 1 in .taad/fitness.yaml still has no pattern for `e?.Args`, `e!.Args` or `(e).Args`."
+   },
+   {
+    "key": "O-050",
+    "discharged": "no",
+    "evidence": "Carried to SC-084, and not built: rule 3 still lets through File.AppendAllBytes, File.Copy and FileInfo.CopyTo with overwrite, and FileInfo.Open(mode)."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "CommandLineTests.AQuotedRootEndingInABackslashThenReportIsSplitAsTyped passes on the current tree."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "CommandLineTests.ASpacedRootAndASpacedReportPathKeepTheirSpaces and QuotedRootShapesTests' spaced fact pass."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "All TheGrammar rows still repair; the suite passes."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "ALineWindowsSplitCleanlyIsReturnedAsItCame passes; the gate is unchanged (CommandLine.cs:65-66)."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "ALineThatDoesNotMatchItsArgvIsRefusedOrLeftAlone passes; the fallback is unchanged (CommandLine.cs:68)."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "AppArgumentTests.EveryRootOfTheCorpusHandQuotedIsRepairedByArguments passes."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "The repro passes on the Debug apphost."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "QuotedRootShapesTests.ASpacedRootAndAReportPathWithTwoSpacesAreTakenWhole passes."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "QuotedRootShapesTests.AQuotedRootEndingInABackslashAloneOpensTheWindow passes."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "QuotedRootShapesTests.AnArgumentAfterTheQuotedRootIsRefusedWithExit2AndNoWindow passes."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "UnwritableReportFolderTests (Deny CreateFiles) passes."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "ReportFileTests rows T01-T06."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "ReportFileTests rows L01-L03."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "ReportFileTests.AFailedMoveLeavesNoTemporary passes."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "ReportFile.cs:41-45 and :67/:89: a fresh name is drawn for each open; the counting fact passes after the Probe change."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "The bug-project facts for finish lines 2-4 pass; rule 1 is in the SL-007 block."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "The repro and exe facts pass on the Debug apphost; alignment holds."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": "Rule 1 is unchanged from attempt 1, and SettledRulesCorpusTests passes. The new members O-049 lists are on the backlog."
+   },
+   {
+    "key": "O-024",
+    "discharged": "yes",
+    "evidence": "Rule 3 is unchanged and passes. The new members O-050 lists are on the backlog."
+   },
+   {
+    "key": "O-025",
+    "discharged": "yes",
+    "evidence": "WindowCases.ps1 Test-NoReportTemporary call sites are unchanged."
+   },
+   {
+    "key": "O-026",
+    "discharged": "yes",
+    "evidence": "ReportFileTests rows R01-R03."
+   },
+   {
+    "key": "O-027",
+    "discharged": "yes",
+    "evidence": "Same as O-002."
+   },
+   {
+    "key": "O-028",
+    "discharged": "yes",
+    "evidence": "Same as O-003."
+   },
+   {
+    "key": "O-029",
+    "discharged": "yes",
+    "evidence": "AQuotedRootEndingInABackslashAloneIsTheFolder passes; the stem check accepts [D:\\Data\\]."
+   },
+   {
+    "key": "O-030",
+    "discharged": "yes",
+    "evidence": "Same as O-005."
+   },
+   {
+    "key": "O-031",
+    "discharged": "yes",
+    "evidence": "Same as O-006."
+   },
+   {
+    "key": "O-032",
+    "discharged": "yes",
+    "evidence": "Same as O-004 and O-007."
+   },
+   {
+    "key": "O-033",
+    "discharged": "yes",
+    "evidence": "Same as O-008."
+   },
+   {
+    "key": "O-034",
+    "discharged": "yes",
+    "evidence": "Same as O-009."
+   },
+   {
+    "key": "O-035",
+    "discharged": "yes",
+    "evidence": "Same as O-010."
+   },
+   {
+    "key": "O-036",
+    "discharged": "yes",
+    "evidence": "Same as O-011."
+   },
+   {
+    "key": "O-037",
+    "discharged": "yes",
+    "evidence": "Same as O-012; the create-only folder is now covered too."
+   },
+   {
+    "key": "O-038",
+    "discharged": "yes",
+    "evidence": "The fresh-name and probe facts pass with the new Probe: a writable folder is left empty."
+   },
+   {
+    "key": "O-039",
+    "discharged": "yes",
+    "evidence": "ReportFileTests link rows pass."
+   },
+   {
+    "key": "O-043",
+    "discharged": "yes",
+    "evidence": "Rule 3's type bans are unchanged."
+   },
+   {
+    "key": "O-044",
+    "discharged": "yes",
+    "evidence": "There is still one SL-007 block; SettledRulesCorpusTests' structure fact passes."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "CommandLineTests.cs:28-37 feeds both merged lines; they still repair under the new pairing and exposed-token checks (my run printed [D:\\Data\\ | --report | ...])."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "CommandLineTests.cs:39-49 and corpus row Q04: the spaced root and the two-space report path still repair."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "CommandLineTests.cs:51-60 and Q06."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "CommandLineTests.cs:62-77, with the gate unchanged."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "CommandLineTests.cs:86-110, plus the UnpairedQuoteCorpus kept/refused rows that feed the new fallback reasons."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "TheGrammar's 16 rows and AppArgumentTests' A01-A10 still pass."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "QuotedRootTrailingBackslashTests.cs:61-92."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "QuotedRootShapesTests' spaced fact."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "QuotedRootShapesTests' window fact."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "QuotedRootShapesTests' extra-argument fact."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "UnwritableReportFolderTests: Deny CreateFiles and the new create-only drop folder."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "The ReportFileTests counting and probe facts, plus ReportFileFolderRightsCorpusTests F01."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "ReportFileTests corpus theories."
+   },
+   {
+    "key": "C-014",
+    "exercised": "no",
+    "evidence": "material:false by design. Residual row T07 points at E01, and the reason still holds (ReportFile.cs:89 draws just before its open)."
+   }
+  ],
+  "drift": [],
+  "unreviewed": [
+   "tests/window/WindowCases.ps1 -- unchanged this round; read earlier only through its 4 SL-007 diff hunks"
+  ],
+  "second_round": {
+   "run_id": 11448,
+   "filed": 0
+  },
+  "reading_pass": {
+   "state": "landed",
+   "why": [
+    "unseen changed hunks"
+   ],
+   "lens": "contracts",
+   "cut_off": false,
+   "cut_runs": {
+    "line": false,
+    "inputs": false,
+    "any": false
+   },
+   "run_id": 11449,
+   "session": "e4d768aa-9ac8-4595-a81c-ab6fe6822d9b",
+   "resumed": true,
+   "asked": [
+    {
+     "path": "tests/bugs/SL-007-QuotedRootTrailingBackslash/QuotedRootShapesTests.cs",
+     "kind": "tests",
+     "state": "partly-opened",
+     "why": "unseen changed hunks",
+     "hunks": [
+      [
+       43,
+       71
+      ]
+     ],
+     "scopes": [
+      {
+       "line": 11,
+       "header": "public class QuotedRootShapesTests"
+      }
+     ],
+     "read": [
+      11,
+      123
+     ],
+     "header": "public class QuotedRootShapesTests",
+     "line": 11,
+     "whole_file": false
+    },
+    {
+     "path": "tests/bugs/SL-007-QuotedRootTrailingBackslash/UnwritableReportFolderTests.cs",
+     "kind": "tests",
+     "state": "partly-opened",
+     "why": "unseen changed hunks",
+     "hunks": [
+      [
+       8,
+       8
+      ],
+      [
+       10,
+       11
+      ],
+      [
+       17,
+       34
+      ],
+      [
+       41,
+       42
+      ],
+      [
+       61,
+       62
+      ]
+     ],
+     "scopes": [
+      {
+       "line": null,
+       "header": null
+      },
+      {
+       "line": null,
+       "header": null
+      },
+      {
+       "line": 13,
+       "header": "public class UnwritableReportFolderTests"
+      },
+      {
+       "line": 34,
+       "header": "private static void RefusedBeforeAnyWindow(params FileSystemAccessRule[] denied)"
+      },
+      {
+       "line": 34,
+       "header": "private static void RefusedBeforeAnyWindow(params FileSystemAccessRule[] denied)"
+      }
+     ],
+     "read": [
+      3,
+      67
+     ],
+     "header": "public class UnwritableReportFolderTests",
+     "line": 13,
+     "whole_file": false
+    }
+   ],
+   "asked_hunks": 6,
+   "named": [],
+   "before": {
+    "read_whole": 7,
+    "changed": 14,
+    "listed": 7
+   },
+   "filed": 0,
+   "read_after": 6,
+   "still_unread": []
+  },
+  "unread_measured": {
+   "measured": true,
+   "why": "",
+   "changed": 14,
+   "read_whole": 9,
+   "deleted": [],
+   "runs": [
+    11436,
+    11438,
+    11447,
+    11448,
+    11449
+   ],
+   "range": {
+    "base": "aa3d96b8842dca5f5e5ebdcc22845e56029bbfad",
+    "head": "cc22a1ed286326adeffe906a8fc58d56bf826c03",
+    "source": "commits",
+    "hunk_base": "f42a20b11b4f72311f4384425821543afd080c28",
+    "hunk_base_from": "the earlier review's scope"
+   },
+   "items": [
+    {
+     "path": "src/FsAnalyser.App/WindowReport.cs",
+     "state": "partly-opened",
+     "section": "lines 1-13, 25-448 of 448",
+     "reason": "a Read returned only part of it; seen only through a shell command: git diff, git diff (before the build); 13 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 448,
+     "hunks": []
+    },
+    {
+     "path": "src/FsAnalyser.Core/CommandLine.cs",
+     "state": "partly-opened",
+     "section": "lines 121-202 of 202",
+     "reason": "a Read returned only part of it; seen only through a shell command: git diff; 115 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 202,
+     "hunks": []
+    },
+    {
+     "path": "tests/bugs/SL-007-QuotedRootTrailingBackslash/QuotedRootTrailingBackslashTests.cs",
+     "state": "partly-opened",
+     "section": "lines 9-11 of 165",
+     "reason": "a Read returned only part of it; seen only through a shell command: git diff; 3 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 165,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/CommandLineTests.cs",
+     "state": "partly-opened",
+     "section": "lines 112 of 154",
+     "reason": "a Read returned only part of it; seen only through a shell command: git diff; 2 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 154,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/SettledRulesCorpusTests.cs",
+     "state": "partly-opened",
+     "section": "lines 77 of 152",
+     "reason": "a Read returned only part of it; seen only through a shell command: git diff; 2 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 152,
+     "hunks": []
+    }
+   ],
+   "notes": []
+  }
+ }
+}

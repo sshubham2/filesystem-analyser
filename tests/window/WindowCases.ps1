@@ -487,6 +487,15 @@ function Format-AppArgument([string] $path) {
     '"' + ($path -replace '(\\+)$', '$1$1') + '"'
 }
 
+# SL-007: the report's folder holds no temporary of the app's own: neither the fixed <report>.tmp that earlier versions wrote nor one of the
+# .fsa-<hex>.tmp and .fsa-<hex>.probe files ReportFile makes, whose names are drawn at the moment of opening and so cannot be named here.
+function Test-NoReportTemporary([string] $report) {
+    if (Test-Path -LiteralPath "$report.tmp") { return $false }
+    $leftovers = @(Get-ChildItem -LiteralPath (Split-Path -Parent $report) -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like '.fsa-*.tmp' -or $_.Name -like '.fsa-*.probe' })
+    $leftovers.Count -eq 0
+}
+
 # Straight through Start-Process, for the cases about raw arguments. -ArgumentList joins an array with
 # spaces and quotes nothing. $environment (SL-080) is given to this one process alone (-Environment, pwsh 7.4+),
 # never set in this script's own $env:, so no build or other process it starts ever sees it.
@@ -1027,7 +1036,7 @@ function Test-C007 {
 
         CheckEqual '2' (Invoke-App @($root, '--report', $report)) 'unquoted root: exit code'
         Check (-not (Test-Path -LiteralPath $report)) 'unquoted root: no report'
-        Check (-not (Test-Path -LiteralPath "$report.tmp")) 'unquoted root: no .tmp'
+        Check (Test-NoReportTemporary $report) 'unquoted root: no .tmp'
 
         CheckFinished (Read-Window $root) $root $root $manifest
     }
@@ -1073,7 +1082,7 @@ function Test-C008 {
         $written = if (Test-Path -LiteralPath $report) { Get-Content -LiteralPath $report -Raw } else { '' }
         Check ($written -notmatch 'stale') 'with a root: the stale report was replaced'
         CheckEqual $root ($written | ConvertFrom-Json).root 'with a root: the new report is this run''s'
-        Check (-not (Test-Path -LiteralPath "$report.tmp")) 'with a root: no .tmp left'
+        Check (Test-NoReportTemporary $report) 'with a root: no .tmp left'
     }
     finally { Remove-CaseFolder $case }
 }
@@ -1216,7 +1225,7 @@ function Test-C012 {
         if ($script:Failures.Count -gt $before) { return }
         Check ($run.Exit -eq '70') "exit code is the app's 70 (actual $(Show-Exit $run.Exit))"
         Check (-not (Test-Path -LiteralPath $report)) 'the stale report is gone'
-        Check (-not (Test-Path -LiteralPath "$report.tmp")) 'no .tmp left'
+        Check (Test-NoReportTemporary $report) 'no .tmp left'
     }
     finally { Remove-CaseFolder $case }
 }
@@ -1272,7 +1281,7 @@ function Test-O016 {
         if ($script:Failures.Count -gt $before) { return }
         Check ($run.Exit -eq '70') "exit code is 70, not the 0 a closed window gets by default (actual $(Show-Exit $run.Exit))"
         Check (-not (Test-Path -LiteralPath $report)) 'the stale report is gone'
-        Check (-not (Test-Path -LiteralPath "$report.tmp")) 'no .tmp left'
+        Check (Test-NoReportTemporary $report) 'no .tmp left'
     }
     finally { Remove-CaseFolder $case }
 }

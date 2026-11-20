@@ -1,0 +1,262 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-007",
+ "stage": "validate-slice",
+ "attempt": 3,
+ "at": "2026-11-20T05:21:10.291Z",
+ "head": "e912d6bd9811187491dcdfb7a4cdb72f0e8314ad",
+ "run_id": 11457,
+ "summary": "SL-007 re-validated at HEAD e912d6b. The scope was stale: since cc22a1e the only src changes are CommandLine.cs:99, where `StartsWith(\"--\")` became `argument == ReportOption`, and App.xaml.cs:9, which now reads that same const. All 14 cases hold.\n\n**Measured on the real exe.** I published the single-file Release exe from a clean HEAD into a scratch folder whose path has a space. I drove it on this PC as an ordinary Medium-integrity account through ProcessStartInfo, Start-Process and cmd /c. The runs used real deny rules, the real C:\\ root and links planted mid-scan.\n- **Finish line 1:** exits 0 by every route, with root `<tree>\\` and the control's core (Completed, 20 files, 4 folders).\n- **Finish line 2:** exits 0 and writes the report at the exact `out  dir` path, two spaces included.\n- **`\"<tree>\\\"` alone:** keeps its window up.\n- **`\"<tree>\\\" extra --report …`:** exits 2 at 155 ms with no window.\n- **Unwritable report folders:** Deny CreateFiles, a create-only drop folder and `\"C:\\\" --report C:\\r.json` each exit 3 within 146–252 ms, with no window and nothing left behind.\n- **Planted links:** links at `<report>.tmp` and at `<report>` leave the sentinel untouched.\n- **O-053, the line my last pass failed on:** `\"<tree>\\\" --report \"<r>\\out --old\\dash.json\"` now exits 0 with the right root. On cc22a1e's published exe it exited 2.\n\n**Tests and rules.**\n- Whole suite: 1451 of 1451.\n- Bug project: 8 of 8.\n- Fitness: 114 rules hold.\n- Window cases C-007 and C-008 pass on an artifacts/publish rebuilt from HEAD.\n- Running the fresh Core dll directly on 23 lines shows the narrowing still refuses or falls back on every IN-M1 shape.\n\nNothing that this slice wrote or was required to write is open.",
+ "payload": {
+  "status": "complete",
+  "verdict": "passes",
+  "contact": "real",
+  "summary": "SL-007 re-validated at HEAD e912d6b. The scope was stale: since cc22a1e the only src changes are CommandLine.cs:99, where `StartsWith(\"--\")` became `argument == ReportOption`, and App.xaml.cs:9, which now reads that same const. All 14 cases hold.\n\n**Measured on the real exe.** I published the single-file Release exe from a clean HEAD into a scratch folder whose path has a space. I drove it on this PC as an ordinary Medium-integrity account through ProcessStartInfo, Start-Process and cmd /c. The runs used real deny rules, the real C:\\ root and links planted mid-scan.\n- **Finish line 1:** exits 0 by every route, with root `<tree>\\` and the control's core (Completed, 20 files, 4 folders).\n- **Finish line 2:** exits 0 and writes the report at the exact `out  dir` path, two spaces included.\n- **`\"<tree>\\\"` alone:** keeps its window up.\n- **`\"<tree>\\\" extra --report …`:** exits 2 at 155 ms with no window.\n- **Unwritable report folders:** Deny CreateFiles, a create-only drop folder and `\"C:\\\" --report C:\\r.json` each exit 3 within 146–252 ms, with no window and nothing left behind.\n- **Planted links:** links at `<report>.tmp` and at `<report>` leave the sentinel untouched.\n- **O-053, the line my last pass failed on:** `\"<tree>\\\" --report \"<r>\\out --old\\dash.json\"` now exits 0 with the right root. On cc22a1e's published exe it exited 2.\n\n**Tests and rules.**\n- Whole suite: 1451 of 1451.\n- Bug project: 8 of 8.\n- Fitness: 114 rules hold.\n- Window cases C-007 and C-008 pass on an artifacts/publish rebuilt from HEAD.\n- Running the fresh Core dll directly on 23 lines shows the narrowing still refuses or falls back on every IN-M1 shape.\n\nNothing that this slice wrote or was required to write is open.",
+  "checks": [
+   {
+    "what": "Whole suite at HEAD e912d6b",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test FsAnalyser.slnx -- xUnit.MaxParallelThreads=2 (TAAD3_HOME = new empty .taad-scratch/validate3-home-014087bc; 4662 MB free at start; log .taad-scratch/validate/suite3.log)",
+    "outcome": "passed",
+    "evidence": "Passed! - Failed: 0, Passed: 1451, Skipped: 0, Total: 1451, Duration: 1 m 23 s. EXIT=0 in 86 s. That is 3 more than the 1448 at cc22a1e: the two CommandLineDashFolderTests rows and the dashSweep."
+   },
+   {
+    "what": "Bug project: the repro plus the exe-level facts, including the new dash-folder fact (the repro's own verdict is the engine's, not this)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/bugs/SL-007-QuotedRootTrailingBackslash/SL-007-QuotedRootTrailingBackslash.Tests.csproj --logger console;verbosity=normal",
+    "outcome": "passed",
+    "evidence": "Total tests: 8, all passed, EXIT=0 in 8 s. Per test:\n- AnArgumentAfterTheQuotedRoot…Exit2: 152 ms\n- AFolderThatTakesNoNewFile…Exit3: 155 ms\n- ACreateOnlyDropFolder…Exit3: 352 ms\n- ReportModeSeesTheReportOption…: 1 s\n- …AloneOpensTheWindow: 3 s\n- ASpacedRootAndAReportPathWithTwoSpaces…: 759 ms\n- AReportFolderWhoseNameStartsWithTwoDashesAfterASpaceIsTakenWhole: 741 ms\n- ABackslashQuoteWithNoOpeningQuote…: 752 ms"
+   },
+   {
+    "what": "Declared architecture rules, including the '# settled by SL-007' block",
+    "command": "mcp Fitness op=check",
+    "outcome": "passed",
+    "evidence": "114 rules checked against 233 parsed files: 'Every declared rule holds.' One unrelated rule (docs/proof-runs/*.json) matches no files, as it did before."
+   },
+   {
+    "what": "CommandLine.Arguments from the freshly built Core dll (built 10:44:39) on 23 lines, with argv from shell32 CommandLineToArgvW",
+    "command": "pwsh -NoProfile -File .taad-scratch/validate/args2.ps1 -CoreDll <temp copy of src/FsAnalyser.Core/bin/Debug/net10.0-windows/FsAnalyser.Core.dll>",
+    "outcome": "passed",
+    "evidence": "Lines Windows merged:\n- `\"D:\\Data\\\" --report out.json` gives [D:\\Data\\, --report, out.json].\n- `\"C:\\\" --report C:\\r.json` gives [C:\\, --report, C:\\r.json].\n- `\"D:\\My Data\\\" --report \"C:\\out  dir\\r.json\"` gives [D:\\My Data\\, --report, C:\\out  dir\\r.json], both spaces kept.\n- `\"D:\\Data\\\"` gives [D:\\Data\\].\n\nLines Windows split cleanly come back unchanged: `\"D:\\Data\"`, the even run `\"D:\\Data\\\\\"`, unquoted `C:\\`, and the root last after --report.\n\nIN-M1 shapes:\n- `D:\\Data\\\" --report out.json` and `D:\\Data\\\" --report \"out.json` keep argv's 3 arguments (--report still exposed).\n- `D:\\Data\\\" --report \"C:\\out\\\" x` gives NULL.\n\nO-053 class, all now repaired:\n- `\"C:\\out --old\\r.json\"`\n- `\"C:\\Reports --2024\\r.json\"`\n- `\"C:\\a --b --c\\r.json\"`\n- `\"\\\\srv\\share --x\\r.json\"`\n- `\"C:\\out -old\\r.json\"`\n- `\"C:\\out --report\\r.json\"`: argv holds `--report\\r.json`, which is not the option, and it repairs to [D:\\Data\\, --report, C:\\out --report\\r.json].\n\nOther shapes:\n- `extra` gives 4 arguments, which App refuses on count.\n- Two \\\" in one line gives [D:\\A\\, --report, E:\\out\\].\n- The batch idiom gives [C:\\scripts\\data, --report, out.json]."
+   },
+   {
+    "what": "Publish HEAD e912d6b as a single-file Release exe into a folder whose path has a space",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o \"%LOCALAPPDATA%\\Temp\\fsa-validate3-sl007\\pub dir\"",
+    "outcome": "passed",
+    "evidence": "EXIT=0. FsAnalyser.App.exe is 139,999,384 B, written 10:53:51. git rev-parse HEAD = e912d6bd9, and `git status --porcelain src` is empty. The new code is in this exe: the dash-folder line exits 0 on it, where cc22a1e's exe exited 2."
+   },
+   {
+    "what": "Finish line 1 on the published exe: \"<tree>\\\" --report \"<r>\" through ProcessStartInfo, Start-Process and cmd /c, against the control",
+    "command": "pwsh -NoProfile -File .taad-scratch/validate/exe2.ps1 -Exe \"<pub dir>\\FsAnalyser.App.exe\" -Work %LOCALAPPDATA%\\Temp\\fsa-validate3-sl007\\w-14b851 -Label HEAD-e912d6b (whoami /groups: Medium Mandatory Level)",
+    "outcome": "passed",
+    "evidence": "Control: exit=0 at 1228 ms, root=<…\\tree>, Completed, 20 files, 4 folders.\n\nL1, each with root=<…\\tree\\> and the same core:\n- psi: exit=0 at 761 ms\n- Start-Process: exit=0 at 801 ms\n- cmd: exit=0 at 769 ms\n\nNo leftovers."
+   },
+   {
+    "what": "Finish line 2 on the published exe: a spaced root and the report folder 'out  dir' with two spaces",
+    "command": "exe2.ps1, the L2 cases via psi and Start-Process",
+    "outcome": "passed",
+    "evidence": "psi exit=0 at 715 ms and Start-Process exit=0 at 770 ms, both with root=<…\\tree sp\\>, Completed, 20 files. Exact-path listing: `\\out  dir ; \\out  dir\\l2.json ; \\out  dir\\l2sp.json`."
+   },
+   {
+    "what": "Finish lines 3 and 4 on the published exe",
+    "command": "exe2.ps1, the 'L3 alone (3s)' and 'L4 extra' cases",
+    "outcome": "passed",
+    "evidence": "`\"<tree>\\\"` alone: the window appeared at 398 ms and the process was still running at 3019 ms; it was then killed. `\"<tree>\\\" extra --report \"<r>\"`: exit=2 at 155 ms, no window seen, no report."
+   },
+   {
+    "what": "O-053 on the published exe: \"<tree>\\\" --report \"<r>\\out --old\\dash.json\" (exit 2 on cc22a1e in my previous pass)",
+    "command": "exe2.ps1, the 'dash-folder (O-053)' case and its control \"<tree>\" --report \"<r>\\out --old\\dashc.json\"",
+    "outcome": "passed",
+    "evidence": "Dash-folder: exit=0 at 762 ms, root=<…\\tree\\>, Completed, 20 files, no leftovers. Control: exit=0 at 716 ms with the same core."
+   },
+   {
+    "what": "IN-M1 and related shapes on the published exe, to check the narrowing reopened nothing",
+    "command": "exe2.ps1: 'IN-M1 unpaired', its no-quote control, 'odd run 3', 'batch idiom', 'L1 control no-quote-root'",
+    "outcome": "passed",
+    "evidence": "- Unpaired `<tree>\\\" --report <r>`: exit=0 at 719 ms, root=<…\\tree\\>.\n- Its control: exit=0 at 721 ms, same core.\n- Odd run of 3: exit=0 at 755 ms, root <…\\tree\\\\\\>, the run kept whole as the design chose.\n- Batch idiom: exit=0 at 711 ms, root <…\\tree>.\n- No-quote control: exit=0 at 692 ms.\n\nAll Completed with 20 files."
+   },
+   {
+    "what": "Report folder with Deny CreateFiles for this account, and a create-only drop folder (SC-028)",
+    "command": "exe2.ps1, the 'Deny CreateFiles folder' and 'create-only drop folder' cases (rules set with FileSystemAclExtensions, removed in finally)",
+    "outcome": "passed",
+    "evidence": "Both: exit=3 at 146 ms, no window seen, no report, no leftovers. The drop folder was empty after the rules were removed."
+   },
+   {
+    "what": "\"C:\\\" --report C:\\r.json on the real C:\\ root as an ordinary Medium-integrity account, bounded at 5 s",
+    "command": "exe2.ps1, the 'C:\\ quoted, ordinary user' case",
+    "outcome": "passed",
+    "evidence": "exit=3 at 252 ms, no window seen. C:\\r.json exists: False. C:\\ has 0 .fsa-* entries."
+   },
+   {
+    "what": "CREATE_NEW and rename-over premises (O-040, O-041), raw .NET in scratch",
+    "command": "pwsh -NoProfile -File .taad-scratch/validate/links.ps1 -Exe <pub exe> -Work %LOCALAPPDATA%\\Temp\\fsa-validate3-sl007\\links-* -Root <repo>\\tests",
+    "outcome": "passed",
+    "evidence": "CreateNew:\n- A file, a hardlink and a symlink were refused with IOException.\n- A junction and a directory symlink were refused with UnauthorizedAccessException.\n- The sentinel stayed ORIGINAL.\n- A dangling symlink was OPENED and its target created. This is the design's recorded residual (T07): the defence is a fresh name drawn per open.\n\nFile.Move with overwrite onto a hardlink, a symlink and a dangling symlink at report replaced each one as an entry. The sentinel stayed ORIGINAL, the report has no LinkTarget, and no dangling target was created."
+   },
+   {
+    "what": "SC-037 on the published exe: a link planted mid-scan, after the launch-time delete, with the repo's tests/ folder as root",
+    "command": "links.ps1, the exe section",
+    "outcome": "passed",
+    "evidence": "- Hardlink at r.json.tmp: planted at 692 ms, exit=0 at 1060 ms, sentinel ORIGINAL, r.json 3948 B with 1 hardlink name.\n- Hardlink at r.json: planted at 384 ms, exit=0, sentinel ORIGINAL, r.json has 1 name.\n- Dangling symlink at r.json: planted at 416 ms, exit=0, r.json a regular file, no target created."
+   },
+   {
+    "what": "Report-mode window cases C-007 and C-008 on artifacts/publish (the harness republished it at 10:54:41, after HEAD's commit at 10:44:36)",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File tests/window/WindowCases.ps1 -Case C-007; then -Case C-008",
+    "outcome": "passed",
+    "evidence": "PASSED: C-007 (5 s; 'unquoted root: no .tmp', 'root is the path passed'). PASSED: C-008 (2 s; 'the stale .tmp is gone' with no root, and 'no .tmp left' with a root). No FsAnalyser.App process was left afterwards."
+   },
+   {
+    "what": "Window cases C-012 and O-016 (window closed mid-scan, exit 70)",
+    "command": "tests/window/WindowCases.ps1 -Case C-012 / O-016",
+    "outcome": "not-run",
+    "evidence": "Not re-run this lap. They passed on my previous pass at cc22a1e. The only App change since is App.xaml.cs:9, where the private const reads CommandLine.ReportOption, a compile-time constant with the same value. Neither the exit-70 path nor ReportFile changed."
+   },
+   {
+    "what": "WindowMutants NoCrashHandler and NoExitRule mutants",
+    "command": "tests/window/WindowMutants.ps1",
+    "outcome": "not-run",
+    "evidence": "Not run. git diff cc22a1e..e912d6b on App.xaml.cs is one line, the ReportOption const. The crash-handler and Exit-handler lambdas the mutants match by regex are untouched."
+   },
+   {
+    "what": "dotnet-muxer launch (dotnet FsAnalyser.App.dll \"X\\\" --report f) end to end",
+    "command": "",
+    "outcome": "not-run",
+    "evidence": "Not run. It is not a shipped host. The unit test ALineThatDoesNotMatchItsArgvIsRefusedOrLeftAlone covers the muxer line shape, and it passed in the suite."
+   },
+   {
+    "what": "Scratch cleanup",
+    "command": "Remove-Item -Recurse -Force %LOCALAPPDATA%\\Temp\\fsa-validate3-sl007",
+    "outcome": "passed",
+    "evidence": "scratch removed: True. The ACL rules were removed in exe2.ps1's finally block before this. C:\\r.json was absent and C:\\ had no .fsa-* entries."
+   }
+  ],
+  "criteria": [
+   {
+    "criterion": "1. Split the line: a quoted root ending in one backslash, then --report and a path, which Windows merges into one argument (`\"D:\\Data\\\" --report out.json`, `\"C:\\\" --report C:\\r.json`)",
+    "met": "yes",
+    "how": "The fresh Core dll gives [D:\\Data\\, --report, out.json] and [C:\\, --report, C:\\r.json] from the one merged argv element. CommandLineTests.AQuotedRootEndingInABackslashThenReportIsSplitAsTyped passes in the 1451-test suite."
+   },
+   {
+    "criterion": "2. Split the line: the root and a quoted report path both contain spaces, and the report path has a run of two spaces",
+    "met": "yes",
+    "how": "The fresh Core dll gives [D:\\My Data\\, --report, C:\\out  dir\\r.json] from argv's 2 elements, with the two spaces kept. ASpacedRootAndASpacedReportPathKeepTheirSpaces passes."
+   },
+   {
+    "criterion": "3. Split the line: a quoted root ending in a backslash with nothing after it, so argv's only '\"' is its last character",
+    "met": "yes",
+    "how": "The fresh Core dll gives [D:\\Data\\] from argv [D:\\Data\"]. AQuotedRootEndingInABackslashAloneIsTheFolder passes."
+   },
+   {
+    "criterion": "4. Split the line: a line Windows split cleanly, with no '\"' left in argv",
+    "met": "yes",
+    "how": "`\"D:\\Data\"`, the even run `\"D:\\Data\\\\\"`, unquoted `C:\\` and the root last all come back exactly as argv. ALineWindowsSplitCleanlyIsReturnedAsItCame passes."
+   },
+   {
+    "criterion": "5. Split the line: the typed line does not account for argv; an inner '\"' gives null and a trailing-only '\"' gives argv unchanged",
+    "met": "yes",
+    "how": "`D:\\Data\\\" --report \"C:\\out\\\" x` gives NULL, and the unpaired trailing-only lines keep argv. ALineThatDoesNotMatchItsArgvIsRefusedOrLeftAlone passes."
+   },
+   {
+    "criterion": "6. Split the line: the grammar the new tokeniser opens, one row each, plus the corpus roots A01-A10 hand-quoted",
+    "met": "yes",
+    "how": "TheGrammarTheRepairOpensIsSplitAsTyped and AppArgumentTests.EveryRootOfTheCorpusHandQuotedIsRepairedByArguments pass in the suite. Two \\\" in one line and the odd run of 3 were also measured directly, the odd run on the published exe as well."
+   },
+   {
+    "criterion": "7. Unattended report: the exe started as `\"<tree>\\\" --report \"<file>\"` (finish line 1)",
+    "met": "yes",
+    "how": "Published single-file exe: exit 0 through psi (761 ms), Start-Process (801 ms) and cmd /c (769 ms). Root <tree\\>, with the control's core (Completed, 20 files, 4 folders). The bug project's repro passes too."
+   },
+   {
+    "criterion": "8. Unattended report: a spaced quoted root and a report path whose folder has two spaces (finish line 2)",
+    "met": "yes",
+    "how": "Published exe: exit 0 via psi and Start-Process, with the report at the exact `out  dir` path and root <tree sp\\>. The bug project's ASpacedRootAndAReportPathWithTwoSpacesAreTakenWhole passes."
+   },
+   {
+    "criterion": "9. Open the window: the exe started as `\"<tree>\\\"` with nothing after it (finish line 3)",
+    "met": "yes",
+    "how": "Published exe: the window appeared at 398 ms and the process was still running at 3019 ms. Whether the interactive window shows that exact folder was not checked by UI automation; the exe runs report mode on the same repaired root."
+   },
+   {
+    "criterion": "10. Refuse a report line it cannot take: `\"<tree>\\\" extra --report \"<file>\"` (finish line 4)",
+    "met": "yes",
+    "how": "Published exe: exit 2 at 155 ms, no window, no report. The bug project's fact passes."
+   },
+   {
+    "criterion": "11. Refuse a report path it cannot write: the folder exists but the account cannot create a file in it (Deny CreateFiles), as an ordinary user meets with `C:\\ --report C:\\r.json`",
+    "met": "yes",
+    "how": "Published exe as a Medium-integrity account:\n- Deny CreateFiles: exit 3 at 146 ms.\n- Create-only drop folder: exit 3 at 146 ms.\n- `\"C:\\\" --report C:\\r.json` on the real C:\\: exit 3 at 252 ms.\n\nNone opened a window or left a file."
+   },
+   {
+    "criterion": "12. Create the probe and the temporary: each open draws its own name at that moment; the probe leaves nothing; a failed move removes the temporary",
+    "met": "yes",
+    "how": "ReportFileTests pass in the suite, including AFreshStemIsDrawnForEachOpenAtTheMomentOfOpening, AProbeLeavesAWritableFolderAsItWas and AFailedMoveLeavesNoTemporary. ReportFile.cs is unchanged since my previous pass. Every exe run left no .fsa-* or .tmp entry."
+   },
+   {
+    "criterion": "13. Write without writing through a planted link already at the target name (temporary, <report>, the old fixed <report>.tmp)",
+    "met": "yes",
+    "how": "On the published exe, a hardlink at r.json.tmp and a hardlink or dangling symlink at r.json, all planted mid-scan, left the sentinel ORIGINAL. r.json was a regular single-name file and every run exited 0. The ReportFileTests corpus rows pass in the suite."
+   },
+   {
+    "criterion": "14. Write without writing through a planted link: a dangling symlink planted at the temporary's exact fresh name",
+    "met": "yes",
+    "how": "I measured that raw CreateNew follows a dangling symlink, which is the design's recorded residual (T07). The defence the design chose is a name drawn per open, at the moment of opening. The counting-Func and E01-E03 facts in ReportFileTests pass in the suite. I did not plant at the exe's fresh name, which cannot be predicted from outside."
+   }
+  ],
+  "planned": [
+   {
+    "ordinal": 1,
+    "met": "yes",
+    "evidence": "The fresh Core dll splits `\"D:\\Data\\\" --report out.json` and `\"C:\\\" --report C:\\r.json` into 3 arguments each. The CommandLineTests row passes in the 1451/1451 suite."
+   },
+   {
+    "ordinal": 2,
+    "met": "yes",
+    "evidence": "`\"D:\\My Data\\\" --report \"C:\\out  dir\\r.json\"` gives [D:\\My Data\\, --report, C:\\out  dir\\r.json], both spaces kept. The test passes."
+   },
+   {
+    "ordinal": 3,
+    "met": "yes",
+    "evidence": "`\"D:\\Data\\\"` gives [D:\\Data\\] from argv [D:\\Data\"]. The test passes."
+   },
+   {
+    "ordinal": 4,
+    "met": "yes",
+    "evidence": "Clean lines come back unchanged on the fresh dll: quoted without a trailing backslash, the even run, unquoted C:\\, and the root last. The test passes."
+   },
+   {
+    "ordinal": 5,
+    "met": "yes",
+    "evidence": "An inner '\"' gives NULL (`D:\\Data\\\" --report \"C:\\out\\\" x`), and trailing-only lines keep argv. ALineThatDoesNotMatchItsArgvIsRefusedOrLeftAlone passes."
+   },
+   {
+    "ordinal": 6,
+    "met": "yes",
+    "evidence": "TheGrammarTheRepairOpensIsSplitAsTyped (16 rows) and EveryRootOfTheCorpusHandQuotedIsRepairedByArguments pass in the suite. Two \\\" in one line and the odd run of 3 were measured directly, the latter on the published exe (exit 0)."
+   },
+   {
+    "ordinal": 7,
+    "met": "yes",
+    "evidence": "Published exe, `\"<tree>\\\" --report \"<r>\"`: exit 0 via psi, Start-Process and cmd, with root <tree\\> and the control's core."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-053",
+    "verified": "yes",
+    "evidence": "CommandLine.cs:99 now reads `quote < 0 && argument == ReportOption`. The fresh Core dll repairs six dash-folder report paths. The published exe exits 0 on `\"<tree>\\\" --report \"<r>\\out --old\\dash.json\"`, where cc22a1e's exe exited 2. CommandLineDashFolderTests passes in the suite, and the bug project's dash fact passes. IN-M1 shapes still fall back or are refused."
+   },
+   {
+    "key": "O-001",
+    "verified": "yes",
+    "evidence": "The bug project command exited 0 at e912d6b, 8 of 8, with TAAD3_HOME set to a new empty scratch folder."
+   }
+  ],
+  "not_reached": [
+   "Other Windows builds or ucrtbase versions. Only this PC's Windows 11 10.0.26300 was measured (N-065).",
+   "An elevated run, and a run from a second, non-admin-group account.",
+   "The interactive window's displayed folder for `\"<tree>\\\"` alone. I saw that a window was up but did not read its contents, which would need UI automation or the startup hook.",
+   "A dangling symlink planted at the exe's own fresh temporary name. That name cannot be predicted from outside, so this rests on the unit facts and the design's residual.",
+   "A whole-drive unattended run of `C:\\ --report <writable>` to completion. Only the up-front refusal on C:\\ was measured.",
+   "Window cases C-012 and O-016, and WindowMutants, were not re-run this lap. App.xaml.cs changed only by a const."
+  ],
+  "screens": []
+ }
+}

@@ -1,0 +1,203 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-007",
+ "stage": "code-review",
+ "attempt": 3,
+ "at": "2026-11-20T05:14:52.428Z",
+ "head": "e912d6bd9811187491dcdfb7a4cdb72f0e8314ad",
+ "run_id": 11453,
+ "summary": "The fix removes O-053 (m3). The only thing I found is one stale sentence in a test corpus's note, filed as a text finding for the comment fixer.\n\n**What changed.** At src/FsAnalyser.Core/CommandLine.cs:99 the exposed-token check is now `quote < 0 && argument == ReportOption`, where it was `StartsWith(\"--\")`. `ReportOption` is a new public const at CommandLine.cs:10, and App.xaml.cs:9 reads it, so the option is spelled in one place. The docstring at :52-57 and the comment at :87-91 were corrected.\n\n**Tests I ran on e912d6b.**\n- The given test, tests/FsAnalyser.Core.Tests/CommandLineDashFolderTests.cs, matches the reviewer's test word for word.\n- The engine's filter plus UnpairedQuoteCorpusTests and the other CommandLine tests: 39 of 39 pass.\n- The bug project passes 8 of 8, including the new exe-level fact. In that fact, `\"<tree>\\\" --report \"<work>\\out --old\\r.json\"` exits 0 and writes the report at that exact path.\n- The whole suite passes 1451 of 1451.\n\n**The class corpus.** UnpairedQuoteCorpus.json now has rows D01-D12 and R01, plus a dashSweep. The sweep runs each line again with `--old` renamed to `old` and requires the same verdict and the same arguments.\n\n**Trying to break the narrowed check.**\n- Every IN-M1 shape has `--report` in it, so narrowing does not reopen it. U01-U09 still pass, and I traced two new strays by hand: `D:\\Data\\\" --report out.json \"x` and `D:\\Data\\\" --report out.json\" x`. In both, `--report` would be hidden, so the line falls back to Windows' split.\n- Lines with no `--report` are still guarded by the trailing-root stem check.\n- A report file literally named `--report` (D05) still repairs, because the repair keeps a `--report` token of its own.\n- The builder's follow-up is right. A report path piece ending in `\\\"` is a folder, which the app refuses with exit 3 anyway.\n- Nothing else in src or tests still claims that a token starting with `--` is an option.\n\n**The stale note.** UnpairedQuoteCorpus.json's `_note` defines `before` as what the code did without the pairing and exposed-token steps. For the new D rows, `before` instead records the attempt-2 code with `StartsWith(\"--\")`. Under the note's own definition, D01 would read \"repaired\", not \"refused (null)\".\n\n**Departures.** The public `CommandLine.ReportOption` const was declared. There is no undeclared drift.\n\nSecond round: This pass tried to break the O-053 fix and found nothing new. The fix is one ordinal equality at CommandLine.cs:99 (`argument == ReportOption`) and a const that App.xaml.cs:9 reads.\n\n- **Shapes tried:**\n  - `--report` exposed by Windows as a piece of a quoted path. When the typed line also has the real option, the repair keeps a `--report` of its own and the check passes (D05). When it does not, the line is not a report line, and it falls back to null or argv (R01).\n  - A dashed piece after a tab-separated line.\n  - The trailing stray quotes I traced in round one.\n- **The three repair conditions:** the quote-parity, exposed `--report` and trailing-root conditions are unchanged apart from the narrowing. None of them can now refuse a valid report line because a folder name starts with dashes, and the dashSweep holds that across 3,900 lines.\n- **The dashSweep test:** it reads its own `dashSweep` block. Only a missing block would make it throw, and that would be a red test, not a false pass.\n- **Callers and other paths:** no new boundary, error path or lock is involved. The const is compile-time, and both callers compare ordinally as before.\n\nRound one's text finding m4, the stale `_note` in UnpairedQuoteCorpus.json, stands.\n\nReading pass: Nothing new in CommandLineDashFolderTests.cs (lines 1-21, read in full). The file is my earlier repro exactly as I wrote it.\n\nIt feeds two lines, `\"D:\\Data\\\" --report \"C:\\out --old\\r.json\"` and the spaced-root version `\"D:\\My Data\\\" --report \"C:\\Reports --2024\\r.json\"`. For each it checks that Windows' split leaves a quote inside an argument, then that CommandLine.Arguments returns exactly [root, --report, report].\n\nIt failed with null on cc22a1e and passes 2 of 2 on e912d6b. Round one's text finding m4 stands.",
+ "payload": {
+  "status": "complete",
+  "verdict": "clean",
+  "summary": "The fix removes O-053 (m3). The only thing I found is one stale sentence in a test corpus's note, filed as a text finding for the comment fixer.\n\n**What changed.** At src/FsAnalyser.Core/CommandLine.cs:99 the exposed-token check is now `quote < 0 && argument == ReportOption`, where it was `StartsWith(\"--\")`. `ReportOption` is a new public const at CommandLine.cs:10, and App.xaml.cs:9 reads it, so the option is spelled in one place. The docstring at :52-57 and the comment at :87-91 were corrected.\n\n**Tests I ran on e912d6b.**\n- The given test, tests/FsAnalyser.Core.Tests/CommandLineDashFolderTests.cs, matches the reviewer's test word for word.\n- The engine's filter plus UnpairedQuoteCorpusTests and the other CommandLine tests: 39 of 39 pass.\n- The bug project passes 8 of 8, including the new exe-level fact. In that fact, `\"<tree>\\\" --report \"<work>\\out --old\\r.json\"` exits 0 and writes the report at that exact path.\n- The whole suite passes 1451 of 1451.\n\n**The class corpus.** UnpairedQuoteCorpus.json now has rows D01-D12 and R01, plus a dashSweep. The sweep runs each line again with `--old` renamed to `old` and requires the same verdict and the same arguments.\n\n**Trying to break the narrowed check.**\n- Every IN-M1 shape has `--report` in it, so narrowing does not reopen it. U01-U09 still pass, and I traced two new strays by hand: `D:\\Data\\\" --report out.json \"x` and `D:\\Data\\\" --report out.json\" x`. In both, `--report` would be hidden, so the line falls back to Windows' split.\n- Lines with no `--report` are still guarded by the trailing-root stem check.\n- A report file literally named `--report` (D05) still repairs, because the repair keeps a `--report` token of its own.\n- The builder's follow-up is right. A report path piece ending in `\\\"` is a folder, which the app refuses with exit 3 anyway.\n- Nothing else in src or tests still claims that a token starting with `--` is an option.\n\n**The stale note.** UnpairedQuoteCorpus.json's `_note` defines `before` as what the code did without the pairing and exposed-token steps. For the new D rows, `before` instead records the attempt-2 code with `StartsWith(\"--\")`. Under the note's own definition, D01 would read \"repaired\", not \"refused (null)\".\n\n**Departures.** The public `CommandLine.ReportOption` const was declared. There is no undeclared drift.\n\nSecond round: This pass tried to break the O-053 fix and found nothing new. The fix is one ordinal equality at CommandLine.cs:99 (`argument == ReportOption`) and a const that App.xaml.cs:9 reads.\n\n- **Shapes tried:**\n  - `--report` exposed by Windows as a piece of a quoted path. When the typed line also has the real option, the repair keeps a `--report` of its own and the check passes (D05). When it does not, the line is not a report line, and it falls back to null or argv (R01).\n  - A dashed piece after a tab-separated line.\n  - The trailing stray quotes I traced in round one.\n- **The three repair conditions:** the quote-parity, exposed `--report` and trailing-root conditions are unchanged apart from the narrowing. None of them can now refuse a valid report line because a folder name starts with dashes, and the dashSweep holds that across 3,900 lines.\n- **The dashSweep test:** it reads its own `dashSweep` block. Only a missing block would make it throw, and that would be a red test, not a false pass.\n- **Callers and other paths:** no new boundary, error path or lock is involved. The const is compile-time, and both callers compare ordinally as before.\n\nRound one's text finding m4, the stale `_note` in UnpairedQuoteCorpus.json, stands.\n\nReading pass: Nothing new in CommandLineDashFolderTests.cs (lines 1-21, read in full). The file is my earlier repro exactly as I wrote it.\n\nIt feeds two lines, `\"D:\\Data\\\" --report \"C:\\out --old\\r.json\"` and the spaced-root version `\"D:\\My Data\\\" --report \"C:\\Reports --2024\\r.json\"`. For each it checks that Windows' split leaves a quote inside an argument, then that CommandLine.Arguments returns exactly [root, --report, report].\n\nIt failed with null on cc22a1e and passes 2 of 2 on e912d6b. Round one's text finding m4 stands.",
+  "matches_design": true,
+  "findings": [
+   {
+    "id": "m4",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "text",
+    "file": "tests/FsAnalyser.Core.Tests/UnpairedQuoteCorpus.json",
+    "line": 2,
+    "claim": "The corpus `_note` defines each row's 'before' as what the code did without the pairing and exposed-token steps. The new D rows (lines 23-35) use 'before' for something else: the attempt-2 code, which had those steps but tested `StartsWith(\"--\")`. Under the note's own definition, D01-D04 and D06-D08 would read 'repaired', because the code without those steps repaired them. They say 'refused (null)', so a reader of the corpus misreads what the D rows' 'before' column measured.",
+    "evidence": "UnpairedQuoteCorpus.json:2 (the `_note`) against D01 at line 23, `\"before\": \"refused (null): the piece '--old\\\\r.json' was taken for an option the repair hid\"`. The pre-pairing code (f42a20b) returned the repair for D01; my first review measured this line repaired on f42a20b and null on cc22a1e.",
+    "fix": "In the `_note`, say that U rows' 'before' is the code without the pairing and exposed-token steps, and that D and R rows' 'before' is the attempt-2 code whose exposed-option test was `StartsWith(\"--\")` (O-053). Alternatively, give the D rows a field name of their own.",
+    "quote": {
+     "path": "tests/FsAnalyser.Core.Tests/UnpairedQuoteCorpus.json",
+     "line": 2,
+     "text": "'before' says what the code did without the pairing and exposed-token steps, kept so that the rows the fix closed stay shown."
+    }
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-053",
+    "discharged": "yes",
+    "evidence": "src/FsAnalyser.Core/CommandLine.cs:99 is `argument == ReportOption`. ReportOption is at :10 and App.xaml.cs:9 reads it. The docstring at :52-57 and the comment at :87-91 match. tests/FsAnalyser.Core.Tests/CommandLineDashFolderTests.cs matches the reviewer's test word for word and passes 2 of 2. The corpus is tests/FsAnalyser.Core.Tests/UnpairedQuoteCorpus.json (D01-D12, R01, dashSweep), run by UnpairedQuoteCorpusTests.ADashedNameIsNeverTheReasonForADifferentVerdict, which passes."
+   },
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "The bug project passes 8 of 8 on e912d6b (my run)."
+   },
+   {
+    "key": "O-045",
+    "discharged": "yes",
+    "evidence": "CommandLine.cs:78-113. CommandLineUnpairedQuoteTests and U01-U09 still pass after the narrowing, because every member involves --report, which the check still holds."
+   },
+   {
+    "key": "O-046",
+    "discharged": "yes",
+    "evidence": "ReportFile.cs Probe is unchanged since cc22a1e; ReportFileDropFolderTests passes in the 1451-test suite."
+   },
+   {
+    "key": "O-051",
+    "discharged": "yes",
+    "evidence": "Same as O-046."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "CommandLineTests' merged-line rows still pass in the 39-test filter."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "The spaced pair passes at unit level (CommandLineTests and Q04) and at the exe (QuotedRootShapesTests); the new D02 adds a spaced root with a dashed report folder."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "tests/bugs/.../QuotedRootShapesTests.cs: the spaced fact plus the new AReportFolderWhoseNameStartsWithTwoDashesAfterASpaceIsTakenWhole feed spaced report folders to the exe; 8 of 8 pass."
+   }
+  ],
+  "drift": [],
+  "second_round": {
+   "run_id": 11454,
+   "filed": 0
+  },
+  "reading_pass": {
+   "state": "landed",
+   "why": [
+    "unseen changed hunks"
+   ],
+   "lens": "contracts",
+   "cut_off": false,
+   "cut_runs": {
+    "line": false,
+    "inputs": false,
+    "any": false
+   },
+   "run_id": 11455,
+   "session": "e4d768aa-9ac8-4595-a81c-ab6fe6822d9b",
+   "resumed": true,
+   "asked": [
+    {
+     "path": "tests/FsAnalyser.Core.Tests/CommandLineDashFolderTests.cs",
+     "kind": "tests",
+     "state": "partly-opened",
+     "why": "unseen changed hunks",
+     "hunks": [
+      [
+       1,
+       21
+      ]
+     ],
+     "scopes": [
+      {
+       "line": null,
+       "header": null
+      }
+     ],
+     "read": [
+      1,
+      21
+     ],
+     "header": null,
+     "line": null,
+     "whole_file": false
+    }
+   ],
+   "asked_hunks": 1,
+   "named": [],
+   "before": {
+    "read_whole": 0,
+    "changed": 6,
+    "listed": 6
+   },
+   "filed": 0,
+   "read_after": 1,
+   "still_unread": []
+  },
+  "unread_measured": {
+   "measured": true,
+   "why": "",
+   "changed": 6,
+   "read_whole": 1,
+   "deleted": [],
+   "runs": [
+    11436,
+    11438,
+    11447,
+    11448,
+    11449,
+    11453,
+    11454,
+    11455
+   ],
+   "range": {
+    "base": "aa3d96b8842dca5f5e5ebdcc22845e56029bbfad",
+    "head": "e912d6bd9811187491dcdfb7a4cdb72f0e8314ad",
+    "source": "commits",
+    "hunk_base": "cc22a1ed286326adeffe906a8fc58d56bf826c03",
+    "hunk_base_from": "the earlier review's scope"
+   },
+   "items": [
+    {
+     "path": "src/FsAnalyser.App/App.xaml.cs",
+     "state": "partly-opened",
+     "section": "lines 9 of 139",
+     "reason": "a Read returned only part of it; seen only as 3 Grep lines; seen only through a shell command: git log; 2 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 139,
+     "hunks": []
+    },
+    {
+     "path": "src/FsAnalyser.Core/CommandLine.cs",
+     "state": "partly-opened",
+     "section": "lines 121-207 of 207",
+     "reason": "a Read returned only part of it; seen only as 4 Grep lines; seen only through a shell command: git diff (before the build), git log; 262 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 207,
+     "hunks": []
+    },
+    {
+     "path": "tests/bugs/SL-007-QuotedRootTrailingBackslash/QuotedRootShapesTests.cs",
+     "state": "partly-opened",
+     "section": "lines 47, 54-155 of 155",
+     "reason": "a Read returned only part of it; seen only as 1 Grep line; seen only through a shell command: git log; 114 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 155,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/UnpairedQuoteCorpus.json",
+     "state": "partly-opened",
+     "section": "lines 21-47 of 47",
+     "reason": "a Read returned only part of it; seen only as 2 Grep lines; seen only through a shell command: git log; 8 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 47,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/UnpairedQuoteCorpusTests.cs",
+     "state": "partly-opened",
+     "section": "lines 121-164 of 164",
+     "reason": "a Read returned only part of it; seen only as 1 Grep line; seen only through a shell command: git log; 2 returned lines differ from the reviewed file (read before it changed)",
+     "size_lines": 164,
+     "hunks": []
+    }
+   ],
+   "notes": []
+  }
+ }
+}
