@@ -44,6 +44,38 @@ public class QuotedRootShapesTests
     }
 
     [Fact]
+    public void AReportFolderWhoseNameStartsWithTwoDashesAfterASpaceIsTakenWhole()
+    {
+        string work = AppRun.WorkFolder();
+        Process? process = null;
+        try
+        {
+            string tree = AppRun.MakeTree(work, "tree");
+            // After the root's \" Windows hands over "...\out" and "--old\r.json" as two arguments: the second is a piece of the
+            // quoted report path, not an option, and refusing the line for it was exit 2 on a valid report line (O-053).
+            string reportFolder = Path.Combine(work, "out --old");
+            Directory.CreateDirectory(reportFolder);
+            string report = Path.Combine(reportFolder, "r.json");
+            string arguments = $"\"{tree}\\\" --report \"{report}\"";
+
+            process = AppRun.Start(AppRun.Exe(), arguments);
+            AppRun.Result run = AppRun.Watch(process, 7000);
+
+            Assert.True(run.Exited, $"the app did not exit within 7000 ms on [{arguments}]");
+            Assert.True(run.ExitCode == 0, $"the app exited with {run.ExitCode}, not 0, on [{arguments}]: a piece of the quoted report path that starts with two dashes was taken for an option");
+            Assert.True(File.Exists(report), $"no report at the exact path {report}");
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(report));
+            Assert.Equal(tree + "\\", document.RootElement.GetProperty("root").GetString());
+            Assert.Equal(3, document.RootElement.GetProperty("core").GetProperty("files").GetInt64());
+        }
+        finally
+        {
+            AppRun.Stop(process);
+            AppRun.RemoveQuietly(work);
+        }
+    }
+
+    [Fact]
     public void ABackslashQuoteWithNoOpeningQuoteStillRunsReportMode()
     {
         string work = AppRun.WorkFolder();

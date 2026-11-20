@@ -118,4 +118,47 @@ public class UnpairedQuoteCorpusTests
         Assert.True(lines > 1000, $"the sweep ran {lines} lines");
         Assert.True(wrong.Count == 0, $"{wrong.Count} of {lines} lines:\n" + string.Join("\n", wrong.Take(25)));
     }
+
+    // O-053's class: a piece of a path that starts with two dashes. Every line of up to maxTokens of the tokens is run twice,
+    // as typed and with the dashes taken out of the dashed name ("--old" to "old"). Windows splits the two the same way, so the
+    // repair must answer the same way: null, Windows' own split or a repair, and the repair's elements equal once the same
+    // rename is applied to the first. Only the app's one option, --report, may be told from a piece of a path.
+    [Fact]
+    public void ADashedNameIsNeverTheReasonForADifferentVerdict()
+    {
+        using JsonDocument corpus = Corpus();
+        JsonElement sweep = corpus.RootElement.GetProperty("dashSweep");
+        string[] tokens = Strings(sweep.GetProperty("tokens"));
+        string[] rename = Strings(sweep.GetProperty("rename"));
+        int maxTokens = sweep.GetProperty("maxTokens").GetInt32();
+
+        var wrong = new List<string>();
+        int lines = 0;
+        var level = new List<string[]> { Array.Empty<string>() };
+        for (int length = 1; length <= maxTokens; length++)
+        {
+            level = [.. level.SelectMany(prefix => tokens.Select(t => (string[])[.. prefix, t]))];
+            foreach (string[] sequence in level)
+            {
+                string tail = string.Join(' ', sequence);
+                if (!tail.Contains(rename[0]))
+                    continue;
+                string twin = tail.Replace(rename[0], rename[1]);
+
+                string[] argv = TestNative.SplitArguments(tail);
+                string[] twinArgv = TestNative.SplitArguments(twin);
+                string[]? got = CommandLine.Arguments(argv, "app.exe " + tail);
+                string[]? twinGot = CommandLine.Arguments(twinArgv, "app.exe " + twin);
+                lines++;
+
+                string verdict = got is null ? "refused" : ReferenceEquals(got, argv) ? "kept" : "repaired";
+                string twinVerdict = twinGot is null ? "refused" : ReferenceEquals(twinGot, twinArgv) ? "kept" : "repaired";
+                string[] renamed = got is null ? [] : [.. got.Select(a => a.Replace(rename[0], rename[1]))];
+                if (verdict != twinVerdict || (got is not null && !renamed.SequenceEqual(twinGot!)))
+                    wrong.Add($"[{tail}] -> {verdict} [{string.Join(" | ", got ?? [])}] but without the dashes [{twin}] -> {twinVerdict} [{string.Join(" | ", twinGot ?? [])}]");
+            }
+        }
+        Assert.True(lines > 1000, $"the sweep ran {lines} lines");
+        Assert.True(wrong.Count == 0, $"{wrong.Count} of {lines} lines:\n" + string.Join("\n", wrong.Take(25)));
+    }
 }

@@ -6,6 +6,9 @@ namespace FsAnalyser.Core;
 /// <summary>The app's optional path argument.</summary>
 public static class CommandLine
 {
+    /// <summary>The app's one option. The repair keeps this spelling, and only this one, from being hidden.</summary>
+    public const string ReportOption = "--report";
+
     /// <summary>
     /// Undoes Windows argv escaping of a quoted path that ends in a backslash: typed as "C:\" or
     /// "D:\My Folder\", it arrives as <c>C:"</c> or <c>D:\My Folder"</c>, because \" is an escaped quote.
@@ -46,10 +49,12 @@ public static class CommandLine
     /// is repaired. The PAIRING: the repair makes every '"' of the line open or close a quoted part, so it is made only when
     /// they pair up, an even number of them after the program's name; an odd number (a backslash-quote typed with no opening
     /// quote, as tab completion leaves one) would leave the last quoted part open to the end of the line, absorbing the
-    /// arguments Windows had split. And the EXPOSED TOKENS: where Windows' split left a token that is unmistakable (an option
-    /// that starts with "--", or a root whose only damage is a trailing quote) the repair must keep a token of its own for
-    /// it; a stray backslash-quote that pairs with a later quote would otherwise join them into one argument and hide an
-    /// option Windows had exposed. The repair exists to split what Windows merged, and never to join what it split.
+    /// arguments Windows had split. And the EXPOSED TOKENS: where Windows' split left a token that is unmistakable (the app's
+    /// one option, exactly <see cref="ReportOption"/>, or a root whose only damage is a trailing quote) the repair must keep a
+    /// token of its own for it; a stray backslash-quote that pairs with a later quote would otherwise join them into one
+    /// argument and hide an option Windows had exposed. Any other piece Windows left standing, a "--old\r.json" that is the
+    /// tail of a quoted report path <c>"C:\out --old\r.json"</c> for one, is not unmistakable and may be joined. The repair
+    /// exists to split what Windows merged, and never to join what it split.
     /// </para>
     /// <para>
     /// The FALLBACK, when any step refuses: <paramref name="argv"/> as it is when each '"' in it is the last character of its
@@ -82,8 +87,8 @@ public static class CommandLine
     // Whether the repair only splits what Windows merged. quotes is how many '"' the line has after the program's name.
     // The repair makes each of them open or close a quoted part, so an odd number would leave the last open to the end of the
     // line. And Windows can be wrong about an argument, but a token it left standing on its own that cannot be mistaken must
-    // stay one: an option (starts with "--", holds no quote) or a root whose only damage is the trailing quote RootArgument
-    // repairs.
+    // stay one: the app's option (exactly ReportOption: any other piece starting with "--" can be the tail of a quoted path, as
+    // in "C:\out --old\r.json") or a root whose only damage is the trailing quote RootArgument repairs.
     private static bool JoinsNothingWindowsSplit(string[] argv, List<string> repaired, int quotes)
     {
         if (quotes % 2 != 0)
@@ -91,7 +96,7 @@ public static class CommandLine
         foreach (string argument in argv)
         {
             int quote = argument.IndexOf('"');
-            if (quote < 0 && argument.StartsWith("--", StringComparison.Ordinal))
+            if (quote < 0 && argument == ReportOption)
             {
                 if (!repaired.Contains(argument, StringComparer.Ordinal))
                     return false;

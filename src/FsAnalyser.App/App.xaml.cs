@@ -6,7 +6,7 @@ namespace FsAnalyser.App;
 
 public partial class App : Application
 {
-    private const string ReportOption = "--report";
+    private const string ReportOption = CommandLine.ReportOption;
 
     // Report-mode exit codes; WindowReport.cs has the whole contract.
     private const int ReportWritten = 0;
