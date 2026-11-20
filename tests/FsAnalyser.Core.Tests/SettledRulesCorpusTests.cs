@@ -15,7 +15,7 @@ public class SettledRulesCorpusTests
     private const string RebuiltRule = "nothing reads the rebuilt command line";
     private const string WriteRule = "the app writes files only by exclusive create";
 
-    private sealed record Rule(string Name, string Files, string[] ExceptFiles, string[] Patterns, bool IncludesComments, bool PatternsAreSingleQuoted);
+    internal sealed record Rule(string Name, string Files, string[] ExceptFiles, string[] Patterns, bool IncludesComments, bool PatternsAreSingleQuoted);
 
     private static string[] FitnessLines() =>
         File.ReadAllLines(Path.Combine(FailCriticalErrorsTests.FindRepo(), ".taad", "fitness.yaml"));
@@ -23,7 +23,8 @@ public class SettledRulesCorpusTests
     private static int[] EntriesNamed(string[] lines, string name) =>
         [.. Enumerable.Range(0, lines.Length).Where(i => lines[i].Trim() == "- name: " + name || lines[i].Trim() == "- name: '" + name + "'")];
 
-    private static Rule ReadRule(string name)
+    // Internal so that RescanElevationRulesCorpusTests (SL-008) reads its entries by the same reader.
+    internal static Rule ReadRule(string name)
     {
         string[] lines = FitnessLines();
         int[] at = EntriesNamed(lines, name);

@@ -73,6 +73,8 @@ public partial class MainWindow : Window
     public MainWindow(string? launchPath)
     {
         InitializeComponent();
+        RescanAsAdministratorButton.Content = RescanAsAdministrator.ButtonText;
+        RescanAsAdministratorButton.ToolTip = RescanAsAdministrator.ButtonTip;
         _launchPath = launchPath;
         _timer.Tick += (_, _) =>
         {
@@ -268,6 +270,7 @@ public partial class MainWindow : Window
         RevealStatus.Text = string.Empty;
         RevealStatus.Visibility = Visibility.Collapsed;
         LastRevealOutcome = null;
+        HideRescanOffer(); // the last ending's offer, and what it said, are not this scan's
         HideUnreadable();
         HideCoverage(); // nor its coverage panel
         HideLargestFiles(); // the last scan's list is never shown as this one's
@@ -292,11 +295,22 @@ public partial class MainWindow : Window
         _timer.Start();
 
         ScanResult? result = null;
+        DriveType? rescanDrive = null; // what an elevated copy would see the root's letter as, when the ending may offer it
         string? rejected = null;
         Exception? failure = null;
         try
         {
-            result = await Task.Factory.StartNew(() => Scanner.Scan(path, progress, token, enabledWorkarounds),
+            // The probe for 'Rescan as administrator' runs here, on the scan's own thread after the scan, and only for an
+            // ending that could offer it: it opens the drive's letter, which the UI thread never does (SL-001, SL-002). It
+            // gives null for anything it cannot answer, so a finished scan is never turned into a failed one by it.
+            (result, rescanDrive) = await Task.Factory.StartNew(() =>
+                {
+                    ScanResult scanned = Scanner.Scan(path, progress, token, enabledWorkarounds);
+                    DriveType? seen = RescanAsAdministrator.WorthProbing(scanned.Status, scanned.Unreadable.Count, Environment.IsPrivilegedProcess)
+                        ? RescanAsAdministrator.DriveTypeAnElevatedCopySees(scanned.Root)
+                        : null;
+                    return (scanned, seen);
+                },
                 CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
         catch (ArgumentException e) when (e.ParamName == "root")
@@ -335,7 +349,7 @@ public partial class MainWindow : Window
         else if (result is null)
             ShowProblem($"Could not read {path}", rejected!);
         else
-            ShowOutcome(result);
+            ShowOutcome(result, rescanDrive);
     }
 
     // Cancel does not abandon the scan: the window waits for it to return, however long the drive takes
@@ -624,7 +638,7 @@ public partial class MainWindow : Window
 
     // ---- Outcomes ----
 
-    private void ShowOutcome(ScanResult result)
+    private void ShowOutcome(ScanResult result, DriveType? rescanDrive)
     {
         LastResult = result;
         HideCoverage(); // this ending's panel, if it has one, comes with its volume figure (AddVolumeInUse)
@@ -688,6 +702,15 @@ public partial class MainWindow : Window
         {
             HideUnreadable();
         }
+
+        // The offer to scan this drive again as administrator (SL-008), set here and nowhere after: before the volume line below
+        // raises EndingShown, so whoever listens reads the ending with its button as it will stay. Shown only for a finished scan
+        // of a whole local drive that left folders unread, in a copy that is not elevated, whose letter an elevated copy sees
+        // (rescanDrive, answered on the scan's thread). The two early returns above and every problem ending leave it hidden,
+        // as StartScan left it.
+        RescanAsAdministratorButton.Visibility = RescanAsAdministrator.Offers(
+            result.Status, result.Root, result.Unreadable.Count, rescanDrive, Environment.IsPrivilegedProcess)
+            ? Visibility.Visible : Visibility.Collapsed;
 
         // Last, so that a failure here cannot take away what is already filled in above.
         ShowLargestFiles(result);
@@ -926,6 +949,32 @@ public partial class MainWindow : Window
             ? $"The volume reports {FormatSize(volumeInUse)} in use, so {FormatSize(unseen)} of it was not seen by this scan " +
               "(file-system metadata, folders it could not read, and anything else an ordinary account cannot list)."
             : $"The volume reports {FormatSize(volumeInUse)} in use; {FormatSize(unseen)} of it is not in this partial scan.";
+    }
+
+    // 'Rescan as administrator', pressed (SL-008). The only press: the button's Click, which a person makes, and the only place the
+    // app asks Windows to start itself with more rights; nothing at a start or an ending does. The root is the ending's own, the
+    // drive the button was offered for. Windows' prompt holds this thread until it is answered, and covers the window as it does.
+    // Started: the button is spent, so that a second press cannot start a second copy, and the line says where the scan went; the
+    // copy scans in a window of its own and this one keeps its ending, for a person to compare. Declined or refused: the line says
+    // so and nothing else changes, the button stays, and this window is as it was.
+    private void OnRescanAsAdministrator(object sender, RoutedEventArgs e)
+    {
+        if (LastResult is not { } last)
+            return;
+        string? line = RescanAsAdministrator.Start(Environment.ProcessPath, last.Root, Process.Start);
+        if (line is null)
+            RescanAsAdministratorButton.IsEnabled = false;
+        RescanStatus.Text = line ?? RescanAsAdministrator.StartedLine;
+        RescanStatus.Visibility = Visibility.Visible;
+    }
+
+    // As a scan starts: the offer goes, enabled again for the next one that makes it, with its line.
+    private void HideRescanOffer()
+    {
+        RescanAsAdministratorButton.Visibility = Visibility.Collapsed;
+        RescanAsAdministratorButton.IsEnabled = true;
+        RescanStatus.Text = string.Empty;
+        RescanStatus.Visibility = Visibility.Collapsed;
     }
 
     // Could not read, and Scan failed: nothing to show but why.

@@ -1,0 +1,88 @@
+{
+  "_note": "SL-008 review m3 and m4 (the class 'C# spellings that set a shell verb or request elevation', and the ways of attaching a manifest) and M2 (who calls the rescan start), closed as their classes. The rules are the settled entries of .taad/fitness.yaml under '# settled by SL-008', read from there by RescanElevationRulesCorpusTests (their only copy). Each class is bounded by who produces its members, which is whoever edits src, a project file or the window hook next, by accident or in a hurry, not to get past a rule. A row is a snippet of one to three lines: expect 'fire' means some pattern of the rule matches it, 'quiet' that none does. 'before' is what the patterns the design wrote (listed under 'beforePatterns') did with the row, and the test recomputes it from them on every run, so the rows the fix closes stay shown: a row that was 'quiet' and now fires is one the fix closed, and a row that was 'fire' and is now 'quiet' is an over-broad match the fix lifted. The rules the design did not have (the manifest, the call-site and the hook entries) had no patterns before: every row's 'before' is 'quiet'.",
+  "beforePatterns": {
+    "only the rescan button's file asks Windows for elevation": [
+      "(?m)(?i)\\brunas\\b",
+      "(?m)\\blpVerb\\b",
+      "(?m)\\bVerb\\s*=[^=]"
+    ],
+    "the app never asks for elevation at start": [
+      "(?m)(?i)\\b(requireAdministrator|highestAvailable)\\b"
+    ],
+    "no manifest or resource is attached to the app from outside its project": [],
+    "no manifest or resource is attached to the app from the root build files": [],
+    "only the window's own handler calls the rescan start, and nothing else names the handler": [],
+    "the window hook never names the rescan button": []
+  },
+  "rules": {
+    "only the rescan button's file asks Windows for elevation": [
+      { "id": "A01", "lines": ["            psi.Verb = \"runas\";"], "expect": "fire", "before": "fire", "note": "the spelling the design's rule was written for" },
+      { "id": "A02", "lines": ["            psi.Verb ??= \"runas\";"], "expect": "fire", "before": "fire", "note": "the word is caught whatever assignment carries it" },
+      { "id": "A03", "lines": ["            psi.UseShellExecute = true;", "            psi.Verb ??= \"run\" + \"as\";"], "expect": "fire", "before": "quiet", "note": "review m3: a verb built as two strings and set by compound assignment; the verb takes effect only through UseShellExecute, which is caught" },
+      { "id": "A04", "lines": ["            psi.UseShellExecute = true;", "            psi.Verb += \"run\";", "            psi.Verb += \"as\";"], "expect": "fire", "before": "quiet", "note": "review m3: Verb += built up in pieces" },
+      { "id": "A05", "lines": ["            Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true, Verb = \"RunAs\" });"], "expect": "fire", "before": "fire", "note": "an object initializer, in any case" },
+      { "id": "A06", "lines": ["            var psi = new ProcessStartInfo(exe) { Verb = \"run\" + \"as\" };"], "expect": "quiet", "before": "fire", "note": "a verb with no UseShellExecute does nothing on .NET: the old pattern fired on it as an over-broad match, and the family ban does not" },
+      { "id": "A07", "lines": ["        public string Verb => \"open\";"], "expect": "quiet", "before": "fire", "note": "review m3: an expression-bodied Verb matched the old pattern, a harmless false positive" },
+      { "id": "A08", "lines": ["        [LibraryImport(\"shell32.dll\", EntryPoint = \"ShellExecuteExW\")]"], "expect": "fire", "before": "quiet", "note": "the shell's own entry point, by import" },
+      { "id": "A09", "lines": ["        private static partial bool ShellExecuteEx(ref SHELLEXECUTEINFO info);"], "expect": "fire", "before": "quiet", "note": "the same, declared" },
+      { "id": "A10", "lines": ["            info.lpVerb = \"RunAs\";"], "expect": "fire", "before": "fire", "note": "the shell structure's own field" },
+      { "id": "A11", "lines": ["            var moniker = \"Elevation:Administrator!new:{3E5FC7F9-9A51-4367-9063-A120244FBEC7}\";"], "expect": "fire", "before": "quiet", "note": "review m3: the COM elevation moniker, which elevates with no verb" },
+      { "id": "A12", "lines": ["            psi.UseShellExecute = false;"], "expect": "fire", "before": "quiet", "note": "the family ban names the property, whatever it is set to: src never needs it, and tests/ are outside the rule" },
+      { "id": "A13", "lines": ["            var psi = new ProcessStartInfo(exe) { UseShellExecute = true };"], "expect": "fire", "before": "quiet", "note": "the shell start with no verb spelled yet" },
+      { "id": "A14", "lines": ["            typeof(ProcessStartInfo).GetProperty(\"Verb\")!.SetValue(psi, \"run\" + \"as\");"], "expect": "quiet", "before": "quiet", "note": "NOT CAUGHT, by design: reflection on the property by its name as a string (the rule's reason lists it)" },
+      { "id": "A15", "lines": ["            Process.Start(new ProcessStartInfo(exe));"], "expect": "quiet", "before": "quiet", "note": "a start with nothing about a shell" },
+      { "id": "A16", "lines": ["            RevealOutcome outcome = await ShellReveal.RevealAsync(path);"], "expect": "quiet", "before": "quiet", "note": "the word boundary leaves ShellReveal alone" },
+      { "id": "A17", "lines": ["            string runasLabel = \"x\";"], "expect": "quiet", "before": "quiet", "note": "runas inside an identifier is not the verb" },
+      { "id": "A18", "lines": ["        const string Verb = \"open\";"], "expect": "quiet", "before": "fire", "note": "a constant named Verb: matched the old pattern, no longer" },
+      { "id": "A19", "lines": ["            var info = new ProcessStartInfo(\"explorer.exe\") { Arguments = path };"], "expect": "quiet", "before": "quiet", "note": "a start with an argument" }
+    ],
+    "the app never asks for elevation at start": [
+      { "id": "B01", "lines": ["        <requestedExecutionLevel level=\"requireAdministrator\" uiAccess=\"false\" />"], "expect": "fire", "before": "fire", "note": "" },
+      { "id": "B02", "lines": ["        <requestedExecutionLevel level=\"highestAvailable\" />"], "expect": "fire", "before": "fire", "note": "" },
+      { "id": "B03", "lines": ["        <requestedExecutionLevel level=\"REQUIREADMINISTRATOR\" />"], "expect": "fire", "before": "fire", "note": "in any case" },
+      { "id": "B04", "lines": ["        <requestedExecutionLevel level=\"asInvoker\" uiAccess=\"false\" />"], "expect": "quiet", "before": "quiet", "note": "the level the app has today" },
+      { "id": "B05", "lines": ["    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>"], "expect": "quiet", "before": "quiet", "note": "the App's own project settings" }
+    ],
+    "no manifest or resource is attached to the app from outside its project": [
+      { "id": "C01", "lines": ["    <ApplicationManifest>..\\..\\eng\\app.manifest</ApplicationManifest>"], "expect": "fire", "before": "quiet", "note": "review m4: the level lives in a file the App folder's glob never reads" },
+      { "id": "C02", "lines": ["    <Win32Manifest>app.manifest</Win32Manifest>"], "expect": "fire", "before": "quiet", "note": "review m4: the property the SDK reads the manifest from" },
+      { "id": "C03", "lines": ["    <Win32Resource>app.res</Win32Resource>"], "expect": "fire", "before": "quiet", "note": "review m4: a compiled resource that carries a manifest" },
+      { "id": "C04", "lines": ["    <ApplicationIcon>app.ico</ApplicationIcon>"], "expect": "quiet", "before": "quiet", "note": "an icon is no manifest" },
+      { "id": "C05", "lines": ["    <NoWin32Manifest>true</NoWin32Manifest>"], "expect": "quiet", "before": "quiet", "note": "no manifest at all: the word boundary leaves it alone" },
+      { "id": "C06", "lines": ["    <UseWPF>true</UseWPF>"], "expect": "quiet", "before": "quiet", "note": "" }
+    ],
+    "no manifest or resource is attached to the app from the root build files": [
+      { "id": "D01", "lines": ["    <ApplicationManifest>eng\\app.manifest</ApplicationManifest>"], "expect": "fire", "before": "quiet", "note": "review m4: set for every project from Directory.Build.props" },
+      { "id": "D02", "lines": ["    <Win32Resource>eng\\app.res</Win32Resource>"], "expect": "fire", "before": "quiet", "note": "review m4: Directory.Build.targets" },
+      { "id": "D03", "lines": ["    <FsaSmbLibraryVersion>1.5.8.1</FsaSmbLibraryVersion>"], "expect": "quiet", "before": "quiet", "note": "the root file's own settings" }
+    ],
+    "only the window's own handler calls the rescan start, and nothing else names the handler": [
+      { "id": "E01", "lines": ["            RescanAsAdministrator.Start(Environment.ProcessPath, root, Process.Start);"], "expect": "fire", "before": "quiet", "note": "review M2: a second call, from OnLoaded, an ending or report mode" },
+      { "id": "E02", "lines": ["            FsAnalyser.App.RescanAsAdministrator.Start(exe, root, Process.Start);"], "expect": "fire", "before": "quiet", "note": "fully qualified" },
+      { "id": "E03", "lines": ["using static FsAnalyser.App.RescanAsAdministrator;"], "expect": "fire", "before": "quiet", "note": "review M2: a bare Start(...) never spells the class" },
+      { "id": "E04", "lines": ["using RA = FsAnalyser.App.RescanAsAdministrator;"], "expect": "fire", "before": "quiet", "note": "an alias of the class" },
+      { "id": "E05", "lines": ["            OnRescanAsAdministrator(this, new RoutedEventArgs());"], "expect": "fire", "before": "quiet", "note": "review M2: the handler called as a method" },
+      { "id": "E06", "lines": ["            Click=\"OnRescanAsAdministrator\""], "expect": "fire", "before": "quiet", "note": "a second wiring of the handler, in any file of src" },
+      { "id": "E07", "lines": ["            var start = RescanAsAdministrator.Start;"], "expect": "fire", "before": "quiet", "note": "the method group, held in a variable" },
+      { "id": "E08", "lines": ["            string name = nameof(RescanAsAdministrator.Start);"], "expect": "fire", "before": "quiet", "note": "named for reflection" },
+      { "id": "E09", "lines": ["            RescanAsAdministrator", "                .Start(exe, root, Process.Start);"], "expect": "fire", "before": "quiet", "note": "laid over two lines" },
+      { "id": "E10", "lines": ["            RescanAsAdministrator . Start(exe, root, Process.Start);"], "expect": "fire", "before": "quiet", "note": "spaces about the dot" },
+      { "id": "E11", "lines": ["            bool offer = RescanAsAdministrator.Offers(status, root, 1, type, false);"], "expect": "quiet", "before": "quiet", "note": "the decision is anyone's to read" },
+      { "id": "E12", "lines": ["            DriveType? seen = RescanAsAdministrator.DriveTypeAnElevatedCopySees(scanned.Root);"], "expect": "quiet", "before": "quiet", "note": "so is the probe" },
+      { "id": "E13", "lines": ["            RescanAsAdministratorButton.Visibility = Visibility.Collapsed;"], "expect": "quiet", "before": "quiet", "note": "the button's own name" },
+      { "id": "E14", "lines": ["            RescanStatus.Text = RescanAsAdministrator.StartedLine;"], "expect": "quiet", "before": "quiet", "note": "StartedLine is not Start: the word boundary" },
+      { "id": "E15", "lines": ["            Func<string, DriveType> f = RescanAsAdministrator.DriveTypeAnElevatedCopySees;"], "expect": "quiet", "before": "quiet", "note": "" },
+      { "id": "E16", "lines": ["            typeof(RescanAsAdministrator).GetMethod(\"Start\")!.Invoke(null, args);"], "expect": "quiet", "before": "quiet", "note": "NOT CAUGHT, by design: reflection by a name held in a string" }
+    ],
+    "the window hook never names the rescan button": [
+      { "id": "F01", "lines": ["            if (window.FindName(\"RescanAsAdministratorButton\") is Button rescan)"], "expect": "fire", "before": "quiet", "note": "review M2: the control by its x:Name" },
+      { "id": "F02", "lines": ["            string text = \"Rescan as administrator\";"], "expect": "fire", "before": "quiet", "note": "review M2: found by its text, as StartupHook finds a drive button" },
+      { "id": "F03", "lines": ["            string text = \"RESCAN  AS ADMINISTRATOR\";"], "expect": "fire", "before": "quiet", "note": "in any case and spacing" },
+      { "id": "F04", "lines": ["            var type = Type.GetType(\"FsAnalyser.App.RescanAsAdministrator\");"], "expect": "fire", "before": "quiet", "note": "the class by name" },
+      { "id": "F05", "lines": ["            string h = \"OnRescanAsAdmin\";"], "expect": "fire", "before": "quiet", "note": "a shortened name" },
+      { "id": "F06", "lines": ["            if (window.FindName(\"SettingsButton\") is not Button settings)"], "expect": "quiet", "before": "quiet", "note": "the hook's own buttons" },
+      { "id": "F07", "lines": ["            RevealStatus.Text = \"Rescan to refresh.\";"], "expect": "quiet", "before": "quiet", "note": "the reveal refusal's words" }
+    ]
+  },
+  "notBounded": "Not closed, because no line pattern can: reflection on ProcessStartInfo or on RescanAsAdministrator by a name held in a string (A14, E16), a process started through another program that elevates (a scheduled task, a helper exe), and a hook that finds the button by a visual-tree walk with no name or text of its own. RescanElevationGuardTests holds MainWindow.xaml.cs, where the one call lives; SL-008's local-drive script is the behavioural guard that a start never prompts."
+}

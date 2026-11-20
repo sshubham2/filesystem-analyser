@@ -108,6 +108,12 @@ namespace FsAnalyser.App;
 /// SL-005 added, additive: "core"'s "foldersVanished", how many folders a parent listed were deleted before the walk opened them
 /// (Core's ScanResult.FoldersVanished). They are in "core"'s "folders" as empty folders and in neither "unreadable" nor the
 /// coverage "folders"; the ending says so in window OutcomeNotes' lines. A count only, never a path (Q-016).
+/// SL-008 added, all additive: the top-level "rescanAsAdministrator", { "offered": bool }, whether the ending offers 'Rescan as
+/// administrator': read from the button, never rebuilt from the scan's result, present at every ending that writes a report
+/// (Could not read and Scan failed included) and false at every one but a finished scan of a whole local drive that left folders
+/// unread, in a copy that is not elevated, whose letter an elevated copy sees; and window "RescanAsAdministratorButton",
+/// { "visible", "enabled", "inView" }, which says where that button is: it sits on the pickers' line, in view whenever it is
+/// shown, and the line keeps PickerPanel's height with it. No text and no path.
 /// Every key under "window" is the x:Name of the control it was read from, and every value is what that
 /// control shows: its Text as displayed, or for a panel whether it is on screen. "inView" says the
 /// control is on screen with some height, and that neither it nor anything around it up to the window
@@ -165,6 +171,13 @@ internal static class WindowReport
                 OutcomeDetail = Regex.Split(window.OutcomeDetail.Text, @"\r?\n"),
                 OutcomeNotes = new { visible = window.OutcomeNotes.IsVisible, lines = Regex.Split(window.OutcomeNotes.Text, @"\r?\n") },
                 SettingsButton = window.SettingsButton.Content as string,
+                // SL-008: the offer as the window holds it, read from the button and from nothing else. A flag per control, no text.
+                RescanAsAdministratorButton = new
+                {
+                    visible = window.RescanAsAdministratorButton.IsVisible,
+                    enabled = window.RescanAsAdministratorButton.IsEnabled,
+                    inView = InView(window.RescanAsAdministratorButton),
+                },
                 CountersText = window.CountersText.Text,
                 PickerPanel = new { actualHeight = window.PickerPanel.ActualHeight },
                 DrivePanel = new { buttons = window.DrivePanel.Children.Count },
@@ -279,6 +292,10 @@ internal static class WindowReport
                 { } other => other.ToString(),
             },
             ["refusal"] = result?.Refusal == ScanRefusal.ContainerLayerStore ? "container-layer-store" : null,
+            // SL-008: whether the ending offers 'Rescan as administrator', read from the button (the window holds the decision, and
+            // this never works it out again from the result). Present at every ending that writes a report, and false at every
+            // one but an offered one; never null.
+            ["rescanAsAdministrator"] = new { offered = window.RescanAsAdministratorButton.IsVisible },
             // The precautions against outside defects as the window holds them, by id: on or off (SL-095). Rendered from
             // Core's list as it is, naming no entry.
             ["workarounds"] = KnownWorkarounds.All.Select(w => new { id = w.Id, on = window.EnabledWorkarounds.Contains(w.Id) }).ToArray(),
