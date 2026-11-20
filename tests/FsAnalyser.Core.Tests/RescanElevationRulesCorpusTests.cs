@@ -129,6 +129,32 @@ public class RescanElevationRulesCorpusTests
         Assert.True(lifted >= 3, $"only {lifted} over-broad rows were lifted");
     }
 
+    // O-023 and O-026: the call-site entry as the first build wrote it let by the rows this widening closed. The rows that carry
+    // an 'attempt1' are run through those patterns, and what they did is what the row says; the rows that were quiet and are now
+    // caught are the ones the widening closed, and they must be the members of the class, not one.
+    [Fact]
+    public void TheFirstBuildsCallSitePatternsLetByTheRowsTheWideningClosed()
+    {
+        const string name = "only the window's own handler calls the rescan start, and nothing else names the handler";
+        using JsonDocument corpus = Corpus();
+        string[] attempt1 = [.. corpus.RootElement.GetProperty("attempt1Patterns").GetProperty(name).EnumerateArray().Select(p => p.GetString()!)];
+        var wrong = new List<string>();
+        int closed = 0;
+        foreach (JsonElement row in corpus.RootElement.GetProperty("rules").GetProperty(name).EnumerateArray())
+        {
+            if (!row.TryGetProperty("attempt1", out JsonElement said))
+                continue;
+            string text = string.Join("\n", row.GetProperty("lines").EnumerateArray().Select(l => l.GetString()));
+            string was = attempt1.Any(p => Regex.IsMatch(text, p)) ? "fire" : "quiet";
+            if (was != said.GetString())
+                wrong.Add($"{row.GetProperty("id").GetString()}: the first build's patterns {was}, the corpus says {said.GetString()}: {text.Trim()}");
+            if (was == "quiet" && row.GetProperty("expect").GetString() == "fire")
+                closed++;
+        }
+        Assert.True(wrong.Count == 0, string.Join("\n", wrong));
+        Assert.True(closed >= 10, $"only {closed} rows were let by the first build's call-site patterns and are now caught");
+    }
+
     [Fact]
     public void TheTreeDoesNotTripTheRulesTheCorpusRuns()
     {

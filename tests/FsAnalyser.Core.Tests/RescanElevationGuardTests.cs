@@ -16,8 +16,12 @@ public class RescanElevationGuardTests
 {
     private const string Handler = "OnRescanAsAdministrator";
 
-    // The method's name as the class is called by it, with room for spaces and line breaks about the dot, and not StartedLine.
-    private const string StartName = @"\bRescanAsAdministrator\s*\.\s*Start\b";
+    // The settled fitness entry about who calls the rescan start; its patterns are read from .taad/fitness.yaml.
+    private const string CallSiteRule = "only the window's own handler calls the rescan start, and nothing else names the handler";
+
+    // The method's name as the class is called by it, with room for spaces and line breaks about the dot; any member whose name
+    // begins with Start (a forwarder) counts, and StartedLine, the status line's words, does not.
+    private const string StartName = @"\bRescanAsAdministrator\s*\.\s*Start(?!edLine\b)";
 
     private static string Source(params string[] relative) =>
         File.ReadAllText(Path.Combine([FailCriticalErrorsTests.FindRepo(), .. relative]));
@@ -89,12 +93,38 @@ public class RescanElevationGuardTests
     public void MainWindowRaisesNoClickAndInvokesNoButton(string needle) =>
         Assert.DoesNotContain(needle, MainWindow(), StringComparison.Ordinal);
 
+    // The settled call-site entry's own two directive patterns (a static import and an alias, with the qualifiers and spacing a
+    // directive can carry: global::, an extern alias, spaces and line breaks about the dots), read from .taad/fitness.yaml and not
+    // copied, so that this file and the entry cannot drift apart. A bare Start(...) cannot be reached by an import or an alias.
     [Fact]
     public void MainWindowDoesNotImportOrAliasTheClass()
     {
         string text = MainWindow();
-        Assert.DoesNotMatch(@"\busing\s+static\s+[\w.]*\bRescanAsAdministrator\b", text);
-        Assert.DoesNotMatch(@"\busing\s+\w+\s*=\s*[\w.]*\bRescanAsAdministrator\b", text);
+        string[] directives = [.. SettledRulesCorpusTests.ReadRule(CallSiteRule).Patterns
+            .Where(p => p.Contains(@"\busing\s+", StringComparison.Ordinal))];
+        Assert.True(directives.Length == 2, $"the call-site entry holds {directives.Length} using-directive patterns, and it is to hold the static import's and the alias's");
+        foreach (string pattern in directives)
+            Assert.DoesNotMatch(pattern, text);
+    }
+
+    // A forwarder in the excepted file is a way to Start that the name 'Start' alone does not show: the delegate is called once,
+    // inside Start's body, and Start is not called by another member of that file.
+    [Fact]
+    public void TheRescanFileCallsItsStartDelegateOnceInsideStartAndStartIsCalledByNoMemberOfIt()
+    {
+        string text = Source("src", "FsAnalyser.App", "RescanAsAdministrator.cs");
+        MatchCollection declared = Regex.Matches(text, @"\bstring\?\s+Start\(");
+        Assert.True(declared.Count == 1, $"RescanAsAdministrator.cs declares Start {declared.Count} times");
+        (int open, int close) = BodyOf(text, declared[0].Index);
+
+        MatchCollection delegateCalls = Regex.Matches(text, @"(?<![\w.])start\s*\(");
+        Assert.True(delegateCalls.Count == 1, $"RescanAsAdministrator.cs calls its start delegate {delegateCalls.Count} times, and it is to be once, in Start");
+        Assert.True(delegateCalls[0].Index > open && delegateCalls[0].Index < close, "the one call of the start delegate is outside Start's body");
+
+        // Not preceded by a dot (Process.Start in a cref) or a word (the declaration's own return type); the declaration is the one match.
+        MatchCollection startNamed = Regex.Matches(text, @"(?<![\w.])Start\s*\(");
+        Assert.True(startNamed.Count == 1 && startNamed[0].Index > declared[0].Index && startNamed[0].Index < open,
+            $"Start( is named {startNamed.Count} times in RescanAsAdministrator.cs, and it is to be once, where it is declared");
     }
 
     // The one call asks for what the design says: this program, the ending's own root, and Process.Start.

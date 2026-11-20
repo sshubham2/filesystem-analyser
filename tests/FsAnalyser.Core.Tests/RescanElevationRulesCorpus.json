@@ -1,5 +1,5 @@
 {
-  "_note": "SL-008 review m3 and m4 (the class 'C# spellings that set a shell verb or request elevation', and the ways of attaching a manifest) and M2 (who calls the rescan start), closed as their classes. The rules are the settled entries of .taad/fitness.yaml under '# settled by SL-008', read from there by RescanElevationRulesCorpusTests (their only copy). Each class is bounded by who produces its members, which is whoever edits src, a project file or the window hook next, by accident or in a hurry, not to get past a rule. A row is a snippet of one to three lines: expect 'fire' means some pattern of the rule matches it, 'quiet' that none does. 'before' is what the patterns the design wrote (listed under 'beforePatterns') did with the row, and the test recomputes it from them on every run, so the rows the fix closes stay shown: a row that was 'quiet' and now fires is one the fix closed, and a row that was 'fire' and is now 'quiet' is an over-broad match the fix lifted. The rules the design did not have (the manifest, the call-site and the hook entries) had no patterns before: every row's 'before' is 'quiet'.",
+  "_note": "SL-008 review m3 and m4 (the class 'C# spellings that set a shell verb or request elevation', and the ways of attaching a manifest) and M2 (who calls the rescan start), closed as their classes. The rules are the settled entries of .taad/fitness.yaml under '# settled by SL-008', read from there by RescanElevationRulesCorpusTests (their only copy). Each class is bounded by who produces its members, which is whoever edits src, a project file or the window hook next, by accident or in a hurry, not to get past a rule. A row is a snippet of one to three lines: expect 'fire' means some pattern of the rule matches it, 'quiet' that none does. 'before' is what the patterns the design wrote (listed under 'beforePatterns') did with the row, and the test recomputes it from them on every run, so the rows the fix closes stay shown: a row that was 'quiet' and now fires is one the fix closed, and a row that was 'fire' and is now 'quiet' is an over-broad match the fix lifted. The rules the design did not have (the manifest, the call-site and the hook entries) had no patterns before: every row's 'before' is 'quiet'. The call-site entry was widened once more after the code review (O-023, O-026: the class 'spellings that reach RescanAsAdministrator.Start without spelling RescanAsAdministrator.Start', whose members are a using directive or alias with the global:: or an extern-alias qualifier, spaces or line breaks, the project-wide 'global using', and a forwarder named Start...). The patterns the first build wrote are kept under 'attempt1Patterns' and each row of that class carries 'attempt1', what they did with it, recomputed by RescanElevationRulesCorpusTests on every run, so the rows the widening closed stay shown as rows the first build's patterns let by.",
   "beforePatterns": {
     "only the rescan button's file asks Windows for elevation": [
       "(?m)(?i)\\brunas\\b",
@@ -13,6 +13,14 @@
     "no manifest or resource is attached to the app from the root build files": [],
     "only the window's own handler calls the rescan start, and nothing else names the handler": [],
     "the window hook never names the rescan button": []
+  },
+  "attempt1Patterns": {
+    "only the window's own handler calls the rescan start, and nothing else names the handler": [
+      "(?m)\\bRescanAsAdministrator\\s*\\.\\s*Start\\b",
+      "(?m)\\bOnRescanAsAdministrator\\b",
+      "(?m)\\busing\\s+static\\s+[\\w.]*\\bRescanAsAdministrator\\b",
+      "(?m)\\busing\\s+\\w+\\s*=\\s*[\\w.]*\\bRescanAsAdministrator\\b"
+    ]
   },
   "rules": {
     "only the rescan button's file asks Windows for elevation": [
@@ -72,7 +80,26 @@
       { "id": "E13", "lines": ["            RescanAsAdministratorButton.Visibility = Visibility.Collapsed;"], "expect": "quiet", "before": "quiet", "note": "the button's own name" },
       { "id": "E14", "lines": ["            RescanStatus.Text = RescanAsAdministrator.StartedLine;"], "expect": "quiet", "before": "quiet", "note": "StartedLine is not Start: the word boundary" },
       { "id": "E15", "lines": ["            Func<string, DriveType> f = RescanAsAdministrator.DriveTypeAnElevatedCopySees;"], "expect": "quiet", "before": "quiet", "note": "" },
-      { "id": "E16", "lines": ["            typeof(RescanAsAdministrator).GetMethod(\"Start\")!.Invoke(null, args);"], "expect": "quiet", "before": "quiet", "note": "NOT CAUGHT, by design: reflection by a name held in a string" }
+      { "id": "E16", "lines": ["            typeof(RescanAsAdministrator).GetMethod(\"Start\")!.Invoke(null, args);"], "expect": "quiet", "before": "quiet", "note": "NOT CAUGHT, by design: reflection by a name held in a string" },
+      { "id": "E17", "lines": ["using static global::FsAnalyser.App.RescanAsAdministrator;"], "expect": "fire", "before": "quiet", "attempt1": "quiet", "note": "review m1/IN-m2: a static import with the global:: qualifier, which [\\w.]* did not allow" },
+      { "id": "E18", "lines": ["using RA = global::FsAnalyser.App.RescanAsAdministrator;"], "expect": "fire", "before": "quiet", "attempt1": "quiet", "note": "review m1/IN-m2: an alias of the class with the global:: qualifier" },
+      { "id": "E19", "lines": ["using static FsAnalyser.App . RescanAsAdministrator;"], "expect": "fire", "before": "quiet", "attempt1": "quiet", "note": "review m1: spaces about a dot of the name" },
+      { "id": "E20", "lines": ["global using static global::FsAnalyser.App.RescanAsAdministrator;"], "expect": "fire", "before": "quiet", "attempt1": "quiet", "note": "review IN-m2: the project-wide form, which reaches every file with no directive of its own" },
+      { "id": "E21", "lines": ["global using RA = global::FsAnalyser.App.RescanAsAdministrator;"], "expect": "fire", "before": "quiet", "attempt1": "quiet", "note": "the project-wide alias" },
+      { "id": "E22", "lines": ["global using static FsAnalyser.App.RescanAsAdministrator;"], "expect": "fire", "before": "quiet", "attempt1": "fire", "note": "the project-wide form without the qualifier: attempt 1 matched it inside 'global using'" },
+      { "id": "E23", "lines": ["using static", "    global::FsAnalyser.App.RescanAsAdministrator;"], "expect": "fire", "before": "quiet", "attempt1": "quiet", "note": "the directive laid over two lines" },
+      { "id": "E24", "lines": ["using RA=global :: FsAnalyser . App . RescanAsAdministrator;"], "expect": "fire", "before": "quiet", "attempt1": "quiet", "note": "an alias with no space about the equals sign and spaces about the qualifier" },
+      { "id": "E25", "lines": ["using static FsAnalyserApp::FsAnalyser.App.RescanAsAdministrator;"], "expect": "fire", "before": "quiet", "attempt1": "quiet", "note": "an extern alias as the qualifier, which is any identifier before ::" },
+      { "id": "E26", "lines": ["using Alias = RescanAsAdministrator;"], "expect": "fire", "before": "quiet", "attempt1": "fire", "note": "an alias written from inside the namespace, with no qualifier at all" },
+      { "id": "E27", "lines": ["            RescanAsAdministrator.StartFor(exe, root, Process.Start);"], "expect": "fire", "before": "quiet", "attempt1": "quiet", "note": "review IN-m2: a forwarder named Start..., which the boundary after Start let by" },
+      { "id": "E28", "lines": ["            string refused = RescanAsAdministrator.StartAsync(exe, root);"], "expect": "fire", "before": "quiet", "attempt1": "quiet", "note": "a second forwarder spelling" },
+      { "id": "E29", "lines": ["            Func<string?, string, Func<ProcessStartInfo, Process?>, string?> go = RescanAsAdministrator.StartElevated;"], "expect": "fire", "before": "quiet", "attempt1": "quiet", "note": "a forwarder held as a method group" },
+      { "id": "E30", "lines": ["using static System.Math;"], "expect": "quiet", "before": "quiet", "attempt1": "quiet", "note": "any other static import is left alone" },
+      { "id": "E31", "lines": ["using Json = System.Text.Json.JsonSerializer;"], "expect": "quiet", "before": "quiet", "attempt1": "quiet", "note": "any other alias is left alone" },
+      { "id": "E32", "lines": ["using FsAnalyser.App;"], "expect": "quiet", "before": "quiet", "attempt1": "quiet", "note": "the namespace's own import: the call still has to spell the class" },
+      { "id": "E33", "lines": ["using static FsAnalyser.Core.Native.GlobalDosDevices;"], "expect": "quiet", "before": "quiet", "attempt1": "quiet", "note": "the facade the probe uses" },
+      { "id": "E34", "lines": ["using System.Diagnostics;", "            RescanStatus.Text = RescanAsAdministrator.StartedLine;"], "expect": "quiet", "before": "quiet", "attempt1": "quiet", "note": "a using line, then StartedLine: the directive ends at its semicolon and StartedLine is not Start" },
+      { "id": "E35", "lines": ["using static System.Math;", "            var RescanAsAdministrator = 3;"], "expect": "quiet", "before": "quiet", "attempt1": "quiet", "note": "the class's name after another directive's semicolon is not part of the directive" }
     ],
     "the window hook never names the rescan button": [
       { "id": "F01", "lines": ["            if (window.FindName(\"RescanAsAdministratorButton\") is Button rescan)"], "expect": "fire", "before": "quiet", "note": "review M2: the control by its x:Name" },

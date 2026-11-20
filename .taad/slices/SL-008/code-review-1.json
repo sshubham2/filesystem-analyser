@@ -1,0 +1,456 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-008",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-11-20T09:10:48.147Z",
+ "head": "e8626f2cae34820c48bdfdaa47f5206e52711931",
+ "run_id": 11515,
+ "summary": "The build matches the design, and every declared departure checks out against the code. I found one small rule defect, with a test that fails on it, and one overclaimed verdict in the window script.\n\n**What I read and ran.** I read every changed file whole or through its full diff:\n- `RescanAsAdministrator.cs`, `GlobalDosDevices.cs`, the `OpensThroughGlobalDosDevices` method added to `Kernel32.cs`;\n- the `StartScan`, `ShowOutcome` and handler blocks of `MainWindow.xaml.cs`, the `MainWindow.xaml` pickers' line, and `WindowReport.cs`;\n- the fitness block, all seven new test files, both corpora and the window script.\n\nI built the App (0 warnings, 0 errors). I ran 222 targeted tests (SL-008's own, SettledRulesCorpus, AppArgument, FailCriticalErrors and ArchitectureRules), and all passed. Fitness check: all 120 rules hold. Reflection probes on this PC gave:\n- `HoldsDriveLetter`: true for C, D and lowercase c (0–4 ms); false for the not-ready removable drives E and F, and for a missing letter Q.\n- The probe: Fixed for C and D, null for E and F, NoRootDirectory for Q.\n- `Start` hands Windows `\"C:\\\\\"`, `\"\\\\?\\C:\\\\\"` and `\"c:\\\\\"`, and refuses `C:\\\\` and `C:\\x` with NotADriveLine without calling Windows.\n\n**Promises I checked:**\n- **Probe and offer.** The probe runs on the scan's own background task (gated by `WorthProbing`), before `ShowOutcome`. The offer is set before `ShowVolumeInUse`, so it is in place when EndingShown is raised.\n- **Reset.** `StartScan`'s `HideRescanOffer` resets the button and status line, and `ShowProblem` is called only from `StartScan` and `ShowOutcome`, so no problem ending can show a stale offer.\n- **Report.** `offered` is read from the button's `IsVisible` and sits in the top-level dictionary for every ending. The SL-005 script's key-set check is a subset check, so the new keys break no reader.\n- **Unreadable count.** `UnreadableRows.Build` only removes duplicates, so the trigger and the Unreadable tab count the same folders.\n- **Hook.** It presses drive buttons only through `DrivePanel`, and other controls only by name.\n\n**Findings:**\n- **m1 (repro proved):** two of the call-site rule's patterns use `[\\w.]*`. That misses `using static global::...RescanAsAdministrator;`, its `using X = global::` alias, and spaced dots. A bare `Start(...)` from `OnLoaded` would then get past both the fitness entry and the guard test's copy of those patterns. I ran the repro against this tree: it fails 3 of 3, and the tree is back as it was.\n- **m2 (no repro possible):** in the window script, the no-path and path-window steps report 'held … with no prompt' for any process still alive after 6 s. A runas raised early on the window launch path leaves the process alive, blocked on the prompt, so those two steps catch only a manifest-level 740. The report-mode run and the text rules do still guard it.\n\nThe full suite was not re-run here: about 2.5 GB was free, under the stated 4.1 GB threshold. The whole-drive script run was not repeated, because a whole-drive scan needs permission first. The code graph query failed (database locked) and I did not retry it.\n\nSecond reader, for inputs: This was the input pass. I fed crafted spellings through the product code, the fitness patterns and the window script, and found no input defect in the product code.\n\n**Product code looks right for the inputs I tried.** `Start` only accepts a display form of exactly `X:\\`, so the elevated copy can only ever get `\"X:\\\\\"` or `\"\\\\?\\X:\\\\\"`. I checked folders, shares, `\\\\?\\UNC\\`, quotes, `--report` and extra arguments. The probe only opens a letter whose type is Fixed or Removable. Every IO, access or argument exception gives null.\n\n**Two of the new fitness patterns miss members of families this slice says it closed.** I confirmed both with .NET Regex against the patterns as `SettledRulesCorpusTests.ReadRule` reads them. Each comes with a repro test that I ran and that fails on this tree: 5 of 5 rows red.\n- **COM moniker:** the elevation family ban leaves out the moniker's second documented level, `Elevation:Highest!new:{clsid}`.\n- **`global::` imports:** the call-site rule, and the same two regexes in `RescanElevationGuardTests`, do not see a static import or alias written with `global::` (`using static global::FsAnalyser.App.RescanAsAdministrator;`, `using RA = global::...`). A bare `Start(...)` or `RA.Start(...)` then gets past every guard. A forwarder in the excepted file named `StartFor...` also slips past the `\\bStart\\b` word boundary.\n\n**The window script decides 'privileged' differently from the app.** The script checks membership of Administrators (or SYSTEM). The app checks `Environment.IsPrivilegedProcess`, which reads the token's elevation. An elevated token without Administrators, such as a Backup Operators member, therefore makes the drive step FAILED when no offer is the correct answer. That is a new member of the closed m2 family. The stub replaces the privilege read, so no repro is possible.\n\n**Two extras, not required by anyone:**\n- The GLOBAL?? letter gate cannot see a session-local definition that shadows a global letter. The offer is then made and the elevated copy scans a different volume. I did not run this, because shadowing a letter would redirect the person's own session.\n- The script's no-path and path-window steps call ALIVE \"held, with no prompt\", but never look for a prompt.\n\nThe temporary repro files were removed after the run, and the tree's status is back to what it was. Fitness op=check: every one of the 120 rules holds.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "The build matches the design, and every declared departure checks out against the code. I found one small rule defect, with a test that fails on it, and one overclaimed verdict in the window script.\n\n**What I read and ran.** I read every changed file whole or through its full diff:\n- `RescanAsAdministrator.cs`, `GlobalDosDevices.cs`, the `OpensThroughGlobalDosDevices` method added to `Kernel32.cs`;\n- the `StartScan`, `ShowOutcome` and handler blocks of `MainWindow.xaml.cs`, the `MainWindow.xaml` pickers' line, and `WindowReport.cs`;\n- the fitness block, all seven new test files, both corpora and the window script.\n\nI built the App (0 warnings, 0 errors). I ran 222 targeted tests (SL-008's own, SettledRulesCorpus, AppArgument, FailCriticalErrors and ArchitectureRules), and all passed. Fitness check: all 120 rules hold. Reflection probes on this PC gave:\n- `HoldsDriveLetter`: true for C, D and lowercase c (0–4 ms); false for the not-ready removable drives E and F, and for a missing letter Q.\n- The probe: Fixed for C and D, null for E and F, NoRootDirectory for Q.\n- `Start` hands Windows `\"C:\\\\\"`, `\"\\\\?\\C:\\\\\"` and `\"c:\\\\\"`, and refuses `C:\\\\` and `C:\\x` with NotADriveLine without calling Windows.\n\n**Promises I checked:**\n- **Probe and offer.** The probe runs on the scan's own background task (gated by `WorthProbing`), before `ShowOutcome`. The offer is set before `ShowVolumeInUse`, so it is in place when EndingShown is raised.\n- **Reset.** `StartScan`'s `HideRescanOffer` resets the button and status line, and `ShowProblem` is called only from `StartScan` and `ShowOutcome`, so no problem ending can show a stale offer.\n- **Report.** `offered` is read from the button's `IsVisible` and sits in the top-level dictionary for every ending. The SL-005 script's key-set check is a subset check, so the new keys break no reader.\n- **Unreadable count.** `UnreadableRows.Build` only removes duplicates, so the trigger and the Unreadable tab count the same folders.\n- **Hook.** It presses drive buttons only through `DrivePanel`, and other controls only by name.\n\n**Findings:**\n- **m1 (repro proved):** two of the call-site rule's patterns use `[\\w.]*`. That misses `using static global::...RescanAsAdministrator;`, its `using X = global::` alias, and spaced dots. A bare `Start(...)` from `OnLoaded` would then get past both the fitness entry and the guard test's copy of those patterns. I ran the repro against this tree: it fails 3 of 3, and the tree is back as it was.\n- **m2 (no repro possible):** in the window script, the no-path and path-window steps report 'held … with no prompt' for any process still alive after 6 s. A runas raised early on the window launch path leaves the process alive, blocked on the prompt, so those two steps catch only a manifest-level 740. The report-mode run and the text rules do still guard it.\n\nThe full suite was not re-run here: about 2.5 GB was free, under the stated 4.1 GB threshold. The whole-drive script run was not repeated, because a whole-drive scan needs permission first. The code graph query failed (database locked) and I did not retry it.\n\nSecond reader, for inputs: This was the input pass. I fed crafted spellings through the product code, the fitness patterns and the window script, and found no input defect in the product code.\n\n**Product code looks right for the inputs I tried.** `Start` only accepts a display form of exactly `X:\\`, so the elevated copy can only ever get `\"X:\\\\\"` or `\"\\\\?\\X:\\\\\"`. I checked folders, shares, `\\\\?\\UNC\\`, quotes, `--report` and extra arguments. The probe only opens a letter whose type is Fixed or Removable. Every IO, access or argument exception gives null.\n\n**Two of the new fitness patterns miss members of families this slice says it closed.** I confirmed both with .NET Regex against the patterns as `SettledRulesCorpusTests.ReadRule` reads them. Each comes with a repro test that I ran and that fails on this tree: 5 of 5 rows red.\n- **COM moniker:** the elevation family ban leaves out the moniker's second documented level, `Elevation:Highest!new:{clsid}`.\n- **`global::` imports:** the call-site rule, and the same two regexes in `RescanElevationGuardTests`, do not see a static import or alias written with `global::` (`using static global::FsAnalyser.App.RescanAsAdministrator;`, `using RA = global::...`). A bare `Start(...)` or `RA.Start(...)` then gets past every guard. A forwarder in the excepted file named `StartFor...` also slips past the `\\bStart\\b` word boundary.\n\n**The window script decides 'privileged' differently from the app.** The script checks membership of Administrators (or SYSTEM). The app checks `Environment.IsPrivilegedProcess`, which reads the token's elevation. An elevated token without Administrators, such as a Backup Operators member, therefore makes the drive step FAILED when no offer is the correct answer. That is a new member of the closed m2 family. The stub replaces the privilege read, so no repro is possible.\n\n**Two extras, not required by anyone:**\n- The GLOBAL?? letter gate cannot see a session-local definition that shadows a global letter. The offer is then made and the elevated copy scans a different volume. I did not run this, because shadowing a letter would redirect the person's own session.\n- The script's no-path and path-window steps call ALIVE \"held, with no prompt\", but never look for a prompt.\n\nThe temporary repro files were removed after the run, and the tree's status is back to what it was. Fitness op=check: every one of the 120 rules holds.",
+  "matches_design": true,
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "claim": "The call-site rule's using-directive patterns use [\\w.]* between 'using static' / 'using X =' and RescanAsAdministrator, so `using static global::FsAnalyser.App.RescanAsAdministrator;`, `using RA = global::FsAnalyser.App.RescanAsAdministrator;` and `using static FsAnalyser.App . RescanAsAdministrator;` all match none of the entry's patterns. Any of those directives makes a bare `Start(Environment.ProcessPath, root, Process.Start)` legal C# that never spells `RescanAsAdministrator.Start`. That passes this fitness entry in every src file. It also passes RescanElevationGuardTests inside MainWindow.xaml.cs, because that test's MainWindowDoesNotImportOrAliasTheClass hard-codes the same two regexes, and its Start counters only look for the qualified spelling. So a call from OnLoaded or ShowOutcome, the M2 route to an unattended UAC prompt, gets past both layers. Measured: the four patterns run over the three lines give False for each, and True for the plain `using static FsAnalyser.App.RescanAsAdministrator;`.",
+    "class_of": "C# spellings that name RescanAsAdministrator.Start without writing RescanAsAdministrator.Start",
+    "threat": "accident",
+    "file": ".taad/fitness.yaml",
+    "line": 1645,
+    "end_line": 1646,
+    "evidence": ".taad/fitness.yaml:1645-1646 under 'only the window's own handler calls the rescan start, and nothing else names the handler'; tests/FsAnalyser.Core.Tests/RescanElevationGuardTests.cs:95-96 repeats the same two regexes; the corpus RescanElevationRulesCorpus.json E03/E04 has no global:: or spaced-dot row.",
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1645,
+     "text": "    - '(?m)\\busing\\s+static\\s+[\\w.]*\\bRescanAsAdministrator\\b'"
+    },
+    "fix": "Widen both patterns to allow the alias qualifier and whitespace, for example '(?m)\\busing\\s+static\\s+[\\w.:\\s]*\\bRescanAsAdministrator\\b' and '(?m)\\busing\\s+\\w+\\s*=\\s*[\\w.:\\s]*\\bRescanAsAdministrator\\b'. Make the same change in RescanElevationGuardTests.MainWindowDoesNotImportOrAliasTheClass. Add corpus rows E17-E19 (expect fire, before quiet) for the three spellings above.",
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/CrSl008UsingDirectiveSpellingsTests.cs",
+     "body": "using System.Text.RegularExpressions;\n\nnamespace FsAnalyser.Core.Tests;\n\n// Code review of SL-008: a using directive that names RescanAsAdministrator lets a bare Start(...) reach the elevation call\n// without spelling RescanAsAdministrator.Start, so the call-site rule must fire on every spelling of one.\npublic class CrSl008UsingDirectiveSpellingsTests\n{\n    private const string CallSiteRule = \"only the window's own handler calls the rescan start, and nothing else names the handler\";\n\n    [Theory]\n    [InlineData(\"using static global::FsAnalyser.App.RescanAsAdministrator;\")]\n    [InlineData(\"using RA = global::FsAnalyser.App.RescanAsAdministrator;\")]\n    [InlineData(\"using static FsAnalyser.App . RescanAsAdministrator;\")]\n    public void TheCallSiteRuleFiresOnAUsingDirectiveThatNamesTheClass(string line)\n    {\n        SettledRulesCorpusTests.Rule rule = SettledRulesCorpusTests.ReadRule(CallSiteRule);\n        Assert.Contains(rule.Patterns, p => Regex.IsMatch(line, p));\n    }\n}\n",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~CrSl008UsingDirectiveSpellingsTests"
+    }
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "defect",
+    "claim": "For the no-path and path-window steps of case 13, the window script's verdict is 'held' with the reason 'the window stayed up, with no prompt and no exit' whenever the process is alive after 6 s. Nothing measures whether a prompt is up. Suppose the app asked for elevation itself on the window launch path, through an early runas or ShellExecuteEx from App.OnStartup's window branch. ShellExecuteEx would block the UI thread on the consent prompt, and the process would be alive, so the step reports held 'with no prompt'. These two steps can fail only on a manifest-level request (740 at CreateProcess). The design's case 13 names both 'a manifest level or an early runas'. O-015's discharge ('still up after 6 s with no prompt') repeats the overclaim. The report-mode folder run (TIMEOUT is FAILED) and the text rules do still cover an early runas, so the overall guard holds. Only these two verdicts claim more than they measured.",
+    "file": "tests/window/SL-008-RescanOfferOnALocalDrive.Tests.ps1",
+    "line": 220,
+    "evidence": "Get-WindowVerdict maps Exit 'ALIVE' straight to held. Invoke-Launch sets ALIVE whenever WaitForExit($WindowSeconds) times out for a window kind (lines 196-202). No consent.exe or prompt check exists anywhere in the script.",
+    "quote": {
+     "path": "tests/window/SL-008-RescanOfferOnALocalDrive.Tests.ps1",
+     "line": 220,
+     "text": "    if ($read.Exit -ceq 'ALIVE') { return New-Verdict 'held' 'the window stayed up, with no prompt and no exit' }"
+    },
+    "fix": "Either check for a consent.exe process started after the launch (Get-Process consent, StartTime after the launch) before calling an ALIVE window run held, and make that row FAILED. Or reword the held reason, and the script header for no-path and path-window, to say these steps catch only a manifest-level request (740), and that an early runas is caught by the report-mode run and the text rules."
+   },
+   {
+    "id": "IN-m1",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "claim": "The elevation family ban leaves out the COM elevation moniker's second documented level. The rule's only moniker pattern is '(?m)(?i)Elevation:Administrator'. 'Elevation:Highest!new:{clsid}', which CoGetObject accepts and which elevates with no verb, matches none of the five patterns. So it is caught by nothing in src outside the excepted file. The corpus (A11) and the because text call the moniker a 'way in', but only one of its two spellings is pinned. Confirmed by running the patterns as ReadRule reads them: both rows of the repro are quiet.",
+    "file": ".taad/fitness.yaml",
+    "line": 1600,
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1600,
+     "text": "    - '(?m)(?i)Elevation:Administrator'"
+    },
+    "evidence": "Patterns read from fitness.yaml:1595-1600 by SettledRulesCorpusTests.ReadRule. [regex]::IsMatch gives quiet for 'var m = \"Elevation:Highest!new:{3E5F...}\";' and for 'CoGetObject(\"Elevation:highest!new:\" + clsid, ...)'. The repro below failed 2/2 on this tree.",
+    "fix": "Replace the pattern with '(?m)(?i)\\bElevation:\\s*(Administrator|Highest)\\b'. Add corpus rows to RescanElevationRulesCorpus.json under 'only the rescan button's file asks Windows for elevation': A20 { lines: ['            var moniker = \"Elevation:Highest!new:{3E5FC7F9-9A51-4367-9063-A120244FBEC7}\";'], expect: fire, before: quiet }. Also list a moniker built from pieces at run time ('\"Elevation:\" + level') in notBounded, or ban '(?i)\\bElevation:' outright.",
+    "class_of": "C# spellings that set a shell verb or request elevation",
+    "threat": "accident",
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/RescanElevationMonikerHighestTests.cs",
+     "body": "using System.Text.RegularExpressions;\n\nnamespace FsAnalyser.Core.Tests;\n\n// SL-008 review, input pass: the COM elevation moniker has two levels, Administrator and Highest; both elevate with no verb.\npublic class RescanElevationMonikerHighestTests\n{\n    [Theory]\n    [InlineData(\"            var moniker = \\\"Elevation:Highest!new:{3E5FC7F9-9A51-4367-9063-A120244FBEC7}\\\";\")]\n    [InlineData(\"            object o = CoGetObject(\\\"Elevation:highest!new:\\\" + clsid, ref bind, iid);\")]\n    public void TheElevationRuleCatchesTheHighestLevelOfTheMoniker(string line)\n    {\n        SettledRulesCorpusTests.Rule rule = SettledRulesCorpusTests.ReadRule(\"only the rescan button's file asks Windows for elevation\");\n        Assert.Contains(rule.Patterns, p => Regex.IsMatch(line, p));\n    }\n}\n",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~RescanElevationMonikerHighestTests"
+    }
+   },
+   {
+    "id": "IN-m2",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "claim": "The call-site rule's import and alias patterns use '[\\w.]*' before RescanAsAdministrator, so they do not match the global:: alias qualifier (or spaces around a dot). These three lines are legal C# and all quiet:\n- 'using static global::FsAnalyser.App.RescanAsAdministrator;'\n- 'global using static global::FsAnalyser.App.RescanAsAdministrator;'\n- 'using RA = global::FsAnalyser.App.RescanAsAdministrator;'\nAfter one of them, a bare 'Start(Environment.ProcessPath, root, Process.Start)' or 'RA.Start(...)' in any App file, OnLoaded and ShowOutcome included, reaches the elevation and trips nothing. RescanElevationGuardTests.MainWindowDoesNotImportOrAliasTheClass (lines 95-96) uses the same two regexes. Its other facts only look for the literal 'RescanAsAdministrator.Start', so they do not catch it inside MainWindow.xaml.cs either. A related member: a forwarder added to the excepted RescanAsAdministrator.cs and named StartFor... escapes '\\bRescanAsAdministrator\\s*\\.\\s*Start\\b', because the word boundary fails before the next letter.",
+    "file": ".taad/fitness.yaml",
+    "line": 1645,
+    "end_line": 1646,
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1645,
+     "text": "    - '(?m)\\busing\\s+static\\s+[\\w.]*\\bRescanAsAdministrator\\b'"
+    },
+    "evidence": "I ran the patterns at fitness.yaml:1645-1646 with .NET Regex: all three global:: lines are quiet, and the plain 'using static FsAnalyser.App.RescanAsAdministrator;' fires. The repro below failed 3/3 on this tree. The same regexes are in tests/FsAnalyser.Core.Tests/RescanElevationGuardTests.cs:95-96.",
+    "fix": "Use '(?m)\\busing\\s+static\\s+(global::)?[\\w.\\s]*\\bRescanAsAdministrator\\b' and '(?m)\\busing\\s+\\w+\\s*=\\s*(global::)?[\\w.\\s]*\\bRescanAsAdministrator\\b' in both fitness.yaml and RescanElevationGuardTests.cs:95-96. Add corpus rows under the call-site rule:\n- E17 'using static global::FsAnalyser.App.RescanAsAdministrator;' (fire);\n- E18 'using RA = global::FsAnalyser.App.RescanAsAdministrator;' (fire);\n- E19 'using static FsAnalyser.App .RescanAsAdministrator;' (fire).\nTo cover forwarders, either widen Start's boundary to '\\bRescanAsAdministrator\\s*\\.\\s*Start\\w*' or add a fact that RescanAsAdministrator.cs calls its start delegate only inside Start's body.",
+    "class_of": "spellings that reach RescanAsAdministrator.Start without spelling RescanAsAdministrator.Start",
+    "threat": "accident",
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/RescanStartGlobalQualifiedImportTests.cs",
+     "body": "using System.Text.RegularExpressions;\n\nnamespace FsAnalyser.Core.Tests;\n\n// SL-008 review, input pass: a static import or an alias written with the global:: qualifier names RescanAsAdministrator.Start\n// without spelling it, so a bare Start(...) or Alias.Start(...) in any other src file reaches the elevation.\npublic class RescanStartGlobalQualifiedImportTests\n{\n    [Theory]\n    [InlineData(\"using static global::FsAnalyser.App.RescanAsAdministrator;\")]\n    [InlineData(\"global using static global::FsAnalyser.App.RescanAsAdministrator;\")]\n    [InlineData(\"using RA = global::FsAnalyser.App.RescanAsAdministrator;\")]\n    public void TheCallSiteRuleCatchesAGlobalQualifiedImportOfTheClass(string line)\n    {\n        SettledRulesCorpusTests.Rule rule = SettledRulesCorpusTests.ReadRule(\"only the window's own handler calls the rescan start, and nothing else names the handler\");\n        Assert.Contains(rule.Patterns, p => Regex.IsMatch(line, p));\n    }\n}\n",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~RescanStartGlobalQualifiedImportTests"
+    }
+   },
+   {
+    "id": "IN-m3",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "nature": "defect",
+    "claim": "The script and the app decide 'privileged' differently. Get-Privileged returns true only for membership of Administrators (IsInRole) or SYSTEM. The app withholds the offer on Environment.IsPrivilegedProcess, which reads the token's TokenElevation. UAC also splits the token of members of other privileged groups, such as Backup Operators, Network Configuration Operators and Cryptographic Operators. An elevated shell of such an account is TokenIsElevated=1 with IsInRole(Administrator) false. The script then goes past the privileged row, the app correctly makes no offer, and the drive step reports FAILED ('...in a copy that is not elevated, and the ending does not offer'). This is a new member of the class O-019 closed. Its corpus cannot hold the row, because -Stub replaces the privilege read.",
+    "file": "tests/window/SL-008-RescanOfferOnALocalDrive.Tests.ps1",
+    "line": 71,
+    "end_line": 76,
+    "quote": {
+     "path": "tests/window/SL-008-RescanOfferOnALocalDrive.Tests.ps1",
+     "line": 75,
+     "text": "    [bool]($principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator) -or $identity.IsSystem)"
+    },
+    "evidence": "The app's gate is at MainWindow.xaml.cs (WorthProbing(..., Environment.IsPrivilegedProcess) in StartScan, and Offers(..., Environment.IsPrivilegedProcess) in ShowOutcome). The script's gate is at SL-008-RescanOfferOnALocalDrive.Tests.ps1:71-76. Not run: no account with such a token exists here.",
+    "fix": "In FsaSl008.Native, add an IsElevated() that calls OpenProcessToken plus GetTokenInformation(TokenElevation = 20) and returns TokenIsElevated != 0. This is the read Environment.IsPrivilegedProcess makes, and it works under 5.1 and 7. Have Get-Privileged return IsElevated() -or IsInRole(Administrator) -or IsSystem. Add a note row to SL-008-RescanOfferEndingsCorpus.json saying that privileged covers an elevated token without Administrators.",
+    "class_of": "runs where offered=false is correct but the table says FAILED",
+    "threat": "accident"
+   },
+   {
+    "id": "IN-m4",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "extra",
+    "claim": "The GLOBAL?? open proves only that the global namespace holds the letter. It does not prove that this session's letter is the same volume. A session-local definition made with DefineDosDevice over a letter the global namespace also holds (C: or D:) takes precedence in this session. subst.exe refuses a letter in use, but DefineDosDevice does not. The scan then reads the local target, DriveType reads Fixed, the global open succeeds, and the offer is shown. The elevated copy, which has no such local definition, then scans the global volume: a different tree from the ending it was offered on. This is the opposite direction to O-001, and nothing checks it.",
+    "file": "src/FsAnalyser.Core/Native/Kernel32.cs",
+    "line": 239,
+    "quote": {
+     "path": "src/FsAnalyser.Core/Native/Kernel32.cs",
+     "line": 239,
+     "text": "    internal static bool OpensThroughGlobalDosDevices(char letter)"
+    },
+    "evidence": "OpensThroughGlobalDosDevices opens only \\\\?\\GLOBALROOT\\GLOBAL??\\X:\\ and returns !handle.IsInvalid. It never compares that open with what X:\\ resolves to in this session. Not run: shadowing C: or D: would redirect the person's own logon session for the length of the experiment.",
+    "fix": "Open both X:\\ and \\\\?\\GLOBALROOT\\GLOBAL??\\X:\\ in the same CriticalErrorBoxOff. Return true only when GetFileInformationByHandle gives the same VolumeSerialNumber and file index for both roots (or compare QueryDosDevice('X:') in this session with the global target)."
+   },
+   {
+    "id": "IN-m5",
+    "severity": "minor",
+    "dimension": "test-coverage",
+    "nature": "extra",
+    "claim": "For the window runs (no path, and a folder path), Get-WindowVerdict maps ALIVE to held with the words 'with no prompt'. Nothing checks for a prompt. Suppose a later change elevated from a start route that report mode does not take, for example the no-path branch of OnLoaded or LoadDrives. The process would sit on the consent prompt, still running when the 6 s bound ends, and the step would report held. CreateProcess fails with 740 only for a manifest level; an elevation the app itself asks for after starting does not. The report-mode short runs catch it only on routes that report mode shares.",
+    "file": "tests/window/SL-008-RescanOfferOnALocalDrive.Tests.ps1",
+    "line": 220,
+    "quote": {
+     "path": "tests/window/SL-008-RescanOfferOnALocalDrive.Tests.ps1",
+     "line": 220,
+     "text": "    if ($read.Exit -ceq 'ALIVE') { return New-Verdict 'held' 'the window stayed up, with no prompt and no exit' }"
+    },
+    "evidence": "Invoke-Launch (lines 196-203) waits $WindowSeconds and then kills the process. No step looks for consent.exe or a secure-desktop switch during that bound.",
+    "fix": "While a window run is up, poll Get-Process consent. If it appears, kill the app and return a new Exit 'PROMPT' that Get-WindowVerdict maps to FAILED. Add a stub row for PROMPT to the endings corpus."
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "cannot-tell",
+    "evidence": "Owed to validate-slice, and not observable from the code. GlobalDosDevices.HoldsDriveLetter (src/FsAnalyser.Core/Native/GlobalDosDevices.cs:19-20) only proves the global namespace holds the letter. Nothing checks what an elevated session would resolve, and making a shadowing definition there needs an elevated DefineDosDevice."
+   },
+   {
+    "key": "O-002",
+    "discharged": "cannot-tell",
+    "evidence": "Owed to validate-slice. It needs a real interactive consent elevation (N-075). The code reaches it only through Process.Start with runas in MainWindow.OnRescanAsAdministrator, which cannot be driven unattended."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "RescanAsAdministratorOfferTests.AFinishedScanOfAFixedOrRemovableDriveThatLeftFoldersUnreadOffersIt feeds C:\\, c:\\, Z:\\, z:\\, E:\\, e:\\, \\\\?\\C:\\ and \\\\?\\c:\\ with Fixed/Removable and unreadable 1/5000. Offers is at RescanAsAdministrator.cs:91-94. Ran green here."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "OnlyAScanThatCompletedOffersIt varies every ScanStatus with the drive-root shape held fixed, so the status gate itself is what is exercised. MainWindow.ShowOutcome returns early for RootUnreadable and Refused (xaml.cs:645-657) before the Offers line at :711, and StartScan:273 has already collapsed the button."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "ARootIsADriveOnlyInTheShapeOfOne gives true for C:\\, c:\\ and \\\\?\\C:\\, and false for C:, C:\\dir, C:\\dir\\, \\\\server\\share and \\\\?\\UNC\\... The script's folder, folder-slash and root-unreadable steps check the report key is present and false. The UNC report run is declared as not run at exe level."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "ADriveThatWasReadInFullDoesNotOfferIt (0 and -1 give false). WorthProbing is at RescanAsAdministrator.cs:61-62 (unreadableFolders > 0). Corpus rows D05 and D06 run through -Stub under both PowerShells."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "ATypeThatIsNotLocalIsReturnedAsItIsAndTheNamespaceIsNeverAsked counts holdsLetter calls and asserts 0 for Network, CDRom, Ram, NoRootDirectory and Unknown. The code returns the type before holdsLetter (RescanAsAdministrator.cs:172-174)."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "RescanAsAdministratorProbeTests uses a real SubstDrive and the system drive, and asserts the result equals IsSystem. It ran green here, not as SYSTEM. My own probe on this PC: C and D held, the not-ready removable drives E and F not held."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "AReadThatThrowsAnIoAccessOrArgumentExceptionGivesNull throws from both readers. The catch filter is at RescanAsAdministrator.cs:177."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "AnElevatedCopyNeverOffersItWhateverElseHolds. MainWindow passes Environment.IsPrivilegedProcess to both WorthProbing (xaml.cs:309) and Offers (:712)."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "EveryDriveRootReachesTheNewCopyAsItsOneArgumentAndNothingElse: 52 roots, a spaced exe path, and the real CommandLineToArgvW split (TestNative.SplitArguments). My reflection run gave Arguments \"C:\\\\\" for C:\\."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "ADeclinedPromptIsTheDeclinedLineAndWindowsIsCalledOnce. The catch is at RescanAsAdministrator.cs:127-130. The handler leaves the button enabled on a returned line (xaml.cs:964-968)."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "AnyOtherRefusalIsTheRefusedLineWithItsCodeAndNoPath (2, 5, 1155, 740, 1, 1222, 1224, 0) and NoProgramFileIsTheNoProgramLineAndWindowsIsNeverCalled. The checks are at RescanAsAdministrator.cs:112-115."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "tests/window/SL-008-RescanOfferOnALocalDrive.Tests.ps1, Get-DriveVerdict (lines 241-265), needs offered true, a visible and in-view button, and PickerPanel's height equal to the folder run's. The builder's real run recorded held on D:. I did not repeat the whole-drive scan."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "The script launches by CreateProcess (UseShellExecute false, line 189). The report runs give FAILED on 740, TIMEOUT or no report (rows S05-S07). Caveat filed as m2: the no-path and path-window steps detect only a manifest-level 740, not an early runas that leaves the process alive."
+   },
+   {
+    "key": "O-016",
+    "discharged": "yes",
+    "evidence": "Builder-owned RescanAsAdministratorOfferTests, the 1223 test in StartTests, the script's negatives and case 13's short runs exist and ran green. RescanOfferEndingsTests runs all 44 corpus rows under pwsh and 5.1 (9 tests confirmed with verbosity normal)."
+   },
+   {
+    "key": "O-017",
+    "discharged": "yes",
+    "evidence": "Three layers are in place: the call-site entry (fitness.yaml:1641-1647), the hook entry (:1661-1667) and RescanElevationGuardTests. They implement the critic's prescribed patterns. A new member of the same family (using static global:: and spaced dots) is filed as m1."
+   },
+   {
+    "key": "O-018",
+    "discharged": "yes",
+    "evidence": "RescanAsAdministratorProbeTests.cs:19, 37-38 and 56-57 assert against WindowsIdentity.GetCurrent().IsSystem."
+   },
+   {
+    "key": "O-019",
+    "discharged": "yes",
+    "evidence": "Get-Privileged (script lines 71-76) uses WindowsPrincipal.IsInRole or IsSystem. Select-Drive filters on opensGlobal (line 146) through the script's own GLOBAL?? CreateFileW. TheTableBeforeTheFixFailsTheRowsTheFixClosed passes."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "fitness.yaml:1595-1600 bans runas, lpVerb, UseShellExecute, ShellExecute\\w* and Elevation:Administrator outside RescanAsAdministrator.cs. The because text lists reflection as uncaught. The 56-row corpus is green."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "fitness.yaml entries 'no manifest or resource is attached...' cover src/** and Directory.Build.* with (ApplicationManifest|Win32Manifest|Win32Resource). TheEntriesAreOneEachWrittenByHandAndTheirGlobsNameFiles shows both globs name files."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "WorthProbing, IsRescannableType and IsDriveRootShape are each written once (RescanAsAdministrator.cs:61-82). The lambda in MainWindow.xaml.cs:309 and Offers:92 both call WorthProbing, and the probe gates holdsLetter on IsRescannableType (:173). Both pinning tests pass."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "RescanAsAdministratorOfferTests.AFinishedScanOfAFixedOrRemovableDriveThatLeftFoldersUnreadOffersIt: Completed, upper- and lower-case X:\\ (plus \\\\?\\ forms), Fixed/Removable, unreadable >= 1, elevated false."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "OnlyAScanThatCompletedOffersIt iterates every ScanStatus with root C:\\, Fixed, unreadable 1 and not elevated, so Cancelled, RootUnreadable and Refused reach the status gate rather than being refused on shape. ShowOutcome's early returns are not run by any test; StartScan's reset covers them."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "Unit: ARootIsADriveOnlyInTheShapeOfOne feeds folders with and without a trailing backslash, \\\\server\\share and \\\\?\\UNC\\. Report: the script's folder and folder-slash report runs (key present, false). A UNC report run is not made (declared)."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "ADriveThatWasReadInFullDoesNotOfferIt (unreadable 0 and -1) and stub rows D05/D06. A real drive read in full is not available unattended; the script calls that INCONCLUSIVE."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "ATypeThatIsNotLocalIsReturnedAsItIsAndTheNamespaceIsNeverAsked injects Network, CDRom, Ram, NoRootDirectory and Unknown, and counts holdsLetter calls (asserts 0). No real network letter is touched."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "TheProbeGivesTheSystemDriveItsTypeAndASubstLetterNone and ASubstLetterIsGlobalOnlyWhenSubstMadeItInTheGlobalNamespace make a real SUBST letter through SubstDrive and use the real system drive. They ran green here, not as SYSTEM."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "AReadThatThrowsAnIoAccessOrArgumentExceptionGivesNull throws IOException, UnauthorizedAccessException, ArgumentException and subclasses from typeOf and from holdsLetter."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "AnElevatedCopyNeverOffersItWhateverElseHolds passes elevated true for every DriveType, and the sweep test covers elevated true and false."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "EveryDriveRootReachesTheNewCopyAsItsOneArgumentAndNothingElse covers 52 roots A:\\-Z:\\ and a:\\-z:\\ with the exe path 'C:\\Program Files\\Some Folder\\...', split by the real CommandLineToArgvW."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "ADeclinedPromptIsTheDeclinedLineAndWindowsIsCalledOnce injects start throwing Win32Exception(1223)."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "AnyOtherRefusalIsTheRefusedLineWithItsCodeAndNoPath covers 2, 5, 1155 and others. NoProgramFileIsTheNoProgramLineAndWindowsIsNeverCalled covers null and empty."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "The script's drive step launches report mode on a real, ready, global Fixed drive and checks offered, button visible and inView, and PickerPanel height. The builder ran it for real on D: (I did not repeat the whole-drive scan)."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "The script makes no-path, path-window and folder report-mode launches by CreateProcess. The report runs fail on 740 or TIMEOUT. The window runs can fail only on 740 (see finding m2)."
+   },
+   {
+    "key": "C-014",
+    "exercised": "no",
+    "evidence": "Not material in the design, and no test exists. The reason still holds: the only unattended offered ending is a whole real drive, and the hook is barred from pressing the button. The reset is at MainWindow.xaml.cs:273 (HideRescanOffer), and :972-978 also re-enables the button and clears RescanStatus."
+   }
+  ],
+  "drift": [],
+  "second_round": {
+   "run_id": 11516,
+   "filed": 5,
+   "reader": "inputs"
+  },
+  "reading_pass": {
+   "state": "none",
+   "why": [],
+   "lens": null,
+   "cut_off": false,
+   "cut_runs": {
+    "line": false,
+    "inputs": false,
+    "any": false
+   },
+   "run_id": null,
+   "session": null,
+   "resumed": null,
+   "asked": [],
+   "asked_hunks": 0,
+   "named": [],
+   "before": {
+    "read_whole": 11,
+    "changed": 19,
+    "listed": 8
+   },
+   "filed": 0,
+   "read_after": 0,
+   "still_unread": []
+  },
+  "unread_measured": {
+   "measured": true,
+   "why": "",
+   "changed": 19,
+   "read_whole": 11,
+   "deleted": [],
+   "runs": [
+    11515,
+    11516
+   ],
+   "range": {
+    "base": "a805368de1910f4bda8774e5acea5a04f033fc84",
+    "head": "e8626f2cae34820c48bdfdaa47f5206e52711931",
+    "source": "commits",
+    "hunk_base": "a805368de1910f4bda8774e5acea5a04f033fc84",
+    "hunk_base_from": "the merge base with the integration branch"
+   },
+   "items": [
+    {
+     "path": ".taad/fitness.yaml",
+     "state": "partly-opened",
+     "section": "lines 1-1667 of 1667",
+     "reason": "seen only as 5 Grep lines; seen only through a shell command: git --no-pager, git diff",
+     "size_lines": 1667,
+     "hunks": []
+    },
+    {
+     "path": "src/FsAnalyser.App/MainWindow.xaml",
+     "state": "partly-opened",
+     "section": "lines 1-94, 150-574 of 574",
+     "reason": "a Read returned only part of it; seen only as 2 Grep lines; seen only through a shell command: git --no-pager, git diff",
+     "size_lines": 574,
+     "hunks": []
+    },
+    {
+     "path": "src/FsAnalyser.App/MainWindow.xaml.cs",
+     "state": "partly-opened",
+     "section": "lines 1-239, 370-635, 736-1148 of 1148",
+     "reason": "a Read returned only part of it; seen only as 29 Grep lines; seen only through a shell command: git --no-pager, git diff",
+     "size_lines": 1148,
+     "hunks": []
+    },
+    {
+     "path": "src/FsAnalyser.App/WindowReport.cs",
+     "state": "partly-opened",
+     "section": "lines 1-129, 315-465 of 465",
+     "reason": "a Read returned only part of it; seen only as 14 Grep lines; seen only through a shell command: git --no-pager, git diff",
+     "size_lines": 465,
+     "hunks": []
+    },
+    {
+     "path": "src/FsAnalyser.Core/Native/Kernel32.cs",
+     "state": "partly-opened",
+     "section": "lines 1-485 of 485",
+     "reason": "seen only as 62 Grep lines; seen only through a shell command: git --no-pager, git diff",
+     "size_lines": 485,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+     "state": "partly-opened",
+     "section": "lines 1-88 of 88",
+     "reason": "seen only through a shell command: $env:taad3_home, $f, $s, git --no-pager, git diff",
+     "size_lines": 88,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/SettledRulesCorpusTests.cs",
+     "state": "partly-opened",
+     "section": "lines 76-153 of 153",
+     "reason": "a Read returned only part of it; seen only through a shell command: git --no-pager, git diff",
+     "size_lines": 153,
+     "hunks": []
+    },
+    {
+     "path": "tests/window/AppArgumentCorpus.json",
+     "state": "partly-opened",
+     "section": "lines 1-39 of 39",
+     "reason": "seen only through a shell command: git --no-pager, git diff",
+     "size_lines": 39,
+     "hunks": []
+    }
+   ],
+   "notes": []
+  }
+ }
+}
