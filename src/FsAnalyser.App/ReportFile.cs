@@ -49,11 +49,19 @@ internal sealed class ReportFile
     private string Folder => Path.GetDirectoryName(_path)!;
 
     /// <summary>
-    /// Creates a file in the report's folder and removes it again, so that a folder that takes no new file is found before a
-    /// scan and not after it. The file is opened to be deleted when its handle closes, so a killed process leaves nothing.
+    /// Creates a file in the report's folder and removes it again, so that a folder that will not take the report is found
+    /// before a scan and not after it. The file is opened to be deleted when its handle closes, so a killed process leaves
+    /// nothing.
+    /// <para>
+    /// Windows grants a creating open whatever access it asks for on the file it makes, and checks nothing of it against the
+    /// folder's rights. The write's later open of its temporary, the move that puts it in place, is checked: it asks for DELETE.
+    /// So the probe does what the write will do: while its own handle is open (sharing delete) it deletes the file by name, an
+    /// open that is checked for DELETE as the move's is. A folder that takes new files and lets no one delete or rename one
+    /// in it (a create-only drop folder) is refused here and not after the scan.
+    /// </para>
     /// </summary>
-    /// <exception cref="IOException">The file could not be created.</exception>
-    /// <exception cref="UnauthorizedAccessException">The folder takes no new file from this account.</exception>
+    /// <exception cref="IOException">The file could not be created or deleted.</exception>
+    /// <exception cref="UnauthorizedAccessException">The folder takes no new file from this account, or none can be removed or moved in it.</exception>
     public void Probe()
     {
         string probe = Path.Combine(Folder, _freshStem() + ".probe");
@@ -61,10 +69,11 @@ internal sealed class ReportFile
         {
             Mode = FileMode.CreateNew,
             Access = FileAccess.Write,
-            Share = FileShare.None,
+            Share = FileShare.Delete,
             Options = FileOptions.DeleteOnClose,
             BufferSize = 0,
         });
+        File.Delete(probe);
     }
 
     /// <summary>

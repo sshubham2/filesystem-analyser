@@ -1,0 +1,620 @@
+{
+ "schema": "slice-detail@1",
+ "slice": "SL-007",
+ "stage": "code-review",
+ "attempt": 1,
+ "at": "2026-11-20T03:56:13.065Z",
+ "head": "f42a20b11b4f72311f4384425821543afd080c28",
+ "run_id": 11436,
+ "summary": "What was built matches the design. CommandLine.Arguments has the gate, the argv0 skip, the faithful split, the repair split, the alignment check and the fallback, and Kernel32.CommandLineAsTyped reads GetCommandLineW. App.OnStartup decides the mode only on the repaired arguments and gives exit 2 when they are null. ReportFile draws a fresh name for each open and creates every file with CreateNew, and StartReportMode probes the report folder up front. The fitness block is one hand-written SL-007 block of three rules. I re-ran the checks: the repro project passes 5 of 5 (exit 0), the slice's Core tests pass 63 of 63, the whole suite passes 1443 of 1443 with xUnit.MaxParallelThreads=2, and Fitness check reports every one of the 114 declared rules holding. Every case-matrix test feeds the shape it names.\n\nOne contract does not hold, and I measured it. The design says the probe needs the same rights as the real write, but in a create-only folder it does not. Take a folder with an inherited Deny DELETE on its files and a Deny FILE_DELETE_CHILD on the folder. There the probe's CreateNew + DeleteOnClose is granted DELETE simply because it creates the file, so it passes and leaves nothing behind. The write's File.Move then opens the temporary again, that open is checked for DELETE, it is refused, and the temporary cannot be deleted either. So for that folder shape the app scans first, exits 3 at the end, and leaves a `.fsa-*.tmp`. This falsifies O-042. A repro test fails on this tree for that reason, and the fix I suggest (deleting the probe through a second open while it is held) was measured to refuse in the create-only folder and to leave nothing in either folder.\n\nThere is also one text gap: WindowReport.cs's exit-code contract does not list the new exit 2, which comes before the report path is read. No undeclared drift and no loop in the slice's history.\n\nSecond reader, for inputs: This review looked only at the inputs the new code can be handed. I built the Debug apphost and FsAnalyser.Core, then fed CommandLine.Arguments crafted command lines through pwsh (shell32 argv beside the repair). I launched the apphost on the shapes that looked suspect, measured File.Copy against planted links, and ran the two settled rules' patterns from .taad/fitness.yaml against spellings missing from SettledRulesCorpus.json. The existing CommandLineTests and SettledRulesCorpusTests pass (36 of 36). The three repro tests below fail on this tree (7 rows) and were removed again afterwards, so the tree is clean.\n\nFour findings:\n1. (Major) A root typed with an unpaired backslash-quote and no opening quote, `D:\\Data\\\" --report out.json`, is a regression. Windows splits it cleanly into 3 arguments, and on the base it ran report mode with root D:\\Data\\. The repair now opens a quote Windows never opened and joins the three into one. \"--report\" disappears, and the exe hangs with its window up: measured still running at 6 s with no report, while the control exited 0 in 811 ms.\n2. (Minor, extra) The program-name skip is not the C runtime's rule. A partly quoted exe path typed in cmd (`<dir>\\\"a b\"\\FsAnalyser.App.exe \"<tree>\\\" --report \"<r>\"`) gets exit 2 in 155 ms. The same line with the exe path fully quoted exits 0.\n3. (Minor) The args rule misses `e?.Args`, `e!.Args` and `(e).Args`.\n4. (Minor) The write rule misses `File.AppendAllBytes(Async)`, `File.Copy(..., overwrite)` and `FileInfo.Open(mode)`. File.Copy was measured writing through both a hardlink and a symlink planted at its destination.\n\nFindings 3 and 4 are new members of the families the build closed under O-023 and O-024.\n\nNothing else broke. ReportFile probe and write held on root, UNC, folder-path, absent-folder and long-name inputs, every one either refused before Probe or handled. The tab, empty-value, doubled-quote, UNC, \\\\?\\ and dotnet-muxer lines behave as designed.\n\nReading pass: I have now read both remaining files in full, QuotedRootTrailingBackslashTests.cs (lines 1-165) and its csproj (lines 1-36), and they add nothing new.\n- **The repro test:** it starts the Debug apphost for a control run and a trailing-backslash run with raw ProcessStartInfo.Arguments under a shared 7000 ms budget. It asserts the control first, then exit 0, the report on disk, and the same core.status and core.files as the control, so it feeds finish line 1's shape and checks C2.\n- **The csproj:** it builds the App only through ReferenceOutputAssembly=false and passes the exe's folder to the test as FsaAppFolder metadata. It stays out of FsAnalyser.slnx, as designed.\n\nWhat was built matches the design. I re-ran the checks: the bug project passes 5 of 5, the slice's Core tests pass 63 of 63, the whole suite passes 1443 of 1443 with xUnit.MaxParallelThreads=2, and Fitness reports every one of its 114 rules holding. Every case-matrix test feeds the shape it names.\n\nMy two findings from the first pass stand:\n- **m1 (minor defect, with a repro that fails on this tree):** in a folder that lets this account create a file but not delete one, the probe passes and the write's move is then refused. The app scans, exits 3 at the end and leaves a `.fsa-*.tmp`. This falsifies O-042.\n- **m2 (minor, text):** WindowReport.cs's exit-code contract does not list the new exit 2, which comes before the report path is read.\n\nThere is no undeclared drift, and the slice's history shows no loop.",
+ "payload": {
+  "status": "complete",
+  "verdict": "needs-fixes",
+  "summary": "What was built matches the design. CommandLine.Arguments has the gate, the argv0 skip, the faithful split, the repair split, the alignment check and the fallback, and Kernel32.CommandLineAsTyped reads GetCommandLineW. App.OnStartup decides the mode only on the repaired arguments and gives exit 2 when they are null. ReportFile draws a fresh name for each open and creates every file with CreateNew, and StartReportMode probes the report folder up front. The fitness block is one hand-written SL-007 block of three rules. I re-ran the checks: the repro project passes 5 of 5 (exit 0), the slice's Core tests pass 63 of 63, the whole suite passes 1443 of 1443 with xUnit.MaxParallelThreads=2, and Fitness check reports every one of the 114 declared rules holding. Every case-matrix test feeds the shape it names.\n\nOne contract does not hold, and I measured it. The design says the probe needs the same rights as the real write, but in a create-only folder it does not. Take a folder with an inherited Deny DELETE on its files and a Deny FILE_DELETE_CHILD on the folder. There the probe's CreateNew + DeleteOnClose is granted DELETE simply because it creates the file, so it passes and leaves nothing behind. The write's File.Move then opens the temporary again, that open is checked for DELETE, it is refused, and the temporary cannot be deleted either. So for that folder shape the app scans first, exits 3 at the end, and leaves a `.fsa-*.tmp`. This falsifies O-042. A repro test fails on this tree for that reason, and the fix I suggest (deleting the probe through a second open while it is held) was measured to refuse in the create-only folder and to leave nothing in either folder.\n\nThere is also one text gap: WindowReport.cs's exit-code contract does not list the new exit 2, which comes before the report path is read. No undeclared drift and no loop in the slice's history.\n\nSecond reader, for inputs: This review looked only at the inputs the new code can be handed. I built the Debug apphost and FsAnalyser.Core, then fed CommandLine.Arguments crafted command lines through pwsh (shell32 argv beside the repair). I launched the apphost on the shapes that looked suspect, measured File.Copy against planted links, and ran the two settled rules' patterns from .taad/fitness.yaml against spellings missing from SettledRulesCorpus.json. The existing CommandLineTests and SettledRulesCorpusTests pass (36 of 36). The three repro tests below fail on this tree (7 rows) and were removed again afterwards, so the tree is clean.\n\nFour findings:\n1. (Major) A root typed with an unpaired backslash-quote and no opening quote, `D:\\Data\\\" --report out.json`, is a regression. Windows splits it cleanly into 3 arguments, and on the base it ran report mode with root D:\\Data\\. The repair now opens a quote Windows never opened and joins the three into one. \"--report\" disappears, and the exe hangs with its window up: measured still running at 6 s with no report, while the control exited 0 in 811 ms.\n2. (Minor, extra) The program-name skip is not the C runtime's rule. A partly quoted exe path typed in cmd (`<dir>\\\"a b\"\\FsAnalyser.App.exe \"<tree>\\\" --report \"<r>\"`) gets exit 2 in 155 ms. The same line with the exe path fully quoted exits 0.\n3. (Minor) The args rule misses `e?.Args`, `e!.Args` and `(e).Args`.\n4. (Minor) The write rule misses `File.AppendAllBytes(Async)`, `File.Copy(..., overwrite)` and `FileInfo.Open(mode)`. File.Copy was measured writing through both a hardlink and a symlink planted at its destination.\n\nFindings 3 and 4 are new members of the families the build closed under O-023 and O-024.\n\nNothing else broke. ReportFile probe and write held on root, UNC, folder-path, absent-folder and long-name inputs, every one either refused before Probe or handled. The tab, empty-value, doubled-quote, UNC, \\\\?\\ and dotnet-muxer lines behave as designed.\n\nReading pass: I have now read both remaining files in full, QuotedRootTrailingBackslashTests.cs (lines 1-165) and its csproj (lines 1-36), and they add nothing new.\n- **The repro test:** it starts the Debug apphost for a control run and a trailing-backslash run with raw ProcessStartInfo.Arguments under a shared 7000 ms budget. It asserts the control first, then exit 0, the report on disk, and the same core.status and core.files as the control, so it feeds finish line 1's shape and checks C2.\n- **The csproj:** it builds the App only through ReferenceOutputAssembly=false and passes the exe's folder to the test as FsaAppFolder metadata. It stays out of FsAnalyser.slnx, as designed.\n\nWhat was built matches the design. I re-ran the checks: the bug project passes 5 of 5, the slice's Core tests pass 63 of 63, the whole suite passes 1443 of 1443 with xUnit.MaxParallelThreads=2, and Fitness reports every one of its 114 rules holding. Every case-matrix test feeds the shape it names.\n\nMy two findings from the first pass stand:\n- **m1 (minor defect, with a repro that fails on this tree):** in a folder that lets this account create a file but not delete one, the probe passes and the write's move is then refused. The app scans, exits 3 at the end and leaves a `.fsa-*.tmp`. This falsifies O-042.\n- **m2 (minor, text):** WindowReport.cs's exit-code contract does not list the new exit 2, which comes before the report path is read.\n\nThere is no undeclared drift, and the slice's history shows no loop.",
+  "matches_design": true,
+  "findings": [
+   {
+    "id": "m1",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "nature": "defect",
+    "file": "src/FsAnalyser.App/ReportFile.cs",
+    "line": 57,
+    "end_line": 68,
+    "claim": "Probe() reports a folder as writable when the write's move will be refused. Windows grants whatever access a creating open asks for on the file it creates, so the probe's DELETE (requested by DeleteOnClose) is never checked against the folder's inherited ACL. The real write's File.Move opens the existing temporary again for DELETE, and that open is checked. In a create-only folder (inherited Deny DELETE on files, Deny FILE_DELETE_CHILD on the folder), measured here: the probe opened, closed and left nothing; the write's CreateNew temporary was written; File.Move threw UnauthorizedAccessException; and File.Delete of the temporary also threw, so `.fsa-t.tmp` stayed. As a result, for that folder StartReportMode passes the up-front check, scans the whole root, then exits 3 at the end. That is SC-028's harm, against App.xaml.cs:38 'every refusal exits at once'. Write's catch also cannot remove its temporary, against its own doc ('A temporary that was made is removed when anything after that fails') and the design contract ('.fsa-<32 hex>.tmp ... is deleted on failure'). This falsifies precondition O-042, 'The probe needs exactly the rights the real write needs'.",
+    "evidence": "Measured in pwsh with the same FileStreamOptions on a scratch folder under %LOCALAPPDATA%\\Temp (cleaned up after): 'probe: opened OK; left on disk after close: False / write temp: OK / move: THREW UnauthorizedAccessException / delete temp after failed move: THREW UnauthorizedAccessException / entries: .fsa-t.tmp'. The repro below, run in place against ReportFile (linked into Core.Tests), failed at its second assert ('the probe passed a folder whose report the write then could not put in place'), with the premise assert (write refused) passing.",
+    "fix": "In Probe, open the probe with Share = FileShare.Delete (keeping CreateNew and DeleteOnClose), and while the handle is open call File.Delete(probe). That second open is checked for DELETE exactly as the move's open of the temporary is, so it throws UnauthorizedAccessException in a create-only folder, which the App already maps to exit 3. The DeleteOnClose handle still removes the file in every case. Measured: in a writable folder the delete succeeds and nothing is left; in the create-only folder it throws UnauthorizedAccessException and nothing is left.",
+    "class_of": "rights a freshly created file is granted by its creating open but which the write's later open of that file is checked for",
+    "threat": "accident",
+    "quote": {
+     "path": "src/FsAnalyser.App/ReportFile.cs",
+     "line": 62,
+     "text": "            Mode = FileMode.CreateNew,\n            Access = FileAccess.Write,\n            Share = FileShare.None,\n            Options = FileOptions.DeleteOnClose,"
+    },
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/ReportFileDropFolderTests.cs",
+     "body": "using System.Security.AccessControl;\nusing System.Security.Principal;\nusing System.Text;\nusing FsAnalyser.App;\n\nnamespace FsAnalyser.Core.Tests;\n\n/// <summary>\n/// SC-028's probe against a folder that takes a new file but does not let this account delete or rename one in it (an inherited\n/// Deny DELETE on its files and a Deny FILE_DELETE_CHILD on the folder, a create-only drop folder). The write's move needs DELETE on\n/// the temporary, so the report cannot be put there; the probe has to say so up front, as it does for a folder that takes no file.\n/// </summary>\npublic class ReportFileDropFolderTests\n{\n    [Fact]\n    public void AProbeIsRefusedWhereTheWritesMoveWouldBeRefused()\n    {\n        using var tree = new TempTree();\n        string folder = tree.Folder(\"drop\");\n        string report = Path.Combine(folder, \"r.json\");\n        var directory = new DirectoryInfo(folder);\n        SecurityIdentifier me = WindowsIdentity.GetCurrent().User!;\n        var noDeleteChild = new FileSystemAccessRule(me, FileSystemRights.DeleteSubdirectoriesAndFiles,\n            InheritanceFlags.None, PropagationFlags.None, AccessControlType.Deny);\n        var noDeleteOfFiles = new FileSystemAccessRule(me, FileSystemRights.Delete,\n            InheritanceFlags.ObjectInherit, PropagationFlags.InheritOnly, AccessControlType.Deny);\n        DirectorySecurity security = directory.GetAccessControl();\n        security.AddAccessRule(noDeleteChild);\n        security.AddAccessRule(noDeleteOfFiles);\n        directory.SetAccessControl(security);\n        try\n        {\n            Exception? probe = Record.Exception(() => new ReportFile(report).Probe());\n            Exception? write = Record.Exception(() => new ReportFile(report).Write(Encoding.UTF8.GetBytes(\"{ \\\"schema\\\": 1 }\")));\n\n            Assert.True(write is IOException or UnauthorizedAccessException,\n                $\"premise: the write's move must be refused in this folder, and it gave {write?.GetType().Name ?? \"no exception\"}\");\n            Assert.True(probe is IOException or UnauthorizedAccessException,\n                \"the probe passed a folder whose report the write then could not put in place, so the app would scan first and exit 3 only at the end\");\n        }\n        finally\n        {\n            DirectorySecurity restored = directory.GetAccessControl();\n            restored.RemoveAccessRule(noDeleteChild);\n            restored.RemoveAccessRule(noDeleteOfFiles);\n            directory.SetAccessControl(restored);\n        }\n    }\n}\n",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~ReportFileDropFolderTests"
+    }
+   },
+   {
+    "id": "m2",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "text",
+    "file": "src/FsAnalyser.App/WindowReport.cs",
+    "line": 24,
+    "end_line": 28,
+    "claim": "The report-mode exit-code contract (App.xaml.cs:11 says 'WindowReport.cs has the whole contract') was not updated for the new exit 2. App.OnStartup now exits 2 when CommandLine.Arguments returns null, meaning Windows merged the arguments and the typed line cannot account for them. That exit comes before StartReportMode, so the report path is never read and a file already at <file> is not deleted. The remarks still list exit 2 only as 'no value, no root, or any other argument', and still say 'Every non-zero exit leaves no file at <file>, so an absent file means this run has no report'. That sentence is already untrue for the no-value exit 2, and this slice adds a second exit of the same kind.",
+    "evidence": "App.xaml.cs:23-28 (`if (args is null) { Shutdown(BadArguments); return; }`) runs before StartReportMode's DeleteFirst(report). The design's CLI contract lists this case as new: 'This exit comes before StartReportMode, so, like today's no-value exit, it cannot name <file> and deletes nothing.'",
+    "fix": "Add the null case to the Exit 2 list ('or arguments Windows merged that the command line as typed cannot account for'). Qualify 'Every non-zero exit leaves no file at <file>' with the two exit-2 refusals that come before <file> is known, which delete nothing.",
+    "quote": {
+     "path": "src/FsAnalyser.App/WindowReport.cs",
+     "line": 25,
+     "text": "/// --report has no value, there is no root, or there is any other argument. Exit 3: the report could not"
+    }
+   },
+   {
+    "id": "IN-M1",
+    "severity": "major",
+    "dimension": "missing-edge-cases",
+    "nature": "defect",
+    "file": "src/FsAnalyser.Core/CommandLine.cs",
+    "line": 60,
+    "end_line": 63,
+    "claim": "The input is an unpaired backslash-quote, for example `D:\\Data\\\" --report out.json` (no opening quote). Windows splits it cleanly into [D:\\Data\", --report, out.json]: the only damage is the root's trailing quote. The gate opens on that quote and the FAITHFUL split matches, so Arguments returns the REPAIR split. REPAIR toggles quoting on every '\"', so it opens a quoted part that Windows never opened, and that part runs to the end of the line. The result is ONE argument, <D:\\Data\\ --report out.json>.\n\nApp.OnStartup (App.xaml.cs:29) then finds no --report and opens the interactive window on a nonsense root. That window never exits.\n\nOn the base this exact line ran report mode with root RootArgument(\"D:\\Data\\\"\") = D:\\Data\\. So the slice brings back its own hang for a line that used to work, against the design's contract that a line is 'never re-split wrongly'.\n\nMeasured on the Debug apphost: `<tree>\\\" --report <r>` was still running with its window up after 6000 ms and wrote no report. The control `<tree>\\ --report <r>` exited 0 in 811 ms.\n\nOther members of the family behave the same way:\n- `D:\\Data\\\" --report \"out.json` gives one argument;\n- `D:\\Data\\\" --report \"C:\\out\\\" x` gives one argument;\n- `app.exe D:\\Data --report C:\\out\\\" ` gives `C:\\out\\ ` with the trailing space absorbed.",
+    "class_of": "backslash-quote outside a quoted part, which the repair pairs with a later quote or leaves open, joining arguments Windows split",
+    "threat": "accident",
+    "evidence": "pwsh calling FsAnalyser.Core.CommandLine.Arguments on 'app.exe D:\\Data\\\" --report out.json': argv <D:\\Data\"> <--report> <out.json>, out <D:\\Data\\ --report out.json>. Exe launch via ProcessStartInfo.Arguments: 'STILL RUNNING after 6000 ms, window=True, report written: False'. Base OnStartup (git show aa3d96b): `if (e.Args.Contains(ReportOption)) { StartReportMode(e.Args); ...}` with root = CommandLine.RootArgument(roots[0]).",
+    "quote": {
+     "path": "src/FsAnalyser.Core/CommandLine.cs",
+     "line": 60,
+     "text": "        if (Split(commandLine, rest, repair: false).SequenceEqual(argv, StringComparer.Ordinal))\n            return [.. Split(commandLine, rest, repair: true)];"
+    },
+    "fix": "Fall back exactly as for a failed alignment (argv when every quote is trailing, otherwise null) in either of two cases:\n- the typed line after the program name holds an odd number of '\"', so the repair would end inside an unterminated quoted part;\n- argv has a \"--report\" element that the repaired list lacks.\n\nThe repair exists to split what Windows merged, and must never hide an option that Windows' split exposed.\n\nDo NOT simply drop an odd-run quote that stands outside quotes. That breaks the batch idiom `%~dp0\"data\" --report out.json` (`C:\\scripts\\\"data\" ...`), which the repair currently gets right: [C:\\scripts\\data, --report, out.json].",
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/CommandLineUnpairedQuoteTests.cs",
+     "body": "namespace FsAnalyser.Core.Tests;\n\n// A root typed with an unpaired backslash-quote and no opening quote: Windows splits the line into three arguments, and only\n// the root carries a trailing quote, which RootArgument repairs. The repair must not join what Windows split.\npublic class CommandLineUnpairedQuoteTests\n{\n    [Fact]\n    public void AnUnpairedQuoteAfterABackslashDoesNotJoinWhatWindowsSplit()\n    {\n        const string tail = @\"D:\\Data\\\"\" --report out.json\";\n        string[] argv = TestNative.SplitArguments(tail);\n        Assert.Equal([@\"D:\\Data\"\"\", \"--report\", \"out.json\"], argv);\n\n        string[]? got = CommandLine.Arguments(argv, \"app.exe \" + tail);\n\n        Assert.NotNull(got);\n        Assert.Equal(3, got.Length);\n        Assert.Equal(@\"D:\\Data\\\", CommandLine.RootArgument(got[0]));\n        Assert.Equal(\"--report\", got[1]);\n        Assert.Equal(\"out.json\", got[2]);\n    }\n}\n",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.CommandLineUnpairedQuoteTests"
+    }
+   },
+   {
+    "id": "IN-m1",
+    "severity": "minor",
+    "dimension": "missing-edge-cases",
+    "nature": "extra",
+    "file": "src/FsAnalyser.Core/CommandLine.cs",
+    "line": 77,
+    "end_line": 94,
+    "claim": "AfterProgramName does not skip the program name by the C runtime's rule, although its comment and the Arguments docstring say it does.\n\nucrt's program-name scan toggles quoting on EVERY '\"' and ends only at a space or tab outside quotes. This code instead:\n- ends a quoted name at its first closing quote;\n- ends an unquoted name at the first space, even inside quotes.\n\nA legal typed launch therefore fails alignment, falls back, and is refused with exit 2. The trigger is an exe path that is quoted only in part around a space, as cmd accepts: `C:\\...\\\"a b\"\\FsAnalyser.App.exe \"<tree>\\\" --report \"<r>\"`.\n\nMeasured through cmd /c on the Debug apphost reached through a junction 'a b': exit 2 at 155 ms and no report. The same line with the exe path fully quoted exited 0 in 742 ms.\n\nThis is a refusal, not a hang, and the design specified this simplified rule.",
+    "class_of": "program-name spellings the C runtime skips differently from AfterProgramName",
+    "threat": "accident",
+    "evidence": "cmd /d /s /c with partially quoted exe path: 'exit 2 at 155 ms, report written: False'; control with fully quoted path: 'exit 0 at 742 ms, report written: True'. Unit call: Arguments([\"D:\\Data\\\" --report out.json\"], 'C:\\\"Program Files\"\\app.exe \"D:\\Data\\\" --report out.json') returns NULL.",
+    "fix": "Skip the program name as ucrt does. Walk from 0 and flip a quote flag on each '\"'. Stop at the first space or tab while the flag is off: `bool q = false; int p = 0; while (p < line.Length && (q || (line[p] != ' ' && line[p] != '\\t'))) { if (line[p] == '\"') q = !q; p++; }`. Add a TheGrammar row with a partly quoted, spaced program name."
+   },
+   {
+    "id": "IN-m2",
+    "severity": "minor",
+    "dimension": "cross-cutting-conformance",
+    "nature": "defect",
+    "file": ".taad/fitness.yaml",
+    "line": 1551,
+    "claim": "The settled rule 'the app decides its mode only on repaired arguments' misses three spellings that read StartupEventArgs.Args before the repair: `e?.Args`, `e!.Args` and `(e).Args`.\n\n`\\b\\w+\\.Args\\b` needs a word character directly before the '.'. The other two patterns cover only GetCommandLineArgs and property patterns.\n\nAny of these spellings in OnStartup reopens SL-007's hang while Fitness stays green. The build declared this family closed (O-023, SettledRulesCorpus.json), and these are new members of it.",
+    "class_of": "spellings of StartupEventArgs.Args that bypass the e.Args pattern",
+    "threat": "accident",
+    "evidence": "The rule's three patterns, run as .NET regex, are all QUIET on 'if (e?.Args.Contains(ReportOption) == true)', 'string[] a = e!.Args;' and 'string[] a = (e).Args;'. Grep of src/FsAnalyser.App finds no `[?!)\\]]\\s*\\.Args` today, so the wider pattern costs no existing code.",
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1551,
+     "text": "    - '(?m)(?<!CommandLine\\.Arguments\\()\\b\\w+\\.Args\\b'"
+    },
+    "fix": "Add `- '(?m)[?!)\\]]\\s*\\.Args\\b'` to the rule's must_not_match. Add these rows to SettledRulesCorpus.json under the rule:\n- A18 `        if (e?.Args.Contains(ReportOption) == true)` fire\n- A19 `        string[] a = e!.Args;` fire\n- A20 `        string[] a = (e).Args;` fire",
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/SettledArgsRuleMissedSpellingTests.cs",
+     "body": "using System.Text.RegularExpressions;\n\nnamespace FsAnalyser.Core.Tests;\n\n// Spellings of StartupEventArgs.Args read before CommandLine.Arguments that the settled SL-007 rule must catch.\npublic class SettledArgsRuleMissedSpellingTests\n{\n    private static string[] Patterns(string name)\n    {\n        string[] lines = File.ReadAllLines(Path.Combine(FailCriticalErrorsTests.FindRepo(), \".taad\", \"fitness.yaml\"));\n        int at = Array.FindIndex(lines, l => l.Trim() == \"- name: \" + name);\n        Assert.True(at >= 0, name);\n        var patterns = new List<string>();\n        bool inPatterns = false;\n        for (int i = at + 1; i < lines.Length && !lines[i].StartsWith(\"  - name:\", StringComparison.Ordinal) && !lines[i].StartsWith(\"  #\", StringComparison.Ordinal); i++)\n        {\n            string t = lines[i].Trim();\n            if (lines[i].StartsWith(\"    \", StringComparison.Ordinal) && !lines[i].StartsWith(\"     \", StringComparison.Ordinal) && !t.StartsWith(\"- \", StringComparison.Ordinal))\n                inPatterns = t.StartsWith(\"must_not_match:\", StringComparison.Ordinal);\n            else if (inPatterns && t.StartsWith(\"- '\", StringComparison.Ordinal) && t.EndsWith('\\''))\n                patterns.Add(t[3..^1].Replace(\"''\", \"'\"));\n        }\n        Assert.NotEmpty(patterns);\n        return [.. patterns];\n    }\n\n    [Theory]\n    [InlineData(\"        if (e?.Args.Contains(ReportOption) == true)\")]\n    [InlineData(\"        string[] a = e!.Args;\")]\n    [InlineData(\"        string[] a = (e).Args;\")]\n    public void TheArgsRuleCatchesTheProperty(string line)\n    {\n        string[] patterns = Patterns(\"the app decides its mode only on repaired arguments\");\n        Assert.True(patterns.Any(p => Regex.IsMatch(line, p)), line);\n    }\n}\n",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.SettledArgsRuleMissedSpellingTests"
+    }
+   },
+   {
+    "id": "IN-m3",
+    "severity": "minor",
+    "dimension": "security",
+    "nature": "defect",
+    "file": ".taad/fitness.yaml",
+    "line": 1573,
+    "end_line": 1578,
+    "claim": "The settled rule 'the app writes files only by exclusive create' lets three BCL writers through that write through an entry already at the name. Its because text says 'Every byte the App writes goes through ReportFile', and these break that:\n- `File.AppendAllBytes` / `AppendAllBytesAsync`, a .NET 9+ API that `AppendAll(Text|Lines)` misses;\n- `File.Copy(src, dst, overwrite: true)` and `FileInfo.CopyTo(dst, true)`;\n- `FileInfo.Open(mode, ...)` with the mode in a variable, the same shape as row C16 for File.Open.\n\nFile.Copy is the obvious alternative to the File.Move that ReportFile uses to put the temporary over <report>, the one predictable name. Measured here: File.Copy(src, r.json, true) with a hardlink at r.json overwrote the sentinel's bytes. With a file symlink at the destination it overwrote the symlink's target. That is SC-037 at the fixed name, with the rule still green.\n\nThe build declared this family closed (O-024, SettledRulesCorpus.json); these are new members.",
+    "class_of": "BCL write openers that truncate through an existing entry",
+    "threat": "accident",
+    "evidence": "The rule's six patterns, run as .NET regex, are all QUIET on:\n- 'File.AppendAllBytes(path, json);'\n- 'await File.AppendAllBytesAsync(path, json);'\n- 'File.Copy(temporary, path, overwrite: true);'\n- 'new FileInfo(temporary).CopyTo(path, true);'\n- 'using var s = info.Open(mode);'\nExperiment: 'hardlink at dst: sentinel now 'REPORT''; 'symlink at dst: sentinel2 now 'REPORT''. Grep of src/FsAnalyser.App finds no `.Open(`, `Copy(`/`CopyTo(` or `AppendAll`, so the wider patterns cost no existing code.",
+    "quote": {
+     "path": ".taad/fitness.yaml",
+     "line": 1573,
+     "text": "    - '(?m)\\bFile\\.(WriteAll(Bytes|Text|Lines)|AppendAll(Text|Lines)|AppendText|CreateText|Create|OpenWrite)(Async)?\\s*\\('"
+    },
+    "fix": "Add these to must_not_match:\n- `- '(?m)\\bFile\\.(AppendAll\\w*|Copy)(Async)?\\s*\\('`\n- `- '(?m)\\.CopyTo\\s*\\([^)]*,\\s*(true|overwrite\\s*:\\s*true)\\s*\\)'`\n- `- '(?m)\\.Open\\s*\\('`\n\nAdd these rows to SettledRulesCorpus.json under the rule:\n- C33 `            File.AppendAllBytes(path, json);` fire\n- C34 `            await File.AppendAllBytesAsync(path, json);` fire\n- C35 `            File.Copy(temporary, path, overwrite: true);` fire\n- C36 `            new FileInfo(temporary).CopyTo(path, true);` fire\n- C37 `            using var s = info.Open(mode, FileAccess.Write);` fire",
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/SettledWriteRuleMissedSpellingTests.cs",
+     "body": "using System.Text.RegularExpressions;\n\nnamespace FsAnalyser.Core.Tests;\n\n// BCL calls that write through an entry already at the name, which the settled SL-007 write rule must catch.\npublic class SettledWriteRuleMissedSpellingTests\n{\n    private static string[] Patterns(string name)\n    {\n        string[] lines = File.ReadAllLines(Path.Combine(FailCriticalErrorsTests.FindRepo(), \".taad\", \"fitness.yaml\"));\n        int at = Array.FindIndex(lines, l => l.Trim() == \"- name: \" + name);\n        Assert.True(at >= 0, name);\n        var patterns = new List<string>();\n        bool inPatterns = false;\n        for (int i = at + 1; i < lines.Length && !lines[i].StartsWith(\"  - name:\", StringComparison.Ordinal) && !lines[i].StartsWith(\"  #\", StringComparison.Ordinal); i++)\n        {\n            string t = lines[i].Trim();\n            if (lines[i].StartsWith(\"    \", StringComparison.Ordinal) && !lines[i].StartsWith(\"     \", StringComparison.Ordinal) && !t.StartsWith(\"- \", StringComparison.Ordinal))\n                inPatterns = t.StartsWith(\"must_not_match:\", StringComparison.Ordinal);\n            else if (inPatterns && t.StartsWith(\"- '\", StringComparison.Ordinal) && t.EndsWith('\\''))\n                patterns.Add(t[3..^1].Replace(\"''\", \"'\"));\n        }\n        Assert.NotEmpty(patterns);\n        return [.. patterns];\n    }\n\n    [Theory]\n    [InlineData(\"            File.AppendAllBytes(path, json);\")]\n    [InlineData(\"            File.Copy(temporary, path, overwrite: true);\")]\n    [InlineData(\"            using var s = info.Open(mode, FileAccess.Write);\")]\n    public void TheWriteRuleCatchesTheWriter(string line)\n    {\n        string[] patterns = Patterns(\"the app writes files only by exclusive create\");\n        Assert.True(patterns.Any(p => Regex.IsMatch(line, p)), line);\n    }\n}\n",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~FsAnalyser.Core.Tests.SettledWriteRuleMissedSpellingTests"
+    }
+   },
+   {
+    "id": "RD-m1",
+    "severity": "minor",
+    "dimension": "unfounded-assumptions",
+    "nature": "defect",
+    "file": "src/FsAnalyser.App/ReportFile.cs",
+    "line": 57,
+    "end_line": 68,
+    "claim": "Probe() reports a folder as writable when the write's move will be refused. Windows grants whatever access a creating open asks for on the file it creates, so the probe's DELETE (requested by DeleteOnClose) is never checked against the folder's inherited ACL. The real write's File.Move opens the existing temporary again for DELETE, and that open is checked. In a create-only folder (inherited Deny DELETE on files, Deny FILE_DELETE_CHILD on the folder), measured here: the probe opened, closed and left nothing; the write's CreateNew temporary was written; File.Move threw UnauthorizedAccessException; and File.Delete of the temporary also threw, so `.fsa-t.tmp` stayed. As a result, for that folder StartReportMode passes the up-front check, scans the whole root, then exits 3 at the end. That is SC-028's harm, against App.xaml.cs:38 'every refusal exits at once'. Write's catch also cannot remove its temporary, against its own doc ('A temporary that was made is removed when anything after that fails') and the design contract ('.fsa-<32 hex>.tmp ... is deleted on failure'). This falsifies precondition O-042, 'The probe needs exactly the rights the real write needs'.",
+    "evidence": "Measured in pwsh with the same FileStreamOptions on a scratch folder under %LOCALAPPDATA%\\Temp (cleaned up after): 'probe: opened OK; left on disk after close: False / write temp: OK / move: THREW UnauthorizedAccessException / delete temp after failed move: THREW UnauthorizedAccessException / entries: .fsa-t.tmp'. The repro below, run in place against ReportFile (linked into Core.Tests), failed at its second assert, with the premise assert (write refused) passing.",
+    "fix": "In Probe, open the probe with Share = FileShare.Delete (keeping CreateNew and DeleteOnClose), and while the handle is open call File.Delete(probe). That second open is checked for DELETE exactly as the move's open of the temporary is, so it throws UnauthorizedAccessException in a create-only folder, which the App already maps to exit 3. The DeleteOnClose handle still removes the file in every case. Measured: in a writable folder the delete succeeds and nothing is left; in the create-only folder it throws UnauthorizedAccessException and nothing is left.",
+    "class_of": "rights a freshly created file is granted by its creating open but which the write's later open of that file is checked for",
+    "threat": "accident",
+    "quote": {
+     "path": "src/FsAnalyser.App/ReportFile.cs",
+     "line": 62,
+     "text": "            Mode = FileMode.CreateNew,\n            Access = FileAccess.Write,\n            Share = FileShare.None,\n            Options = FileOptions.DeleteOnClose,"
+    },
+    "repro": {
+     "path": "tests/FsAnalyser.Core.Tests/ReportFileDropFolderTests.cs",
+     "body": "using System.Security.AccessControl;\nusing System.Security.Principal;\nusing System.Text;\nusing FsAnalyser.App;\n\nnamespace FsAnalyser.Core.Tests;\n\n/// <summary>\n/// SC-028's probe against a folder that takes a new file but does not let this account delete or rename one in it (an inherited\n/// Deny DELETE on its files and a Deny FILE_DELETE_CHILD on the folder, a create-only drop folder). The write's move needs DELETE on\n/// the temporary, so the report cannot be put there; the probe has to say so up front, as it does for a folder that takes no file.\n/// </summary>\npublic class ReportFileDropFolderTests\n{\n    [Fact]\n    public void AProbeIsRefusedWhereTheWritesMoveWouldBeRefused()\n    {\n        using var tree = new TempTree();\n        string folder = tree.Folder(\"drop\");\n        string report = Path.Combine(folder, \"r.json\");\n        var directory = new DirectoryInfo(folder);\n        SecurityIdentifier me = WindowsIdentity.GetCurrent().User!;\n        var noDeleteChild = new FileSystemAccessRule(me, FileSystemRights.DeleteSubdirectoriesAndFiles,\n            InheritanceFlags.None, PropagationFlags.None, AccessControlType.Deny);\n        var noDeleteOfFiles = new FileSystemAccessRule(me, FileSystemRights.Delete,\n            InheritanceFlags.ObjectInherit, PropagationFlags.InheritOnly, AccessControlType.Deny);\n        DirectorySecurity security = directory.GetAccessControl();\n        security.AddAccessRule(noDeleteChild);\n        security.AddAccessRule(noDeleteOfFiles);\n        directory.SetAccessControl(security);\n        try\n        {\n            Exception? probe = Record.Exception(() => new ReportFile(report).Probe());\n            Exception? write = Record.Exception(() => new ReportFile(report).Write(Encoding.UTF8.GetBytes(\"{ \\\"schema\\\": 1 }\")));\n\n            Assert.True(write is IOException or UnauthorizedAccessException,\n                $\"premise: the write's move must be refused in this folder, and it gave {write?.GetType().Name ?? \"no exception\"}\");\n            Assert.True(probe is IOException or UnauthorizedAccessException,\n                \"the probe passed a folder whose report the write then could not put in place, so the app would scan first and exit 3 only at the end\");\n        }\n        finally\n        {\n            DirectorySecurity restored = directory.GetAccessControl();\n            restored.RemoveAccessRule(noDeleteChild);\n            restored.RemoveAccessRule(noDeleteOfFiles);\n            directory.SetAccessControl(restored);\n        }\n    }\n}\n",
+     "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 test tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj --filter FullyQualifiedName~ReportFileDropFolderTests"
+    }
+   },
+   {
+    "id": "RD-m2",
+    "severity": "minor",
+    "dimension": "contract-gaps",
+    "nature": "text",
+    "file": "src/FsAnalyser.App/WindowReport.cs",
+    "line": 24,
+    "end_line": 28,
+    "claim": "The report-mode exit-code contract (App.xaml.cs:11 says 'WindowReport.cs has the whole contract') was not updated for the new exit 2. App.OnStartup now exits 2 when CommandLine.Arguments returns null, meaning Windows merged the arguments and the typed line cannot account for them. That exit comes before StartReportMode, so the report path is never read and a file already at <file> is not deleted. The remarks still list exit 2 only as 'no value, no root, or any other argument', and still say 'Every non-zero exit leaves no file at <file>, so an absent file means this run has no report'. That sentence is already untrue for the no-value exit 2, and this slice adds a second exit of the same kind.",
+    "evidence": "App.xaml.cs:23-28 (`if (args is null) { Shutdown(BadArguments); return; }`) runs before StartReportMode's DeleteFirst(report). The design's CLI contract lists this case as new: 'This exit comes before StartReportMode, so, like today's no-value exit, it cannot name <file> and deletes nothing.'",
+    "fix": "Add the null case to the Exit 2 list ('or arguments Windows merged that the command line as typed cannot account for'). Qualify 'Every non-zero exit leaves no file at <file>' with the two exit-2 refusals that come before <file> is known, which delete nothing.",
+    "quote": {
+     "path": "src/FsAnalyser.App/WindowReport.cs",
+     "line": 25,
+     "text": "/// --report has no value, there is no root, or there is any other argument. Exit 3: the report could not"
+    }
+   }
+  ],
+  "obligations": [
+   {
+    "key": "O-001",
+    "discharged": "yes",
+    "evidence": "I ran `eng/dotnet.ps1 test tests/bugs/SL-007-QuotedRootTrailingBackslash/...Tests.csproj`: 5 of 5 passed, exit 0. That includes QuotedRootTrailingBackslashTests (control and trailing-backslash runs give the same core)."
+   },
+   {
+    "key": "O-040",
+    "discharged": "yes",
+    "evidence": "ReportFileTests.AWriteRefusesALinkAlreadyAtItsTemporaryName runs corpus rows T01-T06 (hardlink, file symlink, junction, directory symlink, file, folder at the exact temporary name). It asserts a throw, the target unchanged, the plant still there and no report. It passed in my filtered run (63 of 63)."
+   },
+   {
+    "key": "O-041",
+    "discharged": "yes",
+    "evidence": "ReportFileTests.AWriteReplacesALinkAtTheReportItself, rows R01-R03 (hardlink, file symlink, dangling symlink at <report>). It asserts the sentinel is unchanged, the report holds the JSON and LinkTarget is null. Passed."
+   },
+   {
+    "key": "O-042",
+    "discharged": "no",
+    "evidence": "Measured false for a create-only folder: the probe's DeleteOnClose is granted DELETE because it creates the file, while File.Move's later open of the temporary is denied DELETE. The probe passes and the write fails. See finding m1 and its repro."
+   },
+   {
+    "key": "O-002",
+    "discharged": "yes",
+    "evidence": "tests/FsAnalyser.Core.Tests/CommandLineTests.cs:28-37 feeds `\"D:\\Data\\\" --report out.json` and `\"C:\\\" --report C:\\r.json`. It asserts shell32 gives the one merged argument, then that the repair gives [root, --report, file]."
+   },
+   {
+    "key": "O-003",
+    "discharged": "yes",
+    "evidence": "CommandLineTests.cs:39-49 checks the shell32 split gives 2 pieces and the repair keeps `C:\\out  dir\\r.json`. At the exe, QuotedRootShapesTests.cs:13-44 creates `out  dir` and asserts the report is at that exact path with root `<tree>\\`."
+   },
+   {
+    "key": "O-004",
+    "discharged": "yes",
+    "evidence": "CommandLineTests.cs:114-153, TheGrammar: 16 rows covering two \\\" in one line, an odd run of 3, an even run elsewhere, tabs, quoted and unquoted argv0, an empty quoted value, non-ASCII, UNC, \\\\?\\, \\\\?\\UNC, the root last and the root not first."
+   },
+   {
+    "key": "O-005",
+    "discharged": "yes",
+    "evidence": "CommandLineTests.cs:62-77 asserts Assert.Same(argv, ...) for 5 clean lines, including with a different line and with an empty one."
+   },
+   {
+    "key": "O-006",
+    "discharged": "yes",
+    "evidence": "CommandLineTests.cs:86-110: a dotnet-muxer line, an extra token, an empty line and an inner quote give null; a trailing-only quote gives the same array."
+   },
+   {
+    "key": "O-007",
+    "discharged": "yes",
+    "evidence": "AppArgumentTests.EveryRootOfTheCorpusHandQuotedIsRepairedByArguments hand-quotes rows A01-A10, halving an even trailing run. Passed."
+   },
+   {
+    "key": "O-008",
+    "discharged": "yes",
+    "evidence": "The repro passes on the Debug apphost (my run). The published-exe run is the builder's account, which I did not re-run."
+   },
+   {
+    "key": "O-009",
+    "discharged": "yes",
+    "evidence": "QuotedRootShapesTests.ASpacedRootAndAReportPathWithTwoSpacesAreTakenWhole: exit 0, report at the exact path, root `<tree>\\`, Completed, 3 files. Passed in my run."
+   },
+   {
+    "key": "O-010",
+    "discharged": "yes",
+    "evidence": "QuotedRootShapesTests.AQuotedRootEndingInABackslashAloneOpensTheWindow: alive after 3 s with a window seen. Passed."
+   },
+   {
+    "key": "O-011",
+    "discharged": "yes",
+    "evidence": "QuotedRootShapesTests.AnArgumentAfterTheQuotedRootIsRefusedWithExit2AndNoWindow: exit 2, no window, only `tree` left in the work folder. Passed."
+   },
+   {
+    "key": "O-012",
+    "discharged": "yes",
+    "evidence": "UnwritableReportFolderTests (Deny CreateFiles): exit 3, no window, folder empty. Passed. App.xaml.cs:77 calls file.Probe() inside the existing try. This covers only the FILE_ADD_FILE shape; see m1 for the create-only shape."
+   },
+   {
+    "key": "O-013",
+    "discharged": "yes",
+    "evidence": "ReportFileTests.cs:180-197, corpus rows T01-T06."
+   },
+   {
+    "key": "O-014",
+    "discharged": "yes",
+    "evidence": "ReportFileTests.cs:236-251, rows L01-L03 at <report>.tmp: the plant is untouched and the report is its own file."
+   },
+   {
+    "key": "O-015",
+    "discharged": "yes",
+    "evidence": "ReportFileTests.cs:278-294: <report> held without FileShare.Delete; Write throws; only r.json remains; the held file reads OLD."
+   },
+   {
+    "key": "O-020",
+    "discharged": "yes",
+    "evidence": "ReportFile.cs:41-45: the constructor stores only the Func. Probe (:59) and Write (:80) each draw a name just before their own open, and _temporary is set after the FileStream constructor returns (:83). The class comment records the dangling-symlink residual. ReportFileTests.cs:103-130, the counting fact, checks 0, 1 and 2 draws and that nothing is on disk at either draw. The fitness `because` text no longer claims CreateNew refuses everything."
+   },
+   {
+    "key": "O-021",
+    "discharged": "yes",
+    "evidence": "QuotedRootShapesTests.cs covers finish lines 2-4 and UnwritableReportFolderTests covers SC-028. Rule 1 is in .taad/fitness.yaml, and SettledRulesCorpusTests fails if it goes."
+   },
+   {
+    "key": "O-022",
+    "discharged": "yes",
+    "evidence": "On the Debug apphost the repro and the exe facts pass, so alignment holds on finish lines 1, 2 and 4 there. Spike e-args-match-ucrt-split-on-shipped-hosts is go."
+   },
+   {
+    "key": "O-023",
+    "discharged": "yes",
+    "evidence": ".taad/fitness.yaml, SL-007 block, rule 1 has `(?<!CommandLine\\.Arguments\\()\\b\\w+\\.Args\\b`, `\\bGetCommandLineArgs\\b` and `[{,]\\s*Args\\s*[:.]`. SettledRulesCorpusTests passed, and Fitness check holds."
+   },
+   {
+    "key": "O-024",
+    "discharged": "yes",
+    "evidence": "Rule 3 bans StreamWriter, FileStream, File.Open(Handle) and the parameterless openers, with except_files [src/FsAnalyser.App/ReportFile.cs]. Fitness check holds, so except_files is honoured."
+   },
+   {
+    "key": "O-025",
+    "discharged": "yes",
+    "evidence": "tests/window/WindowCases.ps1: Test-NoReportTemporary is added and used at C-007, C-008, C-012 and O-016 (diff hunks)."
+   },
+   {
+    "key": "O-026",
+    "discharged": "yes",
+    "evidence": "ReportFileTests.cs:219-234, rows R01-R03."
+   },
+   {
+    "key": "O-027",
+    "discharged": "yes",
+    "evidence": "Same as O-002."
+   },
+   {
+    "key": "O-028",
+    "discharged": "yes",
+    "evidence": "Same as O-003."
+   },
+   {
+    "key": "O-029",
+    "discharged": "yes",
+    "evidence": "CommandLineTests.cs:51-60: [D:\\Data\"] gives [D:\\Data\\]."
+   },
+   {
+    "key": "O-030",
+    "discharged": "yes",
+    "evidence": "Same as O-005."
+   },
+   {
+    "key": "O-031",
+    "discharged": "yes",
+    "evidence": "Same as O-006."
+   },
+   {
+    "key": "O-032",
+    "discharged": "yes",
+    "evidence": "Same as O-004 and O-007."
+   },
+   {
+    "key": "O-033",
+    "discharged": "yes",
+    "evidence": "Same as O-008."
+   },
+   {
+    "key": "O-034",
+    "discharged": "yes",
+    "evidence": "Same as O-009."
+   },
+   {
+    "key": "O-035",
+    "discharged": "yes",
+    "evidence": "Same as O-010."
+   },
+   {
+    "key": "O-036",
+    "discharged": "yes",
+    "evidence": "Same as O-011."
+   },
+   {
+    "key": "O-037",
+    "discharged": "yes",
+    "evidence": "Same as O-012, for the Deny CreateFiles shape the case names."
+   },
+   {
+    "key": "O-038",
+    "discharged": "yes",
+    "evidence": "ReportFileTests: AFreshStemIsDrawnForEachOpenAtTheMomentOfOpening, TheDefaultStemIsNewForEveryOpenAndLeavesTheFolderAsItWas, AProbeLeavesAWritableFolderAsItWas and AFailedMoveLeavesNoTemporary all pass. The failed-move case is the held-open one; the create-only folder does leave a temporary (m1)."
+   },
+   {
+    "key": "O-039",
+    "discharged": "yes",
+    "evidence": "ReportFileTests rows T01-T06, R01-R03 and L01-L03 pass."
+   },
+   {
+    "key": "O-043",
+    "discharged": "yes",
+    "evidence": "The rule 3 type bans are present, and the `because` text no longer says 'deliberately absent'."
+   },
+   {
+    "key": "O-044",
+    "discharged": "yes",
+    "evidence": ".taad/fitness.yaml has one '# settled by SL-007' block with the three design names, single-quoted (?m) patterns and no including_comments. SettledRulesCorpusTests.TheThreeRulesAreOneEntryEachWrittenByHandAsTheAuthoringRulesSay passes. Fitness reports 114 rules holding."
+   }
+  ],
+  "cases": [
+   {
+    "key": "C-001",
+    "exercised": "yes",
+    "evidence": "CommandLineTests.cs:28-37 feeds both merged lines and first asserts that shell32 really merges them."
+   },
+   {
+    "key": "C-002",
+    "exercised": "yes",
+    "evidence": "CommandLineTests.cs:39-49: the spaced root and the two-space report path; it asserts Windows gives 2 pieces and the repair keeps both spaces."
+   },
+   {
+    "key": "C-003",
+    "exercised": "yes",
+    "evidence": "CommandLineTests.cs:51-60: `\"D:\\Data\\\"` alone, with argv [D:\\Data\"] asserted."
+   },
+   {
+    "key": "C-004",
+    "exercised": "yes",
+    "evidence": "CommandLineTests.cs:62-77: quoted with no trailing backslash, an even run, a spaced pair and unquoted C:\\. Assert.Same with other lines proves the line is never read."
+   },
+   {
+    "key": "C-005",
+    "exercised": "yes",
+    "evidence": "CommandLineTests.cs:86-110: inner quotes with non-matching lines give null; trailing-only quotes give the same array."
+   },
+   {
+    "key": "C-006",
+    "exercised": "yes",
+    "evidence": "TheGrammar has 16 rows, each asserting the gate is open, and AppArgumentTests hand-quotes rows A01-A10."
+   },
+   {
+    "key": "C-007",
+    "exercised": "yes",
+    "evidence": "QuotedRootTrailingBackslashTests.cs:61-92 launches `\"<tree>\\\" --report \"<file>\"` through raw ProcessStartInfo.Arguments and compares the core with the control."
+   },
+   {
+    "key": "C-008",
+    "exercised": "yes",
+    "evidence": "QuotedRootShapesTests.cs:13-44: spaced root `a quoted tree` and folder `out  dir`, created first; the report must be at the exact path."
+   },
+   {
+    "key": "C-009",
+    "exercised": "yes",
+    "evidence": "QuotedRootShapesTests.cs:46-67: `\"<tree>\\\"` alone; alive with a window after 3 s."
+   },
+   {
+    "key": "C-010",
+    "exercised": "yes",
+    "evidence": "QuotedRootShapesTests.cs:69-93: `\"<tree>\\\" extra --report` gives exit 2, no window and no leftovers."
+   },
+   {
+    "key": "C-011",
+    "exercised": "yes",
+    "evidence": "UnwritableReportFolderTests.cs puts a Deny CreateFiles rule on the folder itself; exit 3, no window, folder empty. ReportFileTests.AProbeIsRefusedWhereNoFileCanBeCreated covers the same shape at unit level."
+   },
+   {
+    "key": "C-012",
+    "exercised": "yes",
+    "evidence": "ReportFileTests counting-Func fact (draws 0/1/2, nothing on disk at either draw), probe-leaves-nothing facts and AFailedMoveLeavesNoTemporary (held-open report)."
+   },
+   {
+    "key": "C-013",
+    "exercised": "yes",
+    "evidence": "ReportFileTests theories driven by ReportFilePlantsCorpus.json: T01-T06 at the injected temporary name, R01-R03 at <report>, L01-L03 at <report>.tmp."
+   },
+   {
+    "key": "C-014",
+    "exercised": "no",
+    "evidence": "material:false by design. The dangling symlink at the exact fresh name is not planted; T07 is a residual row pointing at E01, the earlier-stem dangling-symlink plant, which is ignored, and at the counting fact. That reason still holds: the name is drawn just before the open (ReportFile.cs:80)."
+   }
+  ],
+  "drift": [],
+  "unreviewed": [
+   "tests/window/WindowCases.ps1 -- read only through the 4 diff hunks (Test-NoReportTemporary and its 4 call sites), not the whole 6000+ line script",
+   "tests/FsAnalyser.Core.Tests/SettledRulesCorpus.json -- not read row by row; judged by running SettledRulesCorpusTests (passes) and Fitness check",
+   "tests/bugs/SL-007-QuotedRootTrailingBackslash/QuotedRootTrailingBackslashTests.cs:1-39,110-165 -- helper section not read; the test body (40-109) was read and run",
+   "tests/bugs/SL-007-QuotedRootTrailingBackslash/SL-007-QuotedRootTrailingBackslash.Tests.csproj -- not opened; judged by the project building and running 5 of 5",
+   "src/FsAnalyser.App/WindowReport.cs -- read through the diff and the header remarks (14-37) only; the report-building body is unchanged except the last line"
+  ],
+  "second_round": {
+   "run_id": 11437,
+   "filed": 4,
+   "reader": "inputs"
+  },
+  "reading_pass": {
+   "state": "landed",
+   "why": [
+    "unseen changed hunks"
+   ],
+   "lens": "contracts",
+   "cut_off": false,
+   "cut_runs": {
+    "line": false,
+    "inputs": false,
+    "any": false
+   },
+   "run_id": 11438,
+   "session": "e4d768aa-9ac8-4595-a81c-ab6fe6822d9b",
+   "resumed": true,
+   "asked": [
+    {
+     "path": "tests/bugs/SL-007-QuotedRootTrailingBackslash/QuotedRootTrailingBackslashTests.cs",
+     "kind": "tests",
+     "state": "partly-opened",
+     "why": "unseen changed hunks",
+     "hunks": [
+      [
+       1,
+       165
+      ]
+     ],
+     "scopes": [
+      {
+       "line": null,
+       "header": null
+      }
+     ],
+     "read": [
+      1,
+      165
+     ],
+     "header": null,
+     "line": null,
+     "whole_file": false
+    },
+    {
+     "path": "tests/bugs/SL-007-QuotedRootTrailingBackslash/SL-007-QuotedRootTrailingBackslash.Tests.csproj",
+     "kind": "tests",
+     "state": "partly-opened",
+     "why": "unseen changed hunks",
+     "hunks": [
+      [
+       1,
+       36
+      ]
+     ],
+     "scopes": [
+      {
+       "line": null,
+       "header": null
+      }
+     ],
+     "read": [
+      1,
+      36
+     ],
+     "header": null,
+     "line": null,
+     "whole_file": false
+    }
+   ],
+   "asked_hunks": 2,
+   "named": [],
+   "before": {
+    "read_whole": 11,
+    "changed": 19,
+    "listed": 8
+   },
+   "filed": 2,
+   "read_after": 2,
+   "still_unread": []
+  },
+  "unread_measured": {
+   "measured": true,
+   "why": "",
+   "changed": 19,
+   "read_whole": 13,
+   "deleted": [],
+   "runs": [
+    11436,
+    11437,
+    11438
+   ],
+   "range": {
+    "base": "aa3d96b8842dca5f5e5ebdcc22845e56029bbfad",
+    "head": "f42a20b11b4f72311f4384425821543afd080c28",
+    "source": "commits",
+    "hunk_base": "aa3d96b8842dca5f5e5ebdcc22845e56029bbfad",
+    "hunk_base_from": "the merge base with the integration branch"
+   },
+   "items": [
+    {
+     "path": ".taad/fitness.yaml",
+     "state": "partly-opened",
+     "section": "lines 1-1589 of 1589",
+     "reason": "seen only as 34 Grep lines; seen only through a shell command: $t, git diff",
+     "size_lines": 1589,
+     "hunks": []
+    },
+    {
+     "path": "src/FsAnalyser.App/WindowReport.cs",
+     "state": "partly-opened",
+     "section": "lines 1-13, 38-445 of 445",
+     "reason": "a Read returned only part of it; seen only through a shell command: git diff",
+     "size_lines": 445,
+     "hunks": []
+    },
+    {
+     "path": "src/FsAnalyser.Core/Native/Kernel32.cs",
+     "state": "partly-opened",
+     "section": "lines 1-466 of 466",
+     "reason": "seen only through a shell command: git diff",
+     "size_lines": 466,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/AppArgumentTests.cs",
+     "state": "partly-opened",
+     "section": "lines 1-188 of 188",
+     "reason": "seen only through a shell command: git diff",
+     "size_lines": 188,
+     "hunks": []
+    },
+    {
+     "path": "tests/FsAnalyser.Core.Tests/FsAnalyser.Core.Tests.csproj",
+     "state": "partly-opened",
+     "section": "lines 1-85 of 85",
+     "reason": "seen only through a shell command: $h, $t, git diff",
+     "size_lines": 85,
+     "hunks": []
+    },
+    {
+     "path": "tests/window/WindowCases.ps1",
+     "state": "partly-opened",
+     "section": "lines 1-8152 of 8152",
+     "reason": "seen only through a shell command: git diff",
+     "size_lines": 8152,
+     "hunks": []
+    }
+   ],
+   "notes": []
+  }
+ }
+}

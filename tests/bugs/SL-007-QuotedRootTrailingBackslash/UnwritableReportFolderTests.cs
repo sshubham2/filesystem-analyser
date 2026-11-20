@@ -5,24 +5,41 @@ using System.Security.Principal;
 namespace SL007.QuotedRootTrailingBackslash.Tests;
 
 /// <summary>
-/// SC-028: a report path in a folder the account cannot create a file in is refused up front, with exit 3 before any window or scan.
+/// SC-028: a report path in a folder the account cannot put a report in is refused up front, with exit 3 before any window or scan.
 /// On the base the app opened its window, scanned the whole tree and found out only at the write (measured: a window at 1062 ms,
-/// then exit 3 at 1401 ms), which on a whole drive is a full scan and then exit 3.
+/// then exit 3 at 1401 ms), which on a whole drive is a full scan and then exit 3. Two folders: one that takes no new file, and
+/// a create-only drop folder that takes new files and lets nobody delete or rename one, where the write's move is refused.
 /// </summary>
 public class UnwritableReportFolderTests
 {
     [Fact]
     public void AFolderThatTakesNoNewFileIsRefusedWithExit3BeforeAnyWindow()
     {
+        // Deny CreateFiles (FILE_ADD_FILE) to this account on the folder itself: it exists, it can be listed, and no new file can be made in it.
+        RefusedBeforeAnyWindow(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User!, FileSystemRights.CreateFiles,
+            InheritanceFlags.None, PropagationFlags.None, AccessControlType.Deny));
+    }
+
+    [Fact]
+    public void ACreateOnlyDropFolderIsRefusedWithExit3BeforeAnyWindow()
+    {
+        // A new file can be made, and nothing in the folder can be deleted or renamed: the probe's own creating open is granted DELETE
+        // whatever the folder says, so only deleting the file it made, as the write's move will, finds this.
+        SecurityIdentifier me = WindowsIdentity.GetCurrent().User!;
+        RefusedBeforeAnyWindow(
+            new FileSystemAccessRule(me, FileSystemRights.DeleteSubdirectoriesAndFiles, InheritanceFlags.None, PropagationFlags.None, AccessControlType.Deny),
+            new FileSystemAccessRule(me, FileSystemRights.Delete, InheritanceFlags.ObjectInherit, PropagationFlags.InheritOnly, AccessControlType.Deny));
+    }
+
+    private static void RefusedBeforeAnyWindow(params FileSystemAccessRule[] denied)
+    {
         string work = AppRun.WorkFolder();
         Process? process = null;
         var folder = new DirectoryInfo(Path.Combine(work, "locked"));
         folder.Create();
-        // Deny CreateFiles (FILE_ADD_FILE) to this account on the folder itself: it exists, it can be listed, and no new file can be made in it.
-        var rule = new FileSystemAccessRule(WindowsIdentity.GetCurrent().User!, FileSystemRights.CreateFiles,
-            InheritanceFlags.None, PropagationFlags.None, AccessControlType.Deny);
         DirectorySecurity security = folder.GetAccessControl();
-        security.AddAccessRule(rule);
+        foreach (FileSystemAccessRule rule in denied)
+            security.AddAccessRule(rule);
         folder.SetAccessControl(security);
         try
         {
@@ -41,7 +58,8 @@ public class UnwritableReportFolderTests
         {
             AppRun.Stop(process);
             DirectorySecurity restored = folder.GetAccessControl();
-            restored.RemoveAccessRule(rule);
+            foreach (FileSystemAccessRule rule in denied)
+                restored.RemoveAccessRule(rule);
             folder.SetAccessControl(restored);
             AppRun.RemoveQuietly(work);
         }

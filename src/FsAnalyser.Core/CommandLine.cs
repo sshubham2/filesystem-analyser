@@ -39,11 +39,20 @@ public static class CommandLine
     /// it. It is not .NET's own command-line string either, which is built again from the split arguments.
     /// </para>
     /// <para>
-    /// Three steps, in order. The GATE: an <paramref name="argv"/> with no '"' in it was split cleanly, and is returned as
+    /// Four steps, in order. The GATE: an <paramref name="argv"/> with no '"' in it was split cleanly, and is returned as
     /// it came without looking at the line. The ALIGNMENT: the line, split as Windows' C runtime splits it (the program's
     /// name skipped by that runtime's own rule), must give exactly <paramref name="argv"/>, element for element, or this
     /// process was not started from that line as it is read here (a <c>dotnet app.dll</c> launch, for one) and nothing
-    /// is repaired. The FALLBACK for that: <paramref name="argv"/> as it is when each '"' in it is the last character of its
+    /// is repaired. The PAIRING: the repair makes every '"' of the line open or close a quoted part, so it is made only when
+    /// they pair up, an even number of them after the program's name; an odd number (a backslash-quote typed with no opening
+    /// quote, as tab completion leaves one) would leave the last quoted part open to the end of the line, absorbing the
+    /// arguments Windows had split. And the EXPOSED TOKENS: where Windows' split left a token that is unmistakable (an option
+    /// that starts with "--", or a root whose only damage is a trailing quote) the repair must keep a token of its own for
+    /// it; a stray backslash-quote that pairs with a later quote would otherwise join them into one argument and hide an
+    /// option Windows had exposed. The repair exists to split what Windows merged, and never to join what it split.
+    /// </para>
+    /// <para>
+    /// The FALLBACK, when any step refuses: <paramref name="argv"/> as it is when each '"' in it is the last character of its
     /// argument, which <see cref="RootArgument"/> repairs for the root; null when a '"' is inside one, because the
     /// arguments are then merged and nothing here can say how they were typed.
     /// </para>
@@ -56,13 +65,47 @@ public static class CommandLine
         if (!HoldsAQuote(argv))
             return argv;
 
-        int rest = AfterProgramName(commandLine);
-        if (Split(commandLine, rest, repair: false).SequenceEqual(argv, StringComparer.Ordinal))
-            return [.. Split(commandLine, rest, repair: true)];
-
-        return argv.All(QuoteOnlyAtTheEnd) ? argv : null;
+        return Repaired(argv, commandLine) ?? (argv.All(QuoteOnlyAtTheEnd) ? argv : null);
     }
 
+    // The arguments as typed, or null when this line is not one the repair may read: not accounted for by argv, quotes that
+    // do not pair, or a repair that would hide a token Windows exposed.
+    private static string[]? Repaired(string[] argv, string commandLine)
+    {
+        int rest = AfterProgramName(commandLine);
+        if (!Split(commandLine, rest, repair: false).SequenceEqual(argv, StringComparer.Ordinal))
+            return null;
+        List<string> repaired = Split(commandLine, rest, repair: true);
+        return JoinsNothingWindowsSplit(argv, repaired, commandLine.AsSpan(rest).Count('"')) ? [.. repaired] : null;
+    }
+
+    // Whether the repair only splits what Windows merged. quotes is how many '"' the line has after the program's name.
+    // The repair makes each of them open or close a quoted part, so an odd number would leave the last open to the end of the
+    // line. And Windows can be wrong about an argument, but a token it left standing on its own that cannot be mistaken must
+    // stay one: an option (starts with "--", holds no quote) or a root whose only damage is the trailing quote RootArgument
+    // repairs.
+    private static bool JoinsNothingWindowsSplit(string[] argv, List<string> repaired, int quotes)
+    {
+        if (quotes % 2 != 0)
+            return false;
+        foreach (string argument in argv)
+        {
+            int quote = argument.IndexOf('"');
+            if (quote < 0 && argument.StartsWith("--", StringComparison.Ordinal))
+            {
+                if (!repaired.Contains(argument, StringComparer.Ordinal))
+                    return false;
+            }
+            else if (quote >= 0 && quote == argument.Length - 1)
+            {
+                // The repair keeps an odd run of backslashes whole where RootArgument gives one, so the root is told by its stem.
+                string stem = argument[..quote].TrimEnd('\\');
+                if (!repaired.Any(r => r.TrimEnd('\\') == stem))
+                    return false;
+            }
+        }
+        return true;
+    }
     private static bool HoldsAQuote(string[] argv) => argv.Any(argument => argument.Contains('"'));
 
     // No quote, or exactly one and it is the last character: the shape RootArgument repairs.

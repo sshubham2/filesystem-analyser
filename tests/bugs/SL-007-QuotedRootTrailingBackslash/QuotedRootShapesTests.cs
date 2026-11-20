@@ -44,6 +44,35 @@ public class QuotedRootShapesTests
     }
 
     [Fact]
+    public void ABackslashQuoteWithNoOpeningQuoteStillRunsReportMode()
+    {
+        string work = AppRun.WorkFolder();
+        Process? process = null;
+        try
+        {
+            string tree = AppRun.MakeTree(work, "tree");
+            string report = Path.Combine(work, "r.json");
+            // Typed with a closing quote and no opening one, as tab completion leaves it: Windows splits this cleanly into three
+            // arguments and only the root carries a trailing quote. Joining them hid --report and left a window that never ends.
+            string arguments = $"{tree}\\\" --report {report}";
+
+            process = AppRun.Start(AppRun.Exe(), arguments);
+            AppRun.Result run = AppRun.Watch(process, 7000);
+
+            Assert.True(run.Exited, $"the app did not exit within 7000 ms on [{arguments}]: the unpaired quote was paired with nothing and swallowed the line");
+            Assert.True(run.ExitCode == 0, $"the app exited with {run.ExitCode}, not 0, on [{arguments}]");
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(report));
+            Assert.Equal(tree + "\\", document.RootElement.GetProperty("root").GetString());
+            Assert.Equal(3, document.RootElement.GetProperty("core").GetProperty("files").GetInt64());
+        }
+        finally
+        {
+            AppRun.Stop(process);
+            AppRun.RemoveQuietly(work);
+        }
+    }
+
+    [Fact]
     public void AQuotedRootEndingInABackslashAloneOpensTheWindow()
     {
         string work = AppRun.WorkFolder();
