@@ -23,7 +23,7 @@ namespace FsAnalyser.App;
 /// scans the root with the window shown as usual, writes the report once the first ending is on screen,
 /// and exits. Exit 0: the report was written, whatever the ending (the ending is in the file). Exit 2:
 /// --report has no value, there is no root, or there is any other argument. Exit 3: the report could not
-/// be written. Exit 70: an unhandled exception on the UI thread, or any other end without a report, such
+/// be written (a folder that takes no new file is refused before the scan, not after it). Exit 70: an unhandled exception on the UI thread, or any other end without a report, such
 /// as the window closed before its ending. Every non-zero exit leaves no file at &lt;file&gt;, so an
 /// absent file means this run has no report. A file already there is deleted before the run, read-only
 /// or not; the one exception is a file another program holds open without sharing delete, which nothing
@@ -142,11 +142,11 @@ internal static class WindowReport
 {
     /// <summary>
     /// Waits until layout and render have settled, then reads the window, writes the report beside
-    /// <paramref name="path"/> and moves it into place, so the file is either whole or absent.
+    /// <paramref name="file"/>'s path and moves it into place, so the file is either whole or absent.
     /// </summary>
     /// <exception cref="IOException">The report could not be written.</exception>
     /// <exception cref="UnauthorizedAccessException">The report could not be written.</exception>
-    public static async Task WriteAsync(MainWindow window, string root, string path)
+    public static async Task WriteAsync(MainWindow window, string root, ReportFile file)
     {
         await Dispatcher.Yield(DispatcherPriority.Loaded); // below Render: layout and render have run
 
@@ -326,17 +326,7 @@ internal static class WindowReport
         // The default encoder escapes everything outside ASCII, so Windows PowerShell 5.1 and pwsh read
         // the same text whatever code page or byte-order mark they assume.
         byte[] json = JsonSerializer.SerializeToUtf8Bytes(report, new JsonSerializerOptions { WriteIndented = true });
-        string temporary = path + ".tmp";
-        try
-        {
-            File.WriteAllBytes(temporary, json);
-            File.Move(temporary, path, overwrite: true);
-        }
-        catch
-        {
-            DeleteQuietly(temporary);
-            throw;
-        }
+        file.Write(json);
     }
 
     // Whether the control is on screen with some height, and neither it nor anything around it up to the
@@ -451,23 +441,5 @@ internal static class WindowReport
                 return found;
         }
         return null;
-    }
-
-    /// <summary>Deletes the report and its temporary file, if they are there; never throws.</summary>
-    public static void Discard(string path)
-    {
-        DeleteQuietly(path);
-        DeleteQuietly(path + ".tmp");
-    }
-
-    private static void DeleteQuietly(string file)
-    {
-        try
-        {
-            File.Delete(file);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-        }
     }
 }

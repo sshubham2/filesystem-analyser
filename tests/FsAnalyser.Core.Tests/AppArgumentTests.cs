@@ -72,6 +72,42 @@ public class AppArgumentTests
         Assert.True(wrong.Count == 0, "Roots that do not reach the app as written:\n" + string.Join("\n", wrong));
     }
 
+    /// <summary>
+    /// SL-007: the same roots quoted by hand, <c>"&lt;root&gt;" --report "&lt;report&gt;"</c>, as a person types them in cmd or hands
+    /// them to Start-Process, are given back as [root, --report, report] by <see cref="CommandLine.Arguments(string[], string)"/>
+    /// from the line as typed. The roots Windows split cleanly come back as they were; a root ending in an odd run of
+    /// backslashes, which Windows merged with what follows, is repaired as typed; and A07's even run is halved, as Windows
+    /// halves it, so its root is the one backslash less that the control gets today.
+    /// </summary>
+    [Fact]
+    public void EveryRootOfTheCorpusHandQuotedIsRepairedByArguments()
+    {
+        using JsonDocument corpus = ReadCorpus();
+        using var tree = new TempTree();
+        string report = Path.Combine(tree.Root, "report.json");
+        RootRow[] rows = [.. corpus.RootElement.GetProperty("roots").EnumerateArray().Select(r => new RootRow(
+            r.GetProperty("id").GetString()!, r.GetProperty("producer").GetString()!,
+            r.GetProperty("root").GetString()!.Replace("<temp>", tree.Root, StringComparison.Ordinal), r.GetProperty("handQuoted").GetString()!))];
+        Assert.NotEmpty(rows);
+
+        var wrong = new List<string>();
+        foreach (RootRow row in rows)
+        {
+            string tail = $"\"{row.Root}\" --report \"{report}\"";
+            string[] argv = TestNative.SplitArguments(tail);
+
+            // What the root is once Windows has read the quotes: an even run of trailing backslashes is halved, an odd one
+            // escapes the quote and is what the repair gives back.
+            int trailing = row.Root.Length - row.Root.TrimEnd('\\').Length;
+            string expectedRoot = trailing > 0 && trailing % 2 == 0 ? row.Root[..^(trailing / 2)] : row.Root;
+
+            string[]? repaired = CommandLine.Arguments(argv, "app.exe " + tail);
+            if (repaired is null || !Reaches(repaired, expectedRoot, report))
+                wrong.Add($"{row.Id} ({row.Producer}): {tail} gave [{(repaired is null ? "null" : string.Join(" | ", repaired))}], not [{expectedRoot} | --report | {report}]");
+        }
+        Assert.True(wrong.Count == 0, "Roots that are not repaired as typed:\n" + string.Join("\n", wrong));
+    }
+
     [Fact]
     public void ThePatternFindsAPathQuotedByHandAndNothingElse()
     {

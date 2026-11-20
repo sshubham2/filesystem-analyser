@@ -18,12 +18,20 @@ public partial class App : Application
     // FsAnalyser.App.exe <path> --report <file>: scan it, write what the window shows to <file>, and exit.
     private void OnStartup(object sender, StartupEventArgs e)
     {
-        if (e.Args.Contains(ReportOption))
+        // Windows merges a quoted root that ends in a backslash with every argument after it, so the mode is decided
+        // only on the arguments as typed (SL-007). Null: the arguments cannot be told apart, and nothing is opened.
+        string[]? args = CommandLine.Arguments(e.Args);
+        if (args is null)
         {
-            StartReportMode(e.Args);
+            Shutdown(BadArguments);
             return;
         }
-        var window = new MainWindow(e.Args.Length > 0 ? CommandLine.RootArgument(e.Args[0]) : null);
+        if (args.Contains(ReportOption))
+        {
+            StartReportMode(args);
+            return;
+        }
+        var window = new MainWindow(args.Length > 0 ? CommandLine.RootArgument(args[0]) : null);
         window.Show();
     }
 
@@ -59,12 +67,14 @@ public partial class App : Application
             Shutdown(BadArguments);
             return;
         }
+        var file = new ReportFile(report);
         try
         {
             if (Directory.Exists(report) || !Directory.Exists(Path.GetDirectoryName(report)))
                 throw new IOException($"{report} is a folder, or its folder does not exist.");
             DeleteFirst(report);
             DeleteFirst(report + ".tmp");
+            file.Probe(); // a folder that takes no new file is refused here, before any window or scan
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -84,7 +94,7 @@ public partial class App : Application
         DispatcherUnhandledException += (_, ex) =>
         {
             ex.Handled = true;
-            WindowReport.Discard(report);
+            file.Discard();
             Shutdown(Crashed);
         };
 
@@ -106,7 +116,7 @@ public partial class App : Application
             reported = true;
             try
             {
-                await WindowReport.WriteAsync(window, root, report);
+                await WindowReport.WriteAsync(window, root, file);
                 Shutdown(ReportWritten);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

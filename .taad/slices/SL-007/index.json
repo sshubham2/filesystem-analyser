@@ -1,0 +1,201 @@
+{
+ "schema": "slice-record@1",
+ "slice": "SL-007",
+ "title": "Report mode accepts a quoted root ending in a backslash instead of hanging in an interactive window",
+ "status": "active",
+ "branch": "slice/SL-007",
+ "opened_at": "2026-11-18T06:24:21.337Z",
+ "merge_commit": null,
+ "how_to_read": "Each attempt is one line and a `details` filename in this same directory. Open a detail file ONLY when this index points you at one -- the summaries are here so you do not have to. `caused_by` is what sent the stage back; `changed` is what the attempt then touched, counted by kind. Several attempts in a row that were caused by the same stage and changed no `src` is a loop, not progress.",
+ "open": [
+  {
+   "stage": "repro",
+   "issue": "observed: The app did not exit within 7000 ms (7011 ms) on [\"...\\trailing\\\" --report \"...\\trailing-report.json\"], while the control without the trailing backslash exited 0 with a report after 1823 ms. Report written: False."
+  },
+  {
+   "stage": "build-check",
+   "issue": "C1: A quoted root ending in a backslash followed by --report (e.g. \"<tree>\\\" --report \"<r>\", from cmd, Start-Process or ProcessStartInfo.Arguments) starts report mode, writes the report and exits 0 instead of opening an interactive window that never exits: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "C2: The repaired root is the folder the user named (X\\), and the report it writes matches the control's (same core.status and core.files for the same tree): missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "C3 (SC-028): a report path in a folder the account cannot write is refused up front with exit 3, before any scan, so the comment 'every refusal exits at once' (App.xaml.cs:30) is true: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "C4 (SC-028/SC-037): the up-front write probe is created new (CreateNew, DeleteOnClose), so it cannot follow a link already at the probe name: missing"
+  },
+  {
+   "stage": "build-check",
+   "issue": "C5 (SC-037): the report's temporary file cannot be redirected by a link planted during the scan (a fresh, unpredictable name opened CreateNew, and Discard tracks that name): missing"
+  },
+  {
+   "stage": "design-slice",
+   "issue": "An odd run of 2n+1 backslashes before a quote in a repaired line is kept whole, as typed. The alternative is n+1, treating the escape as undone. Both resolve to the same folder through Win32, but the report's \"root\" carries the extra backslashes under the chosen rule."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "Rule 3 leaves out the proposal's `new StreamWriter(` and `.AppendText(` patterns, because they match correct code. A reviewer may prefer them back, together with an except list."
+  },
+  {
+   "stage": "design-slice",
+   "issue": "The name source is a Func<string> injected through an internal constructor rather than an injected IFileSystem or a stored stem. This was chosen as the smallest seam that lets a test plant a link at the exact temporary name."
+  }
+ ],
+ "stages": [
+  {
+   "stage": "repro",
+   "title": "Repro",
+   "order": 1,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "build-check",
+   "title": "Build check",
+   "order": 2,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "risk-spike",
+   "title": "Risk spike",
+   "order": 3,
+   "state": "passed",
+   "attempts": []
+  },
+  {
+   "stage": "design-slice",
+   "title": "Design",
+   "order": 4,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-11-18T06:51:07.770Z",
+     "head": "aa3d96b8842dca5f5e5ebdcc22845e56029bbfad",
+     "summary": "the provider turned this away rather than running it -- You've hit your weekly limit · resets Nov 22, 8:30pm (Asia/Kolkata); it was cut off partway: a model had already worked in this run, and what it spent is booked",
+     "caused_by": null,
+     "changed": {},
+     "details": "design-slice-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-11-20T02:21:50.734Z",
+     "head": "aa3d96b8842dca5f5e5ebdcc22845e56029bbfad",
+     "summary": "The practice proposal fits how the code is already shaped.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "Trip 1 of 2 back to the risk spike: the design left 1 fork that only a measurement can settle. O-019: unsettled design fork: On the shipped apphost (single-file Release and the Debug apphost), does e.Args equal the ucrt-rule split of GetCommandLineW after argv0 for the finish-line lines: `\"<f>\\\" --report \"<r>\"`, the spaced pair, `\"<f>\\\"` alone and `\"<f>\\\" extra --report \"<r>\"`? Its context: The design assumes yes: the investigation measured .NET argv equal to CommandLineToArgvW on these shapes. If no, the alignment check sends these lines to the fallback, so finish lines 1, 2 and 4 exit 2 instead of passing, and the parser contract must change (for example, align on CommandLineToArgvW, or drop alignment and trust the argv0 skip). The queued spike getcommandlinew-retokenise-restores-report-args settles it. The synthesis marked this as forcing a re-synthesis: the losing answer moves a component boundary, a contract or the data model. How the fork decider would measure it: MEASURE IT; do not build it. This is a measurement that needs no fix and no change to src/. The risk spike runs it on the two shipped hosts as they are. SETUP - Set TAAD3_HOME to a new empty scratch folder. - Keep all scratch, including the probe project, outside the repo tree (lessons #889, #412). - Put trees and report folders under %LOCALAPPDATA%\\Temp (lesson #360). - Build the Debug apphost: `pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build src/FsAnalyser.App/FsAnalyser.App.csproj`. This gives bin/Debug/net10.0-windows/win-x64/FsAnalyser.App.exe. - Publish the single-file Release exe into a scratch folder WHOSE PATH CONTAINS A SPACE, so the quoted-argv0 skip is exercised: `pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o \"<scratch>\\pub dir\"`. - The probe is a scratch startup-hook assembly, loaded with DOTNET_STARTUP_HOOKS the way FsaWindowHook already drives the published exe. Inside the real app process, before Main, it writes one JSON file (path taken from an env var) and then calls Environment.Exit(0), so no window opens and nothing is scanned. The JSON holds: (a) GetCommandLineW, the raw line; (b) Environment.GetCommandLineArgs(), whose [1..] is e.Args (WPF StartupEventArgs); (c) the real ucrt split of this process's own line: P/Invoke ucrtbase `_configure_wide_argv(1)`, then `__p___argc` / `__p___wargv`; (d) shell32 CommandLineToArgvW(GetCommandLineW); (e) a scratch reference of the design's FAITHFUL tokeniser and CRT argv0 skip, applied to (a). LINES, each on both hosts: - L0, the control: `\"<f>\" --report \"<r>\"` - L1: `\"<f>\\\" --report \"<r>\"` - L2: `\"<f sp>\\\" --report \"<d sp>\\out dir\\r.json\"`, with two spaces - L3: `\"<f>\\\"` alone - L4: `\"<f>\\\" extra --report \"<r>\"` ROUTES - ProcessStartInfo.Arguments on every line, both hosts. - Start-Process with a single -ArgumentList string, and `cmd /c` with an unquoted exe path (Debug host only, no space in its path), on L1 and L2. INCONCLUSIVE (rerun; this does not decide the fork) if any of these happens: - L0's (b)[1..] is not the 3 tokens; - L1 does not show the one merged argument; - the hook did not run in the shipped single-file exe. HOW THE RESULT DECIDES 1. On every line, host and route, (b)[1..] equals (c)[1..], and (e) equals (b)[1..]: the answer is YES. The design stands as written. The build aligns with the FAITHFUL emulator on the ucrt rule, and there is no resynthesis. 2. (b)[1..] equals (c)[1..] but (e) differs: the emulator spec is wrong in one branch. Record which branch (argv0 skip, backslash-run counting, empty token). The design is rewritten to fix that branch and keeps ucrt alignment. 3. (b)[1..] differs from (c)[1..] but equals (d)[1..]: alignment moves to CommandLineToArgvW, a shell32 import in Core.Native, and the design is rewritten. 4. (b)[1..] matches neither (c) nor (d) on some line: a split of the raw line cannot be the alignment check. The design is rewritten to drop alignment and rely on the argv0 skip plus the gate, with that line recorded as the counter-example. Also record, for the gate premise: whether (b) holds a '\"' on L1, L2 and L4, and only a trailing '\"' on L3. Nothing has measured this yet. - The investigation compared .NET argv with CommandLineToArgvW under pwsh.exe. That is neither the shipped single-file host nor the Debug apphost. - Nobody has compared argv with the ucrt rule, which is what the design's alignment check actually uses. - The queued spike getcommandlinew-retokenise-restores-report-args has no verdict. It also presumes a FIX build, and this fork does not need one. The synthesis marked the losing answer as forcing a re-synthesis. If alignment fails on these lines, finish lines 1, 2 and 4 exit 2, and the alignment contract has to move to CommandLineToArgvW or be dropped. So the answer has to come before build, not during it. The critique's own fix for M3 asked for exactly this lap. The hook-plus-dump probe measures the real shipped binaries and changes nothing in src/. Its worst case is a few short-lived processes and some KB of scratch, so it is a small experiment the spike can run on this machine without a person. A measure lap is available: 0 of 2 have been used. The risk spike measures these first. Write the design again with what it measured: its experiments are under what reality already said about this slice.",
+      "cause": "fork-measure",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "design-slice-2.json"
+    },
+    {
+     "n": 3,
+     "state": "unrecorded",
+     "at": "2026-11-20T03:06:13.793Z",
+     "head": "",
+     "summary": "There was one proposal (practice), so this is a sized tournament with no rival pieces.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "wrong",
+      "reason": "Trip 1 of 2 back to the risk spike: the design left 1 fork that only a measurement can settle. O-019: unsettled design fork: On the shipped apphost (single-file Release and the Debug apphost), does e.Args equal the ucrt-rule split of GetCommandLineW after argv0 for the finish-line lines: `\"<f>\\\" --report \"<r>\"`, the spaced pair, `\"<f>\\\"` alone and `\"<f>\\\" extra --report \"<r>\"`? Its context: The design assumes yes: the investigation measured .NET argv equal to CommandLineToArgvW on these shapes. If no, the alignment check sends these lines to the fallback, so finish lines 1, 2 and 4 exit 2 instead of passing, and the parser contract must change (for example, align on CommandLineToArgvW, or drop alignment and trust the argv0 skip). The queued spike getcommandlinew-retokenise-restores-report-args settles it. The synthesis marked this as forcing a re-synthesis: the losing answer moves a component boundary, a contract or the data model. How the fork decider would measure it: MEASURE IT; do not build it. This is a measurement that needs no fix and no change to src/. The risk spike runs it on the two shipped hosts as they are. SETUP - Set TAAD3_HOME to a new empty scratch folder. - Keep all scratch, including the probe project, outside the repo tree (lessons #889, #412). - Put trees and report folders under %LOCALAPPDATA%\\Temp (lesson #360). - Build the Debug apphost: `pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 build src/FsAnalyser.App/FsAnalyser.App.csproj`. This gives bin/Debug/net10.0-windows/win-x64/FsAnalyser.App.exe. - Publish the single-file Release exe into a scratch folder WHOSE PATH CONTAINS A SPACE, so the quoted-argv0 skip is exercised: `pwsh -NoProfile -ExecutionPolicy Bypass -File eng/dotnet.ps1 publish src/FsAnalyser.App/FsAnalyser.App.csproj -c Release -o \"<scratch>\\pub dir\"`. - The probe is a scratch startup-hook assembly, loaded with DOTNET_STARTUP_HOOKS the way FsaWindowHook already drives the published exe. Inside the real app process, before Main, it writes one JSON file (path taken from an env var) and then calls Environment.Exit(0), so no window opens and nothing is scanned. The JSON holds: (a) GetCommandLineW, the raw line; (b) Environment.GetCommandLineArgs(), whose [1..] is e.Args (WPF StartupEventArgs); (c) the real ucrt split of this process's own line: P/Invoke ucrtbase `_configure_wide_argv(1)`, then `__p___argc` / `__p___wargv`; (d) shell32 CommandLineToArgvW(GetCommandLineW); (e) a scratch reference of the design's FAITHFUL tokeniser and CRT argv0 skip, applied to (a). LINES, each on both hosts: - L0, the control: `\"<f>\" --report \"<r>\"` - L1: `\"<f>\\\" --report \"<r>\"` - L2: `\"<f sp>\\\" --report \"<d sp>\\out dir\\r.json\"`, with two spaces - L3: `\"<f>\\\"` alone - L4: `\"<f>\\\" extra --report \"<r>\"` ROUTES - ProcessStartInfo.Arguments on every line, both hosts. - Start-Process with a single -ArgumentList string, and `cmd /c` with an unquoted exe path (Debug host only, no space in its path), on L1 and L2. INCONCLUSIVE (rerun; this does not decide the fork) if any of these happens: - L0's (b)[1..] is not the 3 tokens; - L1 does not show the one merged argument; - the hook did not run in the shipped single-file exe. HOW THE RESULT DECIDES 1. On every line, host and route, (b)[1..] equals (c)[1..], and (e) equals (b)[1..]: the answer is YES. The design stands as written. The build aligns with the FAITHFUL emulator on the ucrt rule, and there is no resynthesis. 2. (b)[1..] equals (c)[1..] but (e) differs: the emulator spec is wrong in one branch. Record which branch (argv0 skip, backslash-run counting, empty token). The design is rewritten to fix that branch and keeps ucrt alignment. 3. (b)[1..] differs from (c)[1..] but equals (d)[1..]: alignment moves to CommandLineToArgvW, a shell32 import in Core.Native, and the design is rewritten. 4. (b)[1..] matches neither (c) nor (d) on some line: a split of the raw line cannot be the alignment check. The design is rewritten to drop alignment and rely on the argv0 skip plus the gate, with that line recorded as the counter-example. Also record, for the gate premise: whether (b) holds a '\"' on L1, L2 and L4, and only a trailing '\"' on L3. Nothing has measured this yet. - The investigation compared .NET argv with CommandLineToArgvW under pwsh.exe. That is neither the shipped single-file host nor the Debug apphost. - Nobody has compared argv with the ucrt rule, which is what the design's alignment check actually uses. - The queued spike getcommandlinew-retokenise-restores-report-args has no verdict. It also presumes a FIX build, and this fork does not need one. The synthesis marked the losing answer as forcing a re-synthesis. If alignment fails on these lines, finish lines 1, 2 and 4 exit 2, and the alignment contract has to move to CommandLineToArgvW or be dropped. So the answer has to come before build, not during it. The critique's own fix for M3 asked for exactly this lap. The hook-plus-dump probe measures the real shipped binaries and changes nothing in src/. Its worst case is a few short-lived processes and some KB of scratch, so it is a small experiment the spike can run on this machine without a person. A measure lap is available: 0 of 2 have been used. The risk spike measures these first. Write the design again with what it measured: its experiments are under what reality already said about this slice.",
+      "cause": "fork-measure",
+      "stage": "build-slice",
+      "from": [
+       "build-slice"
+      ]
+     },
+     "changed": {},
+     "details": "design-slice-3.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique",
+   "title": "Critique",
+   "order": 5,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-11-20T02:44:17.308Z",
+     "head": "aa3d96b8842dca5f5e5ebdcc22845e56029bbfad",
+     "summary": "The argv half of the design holds up against the tree and the measurements.",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-11-20T03:20:56.795Z",
+     "head": "aa3d96b8842dca5f5e5ebdcc22845e56029bbfad",
+     "summary": "The rework answers every finding the decisions list marked accepted-pending, and I checked each fix against the tree: - M1: names are drawn per open.",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "critique passed on 2026-11-20T02:55:27.523Z, and design-slice has judged since (2026-11-20T03:20:56.387Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "cause": "knock-on",
+      "stage": "design-slice",
+      "from": [
+       "design-slice"
+      ]
+     },
+     "changed": {},
+     "details": "critique-2.json"
+    }
+   ]
+  },
+  {
+   "stage": "critique-review",
+   "title": "Critique review",
+   "order": 6,
+   "state": "passed",
+   "attempts": [
+    {
+     "n": 1,
+     "state": "passed",
+     "at": "2026-11-20T02:55:27.565Z",
+     "head": "aa3d96b8842dca5f5e5ebdcc22845e56029bbfad",
+     "summary": "",
+     "caused_by": null,
+     "changed": {},
+     "details": "critique-review-1.json"
+    },
+    {
+     "n": 2,
+     "state": "passed",
+     "at": "2026-11-20T03:25:10.431Z",
+     "head": "aa3d96b8842dca5f5e5ebdcc22845e56029bbfad",
+     "summary": "",
+     "caused_by": {
+      "kind": "revoke",
+      "why": "stale",
+      "reason": "critique-review passed on 2026-11-20T02:55:27.608Z, and design-slice has judged since (2026-11-20T03:20:56.387Z). Sent back to read the tree as it now stands -- the merge refuses a pass older than the work it judged, so this was owed either way. Scoped `stale`: only the tree moved, so this reads the diff rather than the whole slice.",
+      "cause": "knock-on",
+      "stage": "design-slice",
+      "from": [
+       "design-slice"
+      ]
+     },
+     "changed": {},
+     "details": "critique-review-2.json"
+    }
+   ]
+  }
+ ]
+}

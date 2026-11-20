@@ -153,6 +153,17 @@ internal static unsafe partial class Kernel32
     public static partial bool GetVolumeInformationByHandle(SafeFileHandle file, char* volumeName, uint volumeNameSize,
         uint* serialNumber, uint* maximumComponentLength, uint* fileSystemFlags, char* fileSystemName, uint fileSystemNameSize);
 
+    /// <summary>The process's own command line, a buffer the process owns for its whole life: never freed, never changed.</summary>
+    [LibraryImport("kernel32.dll", EntryPoint = "GetCommandLineW")]
+    private static partial char* GetCommandLine();
+
+    /// <summary>
+    /// The command line exactly as the process was started with it (SL-007). It is read raw because .NET builds its own
+    /// command-line string from the arguments it has already split: the quoting and the runs of spaces a typed line had
+    /// are gone from that one, and only this holds them. Only <see cref="CommandLine"/>'s repair of a merged argument reads it.
+    /// </summary>
+    internal static string CommandLineAsTyped() => new(GetCommandLine());
+
     [LibraryImport("kernel32.dll")]
     public static partial uint GetCurrentThreadId();
 
